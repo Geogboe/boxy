@@ -1,0 +1,77 @@
+run:
+  timeout: 5m
+  tests: true
+  build-tags:
+    - integration
+
+linters:
+  enable:
+    - errcheck       # Check for unchecked errors
+    - gosimple       # Simplify code
+    - govet          # Vet examines Go source code
+    - ineffassign    # Detect ineffectual assignments
+    - staticcheck    # Static analysis
+    - unused         # Check for unused constants, variables, functions
+    - gofmt          # Check formatting
+    - goimports      # Check imports
+    - misspell       # Check for misspelled words
+    - revive         # Fast linter
+    - gosec          # Security checks
+    - gocritic       # Opinionated linter
+
+linters-settings:
+  errcheck:
+    check-blank: false
+    check-type-assertions: false
+    exclude-functions:
+      - (*database/sql.DB).Close
+      - (*database/sql.Rows).Close
+      - fmt.Fprintf
+      - fmt.Fprintln
+
+  govet:
+    check-shadowing: false
+    enable:
+      - atomicalign
+      - fieldalignment
+
+  gofmt:
+    simplify: true
+
+  revive:
+    rules:
+      - name: var-naming
+        severity: warning
+        disabled: false
+      - name: package-comments
+        severity: warning
+        disabled: true  # We can enable this later
+
+  gosec:
+    excludes:
+      - G404  # Use of weak random number generator (math/rand)
+    confidence: medium
+
+issues:
+  exclude-rules:
+    # Exclude some linters from running on tests files
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gosec
+
+    # Exclude known issues
+    - text: "weak cryptographic primitive"
+      linters:
+        - gosec
+
+  # Maximum issues count per one linter
+  max-issues-per-linter: 0
+
+  # Maximum count of issues with the same text
+  max-same-issues: 0
+
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
