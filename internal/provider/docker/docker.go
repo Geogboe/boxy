@@ -7,11 +7,10 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	imagetypes "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
-	"github.com/docker/go-connections/nat"
 	"github.com/sirupsen/logrus"
 
 	"github.com/Geogboe/boxy/internal/core/resource"
@@ -255,7 +254,7 @@ func (p *Provider) ensureImage(ctx context.Context, image string) error {
 	p.logger.WithField("image", image).Info("Pulling Docker image")
 
 	// Pull image
-	reader, err := p.client.ImagePull(ctx, image, types.ImagePullOptions{})
+	reader, err := p.client.ImagePull(ctx, image, imagetypes.PullOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to pull image: %w", err)
 	}
