@@ -1,0 +1,254 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Triggers on version tags like v1.0.0, v0.1.0, etc.
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch all history for changelog
+
+    - name: Get version from tag
+      id: get_version
+      run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+    - name: Generate changelog
+      id: changelog
+      run: |
+        # Get commits since last tag
+        PREV_TAG=$(git describe --abbrev=0 --tags $(git rev-list --tags --skip=1 --max-count=1) 2>/dev/null || echo "")
+        if [ -z "$PREV_TAG" ]; then
+          # First release - get all commits
+          CHANGELOG=$(git log --pretty=format:"- %s (%h)" --reverse)
+        else
+          # Get commits since previous tag
+          CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --reverse)
+        fi
+
+        # Save to file for release notes
+        echo "$CHANGELOG" > CHANGELOG.txt
+
+        # Also categorize commits
+        echo "## What's Changed" > RELEASE_NOTES.md
+        echo "" >> RELEASE_NOTES.md
+
+        # Features
+        FEATURES=$(echo "$CHANGELOG" | grep -i "^- feat" || true)
+        if [ ! -z "$FEATURES" ]; then
+          echo "### Features" >> RELEASE_NOTES.md
+          echo "$FEATURES" >> RELEASE_NOTES.md
+          echo "" >> RELEASE_NOTES.md
+        fi
+
+        # Fixes
+        FIXES=$(echo "$CHANGELOG" | grep -i "^- fix" || true)
+        if [ ! -z "$FIXES" ]; then
+          echo "### Bug Fixes" >> RELEASE_NOTES.md
+          echo "$FIXES" >> RELEASE_NOTES.md
+          echo "" >> RELEASE_NOTES.md
+        fi
+
+        # Documentation
+        DOCS=$(echo "$CHANGELOG" | grep -i "^- docs" || true)
+        if [ ! -z "$DOCS" ]; then
+          echo "### Documentation" >> RELEASE_NOTES.md
+          echo "$DOCS" >> RELEASE_NOTES.md
+          echo "" >> RELEASE_NOTES.md
+        fi
+
+        # CI/CD
+        CI=$(echo "$CHANGELOG" | grep -i "^- ci" || true)
+        if [ ! -z "$CI" ]; then
+          echo "### CI/CD" >> RELEASE_NOTES.md
+          echo "$CI" >> RELEASE_NOTES.md
+          echo "" >> RELEASE_NOTES.md
+        fi
+
+        # Other changes
+        OTHERS=$(echo "$CHANGELOG" | grep -v -i "^- \(feat\|fix\|docs\|ci\)" || true)
+        if [ ! -z "$OTHERS" ]; then
+          echo "### Other Changes" >> RELEASE_NOTES.md
+          echo "$OTHERS" >> RELEASE_NOTES.md
+          echo "" >> RELEASE_NOTES.md
+        fi
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Release ${{ steps.get_version.outputs.version }}
+        body_path: RELEASE_NOTES.md
+        draft: false
+        prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+
+  build-and-upload:
+    name: Build and Upload Assets
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          # Linux builds
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            artifact_name: boxy-linux-amd64
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            artifact_name: boxy-linux-arm64
+
+          # macOS builds
+          - os: macos-latest
+            goos: darwin
+            goarch: amd64
+            artifact_name: boxy-darwin-amd64
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            artifact_name: boxy-darwin-arm64
+
+          # Windows builds
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            artifact_name: boxy-windows-amd64.exe
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.22'
+
+    - name: Build binary
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+        CGO_ENABLED: 0
+      run: |
+        go build -v -ldflags="-s -w -X main.Version=${{ needs.create-release.outputs.version }}" -o ${{ matrix.artifact_name }} ./cmd/boxy
+
+    - name: Compress binary (Unix)
+      if: matrix.goos != 'windows'
+      run: |
+        tar -czf ${{ matrix.artifact_name }}.tar.gz ${{ matrix.artifact_name }}
+        sha256sum ${{ matrix.artifact_name }}.tar.gz > ${{ matrix.artifact_name }}.tar.gz.sha256
+
+    - name: Compress binary (Windows)
+      if: matrix.goos == 'windows'
+      run: |
+        Compress-Archive -Path ${{ matrix.artifact_name }} -DestinationPath ${{ matrix.artifact_name }}.zip
+        (Get-FileHash ${{ matrix.artifact_name }}.zip -Algorithm SHA256).Hash | Out-File -FilePath ${{ matrix.artifact_name }}.zip.sha256
+
+    - name: Upload Release Asset (Unix)
+      if: matrix.goos != 'windows'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: ./${{ matrix.artifact_name }}.tar.gz
+        asset_name: ${{ matrix.artifact_name }}.tar.gz
+        asset_content_type: application/gzip
+
+    - name: Upload Release Asset Checksum (Unix)
+      if: matrix.goos != 'windows'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: ./${{ matrix.artifact_name }}.tar.gz.sha256
+        asset_name: ${{ matrix.artifact_name }}.tar.gz.sha256
+        asset_content_type: text/plain
+
+    - name: Upload Release Asset (Windows)
+      if: matrix.goos == 'windows'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: ./${{ matrix.artifact_name }}.zip
+        asset_name: ${{ matrix.artifact_name }}.zip
+        asset_content_type: application/zip
+
+    - name: Upload Release Asset Checksum (Windows)
+      if: matrix.goos == 'windows'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: ./${{ matrix.artifact_name }}.zip.sha256
+        asset_name: ${{ matrix.artifact_name }}.zip.sha256
+        asset_content_type: text/plain
+
+  # Optional: Docker image build and push
+  docker:
+    name: Build and Push Docker Image
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Docker Hub (if configured)
+      if: ${{ secrets.DOCKER_USERNAME != '' }}
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+      continue-on-error: true
+
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: |
+          ghcr.io/${{ github.repository }}
+        tags: |
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=semver,pattern={{major}}
+          type=raw,value=latest
+
+    - name: Build and push
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max

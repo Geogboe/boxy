@@ -1,5 +1,10 @@
 # Boxy 🎁
 
+[![CI](https://github.com/Geogboe/boxy/actions/workflows/ci.yml/badge.svg)](https://github.com/Geogboe/boxy/actions/workflows/ci.yml)
+[![Release](https://github.com/Geogboe/boxy/actions/workflows/release.yml/badge.svg)](https://github.com/Geogboe/boxy/actions/workflows/release.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/Geogboe/boxy)](https://goreportcard.com/report/github.com/Geogboe/boxy)
+[![License](https://img.shields.io/github/license/Geogboe/boxy)](LICENSE)
+
 **Sandboxing orchestration tool for mixed virtual environments with automatic lifecycle management.**
 
 Boxy simplifies spinning up VMs, containers, and processes across different platforms with warm pools for instant allocation. Define your resource pools once, and Boxy keeps them ready - allocate resources on-demand, use them, and let them auto-expire.
@@ -24,14 +29,37 @@ Boxy simplifies spinning up VMs, containers, and processes across different plat
 
 ### 1. Install
 
+**Option A: Download Pre-built Binary (Recommended)**
+
 ```bash
-# Build from source
+# Linux (amd64)
+wget https://github.com/Geogboe/boxy/releases/latest/download/boxy-linux-amd64.tar.gz
+tar -xzf boxy-linux-amd64.tar.gz
+sudo mv boxy-linux-amd64 /usr/local/bin/boxy
+
+# macOS (Apple Silicon)
+wget https://github.com/Geogboe/boxy/releases/latest/download/boxy-darwin-arm64.tar.gz
+tar -xzf boxy-darwin-arm64.tar.gz
+sudo mv boxy-darwin-arm64 /usr/local/bin/boxy
+
+# Windows
+# Download boxy-windows-amd64.exe.zip from releases page
+```
+
+**Option B: Docker**
+
+```bash
+docker pull ghcr.io/geogboe/boxy:latest
+docker run --rm ghcr.io/geogboe/boxy:latest version
+```
+
+**Option C: Build from Source**
+
+```bash
 git clone https://github.com/Geogboe/boxy
 cd boxy
-go build -o boxy ./cmd/boxy
-
-# Move to PATH
-sudo mv boxy /usr/local/bin/
+make build
+sudo make install
 ```
 
 ### 2. Initialize Configuration
@@ -351,13 +379,48 @@ boxy/
 
 ## Contributing
 
-We welcome contributions! See [CLAUDE.md](CLAUDE.md) for development guidelines.
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed development guidelines.
+
+**Quick Start**:
+```bash
+# Clone and setup
+git clone https://github.com/Geogboe/boxy
+cd boxy
+go mod download
+
+# Run tests
+make test
+
+# Build
+make build
+
+# See all available commands
+make help
+```
 
 **Key Points**:
 - Use conventional commits (`feat:`, `fix:`, `docs:`, etc.)
-- Run tests before committing
+- Run tests before committing (`make check`)
 - Add tests for new features
-- Update documentation
+- Update documentation as needed
+- See [CLAUDE.md](CLAUDE.md) for AI assistant development guidelines
+
+## Releases
+
+Releases are automated via GitHub Actions when version tags are pushed:
+
+```bash
+git tag -a v1.0.0 -m "Release v1.0.0"
+git push origin v1.0.0
+```
+
+This automatically:
+- Builds binaries for all platforms
+- Generates changelog from commits
+- Creates GitHub release
+- Builds and pushes Docker images
+
+See [docs/RELEASE.md](docs/RELEASE.md) for detailed release process.
 
 ## Architecture Decisions
 
