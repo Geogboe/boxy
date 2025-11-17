@@ -25,10 +25,18 @@ func TestLogger() *logrus.Logger {
 	return logger
 }
 
-// SetupTestStore creates an in-memory SQLite store for testing
+// SetupTestStore creates a temporary SQLite store for testing
 func SetupTestStore(t *testing.T) storage.Store {
-	store, err := storage.NewSQLiteStore(":memory:")
+	// Use shared memory mode which works better for tests
+	// file::memory:?cache=shared allows multiple connections to share the same in-memory database
+	store, err := storage.NewSQLiteStore("file::memory:?cache=shared")
 	require.NoError(t, err, "Failed to create test store")
+
+	// Verify tables exist
+	var count int64
+	err = store.DB().Raw("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='resources'").Scan(&count).Error
+	require.NoError(t, err, "Failed to verify resources table")
+	require.Equal(t, int64(1), count, "Resources table should exist")
 
 	t.Cleanup(func() {
 		store.Close()
@@ -53,7 +61,7 @@ func SetupTestPool(name string, minReady, maxTotal int) *pool.PoolConfig {
 }
 
 // SetupTestPoolManager creates a pool manager with mock provider
-func SetupTestPoolManager(t *testing.T, config *pool.PoolConfig, mockCfg *mock.Config) *pool.Manager {
+func SetupTestPoolManager(t *testing.T, config *pool.PoolConfig, mockCfg *mock.Config) (*pool.Manager, storage.Store) {
 	store := SetupTestStore(t)
 	logger := TestLogger()
 
@@ -63,7 +71,7 @@ func SetupTestPoolManager(t *testing.T, config *pool.PoolConfig, mockCfg *mock.C
 	manager, err := pool.NewManager(config, provider, adapter, logger)
 	require.NoError(t, err, "Failed to create pool manager")
 
-	return manager
+	return manager, store
 }
 
 // WaitForCondition waits for a condition to be true with timeout

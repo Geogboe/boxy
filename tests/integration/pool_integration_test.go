@@ -25,7 +25,7 @@ func TestPoolManager_Integration_BasicLifecycle(t *testing.T) {
 		DestroyDelay:   25 * time.Millisecond,
 	}
 
-	manager := SetupTestPoolManager(t, poolCfg, mockCfg)
+	manager, _ := SetupTestPoolManager(t, poolCfg, mockCfg)
 
 	// Start the pool manager
 	err := manager.Start()
@@ -49,7 +49,7 @@ func TestPoolManager_Integration_Allocation(t *testing.T) {
 
 	poolCfg := SetupTestPool("test-pool", 2, 5)
 	mockCfg := &mock.Config{ProvisionDelay: 50 * time.Millisecond}
-	manager := SetupTestPoolManager(t, poolCfg, mockCfg)
+	manager, _ := SetupTestPoolManager(t, poolCfg, mockCfg)
 
 	err := manager.Start()
 	require.NoError(t, err)
@@ -81,7 +81,7 @@ func TestPoolManager_Integration_Release(t *testing.T) {
 
 	poolCfg := SetupTestPool("test-pool", 2, 5)
 	mockCfg := &mock.Config{ProvisionDelay: 50 * time.Millisecond}
-	manager := SetupTestPoolManager(t, poolCfg, mockCfg)
+	manager, _ := SetupTestPoolManager(t, poolCfg, mockCfg)
 
 	err := manager.Start()
 	require.NoError(t, err)
@@ -114,7 +114,7 @@ func TestPoolManager_Integration_MultipleAllocations(t *testing.T) {
 
 	poolCfg := SetupTestPool("test-pool", 5, 10)
 	mockCfg := &mock.Config{ProvisionDelay: 50 * time.Millisecond}
-	manager := SetupTestPoolManager(t, poolCfg, mockCfg)
+	manager, _ := SetupTestPoolManager(t, poolCfg, mockCfg)
 
 	err := manager.Start()
 	require.NoError(t, err)
@@ -147,7 +147,7 @@ func TestPoolManager_Integration_ConcurrentAllocations(t *testing.T) {
 
 	poolCfg := SetupTestPool("test-pool", 10, 20)
 	mockCfg := &mock.Config{ProvisionDelay: 100 * time.Millisecond}
-	manager := SetupTestPoolManager(t, poolCfg, mockCfg)
+	manager, _ := SetupTestPoolManager(t, poolCfg, mockCfg)
 
 	err := manager.Start()
 	require.NoError(t, err)
@@ -225,7 +225,7 @@ func TestPoolManager_Integration_CapacityLimit(t *testing.T) {
 
 	poolCfg := SetupTestPool("test-pool", 2, 3) // max 3 total
 	mockCfg := &mock.Config{ProvisionDelay: 50 * time.Millisecond}
-	manager := SetupTestPoolManager(t, poolCfg, mockCfg)
+	manager, _ := SetupTestPoolManager(t, poolCfg, mockCfg)
 
 	err := manager.Start()
 	require.NoError(t, err)

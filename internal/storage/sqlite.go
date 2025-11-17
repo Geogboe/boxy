@@ -26,12 +26,19 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
+	store := &SQLiteStore{db: db}
+
 	// Auto-migrate schema
-	if err := db.AutoMigrate(&resource.Resource{}, &sandbox.Sandbox{}); err != nil {
+	if err := store.Migrate(); err != nil {
 		return nil, fmt.Errorf("failed to migrate schema: %w", err)
 	}
 
-	return &SQLiteStore{db: db}, nil
+	return store, nil
+}
+
+// Migrate runs database migrations
+func (s *SQLiteStore) Migrate() error {
+	return s.db.AutoMigrate(&resource.Resource{}, &sandbox.Sandbox{})
 }
 
 // Close closes the database connection
@@ -41,6 +48,11 @@ func (s *SQLiteStore) Close() error {
 		return err
 	}
 	return db.Close()
+}
+
+// DB returns the underlying gorm.DB for testing
+func (s *SQLiteStore) DB() *gorm.DB {
+	return s.db
 }
 
 // ResourceRepository methods
