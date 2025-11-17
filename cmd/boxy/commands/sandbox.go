@@ -200,7 +200,7 @@ var sandboxListCmd = &cobra.Command{
 		}
 
 		if len(sandboxes) == 0 {
-			fmt.Println("\nNo active sandboxes\n")
+			fmt.Println("\nNo active sandboxes")
 			return nil
 		}
 

@@ -32,6 +32,14 @@ func SetupTestStore(t *testing.T) storage.Store {
 	store, err := storage.NewSQLiteStore("file::memory:?cache=shared")
 	require.NoError(t, err, "Failed to create test store")
 
+	// Configure connection pool to avoid SQLite locking issues in tests
+	// SQLite doesn't handle concurrent writes well, so we limit to 1 connection
+	sqlDB, err := store.DB().DB()
+	require.NoError(t, err, "Failed to get underlying database")
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+	sqlDB.SetConnMaxLifetime(0)
+
 	// Verify tables exist
 	var count int64
 	err = store.DB().Raw("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='resources'").Scan(&count).Error

@@ -130,6 +130,10 @@ func (m *Manager) Allocate(ctx context.Context, sandboxID string) (*resource.Res
 		"sandbox_id": sandboxID,
 	}).Debug("Allocating resource from pool")
 
+	// Lock to prevent concurrent allocations from racing
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	// Get ready resources
 	ready, err := m.repository.GetByState(ctx, m.config.Name, resource.StateReady)
 	if err != nil {

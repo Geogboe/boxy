@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -158,23 +159,36 @@ func TestPoolManager_Integration_ConcurrentAllocations(t *testing.T) {
 	ctx := context.Background()
 	const numWorkers = 5
 
-	// Concurrent allocations
-	results := make(chan error, numWorkers)
+	// Concurrent allocations with unique sandbox IDs
+	type result struct {
+		id  int
+		err error
+	}
+	results := make(chan result, numWorkers)
 	for i := 0; i < numWorkers; i++ {
 		go func(id int) {
-			_, err := manager.Allocate(ctx, "sandbox-concurrent")
-			results <- err
+			sandboxID := fmt.Sprintf("sandbox-concurrent-%d", id)
+			_, err := manager.Allocate(ctx, sandboxID)
+			results <- result{id: id, err: err}
 		}(i)
 	}
 
 	// Collect results
+	successCount := 0
 	for i := 0; i < numWorkers; i++ {
-		err := <-results
-		assert.NoError(t, err, "Concurrent allocation failed")
+		res := <-results
+		if res.err == nil {
+			successCount++
+		}
+		assert.NoError(t, res.err, fmt.Sprintf("Concurrent allocation %d failed", res.id))
 	}
+
+	// Give a moment for stats to update
+	time.Sleep(100 * time.Millisecond)
 
 	stats, err := manager.GetStats(ctx)
 	require.NoError(t, err)
+	t.Logf("Successful allocations: %d, Stats.TotalAllocated: %d", successCount, stats.TotalAllocated)
 	assert.Equal(t, numWorkers, stats.TotalAllocated)
 }
 

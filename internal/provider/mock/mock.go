@@ -96,7 +96,7 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 	}
 
 	p.mu.Lock()
-	p.resources[res.ID] = res
+	p.resources[res.ProviderID] = res
 	p.mu.Unlock()
 
 	p.logger.WithField("resource_id", res.ID).Debug("Mock resource provisioned")
@@ -118,7 +118,7 @@ func (p *Provider) Destroy(ctx context.Context, res *resource.Resource) error {
 	}
 
 	p.mu.Lock()
-	delete(p.resources, res.ID)
+	delete(p.resources, res.ProviderID)
 	p.mu.Unlock()
 
 	p.logger.WithField("resource_id", res.ID).Debug("Mock resource destroyed")
@@ -131,7 +131,8 @@ func (p *Provider) GetStatus(ctx context.Context, res *resource.Resource) (*reso
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	_, exists := p.resources[res.ID]
+	// Look up by ProviderID (not ID, since pool manager owns the ID)
+	_, exists := p.resources[res.ProviderID]
 	if !exists {
 		return &resource.ResourceStatus{
 			State:     resource.StateDestroyed,
@@ -161,7 +162,8 @@ func (p *Provider) GetConnectionInfo(ctx context.Context, res *resource.Resource
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	_, exists := p.resources[res.ID]
+	// Look up by ProviderID (not ID, since pool manager owns the ID)
+	_, exists := p.resources[res.ProviderID]
 	if !exists {
 		return nil, fmt.Errorf("resource not found")
 	}
