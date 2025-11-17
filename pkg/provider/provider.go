@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"sync"
 
 	"github.com/Geogboe/boxy/internal/core/resource"
 )
@@ -31,8 +32,9 @@ type Provider interface {
 	Type() resource.ResourceType
 }
 
-// Registry manages available providers
+// Registry manages available providers with thread-safe access
 type Registry struct {
+	mu        sync.RWMutex
 	providers map[string]Provider
 }
 
@@ -43,19 +45,26 @@ func NewRegistry() *Registry {
 	}
 }
 
-// Register adds a provider to the registry
+// Register adds a provider to the registry (thread-safe)
 func (r *Registry) Register(name string, provider Provider) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.providers[name] = provider
 }
 
-// Get retrieves a provider by name
+// Get retrieves a provider by name (thread-safe)
 func (r *Registry) Get(name string) (Provider, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	p, ok := r.providers[name]
 	return p, ok
 }
 
-// List returns all registered provider names
+// List returns all registered provider names (thread-safe)
 func (r *Registry) List() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	names := make([]string, 0, len(r.providers))
 	for name := range r.providers {
 		names = append(names, name)

@@ -2,9 +2,9 @@ package docker
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"io"
-	"math/rand"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -270,12 +270,20 @@ func (p *Provider) ensureImage(ctx context.Context, image string) error {
 	return nil
 }
 
-// generatePassword generates a random password
+// generatePassword generates a cryptographically secure random password
 func generatePassword(length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
 	b := make([]byte, length)
+
+	// Use crypto/rand for cryptographically secure random numbers
+	randomBytes := make([]byte, length)
+	if _, err := rand.Read(randomBytes); err != nil {
+		// Fallback to timestamp-based if crypto fails (should never happen)
+		panic(fmt.Sprintf("crypto/rand failed: %v", err))
+	}
+
 	for i := range b {
-		b[i] = charset[rand.Intn(len(charset))]
+		b[i] = charset[int(randomBytes[i])%len(charset)]
 	}
 	return string(b)
 }

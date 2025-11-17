@@ -91,8 +91,10 @@ func (m *Manager) Start() error {
 	m.wg.Add(1)
 	go m.healthCheckWorker()
 
-	// Initial replenishment
+	// Initial replenishment (tracked in WaitGroup)
+	m.wg.Add(1)
 	go func() {
+		defer m.wg.Done()
 		if err := m.ensureMinReady(m.ctx); err != nil {
 			m.logger.WithError(err).Error("Initial replenishment failed")
 		}
