@@ -1,5 +1,6 @@
 # Binaries
 /boxy
+dist/
 *.exe
 *.exe~
 *.dll
@@ -11,6 +12,9 @@
 
 # Output of the go coverage tool
 *.out
+coverage.html
+coverage.txt
+coverage-*.txt
 
 # Dependency directories
 vendor/

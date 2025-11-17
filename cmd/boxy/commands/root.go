@@ -15,7 +15,19 @@ var (
 	dbPath   string
 	logLevel string
 	logger   *logrus.Logger
+
+	// Version information (set from main package)
+	version   = "dev"
+	gitCommit = "unknown"
+	buildDate = "unknown"
 )
+
+// SetVersionInfo sets version information from build-time variables
+func SetVersionInfo(v, commit, date string) {
+	version = v
+	gitCommit = commit
+	buildDate = date
+}
 
 // rootCmd represents the base command
 var rootCmd = &cobra.Command{
