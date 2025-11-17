@@ -66,10 +66,10 @@ func (c *PoolConfig) ToResourceSpec() resource.ResourceSpec {
 // PoolStats contains statistics about a pool
 type PoolStats struct {
 	Name          string    `json:"name"`
-	TotalReady    int       `json:"total_ready"`
-	TotalAllocated int      `json:"total_allocated"`
-	TotalProvisioningint    `json:"total_provisioning"`
-	TotalError    int       `json:"total_error"`
+	TotalReady        int       `json:"total_ready"`
+	TotalAllocated    int       `json:"total_allocated"`
+	TotalProvisioning int       `json:"total_provisioning"`
+	TotalError        int       `json:"total_error"`
 	Total         int       `json:"total"`
 	MinReady      int       `json:"min_ready"`
 	MaxTotal      int       `json:"max_total"`
