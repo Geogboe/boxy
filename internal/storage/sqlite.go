@@ -26,6 +26,19 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
+	// Configure connection pooling
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database instance: %w", err)
+	}
+
+	// SQLite specific connection pool settings
+	// SQLite doesn't benefit from multiple open connections due to file locking
+	// Set conservative limits to prevent "database is locked" errors
+	sqlDB.SetMaxOpenConns(1)        // SQLite: single writer at a time
+	sqlDB.SetMaxIdleConns(1)        // Keep one connection idle
+	sqlDB.SetConnMaxLifetime(0)     // No connection lifetime limit
+
 	store := &SQLiteStore{db: db}
 
 	// Auto-migrate schema

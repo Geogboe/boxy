@@ -8,7 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Geogboe/boxy/internal/config"
 	"github.com/Geogboe/boxy/internal/core/pool"
+	"github.com/Geogboe/boxy/internal/crypto"
 	"github.com/Geogboe/boxy/internal/provider/docker"
 	"github.com/Geogboe/boxy/internal/storage"
 )
@@ -36,8 +38,18 @@ var poolListCmd = &cobra.Command{
 		}
 		defer store.Close()
 
+		// Initialize encryption
+		encryptionKey, err := config.GetEncryptionKey()
+		if err != nil {
+			return fmt.Errorf("failed to get encryption key: %w", err)
+		}
+		encryptor, err := crypto.NewEncryptor(encryptionKey)
+		if err != nil {
+			return fmt.Errorf("failed to create encryptor: %w", err)
+		}
+
 		// Initialize Docker provider
-		dockerProvider, err := docker.NewProvider(logger)
+		dockerProvider, err := docker.NewProvider(logger, encryptor)
 		if err != nil {
 			return fmt.Errorf("failed to create Docker provider: %w", err)
 		}
@@ -122,8 +134,18 @@ var poolStatsCmd = &cobra.Command{
 		}
 		defer store.Close()
 
+		// Initialize encryption
+		encryptionKey, err := config.GetEncryptionKey()
+		if err != nil {
+			return fmt.Errorf("failed to get encryption key: %w", err)
+		}
+		encryptor, err := crypto.NewEncryptor(encryptionKey)
+		if err != nil {
+			return fmt.Errorf("failed to create encryptor: %w", err)
+		}
+
 		// Initialize Docker provider
-		dockerProvider, err := docker.NewProvider(logger)
+		dockerProvider, err := docker.NewProvider(logger, encryptor)
 		if err != nil {
 			return fmt.Errorf("failed to create Docker provider: %w", err)
 		}

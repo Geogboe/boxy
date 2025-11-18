@@ -9,8 +9,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Geogboe/boxy/internal/config"
 	"github.com/Geogboe/boxy/internal/core/pool"
 	"github.com/Geogboe/boxy/internal/core/sandbox"
+	"github.com/Geogboe/boxy/internal/crypto"
 	"github.com/Geogboe/boxy/internal/provider/docker"
 	"github.com/Geogboe/boxy/internal/storage"
 	"github.com/Geogboe/boxy/pkg/provider"
@@ -44,11 +46,22 @@ The service will:
 
 		logger.WithField("db_path", cfg.Storage.Path).Info("Storage initialized")
 
+		// Initialize encryption
+		encryptionKey, err := config.GetEncryptionKey()
+		if err != nil {
+			return fmt.Errorf("failed to get encryption key: %w", err)
+		}
+		encryptor, err := crypto.NewEncryptor(encryptionKey)
+		if err != nil {
+			return fmt.Errorf("failed to create encryptor: %w", err)
+		}
+		logger.Info("Encryption initialized")
+
 		// Initialize provider registry
 		providerRegistry := provider.NewRegistry()
 
 		// Register Docker provider
-		dockerProvider, err := docker.NewProvider(logger)
+		dockerProvider, err := docker.NewProvider(logger, encryptor)
 		if err != nil {
 			return fmt.Errorf("failed to create Docker provider: %w", err)
 		}

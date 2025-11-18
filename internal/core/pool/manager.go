@@ -91,8 +91,18 @@ func (m *Manager) Start() error {
 	m.wg.Add(1)
 	go m.healthCheckWorker()
 
-	// Initial replenishment
+	// Initial replenishment (tracked in WaitGroup)
+	m.wg.Add(1)
 	go func() {
+		defer m.wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				m.logger.WithFields(logrus.Fields{
+					"pool":  m.config.Name,
+					"panic": r,
+				}).Error("Panic in initial replenishment")
+			}
+		}()
 		if err := m.ensureMinReady(m.ctx); err != nil {
 			m.logger.WithError(err).Error("Initial replenishment failed")
 		}
@@ -170,6 +180,14 @@ func (m *Manager) Allocate(ctx context.Context, sandboxID string) (*resource.Res
 
 	// Trigger replenishment asynchronously
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				m.logger.WithFields(logrus.Fields{
+					"pool":  m.config.Name,
+					"panic": r,
+				}).Error("Panic in async replenishment after allocation")
+			}
+		}()
 		if err := m.ensureMinReady(m.ctx); err != nil {
 			m.logger.WithError(err).Error("Failed to replenish pool after allocation")
 		}
@@ -212,6 +230,14 @@ func (m *Manager) Release(ctx context.Context, resourceID string) error {
 
 	// Trigger replenishment
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				m.logger.WithFields(logrus.Fields{
+					"pool":  m.config.Name,
+					"panic": r,
+				}).Error("Panic in async replenishment after release")
+			}
+		}()
 		if err := m.ensureMinReady(m.ctx); err != nil {
 			m.logger.WithError(err).Error("Failed to replenish pool after release")
 		}
@@ -263,6 +289,14 @@ func (m *Manager) GetStats(ctx context.Context) (*PoolStats, error) {
 // replenishmentWorker continuously ensures min_ready count is maintained
 func (m *Manager) replenishmentWorker() {
 	defer m.wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			m.logger.WithFields(logrus.Fields{
+				"pool":  m.config.Name,
+				"panic": r,
+			}).Error("Panic in replenishment worker, worker terminated")
+		}
+	}()
 
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
@@ -284,6 +318,14 @@ func (m *Manager) replenishmentWorker() {
 // healthCheckWorker periodically checks resource health
 func (m *Manager) healthCheckWorker() {
 	defer m.wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			m.logger.WithFields(logrus.Fields{
+				"pool":  m.config.Name,
+				"panic": r,
+			}).Error("Panic in health check worker, worker terminated")
+		}
+	}()
 
 	ticker := time.NewTicker(m.config.HealthCheckInterval)
 	defer ticker.Stop()
@@ -441,6 +483,15 @@ func (m *Manager) performHealthChecks(ctx context.Context) error {
 
 			// Destroy unhealthy resource
 			go func(r *resource.Resource) {
+				defer func() {
+					if rec := recover(); rec != nil {
+						m.logger.WithFields(logrus.Fields{
+							"pool":        m.config.Name,
+							"resource_id": r.ID,
+							"panic":       rec,
+						}).Error("Panic in async destroy of unhealthy resource")
+					}
+				}()
 				if err := m.provider.Destroy(ctx, r); err != nil {
 					m.logger.WithError(err).Error("Failed to destroy unhealthy resource")
 				}

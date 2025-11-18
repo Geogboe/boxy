@@ -48,8 +48,7 @@ linters-settings:
         disabled: true  # We can enable this later
 
   gosec:
-    excludes:
-      - G404  # Use of weak random number generator (math/rand)
+    # No exclusions - catch all security issues including weak crypto
     confidence: medium
 
 issues:
