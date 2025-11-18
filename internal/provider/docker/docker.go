@@ -14,25 +14,28 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/Geogboe/boxy/internal/core/resource"
+	"github.com/Geogboe/boxy/internal/crypto"
 	provider_pkg "github.com/Geogboe/boxy/pkg/provider"
 )
 
 // Provider implements the provider.Provider interface for Docker
 type Provider struct {
-	client *client.Client
-	logger *logrus.Logger
+	client    *client.Client
+	logger    *logrus.Logger
+	encryptor *crypto.Encryptor
 }
 
 // NewProvider creates a new Docker provider
-func NewProvider(logger *logrus.Logger) (*Provider, error) {
+func NewProvider(logger *logrus.Logger, encryptor *crypto.Encryptor) (*Provider, error) {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create docker client: %w", err)
 	}
 
 	return &Provider{
-		client: cli,
-		logger: logger,
+		client:    cli,
+		logger:    logger,
+		encryptor: encryptor,
 	}, nil
 }
 
@@ -108,6 +111,14 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 		return nil, fmt.Errorf("failed to inspect container: %w", err)
 	}
 
+	// Encrypt password before storing
+	encryptedPassword, err := p.encryptor.Encrypt(password)
+	if err != nil {
+		// Cleanup container on encryption failure
+		_ = p.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+		return nil, fmt.Errorf("failed to encrypt password: %w", err)
+	}
+
 	// Create resource object
 	res := &resource.Resource{
 		Type:         resource.ResourceTypeContainer,
@@ -115,17 +126,17 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 		ProviderType: "docker",
 		ProviderID:   resp.ID,
 		Spec: map[string]interface{}{
-			"image":      spec.Image,
-			"cpus":       spec.CPUs,
-			"memory_mb":  spec.MemoryMB,
-			"labels":     spec.Labels,
+			"image":       spec.Image,
+			"cpus":        spec.CPUs,
+			"memory_mb":   spec.MemoryMB,
+			"labels":      spec.Labels,
 			"environment": spec.Environment,
 		},
 		Metadata: map[string]interface{}{
-			"container_name": inspect.Name,
-			"ip_address":     inspect.NetworkSettings.IPAddress,
-			"password":       password,
-			"created":        inspect.Created,
+			"container_name":     inspect.Name,
+			"ip_address":         inspect.NetworkSettings.IPAddress,
+			"password_encrypted": encryptedPassword, // Encrypted password
+			"created":            inspect.Created,
 		},
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
@@ -196,7 +207,12 @@ func (p *Provider) GetConnectionInfo(ctx context.Context, res *resource.Resource
 		return nil, fmt.Errorf("failed to inspect container: %w", err)
 	}
 
-	password, _ := res.Metadata["password"].(string)
+	// Decrypt password from metadata
+	encryptedPassword, _ := res.Metadata["password_encrypted"].(string)
+	password, err := p.encryptor.Decrypt(encryptedPassword)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt password: %w", err)
+	}
 
 	connInfo := &resource.ConnectionInfo{
 		Type:     "docker-exec",

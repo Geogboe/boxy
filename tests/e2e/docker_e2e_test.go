@@ -16,10 +16,20 @@ import (
 	"github.com/Geogboe/boxy/internal/core/pool"
 	"github.com/Geogboe/boxy/internal/core/resource"
 	"github.com/Geogboe/boxy/internal/core/sandbox"
+	"github.com/Geogboe/boxy/internal/crypto"
 	"github.com/Geogboe/boxy/internal/provider/docker"
 	"github.com/Geogboe/boxy/internal/storage"
 	provider_pkg "github.com/Geogboe/boxy/pkg/provider"
 )
+
+// createTestEncryptor creates an encryptor for testing
+func createTestEncryptor(t *testing.T) *crypto.Encryptor {
+	key, err := crypto.GenerateKey()
+	require.NoError(t, err, "Failed to generate test encryption key")
+	encryptor, err := crypto.NewEncryptor(key)
+	require.NoError(t, err, "Failed to create test encryptor")
+	return encryptor
+}
 
 // TestDockerE2E_FullLifecycle tests the complete lifecycle with real Docker containers
 func TestDockerE2E_FullLifecycle(t *testing.T) {
@@ -44,8 +54,9 @@ func TestDockerE2E_FullLifecycle(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.InfoLevel)
 
-	// Create real Docker provider
-	dockerProvider, err := docker.NewProvider(logger)
+	// Create real Docker provider with encryption
+	encryptor := createTestEncryptor(t)
+	dockerProvider, err := docker.NewProvider(logger, encryptor)
 	require.NoError(t, err, "Failed to create Docker provider")
 
 	// Create in-memory storage
@@ -178,7 +189,8 @@ func TestDockerE2E_MultipleContainers(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.WarnLevel) // Less verbose for this test
 
-	dockerProvider, err := docker.NewProvider(logger)
+	encryptor := createTestEncryptor(t)
+	dockerProvider, err := docker.NewProvider(logger, encryptor)
 	require.NoError(t, err)
 
 	store, err := storage.NewSQLiteStore(":memory:")
@@ -277,7 +289,8 @@ func TestDockerE2E_SandboxOrchestration(t *testing.T) {
 	logger.SetLevel(logrus.WarnLevel)
 
 	// Setup providers and pools
-	dockerProvider, err := docker.NewProvider(logger)
+	encryptor := createTestEncryptor(t)
+	dockerProvider, err := docker.NewProvider(logger, encryptor)
 	require.NoError(t, err)
 
 	store, err := storage.NewSQLiteStore(":memory:")
