@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Geogboe/boxy/internal/core/pool"
+	"github.com/Geogboe/boxy/internal/crypto"
 )
 
 // Config represents the Boxy configuration
@@ -37,6 +39,12 @@ func Load(configPath string) (*Config, error) {
 	v := viper.New()
 	v.SetConfigType("yaml")
 
+	// Enable environment variable support
+	// Environment variables can override config file values
+	// Example: BOXY_STORAGE_TYPE=postgres, BOXY_STORAGE_DSN=...
+	v.SetEnvPrefix("BOXY")
+	v.AutomaticEnv()
+
 	// If config path provided, use it
 	if configPath != "" {
 		v.SetConfigFile(configPath)
@@ -54,9 +62,13 @@ func Load(configPath string) (*Config, error) {
 	v.SetDefault("logging.level", "info")
 	v.SetDefault("logging.format", "text")
 
-	// Read config
+	// Read config file (optional - will use defaults and env vars if not found)
 	if err := v.ReadInConfig(); err != nil {
-		return nil, fmt.Errorf("failed to read config: %w", err)
+		// Only return error if config was explicitly specified
+		if configPath != "" {
+			return nil, fmt.Errorf("failed to read config: %w", err)
+		}
+		// Otherwise, config file is optional - use defaults + env vars
 	}
 
 	var cfg Config
@@ -98,4 +110,52 @@ func GetDefaultDBPath() string {
 func EnsureConfigDir() error {
 	configDir := filepath.Join(os.Getenv("HOME"), ".config", "boxy")
 	return os.MkdirAll(configDir, 0755)
+}
+
+// GetEncryptionKey gets or creates the encryption key
+// Priority: BOXY_ENCRYPTION_KEY env var > stored key file > generate new
+func GetEncryptionKey() ([]byte, error) {
+	// Try environment variable first
+	if envKey := os.Getenv("BOXY_ENCRYPTION_KEY"); envKey != "" {
+		key, err := base64.StdEncoding.DecodeString(envKey)
+		if err != nil {
+			return nil, fmt.Errorf("invalid BOXY_ENCRYPTION_KEY format (must be base64): %w", err)
+		}
+		if len(key) != 32 {
+			return nil, fmt.Errorf("BOXY_ENCRYPTION_KEY must be 32 bytes (got %d)", len(key))
+		}
+		return key, nil
+	}
+
+	// Try to load from file
+	keyPath := GetEncryptionKeyPath()
+	if data, err := os.ReadFile(keyPath); err == nil {
+		key, err := base64.StdEncoding.DecodeString(string(data))
+		if err == nil && len(key) == 32 {
+			return key, nil
+		}
+	}
+
+	// Generate new key and store it
+	if err := EnsureConfigDir(); err != nil {
+		return nil, fmt.Errorf("failed to create config dir: %w", err)
+	}
+
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate encryption key: %w", err)
+	}
+
+	// Save key to file with restrictive permissions
+	keyB64 := base64.StdEncoding.EncodeToString(key)
+	if err := os.WriteFile(keyPath, []byte(keyB64), 0600); err != nil {
+		return nil, fmt.Errorf("failed to save encryption key: %w", err)
+	}
+
+	return key, nil
+}
+
+// GetEncryptionKeyPath returns the path to the encryption key file
+func GetEncryptionKeyPath() string {
+	return filepath.Join(os.Getenv("HOME"), ".config", "boxy", "encryption.key")
 }

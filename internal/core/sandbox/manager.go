@@ -287,6 +287,13 @@ func (m *Manager) GetResourcesForSandbox(ctx context.Context, sandboxID string) 
 // cleanupWorker periodically checks for expired sandboxes
 func (m *Manager) cleanupWorker() {
 	defer m.wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			m.logger.WithFields(logrus.Fields{
+				"panic": r,
+			}).Error("Panic in sandbox cleanup worker, worker terminated")
+		}
+	}()
 
 	for {
 		select {
