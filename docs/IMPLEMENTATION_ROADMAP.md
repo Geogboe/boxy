@@ -1,12 +1,13 @@
-# Distributed Agent Implementation Roadmap
+# Implementation Roadmap
 
-This document provides a phased implementation plan for Boxy's distributed agent architecture.
+This document provides a phased implementation plan for Boxy with hook-based provisioning and distributed agent architecture.
 
 ## Overview
 
-**Goal**: Enable Boxy server to orchestrate providers running on remote agent hosts via secure gRPC communication.
-
-**Timeline**: 3 weeks for production-ready implementation
+**Goal**:
+1. Core pool management with hook-based provisioning
+2. Distributed agent architecture for remote providers
+3. Token-based secure agent registration
 
 **Success Criteria**:
 - [ ] Server can manage multiple remote agents
@@ -16,7 +17,61 @@ This document provides a phased implementation plan for Boxy's distributed agent
 - [ ] Security audit completed
 - [ ] Documentation complete
 
-## Phase 1: Foundation (Week 1, Days 1-3)
+## Phase 1: Core Hook System (Days 1-5)
+
+### Day 1-2: Provider Interface with Hooks
+
+**Tasks**:
+1. Update Provider interface with Execute() method
+2. Add ResourceUpdate for generic updates
+3. Create hook execution framework
+4. Add timeout and retry logic
+
+**Files**:
+- `pkg/provider/provider.go` - Provider interface
+- `internal/hooks/executor.go` - Hook execution engine
+- `internal/hooks/types.go` - Hook types and config
+
+**Tests**:
+- Unit tests for hook executor
+- Mock provider with Execute()
+- Timeout and retry behavior
+
+### Day 3-4: Pool Manager Hook Integration
+
+**Tasks**:
+1. Add hook execution to pool provisioning
+2. Implement async allocation with status tracking
+3. Add finalization (after_provision) hooks
+4. Add personalization (before_allocate) hooks
+
+**Files**:
+- `internal/core/pool/manager.go` - Add hook execution
+- `internal/core/pool/hooks.go` - Hook management
+- `internal/core/resource/types.go` - Add provisioning status
+
+**Tests**:
+- Integration tests with Docker provider
+- Test hook failures and retries
+- Test async allocation flow
+
+### Day 5: CLI Updates for Async
+
+**Tasks**:
+1. Update `boxy sandbox create` to wait for provisioning
+2. Add progress indicators
+3. Add `--no-wait` flag for async mode
+4. Add status polling
+
+**Files**:
+- `cmd/boxy/commands/sandbox.go`
+- Add spinner/progress library
+
+**Tests**:
+- Manual testing with Docker
+- Test wait vs no-wait modes
+
+## Phase 2: Hyper-V Stub & Testing (Days 6-8)
 
 ### Day 1: Protocol Buffers & Code Generation
 
