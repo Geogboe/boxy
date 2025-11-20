@@ -315,59 +315,89 @@ chore: update dependencies
 - Detailed architecture
 - Tutorials and guides
 
-### 6. Testing Philosophy
+### 6. Code Comments and TODOs
+
+**Use TODOs for future work**:
+```go
+// TODO(mvp2): Add support for multi-resource sandboxes
+// TODO(phase3): Implement overlay networking with WireGuard
+// TODO: Implement retry logic with exponential backoff
+// TODO(security): Encrypt this field before storing
+```
+
+**Guidelines**:
+- Use TODOs for actionable future items
+- Include phase/milestone if relevant (mvp2, phase3, etc)
+- Don't overuse - keep focused on important items
+- Remove TODOs when completed
+
+### 7. Testing Philosophy
 
 **Test at multiple levels:**
 
 **Unit Tests:**
 ```go
-// Test individual pool replenishment logic
-func TestPoolReplenishment(t *testing.T) {
-  pool := NewPool(Config{MinReady: 3})
-  pool.Allocate()
-  assert.Equal(t, 3, pool.PendingCount())
+// Test individual components in isolation
+func TestHookExecutor_Timeout(t *testing.T) {
+  executor := hooks.NewExecutor()
+  hook := &Hook{Timeout: 1 * time.Second}
+
+  // Should timeout
+  err := executor.Execute(ctx, hook, slowProvider)
+  assert.Error(t, err)
+  assert.Contains(t, err.Error(), "timeout")
 }
 ```
 
 **Integration Tests:**
 ```go
-// Test pool + backend interaction
-func TestPoolWithDockerBackend(t *testing.T) {
-  backend := NewDockerBackend()
-  pool := NewPool(backend, Config{MinReady: 2})
-  resource := pool.Allocate()
+// Test components working together
+func TestPoolWithDockerProvider(t *testing.T) {
+  if testing.Short() {
+    t.Skip("skipping integration test")
+  }
+
+  provider := docker.NewProvider(logger, encryptor)
+  pool := pool.NewManager(config, provider, repo, logger)
+
+  // Test full provision flow with hooks
+  resource := pool.Allocate(ctx, "sb-123")
   assert.NotNil(t, resource.ConnectionInfo)
 }
 ```
 
 **End-to-End Tests:**
 ```go
-// Test full user flow via API
-func TestSandboxCreationFlow(t *testing.T) {
+// Test full user flows
+func TestE2E_SandboxWithHooks(t *testing.T) {
+  if testing.Short() {
+    t.Skip("skipping e2e test")
+  }
+
   // Start Boxy service
-  // Call API to create sandbox
-  // Verify resources provisioned
-  // Verify connection info returned
+  // Create sandbox with hooks
+  // Verify hooks executed
+  // Verify resource ready
   // Cleanup
 }
 ```
 
-**Use Docker for test dependencies:**
-```yaml
-# docker-compose.test.yml
-services:
-  postgres:
-    image: postgres:15
-  redis:
-    image: redis:7
-```
+**Use Docker for testing:**
+- Docker provider: Real implementation, can actually test
+- Hyper-V provider: Stub/mock for testing without Windows
+- Tests run on CI (Linux) using Docker
 
 **Stub unavailable components:**
 ```go
-// If Hyper-V not available, use mock
-type MockHyperVProvider struct{}
-func (m *MockHyperVProvider) Provision(spec ResourceSpec) (*Resource, error) {
-  return &Resource{ID: "mock-123"}, nil
+// Stub Hyper-V provider for testing on Linux
+type StubHyperVProvider struct {
+    vms map[string]*stubVM
+}
+
+func (s *StubHyperVProvider) Provision(ctx, spec) (*Resource, error) {
+    // Simulate realistic behavior
+    time.Sleep(10 * time.Second) // Simulate provision time
+    return &Resource{ID: uuid.New().String()}, nil
 }
 ```
 
@@ -482,18 +512,29 @@ boxy/
 
 ## Current Project Status
 
-**Phase**: Initial Planning & Architecture
+**Phase**: MVP Complete + Distributed Architecture Planning
 **Completed**:
-- ✅ Project vision defined
-- ✅ Core concepts established
-- ✅ README created
+- ✅ MVP Phase 1: Core functionality (pools, sandboxes, Docker provider)
+- ✅ Single-host embedded architecture working
+- ✅ Distributed agent architecture designed (ADR-004)
+- ✅ Protocol Buffers schema defined
+- ✅ Security model planned (mTLS, certificate management)
+- ✅ Implementation guide created
 
+**Current Focus**: Distributed Agent Implementation
 **Next Steps**:
-1. ⏳ Technology stack decision (language, frameworks)
-2. ⏳ Architecture design document
-3. ⏳ Proof of concept for single backend (Docker)
-4. ⏳ Core data models
-5. ⏳ Plugin interface definition
+1. ⏳ Implement gRPC services (ProviderService, AgentService)
+2. ⏳ Create RemoteProvider implementation
+3. ⏳ Create Agent Server implementation
+4. ⏳ Implement certificate management commands
+5. ⏳ Add `boxy agent serve` command
+6. ⏳ Integration and E2E testing
+7. ⏳ Security audit and production hardening
+
+**See**:
+- [ADR-004: Distributed Agent Architecture](docs/decisions/adr-004-distributed-agent-architecture.md)
+- [Implementation Guide](docs/architecture/distributed-agent-implementation.md)
+- [Security Guide](docs/architecture/security-guide.md)
 
 ## Quick Reference
 
