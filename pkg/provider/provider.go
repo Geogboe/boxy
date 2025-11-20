@@ -22,14 +22,28 @@ type Provider interface {
 	// GetConnectionInfo returns connection details for a resource
 	GetConnectionInfo(ctx context.Context, res *resource.Resource) (*resource.ConnectionInfo, error)
 
+	// Execute runs a command inside the resource and returns the output
+	// For Docker: uses 'docker exec'
+	// For Hyper-V: uses PowerShell Direct (Invoke-Command -VMName)
+	// For SSH-based: uses SSH connection
+	Execute(ctx context.Context, res *resource.Resource, cmd []string) (*ExecuteResult, error)
+
 	// HealthCheck verifies the provider is operational
 	HealthCheck(ctx context.Context) error
 
-	// Name returns the provider name (docker, hyperv, kvm, etc.)
+	// Name returns the provider name (docker, hyperv, etc.)
 	Name() string
 
 	// Type returns the resource type this provider handles
 	Type() resource.ResourceType
+}
+
+// ExecuteResult contains the result of executing a command in a resource
+type ExecuteResult struct {
+	ExitCode int    // Command exit code
+	Stdout   string // Standard output
+	Stderr   string // Standard error
+	Error    error  // Execution error (connection failed, etc.)
 }
 
 // Registry manages available providers with thread-safe access
