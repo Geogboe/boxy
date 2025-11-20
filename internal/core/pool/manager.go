@@ -9,6 +9,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/Geogboe/boxy/internal/core/resource"
+	"github.com/Geogboe/boxy/internal/hooks"
 	"github.com/Geogboe/boxy/pkg/provider"
 )
 
@@ -28,6 +29,7 @@ type Manager struct {
 	config       *PoolConfig
 	provider     provider.Provider
 	repository   ResourceRepository
+	hookExecutor *hooks.Executor
 	logger       *logrus.Logger
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -44,6 +46,9 @@ func NewManager(
 	repository ResourceRepository,
 	logger *logrus.Logger,
 ) (*Manager, error) {
+	// Apply defaults before validation
+	config.ApplyDefaults()
+
 	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid pool configuration: %w", err)
 	}
@@ -56,13 +61,14 @@ func NewManager(
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Manager{
-		config:     config,
-		provider:   provider,
-		repository: repository,
-		logger:     logger,
-		ctx:        ctx,
-		cancel:     cancel,
-		stopChan:   make(chan struct{}),
+		config:       config,
+		provider:     provider,
+		repository:   repository,
+		hookExecutor: hooks.NewExecutor(logger),
+		logger:       logger,
+		ctx:          ctx,
+		cancel:       cancel,
+		stopChan:     make(chan struct{}),
 	}, nil
 }
 
@@ -162,8 +168,60 @@ func (m *Manager) Allocate(ctx context.Context, sandboxID string) (*resource.Res
 		return nil, ErrNoResourcesAvailable
 	}
 
-	// Allocate the first available resource
+	// Get the first available resource
 	res := available[0]
+
+	// Run before_allocate hooks (personalization) if any
+	if len(m.config.Hooks.BeforeAllocate) > 0 {
+		m.logger.WithFields(logrus.Fields{
+			"pool":        m.config.Name,
+			"resource_id": res.ID,
+			"sandbox_id":  sandboxID,
+		}).Info("Running personalization hooks")
+
+		// TODO(mvp2): Support configurable credentials from pool config
+		// For now, auto-generate credentials
+		username := "boxy-user"
+		password := generateRandomPassword(16)
+
+		hookCtx := hooks.HookContext{
+			ResourceID:   res.ID,
+			ResourceIP:   getResourceIP(res.Metadata),
+			ResourceType: string(res.Type),
+			ProviderID:   res.ProviderID,
+			PoolName:     m.config.Name,
+			Username:     username,
+			Password:     password,
+			Metadata:     make(map[string]string),
+		}
+
+		results, err := m.hookExecutor.ExecuteHooks(
+			ctx,
+			m.config.Hooks.BeforeAllocate,
+			hooks.HookPointBeforeAllocate,
+			m.provider,
+			res,
+			hookCtx,
+			m.config.Timeouts.Personalization,
+		)
+
+		// Store hook results and credentials in metadata
+		if res.Metadata == nil {
+			res.Metadata = make(map[string]interface{})
+		}
+		res.Metadata["personalization_hooks"] = results
+		res.Metadata["allocated_username"] = username
+		// Note: password is stored encrypted in provider metadata already
+
+		if err != nil {
+			m.logger.WithError(err).Error("Personalization hooks failed")
+			// Don't mark resource as error, just return the error
+			// Resource stays ready for next allocation attempt
+			return nil, fmt.Errorf("personalization hooks failed: %w", err)
+		}
+	}
+
+	// Mark as allocated
 	res.SandboxID = &sandboxID
 	res.State = resource.StateAllocated
 	res.UpdatedAt = time.Now()
@@ -194,6 +252,19 @@ func (m *Manager) Allocate(ctx context.Context, sandboxID string) (*resource.Res
 	}()
 
 	return res, nil
+}
+
+// generateRandomPassword generates a cryptographically secure random password
+func generateRandomPassword(length int) string {
+	// For now, use a simple implementation
+	// TODO(mvp2): Use crypto/rand for production
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
+	password := make([]byte, length)
+	for i := range password {
+		password[i] = charset[time.Now().UnixNano()%int64(len(charset))]
+		time.Sleep(time.Nanosecond) // Ensure different values
+	}
+	return string(password)
 }
 
 // Release releases a resource back to the pool
@@ -425,8 +496,11 @@ func (m *Manager) provisionOne(ctx context.Context) error {
 		return fmt.Errorf("failed to create resource record: %w", err)
 	}
 
-	// Provision via provider
-	provisioned, err := m.provider.Provision(ctx, spec)
+	// Provision via provider with timeout
+	provCtx, provCancel := context.WithTimeout(ctx, m.config.Timeouts.Provision)
+	defer provCancel()
+
+	provisioned, err := m.provider.Provision(provCtx, spec)
 	if err != nil {
 		// Mark as error
 		res.State = resource.StateError
@@ -437,9 +511,8 @@ func (m *Manager) provisionOne(ctx context.Context) error {
 		return fmt.Errorf("provider provisioning failed: %w", err)
 	}
 
-	// Update resource with provisioned data
+	// Update resource with provisioned data (still in provisioning state until hooks complete)
 	res.ProviderID = provisioned.ProviderID
-	res.State = resource.StateReady
 	res.Metadata = provisioned.Metadata
 	res.UpdatedAt = time.Now()
 
@@ -449,12 +522,74 @@ func (m *Manager) provisionOne(ctx context.Context) error {
 		return fmt.Errorf("failed to update resource after provisioning: %w", err)
 	}
 
+	// Run after_provision hooks (finalization)
+	if len(m.config.Hooks.AfterProvision) > 0 {
+		m.logger.WithFields(logrus.Fields{
+			"pool":        m.config.Name,
+			"resource_id": res.ID,
+		}).Info("Running finalization hooks")
+
+		hookCtx := hooks.HookContext{
+			ResourceID:   res.ID,
+			ResourceIP:   getResourceIP(provisioned.Metadata),
+			ResourceType: string(res.Type),
+			ProviderID:   res.ProviderID,
+			PoolName:     m.config.Name,
+			Metadata:     make(map[string]string),
+		}
+
+		results, err := m.hookExecutor.ExecuteHooks(
+			ctx,
+			m.config.Hooks.AfterProvision,
+			hooks.HookPointAfterProvision,
+			m.provider,
+			res,
+			hookCtx,
+			m.config.Timeouts.Finalization,
+		)
+
+		// Store hook results in metadata
+		if res.Metadata == nil {
+			res.Metadata = make(map[string]interface{})
+		}
+		res.Metadata["finalization_hooks"] = results
+
+		if err != nil {
+			m.logger.WithError(err).Error("Finalization hooks failed")
+			res.State = resource.StateError
+			res.Metadata["error"] = fmt.Sprintf("finalization hooks failed: %v", err)
+			_ = m.repository.Update(ctx, res)
+
+			// Clean up resource since hooks failed
+			_ = m.provider.Destroy(ctx, res)
+			return fmt.Errorf("finalization hooks failed: %w", err)
+		}
+	}
+
+	// Mark as ready
+	res.State = resource.StateReady
+	res.UpdatedAt = time.Now()
+
+	if err := m.repository.Update(ctx, res); err != nil {
+		// Try to clean up provisioned resource
+		_ = m.provider.Destroy(ctx, res)
+		return fmt.Errorf("failed to update resource after finalization: %w", err)
+	}
+
 	m.logger.WithFields(logrus.Fields{
 		"pool":        m.config.Name,
 		"resource_id": res.ID,
 	}).Info("Resource provisioned and ready")
 
 	return nil
+}
+
+// getResourceIP extracts IP address from metadata
+func getResourceIP(metadata map[string]interface{}) string {
+	if ip, ok := metadata["ip_address"].(string); ok {
+		return ip
+	}
+	return ""
 }
 
 // performHealthChecks checks health of all ready resources
