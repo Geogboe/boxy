@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/Geogboe/boxy/internal/core/resource"
+	"github.com/Geogboe/boxy/internal/hooks"
 )
 
 // PoolConfig defines the configuration for a resource pool
@@ -23,6 +24,10 @@ type PoolConfig struct {
 
 	// Health check configuration
 	HealthCheckInterval time.Duration `yaml:"health_check_interval,omitempty" json:"health_check_interval,omitempty"`
+
+	// Hook configuration
+	Hooks    hooks.HookConfig    `yaml:"hooks,omitempty" json:"hooks,omitempty"`
+	Timeouts hooks.TimeoutConfig `yaml:"timeouts,omitempty" json:"timeouts,omitempty"`
 }
 
 // Validate checks if the pool configuration is valid
@@ -45,7 +50,44 @@ func (c *PoolConfig) Validate() error {
 	if c.MaxTotal < c.MinReady {
 		return ErrInvalidMaxTotal
 	}
+
+	// Validate hooks
+	for _, hook := range c.Hooks.AfterProvision {
+		if err := hooks.ValidateHook(hook); err != nil {
+			return err
+		}
+	}
+	for _, hook := range c.Hooks.BeforeAllocate {
+		if err := hooks.ValidateHook(hook); err != nil {
+			return err
+		}
+	}
+
 	return nil
+}
+
+// ApplyDefaults applies default values for optional fields
+func (c *PoolConfig) ApplyDefaults() {
+	// Apply default timeouts if not set
+	if c.Timeouts.Provision == 0 && c.Timeouts.Finalization == 0 &&
+	   c.Timeouts.Personalization == 0 && c.Timeouts.Destroy == 0 {
+		c.Timeouts = hooks.DefaultTimeouts()
+	} else {
+		// Apply defaults for individual zero values
+		defaults := hooks.DefaultTimeouts()
+		if c.Timeouts.Provision == 0 {
+			c.Timeouts.Provision = defaults.Provision
+		}
+		if c.Timeouts.Finalization == 0 {
+			c.Timeouts.Finalization = defaults.Finalization
+		}
+		if c.Timeouts.Personalization == 0 {
+			c.Timeouts.Personalization = defaults.Personalization
+		}
+		if c.Timeouts.Destroy == 0 {
+			c.Timeouts.Destroy = defaults.Destroy
+		}
+	}
 }
 
 // ToResourceSpec converts pool configuration to a resource specification

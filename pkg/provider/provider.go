@@ -7,43 +7,70 @@ import (
 	"github.com/Geogboe/boxy/internal/core/resource"
 )
 
-// Provider is the interface that all backend providers must implement
+// Provider is the interface that all backend providers must implement.
+// Providers are stateless and dumb - they just translate Boxy commands to backend APIs.
 type Provider interface {
-	// Provision creates a new resource based on the specification
-	// Returns the created resource with provider-specific metadata populated
+	// Lifecycle operations
 	Provision(ctx context.Context, spec resource.ResourceSpec) (*resource.Resource, error)
-
-	// Destroy removes a resource and cleans up all associated data
 	Destroy(ctx context.Context, res *resource.Resource) error
 
-	// GetStatus returns the current status of a resource
+	// Status and information
 	GetStatus(ctx context.Context, res *resource.Resource) (*resource.ResourceStatus, error)
-
-	// GetConnectionInfo returns connection details for a resource
 	GetConnectionInfo(ctx context.Context, res *resource.Resource) (*resource.ConnectionInfo, error)
 
-	// Execute runs a command inside the resource and returns the output
-	// For Docker: uses 'docker exec'
-	// For Hyper-V: uses PowerShell Direct (Invoke-Command -VMName)
-	// For SSH-based: uses SSH connection
+	// Resource management
+	Update(ctx context.Context, res *resource.Resource, updates ResourceUpdate) error
 	Execute(ctx context.Context, res *resource.Resource, cmd []string) (*ExecuteResult, error)
 
-	// HealthCheck verifies the provider is operational
+	// Provider health
 	HealthCheck(ctx context.Context) error
 
-	// Name returns the provider name (docker, hyperv, etc.)
+	// Metadata
 	Name() string
-
-	// Type returns the resource type this provider handles
 	Type() resource.ResourceType
 }
 
-// ExecuteResult contains the result of executing a command in a resource
+// ResourceUpdate contains provider-specific update operations
+type ResourceUpdate struct {
+	// VM-specific operations
+	PowerState *PowerState   // start, stop, pause, reset
+	Snapshot   *SnapshotOp   // create, restore, delete snapshot
+
+	// Container-specific operations
+	Resources *ResourceLimits // CPU, memory adjustments
+
+	// Providers implement what they support, return error for unsupported operations
+}
+
+// PowerState represents VM power states
+type PowerState string
+
+const (
+	PowerStateRunning PowerState = "running"
+	PowerStateStopped PowerState = "stopped"
+	PowerStatePaused  PowerState = "paused"
+	PowerStateReset   PowerState = "reset"
+)
+
+// SnapshotOp represents snapshot operations
+type SnapshotOp struct {
+	Operation string // "create", "restore", "delete"
+	Name      string // Snapshot name
+}
+
+// ResourceLimits for resource updates
+type ResourceLimits struct {
+	CPUs     *int // CPU count
+	MemoryMB *int // Memory in MB
+}
+
+// ExecuteResult contains the result of executing a command in a resource.
+// Used by hooks to run setup scripts inside resources.
 type ExecuteResult struct {
 	ExitCode int    // Command exit code
 	Stdout   string // Standard output
 	Stderr   string // Standard error
-	Error    error  // Execution error (connection failed, etc.)
+	Error    error  // Execution error (connection failed, timeout, etc.)
 }
 
 // Registry manages available providers with thread-safe access

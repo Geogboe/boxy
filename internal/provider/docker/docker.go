@@ -5,12 +5,14 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
 	imagetypes "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/sirupsen/logrus"
 
 	"github.com/Geogboe/boxy/internal/core/resource"
@@ -302,6 +304,66 @@ func generatePassword(length int) string {
 		b[i] = charset[int(randomBytes[i])%len(charset)]
 	}
 	return string(b)
+}
+
+// Update modifies a resource (for Docker: resource limits, pause/unpause)
+func (p *Provider) Update(ctx context.Context, res *resource.Resource, updates provider_pkg.ResourceUpdate) error {
+	// TODO(mvp2): Implement resource limit updates
+	// For now, return not supported
+	return fmt.Errorf("Update not yet implemented for Docker provider")
+}
+
+// Execute runs a command inside the container
+func (p *Provider) Execute(ctx context.Context, res *resource.Resource, cmd []string) (*provider_pkg.ExecuteResult, error) {
+	p.logger.WithFields(logrus.Fields{
+		"container_id": res.ProviderID,
+		"command":      cmd,
+	}).Debug("Executing command in container")
+
+	// Create exec instance
+	execConfig := container.ExecOptions{
+		AttachStdout: true,
+		AttachStderr: true,
+		Cmd:          cmd,
+	}
+
+	execID, err := p.client.ContainerExecCreate(ctx, res.ProviderID, execConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create exec: %w", err)
+	}
+
+	// Attach and run
+	resp, err := p.client.ContainerExecAttach(ctx, execID.ID, container.ExecAttachOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to attach exec: %w", err)
+	}
+	defer resp.Close()
+
+	// Read output
+	var stdout, stderr strings.Builder
+	_, err = stdcopy.StdCopy(&stdout, &stderr, resp.Reader)
+	if err != nil && err != io.EOF {
+		return nil, fmt.Errorf("failed to read exec output: %w", err)
+	}
+
+	// Get exit code
+	inspect, err := p.client.ContainerExecInspect(ctx, execID.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect exec: %w", err)
+	}
+
+	result := &provider_pkg.ExecuteResult{
+		ExitCode: inspect.ExitCode,
+		Stdout:   stdout.String(),
+		Stderr:   stderr.String(),
+	}
+
+	p.logger.WithFields(logrus.Fields{
+		"container_id": res.ProviderID,
+		"exit_code":    result.ExitCode,
+	}).Debug("Command execution completed")
+
+	return result, nil
 }
 
 // Ensure Provider implements provider.Provider interface
