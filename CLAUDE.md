@@ -482,18 +482,29 @@ boxy/
 
 ## Current Project Status
 
-**Phase**: Initial Planning & Architecture
+**Phase**: MVP Complete + Distributed Architecture Planning
 **Completed**:
-- ✅ Project vision defined
-- ✅ Core concepts established
-- ✅ README created
+- ✅ MVP Phase 1: Core functionality (pools, sandboxes, Docker provider)
+- ✅ Single-host embedded architecture working
+- ✅ Distributed agent architecture designed (ADR-004)
+- ✅ Protocol Buffers schema defined
+- ✅ Security model planned (mTLS, certificate management)
+- ✅ Implementation guide created
 
+**Current Focus**: Distributed Agent Implementation
 **Next Steps**:
-1. ⏳ Technology stack decision (language, frameworks)
-2. ⏳ Architecture design document
-3. ⏳ Proof of concept for single backend (Docker)
-4. ⏳ Core data models
-5. ⏳ Plugin interface definition
+1. ⏳ Implement gRPC services (ProviderService, AgentService)
+2. ⏳ Create RemoteProvider implementation
+3. ⏳ Create Agent Server implementation
+4. ⏳ Implement certificate management commands
+5. ⏳ Add `boxy agent serve` command
+6. ⏳ Integration and E2E testing
+7. ⏳ Security audit and production hardening
+
+**See**:
+- [ADR-004: Distributed Agent Architecture](docs/decisions/adr-004-distributed-agent-architecture.md)
+- [Implementation Guide](docs/architecture/distributed-agent-implementation.md)
+- [Security Guide](docs/architecture/security-guide.md)
 
 ## Quick Reference
 
