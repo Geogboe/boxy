@@ -240,6 +240,38 @@ func (p *Provider) Reset() {
 	p.healthCheckCount = 0
 }
 
+// Update modifies a resource (mock implementation)
+func (p *Provider) Update(ctx context.Context, res *resource.Resource, updates provider_pkg.ResourceUpdate) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	_, exists := p.resources[res.ID]
+	if !exists {
+		return fmt.Errorf("resource not found: %s", res.ID)
+	}
+
+	// Mock: just return success
+	return nil
+}
+
+// Execute runs a command in the resource (mock implementation)
+func (p *Provider) Execute(ctx context.Context, res *resource.Resource, cmd []string) (*provider_pkg.ExecuteResult, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	_, exists := p.resources[res.ID]
+	if !exists {
+		return nil, fmt.Errorf("resource not found: %s", res.ID)
+	}
+
+	// Mock: simulate successful command execution
+	return &provider_pkg.ExecuteResult{
+		ExitCode: 0,
+		Stdout:   fmt.Sprintf("Mock output for: %v", cmd),
+		Stderr:   "",
+	}, nil
+}
+
 // ProviderStats contains statistics about the mock provider
 type ProviderStats struct {
 	ProvisionCount   int
