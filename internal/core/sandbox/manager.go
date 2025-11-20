@@ -95,6 +95,8 @@ func (m *Manager) Stop() {
 }
 
 // Create creates a new sandbox
+// The sandbox is created in StateCreating and resources are allocated asynchronously.
+// Use Get() or WaitForReady() to check when allocation completes.
 func (m *Manager) Create(ctx context.Context, req *CreateRequest) (*Sandbox, error) {
 	if err := req.Validate(); err != nil {
 		return nil, err
@@ -106,7 +108,14 @@ func (m *Manager) Create(ctx context.Context, req *CreateRequest) (*Sandbox, err
 		"duration":  req.Duration,
 	}).Info("Creating sandbox")
 
-	// Create sandbox record
+	// Validate pools exist before creating sandbox
+	for _, resReq := range req.Resources {
+		if _, ok := m.pools[resReq.PoolName]; !ok {
+			return nil, fmt.Errorf("pool not found: %s", resReq.PoolName)
+		}
+	}
+
+	// Create sandbox record in StateCreating
 	sb := NewSandbox(req.Name, req.Duration)
 	sb.Metadata = req.Metadata
 
@@ -114,45 +123,149 @@ func (m *Manager) Create(ctx context.Context, req *CreateRequest) (*Sandbox, err
 		return nil, fmt.Errorf("failed to create sandbox record: %w", err)
 	}
 
-	// Allocate resources from pools
+	// Allocate resources asynchronously
+	go m.allocateResourcesAsync(sb.ID, req.Resources)
+
+	m.logger.WithField("sandbox_id", sb.ID).Info("Sandbox creation started")
+
+	return sb, nil
+}
+
+// CreateSync creates a new sandbox and waits for all resources to be allocated
+// This is a synchronous version for cases where waiting is desired
+func (m *Manager) CreateSync(ctx context.Context, req *CreateRequest) (*Sandbox, error) {
+	sb, err := m.Create(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	return m.WaitForReady(ctx, sb.ID, 5*time.Minute)
+}
+
+// WaitForReady waits for a sandbox to transition to StateReady or StateError
+func (m *Manager) WaitForReady(ctx context.Context, sandboxID string, timeout time.Duration) (*Sandbox, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("timeout waiting for sandbox to be ready")
+		case <-ticker.C:
+			sb, err := m.sandboxRepo.GetSandboxByID(ctx, sandboxID)
+			if err != nil {
+				return nil, err
+			}
+
+			switch sb.State {
+			case StateReady:
+				return sb, nil
+			case StateError:
+				errMsg := "unknown error"
+				if msg, ok := sb.Metadata["error"]; ok {
+					errMsg = msg
+				}
+				return nil, fmt.Errorf("sandbox creation failed: %s", errMsg)
+			case StateCreating:
+				// Still creating, continue waiting
+				continue
+			default:
+				return nil, fmt.Errorf("unexpected sandbox state: %s", sb.State)
+			}
+		}
+	}
+}
+
+// allocateResourcesAsync allocates resources for a sandbox in background
+func (m *Manager) allocateResourcesAsync(sandboxID string, resourceReqs []ResourceRequest) {
+	defer func() {
+		if r := recover(); r != nil {
+			m.logger.WithFields(logrus.Fields{
+				"sandbox_id": sandboxID,
+				"panic":      r,
+			}).Error("Panic in async resource allocation")
+
+			// Mark sandbox as error
+			ctx := context.Background()
+			if sb, err := m.sandboxRepo.GetSandboxByID(ctx, sandboxID); err == nil {
+				sb.State = StateError
+				if sb.Metadata == nil {
+					sb.Metadata = make(map[string]string)
+				}
+				sb.Metadata["error"] = fmt.Sprintf("panic during allocation: %v", r)
+				sb.UpdatedAt = time.Now()
+				_ = m.sandboxRepo.UpdateSandbox(ctx, sb)
+			}
+		}
+	}()
+
+	ctx := context.Background()
 	var allocatedIDs []string
-	for _, resReq := range req.Resources {
+
+	// Allocate resources from pools
+	for _, resReq := range resourceReqs {
 		pool, ok := m.pools[resReq.PoolName]
 		if !ok {
-			// Cleanup already allocated resources
-			m.cleanupPartialSandbox(ctx, sb.ID, allocatedIDs)
-			return nil, fmt.Errorf("pool not found: %s", resReq.PoolName)
+			// This shouldn't happen as we validated pools earlier
+			m.markSandboxError(sandboxID, fmt.Sprintf("pool not found: %s", resReq.PoolName), allocatedIDs)
+			return
 		}
 
 		for i := 0; i < resReq.Count; i++ {
-			res, err := pool.Allocate(ctx, sb.ID)
+			res, err := pool.Allocate(ctx, sandboxID)
 			if err != nil {
 				m.logger.WithError(err).Errorf("Failed to allocate resource %d from pool %s", i+1, resReq.PoolName)
-				// Cleanup
-				m.cleanupPartialSandbox(ctx, sb.ID, allocatedIDs)
-				return nil, fmt.Errorf("failed to allocate resources: %w", err)
+				m.markSandboxError(sandboxID, fmt.Sprintf("failed to allocate from pool %s: %v", resReq.PoolName, err), allocatedIDs)
+				return
 			}
 			allocatedIDs = append(allocatedIDs, res.ID)
 		}
 	}
 
-	// Update sandbox with resource IDs
+	// Update sandbox with resource IDs and mark ready
+	sb, err := m.sandboxRepo.GetSandboxByID(ctx, sandboxID)
+	if err != nil {
+		m.logger.WithError(err).Error("Failed to get sandbox after allocation")
+		m.cleanupPartialSandbox(ctx, sandboxID, allocatedIDs)
+		return
+	}
+
 	sb.ResourceIDs = allocatedIDs
 	sb.State = StateReady
 	sb.UpdatedAt = time.Now()
 
 	if err := m.sandboxRepo.UpdateSandbox(ctx, sb); err != nil {
-		// Cleanup
-		m.cleanupPartialSandbox(ctx, sb.ID, allocatedIDs)
-		return nil, fmt.Errorf("failed to update sandbox: %w", err)
+		m.logger.WithError(err).Error("Failed to update sandbox after allocation")
+		m.markSandboxError(sandboxID, fmt.Sprintf("failed to update sandbox: %v", err), allocatedIDs)
+		return
 	}
 
 	m.logger.WithFields(logrus.Fields{
-		"sandbox_id": sb.ID,
+		"sandbox_id": sandboxID,
 		"resources":  len(allocatedIDs),
-	}).Info("Sandbox created successfully")
+	}).Info("Sandbox ready")
+}
 
-	return sb, nil
+// markSandboxError marks a sandbox as error and cleans up partial allocations
+func (m *Manager) markSandboxError(sandboxID string, errorMsg string, allocatedIDs []string) {
+	ctx := context.Background()
+
+	// Cleanup allocated resources
+	m.cleanupPartialSandbox(ctx, sandboxID, allocatedIDs)
+
+	// Mark sandbox as error
+	if sb, err := m.sandboxRepo.GetSandboxByID(ctx, sandboxID); err == nil {
+		sb.State = StateError
+		if sb.Metadata == nil {
+			sb.Metadata = make(map[string]string)
+		}
+		sb.Metadata["error"] = errorMsg
+		sb.UpdatedAt = time.Now()
+		_ = m.sandboxRepo.UpdateSandbox(ctx, sb)
+	}
 }
 
 // Get retrieves a sandbox by ID
