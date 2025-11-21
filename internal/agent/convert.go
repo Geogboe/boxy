@@ -1,4 +1,4 @@
-package remote
+package agent
 
 import (
 	"fmt"
@@ -11,17 +11,17 @@ import (
 
 // Helper functions for converting between internal types and proto types
 
-func resourceSpecToProto(spec *resource.ResourceSpec) *pb.ResourceSpec {
-	return &pb.ResourceSpec{
-		Type:         string(spec.Type),
-		ProviderType: spec.ProviderType,
-		Image:        spec.Image,
-		Cpus:         int32(spec.CPUs),
-		MemoryMb:     int32(spec.MemoryMB),
-		DiskGb:       int32(spec.DiskGB),
-		Labels:       spec.Labels,
-		Environment:  spec.Environment,
-		ExtraConfig:  mapToStringMap(spec.ExtraConfig),
+func protoToResourceSpec(pbSpec *pb.ResourceSpec) resource.ResourceSpec {
+	return resource.ResourceSpec{
+		Type:         resource.ResourceType(pbSpec.Type),
+		ProviderType: pbSpec.ProviderType, // string field
+		Image:        pbSpec.Image,
+		CPUs:         int(pbSpec.Cpus),
+		MemoryMB:     int(pbSpec.MemoryMb),
+		DiskGB:       int(pbSpec.DiskGb),
+		Labels:       pbSpec.Labels,
+		Environment:  pbSpec.Environment,
+		ExtraConfig:  stringMapToMap(pbSpec.ExtraConfig),
 	}
 }
 
@@ -32,7 +32,7 @@ func resourceToProto(res *resource.Resource) *pb.Resource {
 		SandboxId:    stringVal(res.SandboxID),
 		Type:         string(res.Type),
 		State:        string(res.State),
-		ProviderType: res.ProviderType,
+		ProviderType: res.ProviderType, // string field
 		ProviderId:   res.ProviderID,
 		Spec:         mapToStringMap(res.Spec),
 		Metadata:     mapToStringMap(res.Metadata),
@@ -49,7 +49,7 @@ func protoToResource(pb *pb.Resource) *resource.Resource {
 		SandboxID:    stringPtr(pb.SandboxId),
 		Type:         resource.ResourceType(pb.Type),
 		State:        resource.ResourceState(pb.State),
-		ProviderType: pb.ProviderType,
+		ProviderType: pb.ProviderType, // string field
 		ProviderID:   pb.ProviderId,
 		Spec:         stringMapToMap(pb.Spec),
 		Metadata:     stringMapToMap(pb.Metadata),
@@ -57,6 +57,51 @@ func protoToResource(pb *pb.Resource) *resource.Resource {
 		UpdatedAt:    time.Unix(pb.UpdatedAt, 0),
 		ExpiresAt:    timePtr(time.Unix(pb.ExpiresAt, 0)),
 	}
+}
+
+// Convert proto action/params to ResourceUpdate
+func protoToResourceUpdate(action string, params map[string]string) provider_pkg.ResourceUpdate {
+	updates := provider_pkg.ResourceUpdate{}
+
+	// Parse power state actions
+	if action == "power-running" {
+		ps := provider_pkg.PowerStateRunning
+		updates.PowerState = &ps
+	} else if action == "power-stopped" {
+		ps := provider_pkg.PowerStateStopped
+		updates.PowerState = &ps
+	} else if action == "power-paused" {
+		ps := provider_pkg.PowerStatePaused
+		updates.PowerState = &ps
+	} else if action == "power-reset" {
+		ps := provider_pkg.PowerStateReset
+		updates.PowerState = &ps
+	}
+
+	// Parse snapshot actions
+	if action == "snapshot-create" || action == "snapshot-restore" || action == "snapshot-delete" {
+		updates.Snapshot = &provider_pkg.SnapshotOp{
+			Operation: params["operation"],
+			Name:      params["name"],
+		}
+	}
+
+	// Parse resource updates
+	if action == "update-resources" {
+		updates.Resources = &provider_pkg.ResourceLimits{}
+		if cpuStr, ok := params["cpus"]; ok {
+			var cpus int
+			fmt.Sscanf(cpuStr, "%d", &cpus)
+			updates.Resources.CPUs = &cpus
+		}
+		if memStr, ok := params["memory_mb"]; ok {
+			var mem int
+			fmt.Sscanf(memStr, "%d", &mem)
+			updates.Resources.MemoryMB = &mem
+		}
+	}
+
+	return updates
 }
 
 // Pointer helpers
@@ -103,36 +148,4 @@ func stringMapToMap(m map[string]string) map[string]interface{} {
 		result[k] = v
 	}
 	return result
-}
-
-// Convert ResourceUpdate to proto action/params format
-func resourceUpdateToProto(updates provider_pkg.ResourceUpdate) (string, map[string]string) {
-	params := make(map[string]string)
-
-	// Handle PowerState updates
-	if updates.PowerState != nil {
-		return fmt.Sprintf("power-%s", string(*updates.PowerState)), params
-	}
-
-	// Handle Snapshot operations
-	if updates.Snapshot != nil {
-		action := fmt.Sprintf("snapshot-%s", updates.Snapshot.Operation)
-		params["name"] = updates.Snapshot.Name
-		return action, params
-	}
-
-	// Handle Resource limit updates
-	if updates.Resources != nil {
-		action := "update-resources"
-		if updates.Resources.CPUs != nil {
-			params["cpus"] = fmt.Sprintf("%d", *updates.Resources.CPUs)
-		}
-		if updates.Resources.MemoryMB != nil {
-			params["memory_mb"] = fmt.Sprintf("%d", *updates.Resources.MemoryMB)
-		}
-		return action, params
-	}
-
-	// Default
-	return "unknown", params
 }
