@@ -20,7 +20,8 @@ type Provider interface {
 
 	// Resource management
 	Update(ctx context.Context, res *resource.Resource, updates ResourceUpdate) error
-	Execute(ctx context.Context, res *resource.Resource, cmd []string) (*ExecuteResult, error)
+	// Exec runs a command inside the resource (aligns with docker exec, kubectl exec)
+	Exec(ctx context.Context, res *resource.Resource, cmd []string) (*ExecResult, error)
 
 	// Provider health
 	HealthCheck(ctx context.Context) error
@@ -64,9 +65,9 @@ type ResourceLimits struct {
 	MemoryMB *int // Memory in MB
 }
 
-// ExecuteResult contains the result of executing a command in a resource.
+// ExecResult contains the result of executing a command inside a resource.
 // Used by hooks to run setup scripts inside resources.
-type ExecuteResult struct {
+type ExecResult struct {
 	ExitCode int    // Command exit code
 	Stdout   string // Standard output
 	Stderr   string // Standard error

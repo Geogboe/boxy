@@ -256,7 +256,7 @@ func (p *Provider) Update(ctx context.Context, res *resource.Resource, updates p
 }
 
 // Execute runs a command in the resource (mock implementation)
-func (p *Provider) Execute(ctx context.Context, res *resource.Resource, cmd []string) (*provider_pkg.ExecuteResult, error) {
+func (p *Provider) Exec(ctx context.Context, res *resource.Resource, cmd []string) (*provider_pkg.ExecResult, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -267,7 +267,7 @@ func (p *Provider) Execute(ctx context.Context, res *resource.Resource, cmd []st
 	}
 
 	// Mock: simulate successful command execution
-	return &provider_pkg.ExecuteResult{
+	return &provider_pkg.ExecResult{
 		ExitCode: 0,
 		Stdout:   fmt.Sprintf("Mock output for: %v", cmd),
 		Stderr:   "",
