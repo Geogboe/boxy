@@ -1,0 +1,86 @@
+# Multi-pool configuration with different resource types
+# This example shows multiple pools for different use cases
+
+pools:
+  # Development containers - lightweight, fast
+  - name: dev-ubuntu
+    type: container
+    backend: docker
+    image: ubuntu:22.04
+    min_ready: 5
+    max_total: 20
+    cpus: 2
+    memory_mb: 2048
+    hooks:
+      after_provision:
+        - name: install-dev-tools
+          type: script
+          shell: bash
+          inline: |
+            apt-get update && apt-get install -y \
+              git curl vim build-essential python3 python3-pip
+          timeout: 5m
+
+      before_allocate:
+        - name: create-dev-user
+          type: script
+          shell: bash
+          inline: |
+            useradd -m -s /bin/bash ${username}
+            echo "${username}:${password}" | chpasswd
+            usermod -aG sudo ${username}
+
+  # Build containers - more resources
+  - name: build-ubuntu
+    type: container
+    backend: docker
+    image: ubuntu:22.04
+    min_ready: 2
+    max_total: 10
+    cpus: 4
+    memory_mb: 8192
+    hooks:
+      after_provision:
+        - name: install-build-tools
+          type: script
+          shell: bash
+          inline: |
+            apt-get update && apt-get install -y \
+              gcc g++ make cmake ninja-build ccache
+          timeout: 10m
+
+      before_allocate:
+        - name: setup-build-env
+          type: script
+          shell: bash
+          inline: |
+            useradd -m ${username}
+            echo "${username}:${password}" | chpasswd
+            mkdir -p /build && chown ${username} /build
+
+  # Testing containers - isolated, minimal
+  - name: test-alpine
+    type: container
+    backend: docker
+    image: alpine:latest
+    min_ready: 10
+    max_total: 30
+    cpus: 1
+    memory_mb: 512
+    hooks:
+      before_allocate:
+        - name: create-test-user
+          type: script
+          shell: bash
+          inline: |
+            adduser -D ${username}
+            echo "${username}:${password}" | chpasswd
+          continue_on_failure: false  # Must succeed
+
+storage:
+  type: sqlite
+  path: ~/.config/boxy/boxy.db
+
+logging:
+  level: info
+  format: text
