@@ -21,6 +21,12 @@ service ProviderService {
 
   // HealthCheck verifies the provider is operational
   rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+
+  // Exec runs a command inside the resource
+  rpc Exec(ExecRequest) returns (ExecResponse);
+
+  // Update applies updates to a resource (power states, snapshots, etc.)
+  rpc Update(UpdateRequest) returns (UpdateResponse);
 }
 
 // AgentService defines the gRPC interface for agent management.
@@ -101,6 +107,56 @@ message HealthCheckResponse {
 
   // Optional message (error details if unhealthy)
   string message = 2;
+}
+
+message ExecRequest {
+  // Name of the provider
+  string provider_name = 1;
+
+  // Resource to execute command in
+  Resource resource = 2;
+
+  // Command to execute (array of strings)
+  repeated string command = 3;
+}
+
+message ExecResponse {
+  // Exit code
+  int32 exit_code = 1;
+
+  // Standard output
+  string stdout = 2;
+
+  // Standard error
+  string stderr = 3;
+
+  // Error message (if execution failed)
+  string error = 4;
+}
+
+message UpdateRequest {
+  // Name of the provider
+  string provider_name = 1;
+
+  // Resource to update
+  Resource resource = 2;
+
+  // Action to perform (power-on, power-off, restart, snapshot-create, etc.)
+  string action = 3;
+
+  // Action-specific parameters
+  map<string, string> params = 4;
+}
+
+message UpdateResponse {
+  // Success status
+  bool success = 1;
+
+  // Updated resource (may have new metadata)
+  Resource resource = 2;
+
+  // Error message (if update failed)
+  string error = 3;
 }
 
 // ===== Agent Service Messages =====
