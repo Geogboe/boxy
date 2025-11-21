@@ -16,8 +16,20 @@ import (
 // Config represents the Boxy configuration
 type Config struct {
 	Pools   []pool.PoolConfig `yaml:"pools" json:"pools"`
+	Agents  []AgentConfig     `yaml:"agents" json:"agents"`
 	Storage StorageConfig     `yaml:"storage" json:"storage"`
 	Logging LoggingConfig     `yaml:"logging" json:"logging"`
+}
+
+// AgentConfig contains remote agent configuration
+type AgentConfig struct {
+	ID           string `yaml:"id" json:"id"`                       // Unique agent ID
+	Address      string `yaml:"address" json:"address"`             // host:port
+	Providers    []string `yaml:"providers" json:"providers"`       // List of provider names on this agent
+	TLSCertPath  string `yaml:"tls_cert_path" json:"tls_cert_path"` // Client certificate
+	TLSKeyPath   string `yaml:"tls_key_path" json:"tls_key_path"`   // Client key
+	TLSCAPath    string `yaml:"tls_ca_path" json:"tls_ca_path"`     // CA certificate
+	UseTLS       bool   `yaml:"use_tls" json:"use_tls"`             // Enable TLS
 }
 
 // StorageConfig contains storage configuration
