@@ -314,7 +314,7 @@ func (p *Provider) Update(ctx context.Context, res *resource.Resource, updates p
 }
 
 // Execute runs a command inside the container
-func (p *Provider) Execute(ctx context.Context, res *resource.Resource, cmd []string) (*provider_pkg.ExecuteResult, error) {
+func (p *Provider) Exec(ctx context.Context, res *resource.Resource, cmd []string) (*provider_pkg.ExecResult, error) {
 	p.logger.WithFields(logrus.Fields{
 		"container_id": res.ProviderID,
 		"command":      cmd,
@@ -352,7 +352,7 @@ func (p *Provider) Execute(ctx context.Context, res *resource.Resource, cmd []st
 		return nil, fmt.Errorf("failed to inspect exec: %w", err)
 	}
 
-	result := &provider_pkg.ExecuteResult{
+	result := &provider_pkg.ExecResult{
 		ExitCode: inspect.ExitCode,
 		Stdout:   stdout.String(),
 		Stderr:   stderr.String(),

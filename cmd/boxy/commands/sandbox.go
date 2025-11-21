@@ -127,7 +127,7 @@ Example:
 			logger,
 		)
 
-		// Create sandbox
+		// Create sandbox (async)
 		fmt.Println("Creating sandbox...")
 
 		createReq := &sandbox.CreateRequest{
@@ -136,21 +136,34 @@ Example:
 			Duration:  duration,
 		}
 
-		sb, err := sandboxMgr.Create(context.Background(), createReq)
+		ctx := context.Background()
+		sb, err := sandboxMgr.Create(ctx, createReq)
 		if err != nil {
 			return fmt.Errorf("failed to create sandbox: %w", err)
 		}
+
+		fmt.Printf("✓ Sandbox %s created (allocating resources...)\n", sb.ID[:8])
+
+		// Wait for resources to be allocated
+		fmt.Print("Waiting for resources")
+		sb, err = sandboxMgr.WaitForReady(ctx, sb.ID, 5*time.Minute)
+		if err != nil {
+			fmt.Println(" ✗")
+			return fmt.Errorf("failed to allocate resources: %w", err)
+		}
+		fmt.Println(" ✓")
 
 		if sandboxJSON {
 			data, _ := json.MarshalIndent(sb, "", "  ")
 			fmt.Println(string(data))
 		} else {
-			fmt.Printf("\n✓ Sandbox created successfully\n\n")
+			fmt.Printf("\n✓ Sandbox ready\n\n")
 			fmt.Printf("ID:         %s\n", sb.ID)
 			if sb.Name != "" {
 				fmt.Printf("Name:       %s\n", sb.Name)
 			}
 			fmt.Printf("Resources:  %d\n", len(sb.ResourceIDs))
+			fmt.Printf("State:      %s\n", sb.State)
 			fmt.Printf("Expires:    %s (in %s)\n", sb.ExpiresAt.Format(time.RFC3339), sb.TimeRemaining().Round(time.Second))
 			fmt.Println()
 
@@ -158,12 +171,12 @@ Example:
 			fmt.Println("Resource Connection Info:")
 			fmt.Println("─────────────────────────")
 
-			resourcesWithConn, err := sandboxMgr.GetResourcesForSandbox(context.Background(), sb.ID)
+			resourcesWithConn, err := sandboxMgr.GetResourcesForSandbox(ctx, sb.ID)
 			if err != nil {
 				logger.WithError(err).Warn("Failed to get connection info")
 			} else {
 				for i, rwc := range resourcesWithConn {
-					fmt.Printf("\n[%d] Resource %s\n", i+1, rwc.Resource.ID)
+					fmt.Printf("\n[%d] Resource %s\n", i+1, rwc.Resource.ID[:8])
 					fmt.Printf("    Type: %s\n", rwc.Connection.Type)
 					if rwc.Connection.Host != "" {
 						fmt.Printf("    Host: %s\n", rwc.Connection.Host)

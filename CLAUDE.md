@@ -230,11 +230,13 @@ Boxy:
 - Use Docker for dependencies
 - Stub/mock unavailable components
 
-**Step 4: Test Thoroughly**
+**Step 4: Test Thoroughly** ⚠️ **CRITICAL**
 - Unit tests (individual functions)
 - Integration tests (component interactions)
-- End-to-end tests (full user flows)
+- **End-to-end tests (full user flows) - REQUIRED before marking as complete**
 - Error scenarios (what happens when things fail?)
+- **MUST run `go test ./tests/e2e/` and verify all tests pass before saying "done"**
+- **MUST actually test CLI commands work (not just compile)**
 
 ### 3. Commit & Push Practices
 

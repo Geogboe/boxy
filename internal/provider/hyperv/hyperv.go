@@ -208,7 +208,7 @@ func (p *Provider) GetConnectionInfo(ctx context.Context, res *resource.Resource
 // Execute runs a command inside the VM
 // In real implementation: Uses PowerShell Direct (Invoke-Command -VMName ... -ScriptBlock {...})
 // PowerShell Direct allows running commands without network - uses VM bus
-func (p *Provider) Execute(ctx context.Context, res *resource.Resource, cmd []string) (*provider_pkg.ExecuteResult, error) {
+func (p *Provider) Exec(ctx context.Context, res *resource.Resource, cmd []string) (*provider_pkg.ExecResult, error) {
 	p.mu.RLock()
 	vm, exists := p.vms[res.ProviderID]
 	p.mu.RUnlock()
@@ -237,7 +237,7 @@ func (p *Provider) Execute(ctx context.Context, res *resource.Resource, cmd []st
 	// Real implementation would use:
 	// Invoke-Command -VMName $vmName -Credential $cred -ScriptBlock { <command> }
 
-	result := &provider_pkg.ExecuteResult{
+	result := &provider_pkg.ExecResult{
 		ExitCode: 0,
 		Stdout:   fmt.Sprintf("Stub: Executed %v on VM %s\n", cmd, vm.Name),
 		Stderr:   "",
