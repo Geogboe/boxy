@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"time"
 
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
@@ -13,7 +12,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/Geogboe/boxy/internal/core/resource"
 	provider_pkg "github.com/Geogboe/boxy/pkg/provider"
 	pb "github.com/Geogboe/boxy/pkg/provider/proto"
 )
@@ -163,17 +161,7 @@ func (s *Server) Provision(ctx context.Context, req *pb.ProvisionRequest) (*pb.P
 	}
 
 	// Convert proto spec to internal spec
-	spec := &resource.ResourceSpec{
-		Type:         resource.ResourceType(req.Spec.Type),
-		ProviderType: resource.ProviderType(req.Spec.ProviderType),
-		Image:        req.Spec.Image,
-		CPUs:         int(req.Spec.Cpus),
-		MemoryMB:     int(req.Spec.MemoryMb),
-		DiskGB:       int(req.Spec.DiskGb),
-		Labels:       req.Spec.Labels,
-		Environment:  req.Spec.Environment,
-		ExtraConfig:  convertStringToMap(req.Spec.ExtraConfig),
-	}
+	spec := protoToResourceSpec(req.Spec)
 
 	res, err := prov.Provision(ctx, spec)
 	if err != nil {
@@ -237,7 +225,7 @@ func (s *Server) GetStatus(ctx context.Context, req *pb.GetStatusRequest) (*pb.G
 			Healthy:       st.Healthy,
 			Message:       st.Message,
 			LastCheck:     st.LastCheck.Unix(),
-			UptimeSeconds: st.UptimeSeconds,
+			UptimeSeconds: int64(st.Uptime.Seconds()),
 			CpuUsage:      st.CPUUsage,
 			MemoryUsed:    st.MemoryUsed,
 		},
@@ -266,7 +254,7 @@ func (s *Server) GetConnectionInfo(ctx context.Context, req *pb.GetConnectionInf
 			Username:    connInfo.Username,
 			Password:    connInfo.Password,
 			SshKey:      connInfo.SSHKey,
-			ExtraFields: connInfo.ExtraFields,
+			ExtraFields: mapToStringMap(connInfo.ExtraFields),
 		},
 	}, nil
 }
@@ -351,13 +339,10 @@ func (s *Server) Update(ctx context.Context, req *pb.UpdateRequest) (*pb.UpdateR
 
 	res := protoToResource(req.Resource)
 
-	// Convert string params to map[string]interface{}
-	params := make(map[string]interface{})
-	for k, v := range req.Params {
-		params[k] = v
-	}
+	// Convert proto action/params to ResourceUpdate
+	updates := protoToResourceUpdate(req.Action, req.Params)
 
-	updated, err := prov.Update(ctx, res, req.Action, params)
+	err = prov.Update(ctx, res, updates)
 	if err != nil {
 		logger.WithError(err).Error("Update failed")
 		return &pb.UpdateResponse{
@@ -370,58 +355,7 @@ func (s *Server) Update(ctx context.Context, req *pb.UpdateRequest) (*pb.UpdateR
 
 	return &pb.UpdateResponse{
 		Success:  true,
-		Resource: resourceToProto(updated),
+		Resource: resourceToProto(res),
 	}, nil
 }
 
-// **Helper functions for type conversion**
-
-func resourceToProto(res *resource.Resource) *pb.Resource {
-	return &pb.Resource{
-		Id:           res.ID,
-		PoolId:       res.PoolID,
-		SandboxId:    res.SandboxID,
-		Type:         string(res.Type),
-		State:        string(res.State),
-		ProviderType: string(res.ProviderType),
-		ProviderId:   res.ProviderID,
-		Spec:         convertMapToString(res.Spec),
-		Metadata:     res.Metadata,
-		CreatedAt:    res.CreatedAt.Unix(),
-		UpdatedAt:    res.UpdatedAt.Unix(),
-		ExpiresAt:    res.ExpiresAt.Unix(),
-	}
-}
-
-func protoToResource(pb *pb.Resource) *resource.Resource {
-	return &resource.Resource{
-		ID:           pb.Id,
-		PoolID:       pb.PoolId,
-		SandboxID:    pb.SandboxId,
-		Type:         resource.ResourceType(pb.Type),
-		State:        resource.ResourceState(pb.State),
-		ProviderType: resource.ProviderType(pb.ProviderType),
-		ProviderID:   pb.ProviderId,
-		Spec:         convertStringToMap(pb.Spec),
-		Metadata:     pb.Metadata,
-		CreatedAt:    time.Unix(pb.CreatedAt, 0),
-		UpdatedAt:    time.Unix(pb.UpdatedAt, 0),
-		ExpiresAt:    time.Unix(pb.ExpiresAt, 0),
-	}
-}
-
-func convertMapToString(m map[string]interface{}) map[string]string {
-	result := make(map[string]string)
-	for k, v := range m {
-		result[k] = fmt.Sprintf("%v", v)
-	}
-	return result
-}
-
-func convertStringToMap(m map[string]string) map[string]interface{} {
-	result := make(map[string]interface{})
-	for k, v := range m {
-		result[k] = v
-	}
-	return result
-}

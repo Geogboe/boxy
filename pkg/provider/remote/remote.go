@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 
 	"github.com/Geogboe/boxy/internal/core/resource"
@@ -97,8 +98,16 @@ func NewRemoteProvider(cfg *Config, logger *logrus.Logger) (*RemoteProvider, err
 		logger.WithFields(logrus.Fields{
 			"agent":    cfg.AgentAddress,
 			"provider": cfg.ProviderName,
-		}).Warn("RemoteProvider using insecure connection (no TLS)")
+		}).Warn("⚠️  SECURITY WARNING: RemoteProvider using insecure connection (no TLS) - credentials visible on network!")
 	}
+
+	// **Security Enhancement: gRPC Keepalive**
+	// Prevents silent connection failures and enables connection reuse
+	opts = append(opts, grpc.WithKeepaliveParams(keepalive.ClientParameters{
+		Time:                10 * time.Second, // Send keepalive ping every 10 seconds
+		Timeout:             5 * time.Second,  // Wait 5 seconds for ping response
+		PermitWithoutStream: true,             // Send pings even without active RPCs
+	}))
 
 	// Connect to agent
 	conn, err := grpc.NewClient(cfg.AgentAddress, opts...)
@@ -148,7 +157,7 @@ func (r *RemoteProvider) Type() resource.ResourceType {
 // **Potential Problem #4 Addressed: Timeout Handling**
 // - Uses context with timeout for all remote calls
 // - Returns clear errors on timeout
-func (r *RemoteProvider) Provision(ctx context.Context, spec *resource.ResourceSpec) (*resource.Resource, error) {
+func (r *RemoteProvider) Provision(ctx context.Context, spec resource.ResourceSpec) (*resource.Resource, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.requestTimeout)
 	defer cancel()
 
@@ -159,7 +168,7 @@ func (r *RemoteProvider) Provision(ctx context.Context, spec *resource.ResourceS
 	})
 
 	// Convert spec to proto
-	pbSpec := resourceSpecToProto(spec)
+	pbSpec := resourceSpecToProto(&spec)
 
 	req := &pb.ProvisionRequest{
 		ProviderName: r.providerName,
@@ -259,13 +268,13 @@ func (r *RemoteProvider) GetStatus(ctx context.Context, res *resource.Resource) 
 	}
 
 	status := &resource.ResourceStatus{
-		State:        resource.ResourceState(resp.Status.State),
-		Healthy:      resp.Status.Healthy,
-		Message:      resp.Status.Message,
-		LastCheck:    time.Unix(resp.Status.LastCheck, 0),
-		UptimeSeconds: resp.Status.UptimeSeconds,
-		CPUUsage:     resp.Status.CpuUsage,
-		MemoryUsed:   resp.Status.MemoryUsed,
+		State:      resource.ResourceState(resp.Status.State),
+		Healthy:    resp.Status.Healthy,
+		Message:    resp.Status.Message,
+		LastCheck:  time.Unix(resp.Status.LastCheck, 0),
+		Uptime:     time.Duration(resp.Status.UptimeSeconds) * time.Second,
+		CPUUsage:   resp.Status.CpuUsage,
+		MemoryUsed: resp.Status.MemoryUsed,
 	}
 
 	return status, nil
@@ -293,7 +302,7 @@ func (r *RemoteProvider) GetConnectionInfo(ctx context.Context, res *resource.Re
 		Username:    resp.ConnectionInfo.Username,
 		Password:    resp.ConnectionInfo.Password,
 		SSHKey:      resp.ConnectionInfo.SshKey,
-		ExtraFields: resp.ConnectionInfo.ExtraFields,
+		ExtraFields: stringMapToMap(resp.ConnectionInfo.ExtraFields),
 	}
 
 	return connInfo, nil
@@ -378,9 +387,12 @@ func (r *RemoteProvider) Exec(ctx context.Context, res *resource.Resource, cmd [
 }
 
 // Update applies updates to the resource on the remote agent
-func (r *RemoteProvider) Update(ctx context.Context, res *resource.Resource, action string, params map[string]interface{}) (*resource.Resource, error) {
+func (r *RemoteProvider) Update(ctx context.Context, res *resource.Resource, updates provider_pkg.ResourceUpdate) error {
 	ctx, cancel := context.WithTimeout(ctx, r.requestTimeout)
 	defer cancel()
+
+	// Convert ResourceUpdate to action/params for proto
+	action, params := resourceUpdateToProto(updates)
 
 	logger := r.logger.WithFields(logrus.Fields{
 		"agent":       r.agentAddress,
@@ -389,17 +401,11 @@ func (r *RemoteProvider) Update(ctx context.Context, res *resource.Resource, act
 		"action":      action,
 	})
 
-	// Convert params map[string]interface{} to map[string]string for proto
-	strParams := make(map[string]string)
-	for k, v := range params {
-		strParams[k] = fmt.Sprintf("%v", v)
-	}
-
 	req := &pb.UpdateRequest{
 		ProviderName: r.providerName,
 		Resource:     resourceToProto(res),
 		Action:       action,
-		Params:       strParams,
+		Params:       params,
 	}
 
 	var resp *pb.UpdateResponse
@@ -418,22 +424,27 @@ func (r *RemoteProvider) Update(ctx context.Context, res *resource.Resource, act
 
 		if !isRetryable(err) {
 			logger.WithError(err).Error("Non-retryable error during Update")
-			return nil, fmt.Errorf("update failed on agent %s: %w", r.agentAddress, err)
+			return fmt.Errorf("update failed on agent %s: %w", r.agentAddress, err)
 		}
 	}
 
 	if err != nil {
 		logger.WithError(err).Error("Update failed after retries")
-		return nil, fmt.Errorf("update failed on agent %s after %d retries: %w", r.agentAddress, r.maxRetries, err)
+		return fmt.Errorf("update failed on agent %s after %d retries: %w", r.agentAddress, r.maxRetries, err)
 	}
 
 	if !resp.Success {
-		return nil, fmt.Errorf("update action '%s' failed on agent %s: %s", action, r.agentAddress, resp.Error)
+		return fmt.Errorf("update action '%s' failed on agent %s: %s", action, r.agentAddress, resp.Error)
 	}
 
-	updated := protoToResource(resp.Resource)
+	// Update resource metadata from response
+	if resp.Resource != nil {
+		updated := protoToResource(resp.Resource)
+		*res = *updated
+	}
+
 	logger.Info("Resource updated successfully on remote agent")
-	return updated, nil
+	return nil
 }
 
 // Close closes the gRPC connection
@@ -444,3 +455,17 @@ func (r *RemoteProvider) Close() error {
 	return nil
 }
 
+// isRetryable determines if an error is transient and should be retried
+func isRetryable(err error) bool {
+	st, ok := status.FromError(err)
+	if !ok {
+		return false
+	}
+
+	switch st.Code() {
+	case codes.Unavailable, codes.DeadlineExceeded, codes.ResourceExhausted:
+		return true
+	default:
+		return false
+	}
+}

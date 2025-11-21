@@ -1,0 +1,77 @@
+# Example configuration with remote agents for distributed resource management
+#
+# This example shows how to configure Boxy to use remote agents for accessing
+# resources on different machines (e.g., Windows Hyper-V from Linux control plane)
+
+# Remote agents configuration
+agents:
+  # Windows agent with Hyper-V
+  - id: windows-hyperv-01
+    address: windows-host.example.com:50051
+    providers:
+      - hyperv
+    # For production: Use TLS
+    tls_cert_path: /path/to/client-cert.pem
+    tls_key_path: /path/to/client-key.pem
+    tls_ca_path: /path/to/ca.pem
+    use_tls: true
+
+  # Another Linux agent with Docker (optional)
+  - id: linux-docker-02
+    address: docker-host.example.com:50051
+    providers:
+      - docker
+    use_tls: false  # ⚠️  Only for development/testing!
+
+# Pools using remote providers
+pools:
+  # Windows VM pool using remote Hyper-V agent
+  - name: win-server-pool
+    type: vm
+    backend: windows-hyperv-01-hyperv  # Format: {agent-id}-{provider-name}
+    image: Windows Server 2022
+    min_ready: 2
+    max_total: 10
+    cpus: 4
+    memory_mb: 8192
+    disk_gb: 127
+
+    hooks:
+      after_provision:
+        - name: install-features
+          type: script
+          shell: powershell
+          inline: |
+            Install-WindowsFeature -Name Web-Server -IncludeManagementTools
+            New-Item -Path C:\inetpub\wwwroot\test.html -Value "Ready"
+          timeout: 10m
+
+      before_allocate:
+        - name: create-user
+          type: script
+          shell: powershell
+          inline: |
+            New-LocalUser -Name "${username}" -Password (ConvertTo-SecureString "${password}" -AsPlainText -Force)
+            Add-LocalGroupMember -Group "Remote Desktop Users" -Member "${username}"
+          timeout: 1m
+
+    timeouts:
+      provision: 10m
+      finalization: 15m
+      personalization: 2m
+
+  # Local Docker pool for comparison
+  - name: local-containers
+    type: container
+    backend: docker  # Uses local Docker provider
+    image: ubuntu:22.04
+    min_ready: 5
+    max_total: 20
+
+storage:
+  type: sqlite
+  path: /var/lib/boxy/boxy.db
+
+logging:
+  level: info
+  format: text

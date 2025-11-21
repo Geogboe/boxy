@@ -57,6 +57,11 @@ func (p *Provider) Name() string {
 	return "hyperv"
 }
 
+// Type returns the resource type this provider manages
+func (p *Provider) Type() resource.ResourceType {
+	return resource.ResourceTypeVM
+}
+
 // Provision creates a new VM
 // In real implementation: uses New-VM, New-VHD with differencing disks, Start-VM
 func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*resource.Resource, error) {
@@ -323,6 +328,15 @@ func (p *Provider) Update(ctx context.Context, res *resource.Resource, updates p
 		}).Info("VM resources updated (stub)")
 	}
 
+	return nil
+}
+
+// HealthCheck checks if Hyper-V is accessible
+// Real implementation would check: Get-VMHost | Select-Object Name,State
+func (p *Provider) HealthCheck(ctx context.Context) error {
+	// Stub: Always healthy (real impl would check Hyper-V service)
+	// Real PowerShell: Get-Service -Name vmms | Select-Object Status
+	p.logger.Debug("Hyper-V health check (stub: always healthy)")
 	return nil
 }
 

@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -211,7 +210,7 @@ func registerProviders(srv *agent.Server, logger *logrus.Logger) error {
 				ProvisionDelay: 2 * time.Second,
 				DestroyDelay:   1 * time.Second,
 			}
-			prov := mock.NewProvider(mockCfg, logger)
+			prov := mock.NewProvider(logger, mockCfg)
 			if err := srv.RegisterProvider("mock", prov); err != nil {
 				return err
 			}
