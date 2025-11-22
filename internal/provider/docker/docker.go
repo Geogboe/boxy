@@ -122,6 +122,25 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 	}
 
 	// Create resource object
+	// Get IP address from first network if default bridge network doesn't have one
+	ipAddress := ""
+	if inspect.NetworkSettings != nil {
+		// Try default bridge network first
+		if inspect.NetworkSettings.Networks != nil {
+			for _, network := range inspect.NetworkSettings.Networks {
+				if network.IPAddress != "" {
+					ipAddress = network.IPAddress
+					break
+				}
+			}
+		}
+		// Fallback to deprecated IPAddress field if networks don't have IP
+		// nolint:staticcheck // SA1019: Using deprecated field as fallback for older Docker versions
+		if ipAddress == "" && inspect.NetworkSettings.IPAddress != "" {
+			ipAddress = inspect.NetworkSettings.IPAddress
+		}
+	}
+
 	res := &resource.Resource{
 		Type:         resource.ResourceTypeContainer,
 		State:        resource.StateReady,
@@ -136,7 +155,7 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 		},
 		Metadata: map[string]interface{}{
 			"container_name":     inspect.Name,
-			"ip_address":         inspect.NetworkSettings.IPAddress,
+			"ip_address":         ipAddress,
 			"password_encrypted": encryptedPassword, // Encrypted password
 			"created":            inspect.Created,
 		},
@@ -183,20 +202,27 @@ func (p *Provider) GetStatus(ctx context.Context, res *resource.Resource) (*reso
 	}
 
 	// Map Docker state to resource state
-	if inspect.State.Running {
+	switch {
+	case inspect.State.Running:
 		status.State = resource.StateReady
-	} else if inspect.State.Dead {
+	case inspect.State.Dead:
 		status.State = resource.StateError
-	} else {
+	default:
 		status.State = resource.StateProvisioning
 	}
 
 	// Get stats (optional, can be heavy)
 	stats, err := p.client.ContainerStats(ctx, res.ProviderID, false)
 	if err == nil {
-		defer stats.Body.Close()
+		defer func() {
+			if err := stats.Body.Close(); err != nil {
+				p.logger.WithError(err).Debug("Failed to close stats body")
+			}
+		}()
 		// Parse stats if needed (currently just acknowledging it works)
-		io.Copy(io.Discard, stats.Body)
+		if _, err := io.Copy(io.Discard, stats.Body); err != nil {
+			p.logger.WithError(err).Debug("Failed to drain stats body")
+		}
 	}
 
 	return status, nil
@@ -216,9 +242,28 @@ func (p *Provider) GetConnectionInfo(ctx context.Context, res *resource.Resource
 		return nil, fmt.Errorf("failed to decrypt password: %w", err)
 	}
 
+	// Get IP address from first network if default bridge network doesn't have one
+	ipAddress := ""
+	if inspect.NetworkSettings != nil {
+		// Try default bridge network first
+		if inspect.NetworkSettings.Networks != nil {
+			for _, network := range inspect.NetworkSettings.Networks {
+				if network.IPAddress != "" {
+					ipAddress = network.IPAddress
+					break
+				}
+			}
+		}
+		// Fallback to deprecated IPAddress field if networks don't have IP
+		// nolint:staticcheck // SA1019: Using deprecated field as fallback for older Docker versions
+		if ipAddress == "" && inspect.NetworkSettings.IPAddress != "" {
+			ipAddress = inspect.NetworkSettings.IPAddress
+		}
+	}
+
 	connInfo := &resource.ConnectionInfo{
 		Type:     "docker-exec",
-		Host:     inspect.NetworkSettings.IPAddress,
+		Host:     ipAddress,
 		Username: "root",
 		Password: password,
 		ExtraFields: map[string]interface{}{
@@ -263,7 +308,7 @@ func (p *Provider) Type() resource.ResourceType {
 // ensureImage pulls the image if it doesn't exist locally
 func (p *Provider) ensureImage(ctx context.Context, image string) error {
 	// Check if image exists
-	_, _, err := p.client.ImageInspectWithRaw(ctx, image)
+	_, err := p.client.ImageInspect(ctx, image)
 	if err == nil {
 		// Image exists
 		return nil
@@ -276,7 +321,11 @@ func (p *Provider) ensureImage(ctx context.Context, image string) error {
 	if err != nil {
 		return fmt.Errorf("failed to pull image: %w", err)
 	}
-	defer reader.Close()
+	defer func() {
+		if err := reader.Close(); err != nil {
+			p.logger.WithError(err).Debug("Failed to close image pull reader")
+		}
+	}()
 
 	// Drain the reader (pull progress)
 	_, err = io.Copy(io.Discard, reader)

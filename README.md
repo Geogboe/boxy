@@ -58,8 +58,8 @@ docker run --rm ghcr.io/geogboe/boxy:latest version
 ```bash
 git clone https://github.com/Geogboe/boxy
 cd boxy
-make build
-sudo make install
+task build
+sudo task install
 ```
 
 ### 2. Initialize Configuration
@@ -389,18 +389,18 @@ cd boxy
 go mod download
 
 # Run tests
-make test
+task test
 
 # Build
-make build
+task build
 
 # See all available commands
-make help
+task --list
 ```
 
 **Key Points**:
 - Use conventional commits (`feat:`, `fix:`, `docs:`, etc.)
-- Run tests before committing (`make check`)
+- Run tests before committing (`task check`)
 - Add tests for new features
 - Update documentation as needed
 - See [CLAUDE.md](CLAUDE.md) for AI assistant development guidelines

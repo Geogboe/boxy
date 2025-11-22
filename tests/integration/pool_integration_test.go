@@ -126,11 +126,9 @@ func TestPoolManager_Integration_MultipleAllocations(t *testing.T) {
 	ctx := context.Background()
 
 	// Allocate 3 resources
-	var resources []string
 	for i := 0; i < 3; i++ {
-		res, err := manager.Allocate(ctx, "sandbox-1")
+		_, err := manager.Allocate(ctx, "sandbox-1")
 		require.NoError(t, err)
-		resources = append(resources, res.ID)
 	}
 
 	stats, err := manager.GetStats(ctx)

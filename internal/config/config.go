@@ -121,7 +121,7 @@ func GetDefaultDBPath() string {
 // EnsureConfigDir ensures the config directory exists
 func EnsureConfigDir() error {
 	configDir := filepath.Join(os.Getenv("HOME"), ".config", "boxy")
-	return os.MkdirAll(configDir, 0755)
+	return os.MkdirAll(configDir, 0750)
 }
 
 // GetEncryptionKey gets or creates the encryption key
@@ -141,6 +141,7 @@ func GetEncryptionKey() ([]byte, error) {
 
 	// Try to load from file
 	keyPath := GetEncryptionKeyPath()
+	// #nosec G304 - keyPath is constructed from HOME and constant, not user input
 	if data, err := os.ReadFile(keyPath); err == nil {
 		key, err := base64.StdEncoding.DecodeString(string(data))
 		if err == nil && len(key) == 32 {
