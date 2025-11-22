@@ -2,7 +2,9 @@ package pool
 
 import (
 	"context"
+	cryptoRand "crypto/rand"
 	"fmt"
+	"math/big"
 	"sync"
 	"time"
 
@@ -266,14 +268,19 @@ func (m *Manager) Allocate(ctx context.Context, sandboxID string) (*resource.Res
 
 // generateRandomPassword generates a cryptographically secure random password
 func generateRandomPassword(length int) string {
-	// For now, use a simple implementation
-	// TODO(mvp2): Use crypto/rand for production
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
 	password := make([]byte, length)
+
 	for i := range password {
-		password[i] = charset[time.Now().UnixNano()%int64(len(charset))]
-		time.Sleep(time.Nanosecond) // Ensure different values
+		// Use crypto/rand for cryptographically secure random numbers
+		idx, err := cryptoRand.Int(cryptoRand.Reader, big.NewInt(int64(len(charset))))
+		if err != nil {
+			// This should never happen unless system entropy is exhausted
+			panic(fmt.Sprintf("crypto/rand failed: %v", err))
+		}
+		password[i] = charset[idx.Int64()]
 	}
+
 	return string(password)
 }
 

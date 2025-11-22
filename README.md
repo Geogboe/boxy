@@ -156,33 +156,60 @@ boxy sandbox destroy <sandbox-id>
 
 ## Use Cases
 
-### Development Environments
+### Primary: Quick Testing Environment
+Think **Windows Sandbox** for any platform. Get a clean, isolated VM or container instantly to test software, scripts, or configurations.
+
 ```bash
-# Spin up a full dev stack instantly
-boxy sandbox create \
-  --pool ubuntu-containers:3 \
-  --pool nginx-containers:1 \
-  --duration 8h \
-  --name dev-stack
+# Need to test an installer? Get a clean Windows 11 VM instantly
+boxy sandbox create --pool win11-test:1 --duration 1h
+
+# If preheated → instant allocation (< 5 seconds)
+# If cold → starts VM → allocates (30-60 seconds)
+# Auto-destroys after 1 hour
 ```
 
-### Testing & CI/CD
+**Why Boxy?**
+- ✅ **Instant**: Preheated resources ready immediately
+- ✅ **Clean**: Always fresh, never reused
+- ✅ **Simple**: One command, no cleanup needed
+- ✅ **Secure**: Complete isolation, auto-expiration
+
+### Secondary Use Cases
+
+**CI/CD Runners**
 ```bash
-# Fresh environment for each test run
-boxy sandbox create --pool alpine-containers:1 --duration 30m
-# Run tests
-# Auto-destroys after 30 minutes
+# Ephemeral build agents - always fresh, no contamination
+boxy sandbox create --pool ci-runner:1 --duration 30m
 ```
 
-### Security Research
+**Security Red Teaming**
 ```bash
-# Isolated lab environment
+# Isolated malware analysis or attack simulation
 boxy sandbox create \
-  --pool win-server-vms:3 \
-  --pool win-client-vms:2 \
+  --pool malware-analysis:1 \
   --duration 4h \
-  --name malware-analysis-lab
+  --name red-team-session
 ```
+
+**Development Environments**
+```bash
+# Full dev stack (DB + web + cache)
+boxy sandbox create \
+  --pool postgres-db:1 \
+  --pool nginx-web:1 \
+  --pool redis-cache:1 \
+  --duration 8h
+```
+
+**Training & Education**
+```bash
+# Provision lab environments for students
+for i in {1..30}; do
+  boxy sandbox create --pool docker-training:1 --duration 4h --name student-$i
+done
+```
+
+📖 **See [docs/USE_CASES.md](docs/USE_CASES.md) for detailed use case documentation.**
 
 ## CLI Reference
 
