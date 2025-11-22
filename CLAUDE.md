@@ -301,12 +301,21 @@ Boxy:
 - Challenge assumptions
 - Propose alternatives
 - Get alignment
+- **Create architecture diagrams** - Visual diagrams are extremely valuable for planning and design
+  - Show component relationships
+  - Illustrate data flows
+  - Map entire system architecture
+  - Use ASCII art for easy inclusion in docs
 
 **Step 2: Planning**
 - Break down into tasks
 - Identify dependencies
 - Consider testing approach
 - Document decisions
+- **NO TIME ESTIMATES** - Focus on what needs to be done, not when
+  - Don't suggest "this will take 2 weeks"
+  - Don't estimate effort in planning docs
+  - User decides timeline, you focus on completeness
 
 **Step 3: Build & Run**
 - Implement incrementally
