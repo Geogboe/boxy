@@ -450,6 +450,43 @@ pools:
 - Still requires authentication
 - Consider disabling network PS remoting in base image
 
+### PowerShell Injection Prevention
+
+The Hyper-V provider implements comprehensive security measures to prevent PowerShell injection attacks:
+
+**Input Validation**:
+- ✅ VM names validated (alphanumeric, hyphens, underscores only)
+- ✅ Snapshot names validated (prevents dangerous characters)
+- ✅ File paths validated (blocks injection chars, requires absolute paths)
+- ✅ Switch names validated
+- ✅ Image names validated (prevents path traversal with `..`)
+- ✅ Resource limits validated (CPU: 1-64, Memory: 512MB-1TB)
+- ✅ Windows reserved names blocked (CON, PRN, NUL, COM1-9, LPT1-9)
+
+**PowerShell Command Protection**:
+- ✅ All commands use single-quoted strings (prevents variable expansion)
+- ✅ Single quotes in user input are escaped (doubled: `'` → `''`)
+- ✅ Dangerous characters rejected before PowerShell execution
+- ✅ No double-quote interpolation that could enable injection
+
+**Blocked Characters**:
+- Semicolons (`;`) - command chaining
+- Backticks (`` ` ``) - escape sequences
+- Dollar signs (`$`) - variable expansion
+- Pipes (`|`) - command piping
+- Ampersands (`&`) - command chaining
+- Redirects (`<`, `>`) - I/O redirection
+- Carets (`^`) - escape character
+
+**Example Protection**:
+```go
+// User input: vm"; Remove-VM -Name "other
+// BEFORE (vulnerable): New-VM -Name "vm"; Remove-VM -Name "other"
+// AFTER (secure): Rejected at validation layer before reaching PowerShell
+```
+
+All validation functions are thoroughly tested with 100+ test cases covering injection patterns, path traversal, and boundary conditions.
+
 ## Limitations
 
 ### Current Limitations
