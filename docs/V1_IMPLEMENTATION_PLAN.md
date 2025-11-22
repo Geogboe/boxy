@@ -22,7 +22,9 @@ This document provides a comprehensive implementation plan for Boxy v1, incorpor
 8. 📋 **Config schema** - Formal YAML schema definition
 9. 🔍 **CLI/API schemas** - Complete interface documentation for review/regression testing
 10. 🐛 **Debugging docs** - Comprehensive debugging and troubleshooting guide
-11. 📖 **Documentation** - Complete consistency review and updates
+11. 📂 **Config location fix** - Move from `~/.config/boxy/` to `./boxy.yaml` (current directory)
+12. 🐳 **Docker/Compose support** - Run Boxy server in containers with examples
+13. 📖 **Documentation** - Complete consistency review and updates
 
 ---
 
@@ -38,11 +40,13 @@ This document provides a comprehensive implementation plan for Boxy v1, incorpor
 8. [Config File Schema](#8-config-file-schema)
 9. [CLI/API Schema Documentation](#9-cliapi-schema-documentation)
 10. [Debugging Documentation](#10-debugging-documentation)
-11. [Documentation Updates](#11-documentation-updates)
-12. [Testing Strategy](#12-testing-strategy)
-13. [Migration Guide](#13-migration-guide)
-14. [Implementation Checklist](#14-implementation-checklist)
-15. [Success Criteria](#15-success-criteria)
+11. [Config File Location Fix](#11-config-file-location-fix)
+12. [Docker and Docker Compose Support](#12-docker-and-docker-compose-support)
+13. [Documentation Updates](#13-documentation-updates)
+14. [Testing Strategy](#14-testing-strategy)
+15. [Migration Guide](#15-migration-guide)
+16. [Implementation Checklist](#16-implementation-checklist)
+17. [Success Criteria](#17-success-criteria)
 
 ---
 
@@ -2641,7 +2645,532 @@ A: Stop service, delete database (`rm ~/.config/boxy/boxy.db`), restart. WARNING
 
 ---
 
-## 11. Documentation Updates
+## 11. Config File Location Fix
+
+**CRITICAL CHANGE**: Move config from home directory to current working directory.
+
+### 11.1 Problem with Current Approach
+
+**Current (WRONG)**:
+```bash
+~/.config/boxy/boxy.yaml    # System-wide config in home directory
+~/.config/boxy/boxy.db      # Database in home directory
+```
+
+**Issues:**
+- ❌ Not standard for service-oriented tools
+- ❌ Difficult to manage multiple Boxy instances
+- ❌ Not clear which config is being used when running from different directories
+- ❌ Doesn't follow Docker/Compose patterns (mount volumes from current dir)
+- ❌ Awkward for CI/CD (need to setup home directory structure)
+
+### 11.2 New Approach (CORRECT)
+
+**v1 Standard**:
+```bash
+./boxy.yaml                 # Config in current directory
+./boxy.db                   # Database in current directory (or configured path)
+```
+
+**Benefits:**
+- ✅ Standard pattern for modern tools (docker-compose.yml, k8s manifests, etc.)
+- ✅ Clear which config is active (the one in current directory)
+- ✅ Easy to manage multiple Boxy deployments (different directories)
+- ✅ Works naturally with Docker volume mounts
+- ✅ Simple for CI/CD (just place config in workspace)
+
+### 11.3 Config File Name Options
+
+**Recommended**: `./boxy.yaml`
+
+**Alternatives considered:**
+- `./boxy.yml` - Shorter but less common than `.yaml`
+- `./.boxy.yaml` - Hidden file, but adds confusion
+- `./boxy.conf` - Not standard for YAML configs
+- `./config.yaml` - Too generic
+
+**Decision**: Use `./boxy.yaml` (most conventional)
+
+### 11.4 Config Discovery
+
+```go
+// internal/config/loader.go
+
+func LoadConfig() (*Config, error) {
+    // 1. Check --config flag
+    if configFlag != "" {
+        return loadFromPath(configFlag)
+    }
+
+    // 2. Check BOXY_CONFIG environment variable
+    if envConfig := os.Getenv("BOXY_CONFIG"); envConfig != "" {
+        return loadFromPath(envConfig)
+    }
+
+    // 3. Check current directory
+    if fileExists("./boxy.yaml") {
+        return loadFromPath("./boxy.yaml")
+    }
+
+    // 4. Check current directory (.yml variant)
+    if fileExists("./boxy.yml") {
+        return loadFromPath("./boxy.yml")
+    }
+
+    // 5. Error - no config found
+    return nil, fmt.Errorf("no config file found. Run 'boxy init' to create one")
+}
+```
+
+**Priority order:**
+1. `--config` flag (highest priority)
+2. `BOXY_CONFIG` environment variable
+3. `./boxy.yaml` (current directory)
+4. `./boxy.yml` (fallback)
+5. Error if none found
+
+### 11.5 Database Location
+
+**Default**: Specified in config file
+
+```yaml
+# boxy.yaml
+storage:
+  type: sqlite
+  path: ./boxy.db              # Current directory by default
+  # path: /var/lib/boxy/boxy.db  # Or absolute path for production
+```
+
+**Production recommendations:**
+- Development: `./boxy.db` (current directory)
+- Production: `/var/lib/boxy/boxy.db` (system location)
+- Docker: `/data/boxy.db` (mounted volume)
+
+### 11.6 Migration from Old Location
+
+**Backward compatibility** (v1.0 only, remove in v1.1):
+
+```go
+func LoadConfig() (*Config, error) {
+    // ... try new locations first ...
+
+    // DEPRECATED: Check old home directory location
+    oldPath := filepath.Join(os.UserHomeDir(), ".config", "boxy", "boxy.yaml")
+    if fileExists(oldPath) {
+        log.Warn("DEPRECATED: Config found in ~/.config/boxy/boxy.yaml")
+        log.Warn("Please move to ./boxy.yaml in current directory")
+        log.Warn("Support for old location will be removed in v1.1")
+        return loadFromPath(oldPath)
+    }
+
+    return nil, fmt.Errorf("no config file found")
+}
+```
+
+### 11.7 Updated CLI Commands
+
+```bash
+# Initialize config in current directory (NEW)
+boxy init
+# Creates: ./boxy.yaml
+
+# Specify custom location
+boxy serve --config /etc/boxy/boxy.yaml
+
+# Environment variable
+export BOXY_CONFIG=/etc/boxy/boxy.yaml
+boxy serve
+```
+
+### 11.8 Documentation Updates Required
+
+**Files to update:**
+- README.md - All config path examples
+- docs/V1_IMPLEMENTATION_PLAN.md - All config examples
+- docs/CONFIG_REFERENCE.md - Config location documentation
+- docs/DEBUGGING_GUIDE.md - Update log/config paths
+- boxy.example.yaml - Header comments
+- All code examples in docs/
+
+**Search and replace:**
+```bash
+# Find all instances
+grep -r "~/.config/boxy" docs/
+grep -r ".config/boxy" internal/
+
+# Replace with
+./boxy.yaml
+```
+
+---
+
+## 12. Docker and Docker Compose Support
+
+**CRITICAL FOR v1**: Ensure Boxy server runs well in Docker with proper documentation and examples.
+
+### 12.1 Why Docker Support is Essential
+
+**User needs:**
+- Run Boxy server in containerized environment
+- Easy deployment without Go toolchain
+- Consistent environment across dev/staging/prod
+- Integration with existing Docker-based infrastructure
+
+**Use cases:**
+- Development: Run Boxy server in Docker, manage local Docker containers
+- Production: Deploy Boxy server as container, manage remote agents
+- CI/CD: Spin up Boxy in pipeline, create ephemeral test environments
+
+### 12.2 Dockerfile for Boxy Server
+
+**Location**: `Dockerfile`
+
+```dockerfile
+# Multi-stage build for minimal image size
+FROM golang:1.21-alpine AS builder
+
+WORKDIR /app
+
+# Copy go mod files
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source
+COPY . .
+
+# Build binary
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o boxy cmd/boxy/main.go
+
+# Final stage
+FROM alpine:latest
+
+RUN apk --no-cache add ca-certificates
+
+WORKDIR /app
+
+# Copy binary from builder
+COPY --from=builder /app/boxy /usr/local/bin/boxy
+
+# Create data directory
+RUN mkdir -p /data
+
+# Config and database will be in /data
+VOLUME ["/data"]
+
+# Expose server port
+EXPOSE 8443
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD boxy admin health-check || exit 1
+
+# Default command
+ENTRYPOINT ["boxy"]
+CMD ["serve", "--config", "/data/boxy.yaml"]
+```
+
+**Build and run:**
+```bash
+# Build image
+docker build -t boxy:v1 .
+
+# Run server
+docker run -d \
+  --name boxy-server \
+  -v $(pwd)/config:/data \
+  -p 8443:8443 \
+  boxy:v1
+```
+
+### 12.3 Docker Compose Examples
+
+#### Example 1: Boxy Server + Docker Provider (Development)
+
+**Location**: `examples/docker-compose/dev/docker-compose.yml`
+
+```yaml
+version: '3.8'
+
+services:
+  boxy-server:
+    image: boxy:v1
+    container_name: boxy-server
+    volumes:
+      - ./boxy.yaml:/data/boxy.yaml
+      - ./boxy.db:/data/boxy.db
+      - /var/run/docker.sock:/var/run/docker.sock  # Access host Docker
+    ports:
+      - "8443:8443"
+    environment:
+      - BOXY_LOG_LEVEL=debug
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "boxy", "admin", "health-check"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  # Example: Database for multi-tenancy
+  postgres:
+    image: postgres:15
+    container_name: boxy-postgres
+    environment:
+      POSTGRES_DB: boxy
+      POSTGRES_USER: boxy
+      POSTGRES_PASSWORD: boxy_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+volumes:
+  postgres-data:
+```
+
+**Config**: `examples/docker-compose/dev/boxy.yaml`
+
+```yaml
+storage:
+  type: sqlite
+  path: /data/boxy.db
+
+server:
+  listen_address: 0.0.0.0:8443
+
+pools:
+  - name: ubuntu-containers
+    type: container
+    backend: docker
+    # Docker socket mounted from host
+    image: ubuntu:22.04
+    min_ready: 3
+    max_total: 10
+```
+
+#### Example 2: Boxy Server + Remote Agent (Production)
+
+**Location**: `examples/docker-compose/production/docker-compose.yml`
+
+```yaml
+version: '3.8'
+
+services:
+  boxy-server:
+    image: boxy:v1
+    container_name: boxy-server
+    volumes:
+      - ./config:/data
+      - ./certs:/certs:ro
+    ports:
+      - "8443:8443"
+    environment:
+      - BOXY_LOG_LEVEL=info
+    restart: unless-stopped
+    networks:
+      - boxy-network
+
+  # Postgres for production
+  postgres:
+    image: postgres:15
+    container_name: boxy-db
+    environment:
+      POSTGRES_DB: boxy
+      POSTGRES_USER: boxy
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - boxy-network
+    restart: unless-stopped
+
+  # Prometheus for metrics
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: boxy-prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - boxy-network
+
+  # Grafana for dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: boxy-grafana
+    volumes:
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+    networks:
+      - boxy-network
+
+networks:
+  boxy-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  prometheus-data:
+  grafana-data:
+```
+
+### 12.4 Docker-Specific Configuration
+
+**Environment variable overrides:**
+```bash
+# Override config values with environment variables
+docker run -d \
+  -e BOXY_LOG_LEVEL=debug \
+  -e BOXY_SERVER_LISTEN_ADDRESS=0.0.0.0:8443 \
+  -e BOXY_STORAGE_PATH=/data/boxy.db \
+  boxy:v1
+```
+
+**Implementation:**
+```go
+// internal/config/loader.go
+func LoadConfig() (*Config, error) {
+    cfg := loadFromFile()
+
+    // Override with environment variables
+    if logLevel := os.Getenv("BOXY_LOG_LEVEL"); logLevel != "" {
+        cfg.Logging.Level = logLevel
+    }
+
+    if listenAddr := os.Getenv("BOXY_SERVER_LISTEN_ADDRESS"); listenAddr != "" {
+        cfg.Server.ListenAddress = listenAddr
+    }
+
+    return cfg, nil
+}
+```
+
+### 12.5 Volume Mounts and Persistence
+
+**Critical volumes:**
+```bash
+docker run -d \
+  -v $(pwd)/boxy.yaml:/data/boxy.yaml:ro \      # Config (read-only)
+  -v $(pwd)/boxy.db:/data/boxy.db \              # Database (read-write)
+  -v $(pwd)/certs:/certs:ro \                    # TLS certs (read-only)
+  -v /var/run/docker.sock:/var/run/docker.sock \ # Docker access (if using Docker provider)
+  boxy:v1
+```
+
+### 12.6 Docker Image Distribution
+
+**GitHub Container Registry:**
+```bash
+# Build and tag
+docker build -t ghcr.io/geogboe/boxy:v1.0.0 .
+docker build -t ghcr.io/geogboe/boxy:latest .
+
+# Push
+docker push ghcr.io/geogboe/boxy:v1.0.0
+docker push ghcr.io/geogboe/boxy:latest
+
+# Pull
+docker pull ghcr.io/geogboe/boxy:latest
+```
+
+**Docker Hub (optional):**
+```bash
+docker build -t geogboe/boxy:v1.0.0 .
+docker push geogboe/boxy:v1.0.0
+```
+
+### 12.7 Documentation Required
+
+**Create**: `docs/DOCKER_DEPLOYMENT.md`
+
+Contents:
+- Building Docker images
+- Running Boxy in Docker
+- Docker Compose examples
+- Volume mount guide
+- Environment variable reference
+- Networking considerations
+- Security best practices
+- Troubleshooting Docker deployments
+
+**Create**: `examples/docker-compose/README.md`
+
+Contents:
+- Overview of examples
+- Quick start for each example
+- Customization guide
+- Production deployment checklist
+
+### 12.8 CI/CD Integration
+
+**GitHub Actions** - Build and publish Docker images:
+
+```yaml
+# .github/workflows/docker.yml
+name: Docker Build and Push
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version
+        id: meta
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Build and push
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/geogboe/boxy:${{ steps.meta.outputs.version }}
+            ghcr.io/geogboe/boxy:latest
+          platforms: linux/amd64,linux/arm64
+```
+
+### 12.9 Testing Docker Deployment
+
+**Add to test suite:**
+```go
+// tests/e2e/docker_test.go
+func TestE2E_DockerDeployment(t *testing.T) {
+    if testing.Short() {
+        t.Skip("skipping docker deployment test")
+    }
+
+    // 1. Build Docker image
+    // 2. Start container with docker-compose
+    // 3. Wait for health check
+    // 4. Create sandbox via CLI
+    // 5. Verify sandbox created
+    // 6. Cleanup
+}
+```
+
+---
+
+## 13. Documentation Updates
 
 ### 7.2 CLAUDE.md Updates
 
