@@ -331,6 +331,25 @@ Boxy:
 - **MUST run `go test ./tests/e2e/` and verify all tests pass before saying "done"**
 - **MUST actually test CLI commands work (not just compile)**
 
+**Step 5: Use Planning Docs for Roadmapping**
+- **v1/v2/v3 Planning Docs** - Use versioned planning documents to manage work between sessions
+  - `V1_IMPLEMENTATION_PLAN.md` - Complete v1 specification
+  - `V2_IMPLEMENTATION_PLAN.md` - Future v2 features
+  - `V3_IMPLEMENTATION_PLAN.md` - Long-term vision
+- Benefits of this approach:
+  - Clear scope per version
+  - Easy to reference what's in/out of each release
+  - Maintains context between sessions
+  - Serves as project roadmap
+  - Can move features between versions as priorities change
+- Example structure:
+  ```
+  docs/
+    V1_IMPLEMENTATION_PLAN.md    # Current release (distributed agents, multi-tenancy)
+    V2_IMPLEMENTATION_PLAN.md    # Next release (VSCode plugin, advanced scheduling)
+    V3_IMPLEMENTATION_PLAN.md    # Future (multi-cloud, GPU workloads)
+  ```
+
 ### 3. Commit & Push Practices
 
 **Use Conventional Commits:**
