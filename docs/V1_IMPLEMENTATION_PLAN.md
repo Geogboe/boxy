@@ -18,7 +18,11 @@ This document provides a comprehensive implementation plan for Boxy v1, incorpor
 4. ♻️ **Recycling system** - Automatic resource refresh for all resources
 5. 📝 **Terminology updates** - Clarified hook naming and resource states
 6. 👥 **Multi-tenancy** - Users, teams, API tokens, ownership tracking
-7. 📖 **Documentation** - Complete consistency review and updates
+7. 🌐 **Distributed agents** - gRPC/mTLS agents for Hyper-V on Windows from Linux server
+8. 📋 **Config schema** - Formal YAML schema definition
+9. 🔍 **CLI/API schemas** - Complete interface documentation for review/regression testing
+10. 🐛 **Debugging docs** - Comprehensive debugging and troubleshooting guide
+11. 📖 **Documentation** - Complete consistency review and updates
 
 ---
 
@@ -30,10 +34,15 @@ This document provides a comprehensive implementation plan for Boxy v1, incorpor
 4. [Multi-Tenancy](#4-multi-tenancy)
 5. [Base Image Validation](#5-base-image-validation)
 6. [Pool as First-Class Component](#6-pool-as-first-class-component)
-7. [Documentation Updates](#7-documentation-updates)
-8. [Testing Strategy](#8-testing-strategy)
-9. [Migration Guide](#9-migration-guide)
-10. [Future Considerations](#10-future-considerations)
+7. [Distributed Agent Architecture](#7-distributed-agent-architecture)
+8. [Config File Schema](#8-config-file-schema)
+9. [CLI/API Schema Documentation](#9-cliapi-schema-documentation)
+10. [Debugging Documentation](#10-debugging-documentation)
+11. [Documentation Updates](#11-documentation-updates)
+12. [Testing Strategy](#12-testing-strategy)
+13. [Migration Guide](#13-migration-guide)
+14. [Implementation Checklist](#14-implementation-checklist)
+15. [Success Criteria](#15-success-criteria)
 
 ---
 
@@ -1133,19 +1142,1506 @@ boxy pool scale win-test-vms --min-ready 10 --persist
 
 ---
 
-## 7. Documentation Updates
+## 7. Distributed Agent Architecture
 
-### 7.1 Files to Update
+**CRITICAL FOR v1**: Hyper-V is the PRIMARY backend (not Docker), and Hyper-V cannot run on Linux. Therefore, distributed agent architecture is ESSENTIAL for MVP.
 
-1. ✅ **docs/USE_CASES.md** - Created
-2. ✅ **README.md** - Updated with use cases
-3. ⏳ **CLAUDE.md** - Update architecture section
-4. ⏳ **docs/architecture/MVP_DESIGN.md** - Update for v1 changes
-5. ⏳ **ADR-002** - Provider architecture (no changes needed)
-6. ⏳ **ADR-003** - Configuration/state storage (minor updates)
-7. ⏳ **ADR-004** - Distributed agent architecture (clarify v2 timeline)
-8. ⏳ **NEW: ADR-005** - Pool/Sandbox peer architecture
-9. ⏳ **docs/ROADMAP.md** - Update v1 scope
+### 7.1 Why This is v1 (Not v2)
+
+**User Correction**: "Distributed architecture is v1!!! We need agents now!!"
+
+**Rationale:**
+- Hyper-V is PRIMARY backend for production use
+- Hyper-V only runs on Windows hosts
+- Boxy server typically runs on Linux for flexibility
+- Without agents, Hyper-V cannot be used → MVP is blocked
+
+**Therefore**: Distributed agents are NOT optional, they are REQUIRED for v1.
+
+### 7.2 Architecture Overview
+
+See [ADR-004: Distributed Agent Architecture](decisions/adr-004-distributed-agent-architecture.md) for complete specification.
+
+```
+┌─────────────────────────────────────────┐
+│     Boxy Server (Linux)                  │
+│  ┌────────────────────────────────────┐ │
+│  │  Provider Registry                 │ │
+│  │  ├─ Docker (embedded, local)       │ │
+│  │  └─ Hyper-V (remote via agent)     │ │
+│  └────────────────┬───────────────────┘ │
+└────────────────────┼─────────────────────┘
+                     │ gRPC + mTLS
+                     ↓
+    ┌────────────────────────────────────┐
+    │  Boxy Agent (Windows Host)         │
+    │  ├─ Hyper-V Provider (embedded)    │
+    │  └─ gRPC Server                    │
+    └────────────────────────────────────┘
+```
+
+**Key Points:**
+- **Single binary**: `boxy` runs as server, agent, or both
+- **Transparent proxying**: RemoteProvider implements same Provider interface
+- **gRPC**: Efficient, type-safe RPC with Protocol Buffers
+- **mTLS**: Mutual authentication with client certificates
+- **Backwards compatible**: Local providers work unchanged
+
+### 7.3 Component Design
+
+#### 7.3.1 Binary Modes
+
+```bash
+# Run as server (orchestrator)
+boxy serve
+
+# Run as agent (provider host)
+boxy agent serve \
+  --server-url https://boxy-server:8443 \
+  --cert /path/to/agent-cert.pem \
+  --key /path/to/agent-key.pem \
+  --ca /path/to/ca-cert.pem \
+  --providers hyperv
+
+# Run as both (server + local agent)
+boxy serve --agent-mode
+```
+
+#### 7.3.2 Provider Interface (Unchanged)
+
+```go
+// pkg/provider/provider.go
+type Provider interface {
+    Provision(ctx context.Context, spec resource.ResourceSpec) (*resource.Resource, error)
+    Destroy(ctx context.Context, res *resource.Resource) error
+    GetStatus(ctx context.Context, res *resource.Resource) (*resource.ResourceStatus, error)
+    GetConnectionInfo(ctx context.Context, res *resource.Resource) (*resource.ConnectionInfo, error)
+    Update(ctx context.Context, res *resource.Resource, update ResourceUpdate) error
+    Exec(ctx context.Context, res *resource.Resource, command []string) (*ExecResult, error)
+    HealthCheck(ctx context.Context) error
+    Name() string
+    Type() resource.ResourceType
+}
+```
+
+**Critical**: Remote providers implement the EXACT same interface → transparent to Pool, Sandbox, Allocator.
+
+#### 7.3.3 Remote Provider Implementation
+
+**Location**: `pkg/provider/remote/remote.go`
+
+```go
+type RemoteProvider struct {
+    name         string
+    resourceType resource.ResourceType
+    agentID      string
+    client       providerproto.ProviderServiceClient
+    conn         *grpc.ClientConn
+}
+
+func (r *RemoteProvider) Provision(ctx context.Context, spec resource.ResourceSpec) (*resource.Resource, error) {
+    // Translate to gRPC request
+    req := &providerproto.ProvisionRequest{
+        Spec: specToProto(spec),
+    }
+
+    // Call agent via gRPC
+    resp, err := r.client.Provision(ctx, req)
+    if err != nil {
+        return nil, fmt.Errorf("remote provision failed: %w", err)
+    }
+
+    // Translate response back
+    return protoToResource(resp.Resource), nil
+}
+
+// Other methods follow same pattern...
+```
+
+#### 7.3.4 Agent Server Implementation
+
+**Location**: `internal/agent/server.go`
+
+```go
+type Server struct {
+    registry   *provider.Registry  // Local providers
+    tlsConfig  *tls.Config
+    grpcServer *grpc.Server
+}
+
+func (s *Server) Provision(ctx context.Context, req *providerproto.ProvisionRequest) (*providerproto.ProvisionResponse, error) {
+    // Get local provider
+    prov, ok := s.registry.Get(req.ProviderName)
+    if !ok {
+        return nil, status.Errorf(codes.NotFound, "provider not found: %s", req.ProviderName)
+    }
+
+    // Call local provider
+    spec := protoToSpec(req.Spec)
+    res, err := prov.Provision(ctx, spec)
+    if err != nil {
+        return nil, status.Errorf(codes.Internal, "provision failed: %v", err)
+    }
+
+    return &providerproto.ProvisionResponse{
+        Resource: resourceToProto(res),
+    }, nil
+}
+```
+
+#### 7.3.5 Configuration Schema
+
+```yaml
+# ~/.config/boxy/boxy.yaml
+
+# Server configuration
+server:
+  mode: server
+  listen_address: 0.0.0.0:8443
+  tls:
+    cert_file: /etc/boxy/server-cert.pem
+    key_file: /etc/boxy/server-key.pem
+    ca_file: /etc/boxy/ca-cert.pem
+    client_auth: require
+
+# Agent configuration
+agents:
+  - id: windows-host-01
+    address: windows-host-01.internal:8444
+    providers:
+      - hyperv
+    tls:
+      cert_file: /etc/boxy/agents/windows-01-cert.pem
+      key_file: /etc/boxy/agents/windows-01-key.pem
+      ca_file: /etc/boxy/ca-cert.pem
+
+# Pool configuration
+pools:
+  - name: win-server-2022
+    type: vm
+    backend: hyperv
+    backend_agent: windows-host-01  # NEW: Routes to remote agent
+    image: win-server-2022-template
+    min_ready: 3
+    max_total: 10
+
+  - name: ubuntu-containers
+    type: container
+    backend: docker
+    # backend_agent: (not specified = local embedded provider)
+    image: ubuntu:22.04
+    min_ready: 5
+    max_total: 20
+```
+
+### 7.4 Security Model
+
+#### Certificate Management
+
+```bash
+# Server generates CA and issues certificates
+boxy admin init-ca \
+  --output /etc/boxy/ca
+
+# Generate agent certificate
+boxy admin issue-cert \
+  --ca-cert /etc/boxy/ca/ca-cert.pem \
+  --ca-key /etc/boxy/ca/ca-key.pem \
+  --agent-id windows-host-01 \
+  --output /etc/boxy/agents/windows-01
+
+# Outputs:
+#   windows-01-cert.pem
+#   windows-01-key.pem
+```
+
+#### mTLS Authentication Flow
+
+1. Agent starts with client certificate
+2. Agent connects to server with mTLS
+3. Server verifies agent certificate against CA
+4. Server extracts agent ID from cert CN (Common Name)
+5. Server validates agent is authorized for requested providers
+6. Bidirectional authentication established
+
+### 7.5 Protocol Buffers
+
+**Location**: `pkg/provider/proto/provider.proto`
+
+```protobuf
+syntax = "proto3";
+
+package provider;
+
+service ProviderService {
+  rpc Provision(ProvisionRequest) returns (ProvisionResponse);
+  rpc Destroy(DestroyRequest) returns (DestroyResponse);
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+  rpc GetConnectionInfo(GetConnectionInfoRequest) returns (GetConnectionInfoResponse);
+  rpc Update(UpdateRequest) returns (UpdateResponse);
+  rpc Exec(ExecRequest) returns (ExecResponse);
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+}
+
+message ProvisionRequest {
+  string provider_name = 1;
+  ResourceSpec spec = 2;
+}
+
+message ProvisionResponse {
+  Resource resource = 1;
+}
+
+// ... other messages
+```
+
+### 7.6 Implementation Tasks for v1
+
+**Phase 1: Foundation**
+- [ ] Define Protocol Buffers schema (provider.proto)
+- [ ] Generate gRPC code (make protobuf)
+- [ ] Create RemoteProvider implementation
+- [ ] Create Agent Server implementation
+- [ ] Unit tests for serialization/deserialization
+
+**Phase 2: Security**
+- [ ] Implement CA initialization (`boxy admin init-ca`)
+- [ ] Implement certificate issuance (`boxy admin issue-cert`)
+- [ ] mTLS configuration for server
+- [ ] mTLS configuration for agent
+- [ ] Agent registration and authorization
+- [ ] Integration tests for mTLS
+
+**Phase 3: Agent Mode**
+- [ ] Add `boxy agent serve` command
+- [ ] Agent registration on startup
+- [ ] Heartbeat mechanism
+- [ ] Agent health monitoring
+- [ ] Graceful shutdown
+- [ ] E2E tests with real agents
+
+**Phase 4: Server Integration**
+- [ ] Update configuration schema (backend_agent field)
+- [ ] Agent registry in server
+- [ ] Remote provider factory
+- [ ] Provider routing logic
+- [ ] Agent failover handling (basic)
+- [ ] Integration tests
+
+**Phase 5: Testing**
+- [ ] Unit tests for RemoteProvider
+- [ ] Unit tests for Agent Server
+- [ ] Integration tests with Docker (testable on Linux)
+- [ ] E2E tests with stub Hyper-V provider
+- [ ] Real Hyper-V testing (manual on Windows host)
+
+### 7.7 Testing Strategy
+
+**Challenge**: Hyper-V only runs on Windows, but CI runs on Linux.
+
+**Solution**:
+```go
+// Stub Hyper-V provider for testing on Linux
+type StubHyperVProvider struct {
+    vms map[string]*stubVM
+}
+
+func (s *StubHyperVProvider) Provision(ctx context.Context, spec resource.ResourceSpec) (*resource.Resource, error) {
+    // Simulate realistic behavior
+    time.Sleep(10 * time.Second) // Simulate provision time
+    vm := &stubVM{
+        ID:   uuid.New().String(),
+        Name: fmt.Sprintf("stub-vm-%s", uuid.New().String()[:8]),
+    }
+    s.vms[vm.ID] = vm
+    return &resource.Resource{
+        ID:         uuid.New().String(),
+        ProviderID: vm.ID,
+        State:      resource.StateProvisioned,
+    }, nil
+}
+```
+
+**Testing Layers**:
+1. **Unit tests**: Test RemoteProvider, Agent Server with mocks (Linux OK)
+2. **Integration tests**: Test with Docker provider via agent (Linux OK)
+3. **E2E tests**: Test with stubbed Hyper-V provider (Linux OK)
+4. **Manual tests**: Test with real Hyper-V on Windows host (Windows required)
+
+---
+
+## 8. Config File Schema
+
+**NEW for v1**: Formalize YAML configuration schema for validation, documentation, and IDE support.
+
+### 8.1 Why We Need This
+
+**Problems without formal schema:**
+- Users don't know what fields are valid
+- Typos in config cause runtime errors
+- No IDE autocomplete/validation
+- Hard to document all options
+- Difficult to version config format
+
+**Solution**: Define formal YAML schema using JSON Schema.
+
+### 8.2 Schema Definition
+
+**Location**: `docs/config-schema.json`
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Boxy Configuration",
+  "description": "Complete configuration schema for Boxy v1",
+  "type": "object",
+  "required": ["storage", "logging", "pools"],
+  "properties": {
+    "storage": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["sqlite", "postgres"],
+          "description": "Database backend type"
+        },
+        "path": {
+          "type": "string",
+          "description": "Path to SQLite database file (required for sqlite)"
+        },
+        "dsn": {
+          "type": "string",
+          "description": "Connection string for PostgreSQL (required for postgres)"
+        }
+      }
+    },
+    "logging": {
+      "type": "object",
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": ["debug", "info", "warn", "error"],
+          "default": "info"
+        },
+        "format": {
+          "type": "string",
+          "enum": ["text", "json"],
+          "default": "text"
+        }
+      }
+    },
+    "server": {
+      "type": "object",
+      "description": "Server configuration for distributed mode",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["server", "agent", "standalone"],
+          "default": "standalone"
+        },
+        "listen_address": {
+          "type": "string",
+          "default": "0.0.0.0:8443"
+        },
+        "tls": {
+          "type": "object",
+          "required": ["cert_file", "key_file", "ca_file"],
+          "properties": {
+            "cert_file": {"type": "string"},
+            "key_file": {"type": "string"},
+            "ca_file": {"type": "string"},
+            "client_auth": {
+              "type": "string",
+              "enum": ["none", "request", "require"],
+              "default": "require"
+            }
+          }
+        }
+      }
+    },
+    "agents": {
+      "type": "array",
+      "description": "Remote agent configurations",
+      "items": {
+        "type": "object",
+        "required": ["id", "address", "providers"],
+        "properties": {
+          "id": {"type": "string"},
+          "address": {"type": "string"},
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["docker", "hyperv", "kvm", "vmware"]
+            }
+          },
+          "tls": {
+            "type": "object",
+            "required": ["cert_file", "key_file", "ca_file"],
+            "properties": {
+              "cert_file": {"type": "string"},
+              "key_file": {"type": "string"},
+              "ca_file": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "pools": {
+      "type": "array",
+      "description": "Resource pool configurations",
+      "items": {
+        "type": "object",
+        "required": ["name", "type", "backend", "min_ready", "max_total"],
+        "properties": {
+          "name": {"type": "string"},
+          "type": {
+            "type": "string",
+            "enum": ["vm", "container", "process"]
+          },
+          "backend": {
+            "type": "string",
+            "enum": ["docker", "hyperv", "kvm", "vmware", "podman"]
+          },
+          "backend_agent": {
+            "type": "string",
+            "description": "Agent ID for remote provider (optional, uses local if omitted)"
+          },
+          "image": {
+            "oneOf": [
+              {"type": "string"},
+              {
+                "type": "object",
+                "required": ["source"],
+                "properties": {
+                  "source": {"type": "string"},
+                  "differencing_disk": {"type": "boolean", "default": true}
+                }
+              }
+            ]
+          },
+          "min_ready": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Minimum total resources (cold + warm)"
+          },
+          "max_total": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Maximum total resources"
+          },
+          "preheating": {
+            "type": "object",
+            "properties": {
+              "enabled": {"type": "boolean", "default": false},
+              "count": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "How many resources to keep warm"
+              },
+              "recycle_interval": {
+                "type": "string",
+                "pattern": "^[0-9]+(s|m|h)$",
+                "description": "How often to recycle resources (e.g. 1h, 30m)"
+              },
+              "recycle_strategy": {
+                "type": "string",
+                "enum": ["rolling", "all-at-once"],
+                "default": "rolling"
+              },
+              "warmup_timeout": {
+                "type": "string",
+                "pattern": "^[0-9]+(s|m|h)$",
+                "default": "5m"
+              }
+            }
+          },
+          "cpus": {"type": "integer", "minimum": 1},
+          "memory_mb": {"type": "integer", "minimum": 128},
+          "disk_gb": {"type": "integer", "minimum": 1},
+          "labels": {
+            "type": "object",
+            "additionalProperties": {"type": "string"}
+          },
+          "environment": {
+            "type": "object",
+            "additionalProperties": {"type": "string"}
+          },
+          "hooks": {
+            "type": "object",
+            "properties": {
+              "on_provision": {
+                "type": "array",
+                "items": {"$ref": "#/definitions/hook"}
+              },
+              "on_allocate": {
+                "type": "array",
+                "items": {"$ref": "#/definitions/hook"}
+              }
+            }
+          },
+          "health_check_interval": {
+            "type": "string",
+            "pattern": "^[0-9]+(s|m|h)$",
+            "default": "30s"
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "hook": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["script", "http"]
+        },
+        "shell": {
+          "type": "string",
+          "enum": ["bash", "powershell", "cmd"],
+          "description": "Shell to use for script hooks"
+        },
+        "inline": {
+          "type": "string",
+          "description": "Inline script content"
+        },
+        "script_path": {
+          "type": "string",
+          "description": "Path to external script file"
+        },
+        "timeout": {
+          "type": "string",
+          "pattern": "^[0-9]+(s|m|h)$",
+          "default": "5m"
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {"type": "string"},
+          "description": "Environment variables for hook execution"
+        }
+      }
+    }
+  }
+}
+```
+
+### 8.3 Schema Validation Tool
+
+**Add CLI command:**
+
+```bash
+# Validate config file against schema
+boxy admin validate-config --config boxy.yaml
+
+# Output:
+✓ Configuration is valid
+✓ 3 pools defined
+✓ 1 agent configured
+⚠ Warning: Pool 'win-server-2022' preheating count (10) > min_ready (5)
+```
+
+**Implementation:**
+
+```go
+// internal/config/validator.go
+func ValidateConfig(configPath, schemaPath string) error {
+    // Load schema
+    schemaData, err := os.ReadFile(schemaPath)
+    if err != nil {
+        return fmt.Errorf("failed to load schema: %w", err)
+    }
+
+    // Load config
+    configData, err := os.ReadFile(configPath)
+    if err != nil {
+        return fmt.Errorf("failed to load config: %w", err)
+    }
+
+    // Validate using JSON Schema library
+    // (use github.com/xeipuuv/gojsonschema or similar)
+    result, err := validateJSONSchema(schemaData, configData)
+    if err != nil {
+        return err
+    }
+
+    if !result.Valid() {
+        for _, err := range result.Errors() {
+            fmt.Printf("- %s\n", err)
+        }
+        return fmt.Errorf("config validation failed")
+    }
+
+    return nil
+}
+```
+
+### 8.4 Example Annotated Config
+
+**Location**: `boxy.example.yaml`
+
+```yaml
+# Boxy v1 Configuration Example
+# Full documentation: https://github.com/Geogboe/boxy/docs/CONFIG_REFERENCE.md
+
+# Storage configuration (REQUIRED)
+storage:
+  type: sqlite                             # sqlite or postgres
+  path: ~/.config/boxy/boxy.db             # Path for SQLite
+  # dsn: "postgres://user:pass@host/db"    # PostgreSQL connection string
+
+# Logging configuration
+logging:
+  level: info                              # debug, info, warn, error
+  format: text                             # text or json
+
+# Server configuration (for distributed mode)
+server:
+  mode: server                             # server, agent, or standalone
+  listen_address: 0.0.0.0:8443
+  tls:
+    cert_file: /etc/boxy/server-cert.pem
+    key_file: /etc/boxy/server-key.pem
+    ca_file: /etc/boxy/ca-cert.pem
+    client_auth: require                   # none, request, or require
+
+# Agent configurations (for remote providers)
+agents:
+  - id: windows-host-01
+    address: windows-host-01.internal:8444
+    providers:
+      - hyperv
+    tls:
+      cert_file: /etc/boxy/agents/windows-01-cert.pem
+      key_file: /etc/boxy/agents/windows-01-key.pem
+      ca_file: /etc/boxy/ca-cert.pem
+
+# Pool configurations (REQUIRED)
+pools:
+  # Example: Windows VMs via Hyper-V (remote agent)
+  - name: win-server-2022
+    type: vm
+    backend: hyperv
+    backend_agent: windows-host-01         # Routes to remote agent
+
+    image:
+      source: win-server-2022-template.vhdx
+      differencing_disk: true              # Use differencing disks for fast provisioning
+
+    min_ready: 10                          # Total resources (cold + warm)
+    max_total: 20                          # Hard cap
+
+    # Preheating configuration
+    preheating:
+      enabled: true
+      count: 3                             # Keep 3 VMs running/warm
+      recycle_interval: 1h                 # Recycle every hour
+      recycle_strategy: rolling            # rolling or all-at-once
+      warmup_timeout: 5m
+
+    # Resource specifications
+    cpus: 4
+    memory_mb: 8192
+    disk_gb: 80
+
+    # Labels (for filtering/organization)
+    labels:
+      environment: production
+      team: infrastructure
+
+    # Lifecycle hooks
+    hooks:
+      on_provision:
+        - type: script
+          shell: powershell
+          inline: |
+            # Validate VM is accessible
+            Test-Connection localhost -Count 1
+            # Take snapshot for quick restore
+            Checkpoint-VM -Name $env:COMPUTERNAME -SnapshotName "Clean"
+          timeout: 10m
+
+      on_allocate:
+        - type: script
+          shell: powershell
+          inline: |
+            # Create user account with generated password
+            New-LocalUser -Name "${username}" -Password (ConvertTo-SecureString "${password}" -AsPlainText -Force)
+            Add-LocalGroupMember -Group "Administrators" -Member "${username}"
+            # Enable RDP
+            Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          timeout: 2m
+
+    health_check_interval: 30s
+
+  # Example: Docker containers (local provider)
+  - name: ubuntu-containers
+    type: container
+    backend: docker
+    # backend_agent not specified = local provider
+
+    image: ubuntu:22.04
+
+    min_ready: 5
+    max_total: 20
+
+    preheating:
+      enabled: true
+      count: 5                             # All preheated (containers start fast)
+      recycle_interval: 30m
+
+    cpus: 2
+    memory_mb: 512
+
+    environment:
+      DEBIAN_FRONTEND: noninteractive
+
+    hooks:
+      on_provision:
+        - type: script
+          shell: bash
+          inline: |
+            apt-get update
+            apt-get install -y curl git
+          timeout: 5m
+
+    health_check_interval: 30s
+```
+
+### 8.5 Config Reference Documentation
+
+**Create**: `docs/CONFIG_REFERENCE.md`
+
+- Complete field reference
+- Examples for each section
+- Best practices
+- Common patterns
+- Troubleshooting
+
+### 8.6 IDE Integration
+
+**VSCode**: Users can reference schema in config file:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Geogboe/boxy/main/docs/config-schema.json
+
+storage:
+  type: sqlite  # <-- IDE provides autocomplete and validation
+```
+
+**Benefits**:
+- Autocomplete for all fields
+- Inline documentation
+- Real-time validation
+- Error highlighting
+
+---
+
+## 9. CLI/API Schema Documentation
+
+**Purpose**: Document all CLI commands and API endpoints for:
+- User reference
+- Regression testing
+- Interface approval before implementation
+
+### 9.1 CLI Command Reference
+
+**Location**: `docs/CLI_REFERENCE.md`
+
+#### Complete CLI Tree
+
+```
+boxy
+├── init                      # Initialize configuration
+├── serve                     # Start Boxy service
+├── agent                     # Agent commands
+│   └── serve                 # Start agent mode
+├── pool                      # Pool management
+│   ├── ls                    # List pools
+│   ├── stats <pool>          # Pool statistics
+│   ├── inspect <pool>        # Detailed inspection
+│   ├── resources <pool>      # List resources in pool
+│   ├── create --config file  # Create pool from config
+│   ├── start <pool>          # Start pool
+│   ├── stop <pool>           # Stop pool
+│   ├── delete <pool>         # Delete pool
+│   ├── scale <pool>          # Scale pool (--min-ready, --preheated, --persist)
+│   ├── drain <pool>          # Stop accepting allocations
+│   ├── refill <pool>         # Resume allocations
+│   ├── recycle <pool>        # Force recycle now
+│   └── validate <pool>       # Validate base image
+├── sandbox                   # Sandbox management
+│   ├── create                # Create sandbox (-p, -d, -n, --json)
+│   ├── ls                    # List sandboxes
+│   ├── inspect <id>          # Inspect sandbox
+│   ├── extend <id>           # Extend duration
+│   └── destroy <id>          # Destroy sandbox
+└── admin                     # Administrative commands
+    ├── init-ca               # Initialize certificate authority
+    ├── issue-cert            # Issue agent certificate
+    ├── create-token          # Create API token for user
+    ├── validate-config       # Validate config file
+    ├── validate-image        # Validate base image
+    └── migrate-v1            # Run database migrations
+```
+
+#### Detailed Command Schemas
+
+**Pool Commands**:
+
+```bash
+# boxy pool ls
+# Lists all configured pools
+# Flags:
+#   --format [table|json]     # Output format (default: table)
+#   --filter <expression>     # Filter pools by expression
+# Output:
+#   Table with columns: NAME, TYPE, BACKEND, IMAGE, READY, ALLOCATED, MIN, MAX, HEALTHY
+# Exit Codes:
+#   0 - Success
+#   1 - Error
+
+# boxy pool stats <pool-name>
+# Show detailed statistics for a pool
+# Arguments:
+#   pool-name (required)      # Name of the pool
+# Flags:
+#   --format [table|json]     # Output format (default: table)
+#   --watch                   # Continuously update stats
+# Output:
+#   Detailed pool statistics including:
+#   - Total resources (cold, warm, allocated)
+#   - Allocation rate
+#   - Health status
+#   - Last replenishment time
+#   - Recycling status
+# Exit Codes:
+#   0 - Success
+#   1 - Pool not found
+#   2 - Other error
+
+# boxy pool scale <pool-name>
+# Scale pool resources
+# Arguments:
+#   pool-name (required)      # Name of the pool
+# Flags:
+#   --min-ready <int>         # New min_ready count
+#   --preheated <int>         # New preheated count
+#   --persist                 # Update config file (default: false, runtime only)
+# Output:
+#   Confirmation message with new settings
+# Exit Codes:
+#   0 - Success
+#   1 - Invalid arguments
+#   2 - Pool not found
+```
+
+**Sandbox Commands**:
+
+```bash
+# boxy sandbox create
+# Create a new sandbox
+# Flags:
+#   -p, --pool <pool>:<count> # Pool and resource count (repeatable)
+#   -d, --duration <duration> # Expiration duration (default: 2h)
+#   -n, --name <name>         # Optional sandbox name
+#   --json                    # Output JSON format
+# Examples:
+#   boxy sandbox create -p ubuntu-containers:2 -d 1h
+#   boxy sandbox create -p win-vms:1 -p ubuntu:2 -d 4h -n my-lab
+# Output (table):
+#   SANDBOX_ID: sb-abc123
+#   NAME: my-lab
+#   RESOURCES: 2
+#   EXPIRES_AT: 2024-11-22 15:30:00
+#   STATUS: creating
+# Output (json):
+#   {
+#     "id": "sb-abc123",
+#     "name": "my-lab",
+#     "resource_ids": ["res-1", "res-2"],
+#     "state": "creating",
+#     "created_at": "2024-11-22T14:30:00Z",
+#     "expires_at": "2024-11-22T18:30:00Z"
+#   }
+# Exit Codes:
+#   0 - Success
+#   1 - Invalid arguments
+#   2 - Pool not found
+#   3 - No resources available
+#   4 - Quota exceeded
+
+# boxy sandbox ls
+# List active sandboxes
+# Flags:
+#   --format [table|json]     # Output format (default: table)
+#   --filter <expression>     # Filter by expression
+#   --all                     # Include expired sandboxes
+# Output:
+#   Table with columns: ID, NAME, RESOURCES, STATE, CREATED_AT, EXPIRES_AT
+# Exit Codes:
+#   0 - Success
+#   1 - Error
+
+# boxy sandbox destroy <sandbox-id>
+# Destroy a sandbox
+# Arguments:
+#   sandbox-id (required)     # ID of the sandbox
+# Flags:
+#   --force                   # Skip confirmation
+# Output:
+#   Confirmation message
+# Exit Codes:
+#   0 - Success
+#   1 - Sandbox not found
+#   2 - Destroy failed
+```
+
+**Admin Commands**:
+
+```bash
+# boxy admin init-ca
+# Initialize certificate authority
+# Flags:
+#   --output <dir>            # Output directory (default: /etc/boxy/ca)
+#   --validity <duration>     # CA validity period (default: 10y)
+# Output:
+#   CA certificate and key files
+# Exit Codes:
+#   0 - Success
+#   1 - Output directory exists
+#   2 - Generation failed
+
+# boxy admin issue-cert
+# Issue certificate for agent
+# Flags:
+#   --ca-cert <path>          # CA certificate path
+#   --ca-key <path>           # CA key path
+#   --agent-id <id>           # Agent identifier
+#   --output <dir>            # Output directory
+#   --validity <duration>     # Cert validity (default: 1y)
+# Output:
+#   Agent certificate and key files
+# Exit Codes:
+#   0 - Success
+#   1 - Invalid arguments
+#   2 - Generation failed
+```
+
+### 9.2 API Endpoint Reference
+
+**Location**: `docs/API_REFERENCE.md`
+
+**NOTE**: Full REST API is future enhancement, but document structure now for planning.
+
+#### API Structure
+
+```
+Base URL: https://boxy-server:8443/api/v1
+
+Authentication:
+  Authorization: Bearer <api-token>
+
+Content-Type: application/json
+```
+
+#### Pool Endpoints
+
+```
+GET /api/v1/pools
+  Description: List all pools
+  Query Parameters:
+    - filter (string, optional): Filter expression
+  Response: 200 OK
+    {
+      "pools": [
+        {
+          "name": "win-server-2022",
+          "type": "vm",
+          "backend": "hyperv",
+          "backend_agent": "windows-host-01",
+          "stats": {
+            "total": 10,
+            "ready": 3,
+            "allocated": 2,
+            "min_ready": 10,
+            "max_total": 20
+          }
+        }
+      ]
+    }
+
+GET /api/v1/pools/{pool-name}
+  Description: Get pool details
+  Path Parameters:
+    - pool-name (string, required)
+  Response: 200 OK
+    {
+      "name": "win-server-2022",
+      "type": "vm",
+      "backend": "hyperv",
+      "config": { ... },
+      "stats": { ... }
+    }
+  Response: 404 Not Found
+    {"error": "pool not found"}
+
+PATCH /api/v1/pools/{pool-name}/scale
+  Description: Scale pool
+  Request Body:
+    {
+      "min_ready": 15,
+      "preheated": 5
+    }
+  Response: 200 OK
+    {"message": "pool scaled successfully"}
+```
+
+#### Sandbox Endpoints
+
+```
+POST /api/v1/sandboxes
+  Description: Create sandbox
+  Request Body:
+    {
+      "name": "my-lab",
+      "duration": "1h",
+      "resources": [
+        {"pool": "ubuntu-containers", "count": 2},
+        {"pool": "win-vms", "count": 1}
+      ]
+    }
+  Response: 201 Created
+    {
+      "id": "sb-abc123",
+      "name": "my-lab",
+      "resource_ids": ["res-1", "res-2", "res-3"],
+      "state": "creating",
+      "created_at": "2024-11-22T14:30:00Z",
+      "expires_at": "2024-11-22T15:30:00Z"
+    }
+  Response: 400 Bad Request
+    {"error": "invalid duration format"}
+  Response: 403 Forbidden
+    {"error": "quota exceeded"}
+  Response: 503 Service Unavailable
+    {"error": "no resources available in pool ubuntu-containers"}
+
+GET /api/v1/sandboxes
+  Description: List sandboxes
+  Query Parameters:
+    - state (string, optional): Filter by state
+    - user_id (string, optional, admin only): Filter by user
+  Response: 200 OK
+    {
+      "sandboxes": [
+        {
+          "id": "sb-abc123",
+          "name": "my-lab",
+          "state": "ready",
+          "resources": 3,
+          "created_at": "2024-11-22T14:30:00Z",
+          "expires_at": "2024-11-22T15:30:00Z"
+        }
+      ]
+    }
+
+GET /api/v1/sandboxes/{sandbox-id}
+  Description: Get sandbox details
+  Response: 200 OK
+    {
+      "id": "sb-abc123",
+      "name": "my-lab",
+      "state": "ready",
+      "resource_ids": ["res-1", "res-2"],
+      "resources": [
+        {
+          "id": "res-1",
+          "pool": "ubuntu-containers",
+          "state": "allocated",
+          "connection": {
+            "type": "ssh",
+            "host": "10.0.1.5",
+            "port": 22,
+            "username": "user-abc",
+            "password": "generated-password"
+          }
+        }
+      ],
+      "created_at": "2024-11-22T14:30:00Z",
+      "expires_at": "2024-11-22T15:30:00Z"
+    }
+
+DELETE /api/v1/sandboxes/{sandbox-id}
+  Description: Destroy sandbox
+  Response: 204 No Content
+  Response: 404 Not Found
+    {"error": "sandbox not found"}
+
+PATCH /api/v1/sandboxes/{sandbox-id}/extend
+  Description: Extend sandbox duration
+  Request Body:
+    {"additional_duration": "2h"}
+  Response: 200 OK
+    {
+      "id": "sb-abc123",
+      "expires_at": "2024-11-22T17:30:00Z"
+    }
+```
+
+#### Error Response Format
+
+```json
+{
+  "error": "human-readable error message",
+  "code": "ERROR_CODE",
+  "details": {
+    "field": "additional context"
+  },
+  "request_id": "req-xyz789"
+}
+```
+
+#### Common Error Codes
+
+```
+400 Bad Request - Invalid input
+401 Unauthorized - Missing or invalid API token
+403 Forbidden - Quota exceeded, permission denied
+404 Not Found - Resource doesn't exist
+409 Conflict - Resource already exists
+503 Service Unavailable - No resources available
+500 Internal Server Error - Server error
+```
+
+### 9.3 OpenAPI Specification
+
+**Future**: Generate OpenAPI 3.0 spec for API documentation and client code generation.
+
+**Location**: `docs/openapi.yaml`
+
+### 9.4 Usage in Testing
+
+```go
+// tests/e2e/cli_regression_test.go
+func TestCLI_AllCommandsWork(t *testing.T) {
+    // Test every command in CLI_REFERENCE.md
+    // Ensure exit codes match documented behavior
+}
+
+// tests/e2e/api_regression_test.go
+func TestAPI_AllEndpointsWork(t *testing.T) {
+    // Test every endpoint in API_REFERENCE.md
+    // Ensure responses match documented schemas
+}
+```
+
+---
+
+## 10. Debugging Documentation
+
+**Purpose**: Comprehensive troubleshooting guide for common issues and debugging techniques.
+
+**Location**: `docs/DEBUGGING_GUIDE.md`
+
+### 10.1 Debugging Sections
+
+#### Log Levels and Interpretation
+
+```yaml
+# Enable debug logging
+logging:
+  level: debug      # Most verbose
+  format: json      # Structured for log aggregation
+```
+
+**Log Levels**:
+- `debug`: All operations, including internal state transitions
+- `info`: Normal operations (pool replenishment, sandbox creation)
+- `warn`: Unexpected but handled situations (retry attempts, degraded state)
+- `error`: Failed operations requiring attention
+
+**Key Log Fields**:
+```json
+{
+  "level": "error",
+  "time": "2024-11-22T14:30:00Z",
+  "msg": "failed to provision resource",
+  "component": "pool-manager",
+  "pool": "win-server-2022",
+  "error": "provider timeout after 5m",
+  "request_id": "req-xyz789",
+  "resource_id": "res-abc123"
+}
+```
+
+#### Common Issues and Solutions
+
+**1. Pool Not Replenishing**
+
+*Symptoms*:
+```bash
+$ boxy pool stats win-server-2022
+Ready: 0
+Min Ready: 10
+Status: DEGRADED
+```
+
+*Debugging Steps*:
+```bash
+# 1. Check pool worker status
+boxy pool inspect win-server-2022 | grep worker
+
+# 2. Check provider health
+boxy pool validate win-server-2022
+
+# 3. Enable debug logging
+export BOXY_LOG_LEVEL=debug
+boxy serve
+
+# 4. Check logs for provision failures
+grep "provision" ~/.config/boxy/boxy.log | grep error
+```
+
+*Common Causes*:
+- Provider backend unavailable (Hyper-V service stopped, Docker daemon not running)
+- Insufficient host resources (out of memory, disk space)
+- Network connectivity issues (agent unreachable)
+- Hook execution failures
+
+*Solutions*:
+- Verify backend service running: `Get-Service vmms` (Hyper-V) / `systemctl status docker`
+- Check host resources: `free -h`, `df -h`
+- Test agent connectivity: `telnet windows-host-01 8444`
+- Review hook logs: Check `on_provision` hook output
+
+**2. Sandbox Stuck in "Creating" State**
+
+*Symptoms*:
+```bash
+$ boxy sandbox ls
+ID          STATE       RESOURCES
+sb-abc123   creating    0/3
+```
+
+*Debugging Steps*:
+```bash
+# 1. Inspect sandbox details
+boxy sandbox inspect sb-abc123
+
+# 2. Check allocation worker logs
+grep "sb-abc123" ~/.config/boxy/boxy.log
+
+# 3. Check pool availability
+boxy pool stats <pool-name>
+
+# 4. Verify allocator can access pools
+boxy pool ls
+```
+
+*Common Causes*:
+- No resources available in requested pool
+- Allocation timeout (on_allocate hooks taking too long)
+- Database connection issues
+
+*Solutions*:
+- Increase pool size or wait for replenishment
+- Optimize on_allocate hooks (should be < 2 minutes)
+- Check database connectivity
+
+**3. Agent Connection Failures**
+
+*Symptoms*:
+```
+ERROR: failed to connect to agent windows-host-01: connection refused
+```
+
+*Debugging Steps*:
+```bash
+# 1. Test network connectivity
+ping windows-host-01.internal
+telnet windows-host-01.internal 8444
+
+# 2. Verify agent is running on Windows host
+# On Windows host:
+Get-Process boxy
+
+# 3. Check agent logs
+# On Windows host:
+Get-Content C:\ProgramData\Boxy\agent.log -Tail 100
+
+# 4. Verify mTLS certificates
+boxy admin verify-cert \
+  --cert /etc/boxy/agents/windows-01-cert.pem \
+  --ca /etc/boxy/ca-cert.pem
+```
+
+*Common Causes*:
+- Agent not running on Windows host
+- Firewall blocking port 8444
+- Certificate expired or invalid
+- Clock skew between server and agent
+
+*Solutions*:
+- Start agent: `boxy agent serve ...`
+- Allow port 8444 in Windows Firewall
+- Re-issue certificate: `boxy admin issue-cert ...`
+- Synchronize clocks (NTP)
+
+**4. Hook Execution Failures**
+
+*Symptoms*:
+```
+WARN: hook execution failed: timeout after 5m
+ERROR: on_allocate hook failed: exit code 1
+```
+
+*Debugging Steps*:
+```bash
+# 1. Check hook configuration
+cat ~/.config/boxy/boxy.yaml | grep -A 10 "hooks:"
+
+# 2. Test hook manually
+# Extract hook script and run locally
+powershell -Command "Test-Connection localhost"
+
+# 3. Check hook logs (if logging added to hooks)
+# Hooks should log to resource metadata
+boxy pool resources <pool> --format json | jq '.[] | select(.metadata.hook_error)'
+
+# 4. Increase hook timeout
+# Edit config, increase timeout to 10m
+```
+
+*Common Causes*:
+- Network issues in hook (downloading packages)
+- Insufficient permissions
+- Syntax errors in script
+- Missing dependencies
+
+*Solutions*:
+- Add retry logic to hooks
+- Test hooks in isolation before adding to config
+- Increase timeout for slow operations
+- Use on_provision for heavy setup (not on_allocate)
+
+#### Diagnostic Commands
+
+```bash
+# Full system health check
+boxy admin health-check
+
+# Output:
+# ✓ Database: Connected (SQLite)
+# ✓ Pools: 3 running, 0 degraded
+# ✓ Agents: 1 connected
+# ✗ Disk: Low space (15% free)
+# ⚠ Warning: Pool 'win-server-2022' behind min_ready by 5 resources
+
+# Export logs for support
+boxy admin export-logs \
+  --since 24h \
+  --output /tmp/boxy-logs.tar.gz
+
+# Database integrity check
+boxy admin db-check
+
+# Cleanup orphaned resources (manual)
+boxy admin cleanup-orphans --dry-run
+```
+
+#### Debugging with Delve (Go)
+
+```bash
+# Build with debug symbols
+go build -gcflags="all=-N -l" -o boxy-debug cmd/boxy/main.go
+
+# Run with Delve
+dlv exec ./boxy-debug -- serve --config boxy.yaml
+
+# Set breakpoints
+(dlv) break internal/core/pool/manager.go:123
+(dlv) continue
+
+# Inspect variables
+(dlv) print pool.config
+(dlv) print resource.State
+```
+
+#### Performance Profiling
+
+```bash
+# Enable pprof HTTP server
+export BOXY_PPROF=:6060
+boxy serve
+
+# Capture CPU profile
+go tool pprof http://localhost:6060/debug/pprof/profile?seconds=30
+
+# Capture heap profile
+go tool pprof http://localhost:6060/debug/pprof/heap
+
+# View goroutines
+curl http://localhost:6060/debug/pprof/goroutine?debug=2
+```
+
+#### Network Debugging (Agent Communication)
+
+```bash
+# Capture gRPC traffic (server side)
+export GRPC_GO_LOG_VERBOSITY_LEVEL=99
+export GRPC_GO_LOG_SEVERITY_LEVEL=info
+boxy serve
+
+# Tcpdump on agent port
+tcpdump -i eth0 -n port 8444 -w /tmp/agent-traffic.pcap
+
+# Analyze with Wireshark (filter: tcp.port == 8444)
+```
+
+### 10.2 Debugging Checklist
+
+**Before Opening Issue**:
+- [ ] Check logs at debug level
+- [ ] Run `boxy admin health-check`
+- [ ] Verify backend services running (Docker, Hyper-V)
+- [ ] Test network connectivity (if using agents)
+- [ ] Review recent config changes
+- [ ] Try with minimal config (single pool, no hooks)
+- [ ] Check GitHub issues for similar problems
+
+**Information to Include in Issue**:
+- Boxy version: `boxy version`
+- OS and version
+- Backend provider (Docker, Hyper-V, etc.)
+- Full config file (redact secrets)
+- Logs (with debug level)
+- Steps to reproduce
+
+### 10.3 FAQ
+
+**Q: Why is my pool not warming resources?**
+A: Check `preheating.enabled: true` and `preheating.count > 0` in config.
+
+**Q: Can I see hook output?**
+A: Hook output is captured in resource metadata. Use `boxy pool resources <pool> --format json` and check `.metadata.hook_output`.
+
+**Q: How do I reset a stuck pool?**
+A: Stop Boxy, manually clean up resources in provider, restart Boxy. Pool will reprovision.
+
+**Q: Agent certificate expired, how to renew?**
+A: Re-issue cert with `boxy admin issue-cert`, restart agent with new cert.
+
+**Q: How to completely reset Boxy?**
+A: Stop service, delete database (`rm ~/.config/boxy/boxy.db`), restart. WARNING: Destroys all state.
+
+---
+
+## 11. Documentation Updates
 
 ### 7.2 CLAUDE.md Updates
 
