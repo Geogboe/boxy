@@ -6,7 +6,9 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
 	"github.com/Geogboe/boxy/internal/config"
@@ -16,6 +18,7 @@ import (
 	"github.com/Geogboe/boxy/internal/provider/docker"
 	"github.com/Geogboe/boxy/internal/storage"
 	"github.com/Geogboe/boxy/pkg/provider"
+	"github.com/Geogboe/boxy/pkg/provider/remote"
 )
 
 var serveCmd = &cobra.Command{
@@ -68,11 +71,65 @@ The service will:
 		providerRegistry.Register("docker", dockerProvider)
 		logger.Info("Docker provider registered")
 
-		// Health check Docker
-		if err := dockerProvider.HealthCheck(context.Background()); err != nil {
+		// Health check Docker with timeout
+		healthCtx, healthCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer healthCancel()
+		if err := dockerProvider.HealthCheck(healthCtx); err != nil {
 			logger.WithError(err).Warn("Docker health check failed - Docker functionality may be limited")
 		} else {
 			logger.Info("Docker daemon is healthy")
+		}
+
+		// Register remote providers from agents configuration
+		// **Potential Problem #9 Addressed: Remote Agent Registration**
+		// - Loads remote providers from config file
+		// - Each agent can expose multiple providers
+		// - Supports both TLS and insecure connections
+		for _, agentCfg := range cfg.Agents {
+			logger.WithFields(logrus.Fields{
+				"agent_id": agentCfg.ID,
+				"address":  agentCfg.Address,
+				"providers": agentCfg.Providers,
+			}).Info("Registering remote agent")
+
+			for _, provName := range agentCfg.Providers {
+				remoteCfg := &remote.Config{
+					Name:           fmt.Sprintf("%s-%s", agentCfg.ID, provName),
+					ProviderName:   provName,
+					AgentID:        agentCfg.ID,
+					AgentAddress:   agentCfg.Address,
+					TLSCertPath:    agentCfg.TLSCertPath,
+					TLSKeyPath:     agentCfg.TLSKeyPath,
+					TLSCAPath:      agentCfg.TLSCAPath,
+					UseTLS:         agentCfg.UseTLS,
+				}
+
+				remoteProv, err := remote.NewRemoteProvider(remoteCfg, logger)
+				if err != nil {
+					logger.WithError(err).WithFields(logrus.Fields{
+						"agent":    agentCfg.ID,
+						"provider": provName,
+					}).Error("Failed to create remote provider, skipping")
+					continue
+				}
+
+				// Register with a unique name: agent-id-provider-name
+				providerRegistry.Register(remoteCfg.Name, remoteProv)
+				logger.WithFields(logrus.Fields{
+					"provider_name": remoteCfg.Name,
+					"agent":         agentCfg.ID,
+					"backend":       provName,
+				}).Info("Remote provider registered")
+
+				// Health check remote provider
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				if err := remoteProv.HealthCheck(ctx); err != nil {
+					logger.WithError(err).WithField("provider", remoteCfg.Name).Warn("Remote provider health check failed")
+				} else {
+					logger.WithField("provider", remoteCfg.Name).Info("Remote provider is healthy")
+				}
+				cancel()
+			}
 		}
 
 		// Create resource repository adapter

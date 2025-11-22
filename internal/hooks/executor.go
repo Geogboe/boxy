@@ -206,10 +206,10 @@ func (e *Executor) executeHook(
 		"hook_name":   hook.Name,
 		"command":     cmd,
 		"timeout":     timeout,
-	}).Debug("Executing command via provider.Execute()")
+	}).Debug("Executing command via provider.Exec()")
 
 	// Execute via provider
-	execResult, err := prov.Execute(execCtx, res, cmd)
+	execResult, err := prov.Exec(execCtx, res, cmd)
 	result.Duration = time.Since(start)
 
 	if err != nil {
