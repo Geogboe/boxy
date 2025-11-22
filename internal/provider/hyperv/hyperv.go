@@ -454,32 +454,50 @@ func (p *Provider) Exec(ctx context.Context, res *resource.Resource, cmd []strin
 		return nil, fmt.Errorf("failed to decrypt password: %w", err)
 	}
 
-	// Build command string - each argument needs to be properly escaped
-	// Join with spaces - PowerShell will handle argument parsing
-	cmdStr := strings.Join(cmd, " ")
+	// Use PowerShell Direct (Invoke-Command -VMName) with ArgumentList
+	// This passes the command as DATA via -ArgumentList, not embedded code
+	// This prevents ScriptBlock breakout attacks (e.g., cmd with "}" chars)
+	//
+	// Security approach:
+	// 1. Command array passed as argument (not embedded in ScriptBlock)
+	// 2. ScriptBlock receives it as pure data via param()
+	// 3. Call operator (&) executes command inside VM, not on host
 
-	// Escape the command string for PowerShell ScriptBlock
-	escapedCmd := escapePowerShellString(cmdStr)
+	// Build the command array in PowerShell array syntax
+	// Each element is single-quoted and escaped
+	var cmdElements []string
+	for _, arg := range cmd {
+		cmdElements = append(cmdElements, fmt.Sprintf("'%s'", escapePowerShellString(arg)))
+	}
+	cmdArrayStr := strings.Join(cmdElements, ",")
 
-	// Use PowerShell Direct (Invoke-Command -VMName)
-	// This works without network connectivity via VM bus
-	// Note: Password and username are escaped, VMName is escaped
 	script := fmt.Sprintf(`
 		$ErrorActionPreference = "Stop"
 
 		$password = ConvertTo-SecureString '%s' -AsPlainText -Force
 		$cred = New-Object System.Management.Automation.PSCredential('%s', $password)
 
+		# Command array passed as data, not code
+		$cmdArray = @(%s)
+
 		$result = Invoke-Command -VMName '%s' -Credential $cred -ScriptBlock {
-			%s
-		} -ErrorVariable execError
+			param([string[]]$command)
+
+			# Execute command inside VM using call operator
+			# First element is executable, rest are arguments
+			if ($command.Length -eq 1) {
+				& $command[0] 2>&1
+			} else {
+				& $command[0] $command[1..($command.Length-1)] 2>&1
+			}
+		} -ArgumentList (,$cmdArray) -ErrorVariable execError
 
 		if ($execError) {
 			throw $execError
 		}
 
 		$result
-	`, escapePowerShellString(string(decPassword)), escapePowerShellString(username), escapePowerShellString(vmName), escapedCmd)
+	`, escapePowerShellString(string(decPassword)), escapePowerShellString(username), cmdArrayStr, escapePowerShellString(vmName))
 
 	output, err := p.ps.exec(ctx, script)
 
