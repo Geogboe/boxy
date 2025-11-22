@@ -23,25 +23,38 @@ Currently, creating mixed environments with VMs, containers, and processes acros
 Individual compute units that can be provisioned:
 - **VMs** (Virtual Machines) - Full OS instances
 - **Containers** - Lightweight isolated environments
-- **Processes** - Managed application instances
+
+**Resource States:**
+- **Provisioned** - Created but cold (stopped/not running)
+- **Ready** - Running and warm (preheated, available for allocation)
+- **Allocated** - In use by a sandbox
+- **Destroyed** - Cleaned up and removed
+
+**Key principle:** Resources are NEVER reused. After allocation, resources are destroyed to ensure cleanliness.
 
 ### Sandbox
-A **logical collection of resources** allocated to fulfill a specific request. A sandbox might contain:
+A **time-bound collection of allocated resources**. Think of it as a "disposable environment" - like Windows Sandbox, but cross-platform.
+
+A sandbox might contain:
 - 3 server VMs (Windows Server)
 - 1 client VM (Windows 10)
 - 2 containers (Linux)
 
 Sandboxes are:
-- Time-bound (auto-expire after duration)
-- Isolated (each sandbox is independent)
-- Ephemeral (destroyed when no longer needed)
+- **Time-bound** - Auto-expire after specified duration
+- **Isolated** - Each sandbox is completely independent
+- **Ephemeral** - Destroyed when no longer needed
+- **Clean** - Resources never reused, always fresh
+
+**Primary use case:** Quick testing environments (test installer, validate config, run experiments)
 
 ### Pool
-A **self-replenishing collection of pre-provisioned resources of the same type**. Pools ensure resources are always available:
+A **self-replenishing collection of resources of the same type**. Pools ensure resources are always available:
 
-- When a resource is allocated from the pool → automatically provision a replacement
-- Maintain a minimum count of ready resources
-- Support different provisioning strategies (warm, cold, hybrid)
+- Maintains minimum count of resources (mix of cold and warm)
+- Automatically provisions replacements when resources allocated
+- Supports **preheating** (keeping some resources running for instant allocation)
+- Automatic **recycling** (refreshing resources regularly to prevent drift)
 
 **Example Pool Configurations:**
 ```yaml
@@ -49,23 +62,94 @@ pools:
   - name: win-server-2022
     type: vm
     backend: hyperv
-    min_ready: 3
-    max_total: 10
+    min_ready: 10        # Total resources (cold + warm)
+    max_total: 20
+
+    preheating:
+      enabled: true
+      count: 3           # Keep 3 running/warm for instant allocation
+      recycle_interval: 1h  # Refresh resources hourly
 
   - name: ubuntu-containers
     type: container
     backend: docker
     min_ready: 5
     max_total: 20
+
+    preheating:
+      enabled: true
+      count: 5           # All preheated (containers start fast)
+```
+
+**Cold vs Warm Resources:**
+- **Cold** (Provisioned): Created but stopped - takes 30-60s to start and allocate
+- **Warm** (Ready): Running and ready - instant allocation (< 5s)
+- **Preheating**: Pool keeps configurable count of warm resources
+
+### Allocator (Internal Component)
+An **internal orchestration component** that manages resource movement between pools and sandboxes.
+
+**Not user-facing** - users interact with Pools and Sandboxes. Allocator works behind the scenes to:
+- Track resource ownership
+- Coordinate allocation from pool to sandbox
+- Run on_allocate hooks
+- Handle resource release/destruction
+
+**Architecture:**
+```
+Pool (manages unallocated) ←─── Allocator (orchestrates) ───→ Sandbox (manages allocated)
 ```
 
 ### Backend Providers
 Plugins that interface with specific virtualization/containerization platforms:
-- **Hyper-V** - Windows VMs
+- **Hyper-V** - Windows VMs (primary for MVP)
 - **VMware** - Cross-platform VMs
-- **Docker** - Containers
+- **Docker** - Containers (for testing/development)
 - **KVM/QEMU** - Linux VMs
 - **Podman** - Container alternative
+
+### Hook System
+Lifecycle hooks allow customization at specific points in the resource lifecycle:
+
+**on_provision** - Runs after provider creates resource (cold state)
+- **Purpose**: Validation, snapshots, software installation
+- **Timing**: During pool replenishment (can be slow, user not waiting)
+- **Use for**: Heavy setup tasks, system configuration
+
+**on_allocate** - Runs when user requests resource
+- **Purpose**: User-specific personalization
+- **Timing**: User is waiting (MUST be fast - seconds, not minutes)
+- **Use for**: Creating user accounts, granting access, setting hostname
+
+**Example:**
+```yaml
+pools:
+  - name: win-test-vms
+
+    hooks:
+      on_provision:
+        - type: script
+          shell: powershell
+          inline: |
+            # Validate VM is accessible
+            Test-Connection localhost -Count 1
+            # Take snapshot
+            Checkpoint-VM -Name $env:COMPUTERNAME -SnapshotName "Clean"
+
+      on_allocate:
+        - type: script
+          shell: powershell
+          inline: |
+            # Create user with auto-generated password
+            New-LocalUser -Name "${username}" -Password (ConvertTo-SecureString "${password}" -AsPlainText -Force)
+            Add-LocalGroupMember -Group "Administrators" -Member "${username}"
+            # Grant RDP access
+            Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+```
+
+**Key distinction:**
+- `on_provision` = "prepare base image for pool" (runs once when resource created)
+- `on_allocate` = "customize for specific user" (runs each time allocated)
 
 ## Architecture Vision
 
@@ -514,29 +598,38 @@ boxy/
 
 ## Current Project Status
 
-**Phase**: MVP Complete + Distributed Architecture Planning
+**Phase**: v1 Implementation Planning
 **Completed**:
 - ✅ MVP Phase 1: Core functionality (pools, sandboxes, Docker provider)
 - ✅ Single-host embedded architecture working
-- ✅ Distributed agent architecture designed (ADR-004)
-- ✅ Protocol Buffers schema defined
-- ✅ Security model planned (mTLS, certificate management)
-- ✅ Implementation guide created
+- ✅ Critical security fix (crypto/rand for password generation)
+- ✅ Architectural review completed
+- ✅ v1 implementation plan created
+- ✅ Use cases documented
+- ✅ Documentation updated for consistency
 
-**Current Focus**: Distributed Agent Implementation
-**Next Steps**:
-1. ⏳ Implement gRPC services (ProviderService, AgentService)
-2. ⏳ Create RemoteProvider implementation
-3. ⏳ Create Agent Server implementation
-4. ⏳ Implement certificate management commands
-5. ⏳ Add `boxy agent serve` command
-6. ⏳ Integration and E2E testing
-7. ⏳ Security audit and production hardening
+**Current Focus**: v1 Architecture Refactor
+**Next Steps** (see [V1_IMPLEMENTATION_PLAN.md](docs/V1_IMPLEMENTATION_PLAN.md)):
+1. ⏳ Implement Allocator component (Pool/Sandbox peer architecture)
+2. ⏳ Implement preheating & recycling system
+3. ⏳ Update terminology (on_provision, on_allocate hooks)
+4. ⏳ Implement multi-tenancy (users, teams, API tokens)
+5. ⏳ Add Pool as first-class component (CLI commands)
+6. ⏳ Base image validation system
+7. ⏳ Comprehensive testing (unit, integration, E2E)
+8. ⏳ Documentation finalization
 
-**See**:
-- [ADR-004: Distributed Agent Architecture](docs/decisions/adr-004-distributed-agent-architecture.md)
-- [Implementation Guide](docs/architecture/distributed-agent-implementation.md)
-- [Security Guide](docs/architecture/security-guide.md)
+**Future** (v2+):
+- Distributed agent architecture (ADR-004) - deferred to v2
+- Network isolation (overlay networks)
+- Advanced retry strategies
+- Pool layering (v3)
+
+**Key Documents**:
+- [V1 Implementation Plan](docs/V1_IMPLEMENTATION_PLAN.md) - Comprehensive v1 specification
+- [Use Cases](docs/USE_CASES.md) - Primary and secondary use cases
+- [ADR-005: Pool/Sandbox Peer Architecture](docs/decisions/adr-005-pool-sandbox-peer-architecture.md) - New architecture
+- [ADR-004: Distributed Agent Architecture](docs/decisions/adr-004-distributed-agent-architecture.md) - v2 feature
 
 ## Quick Reference
 
