@@ -34,6 +34,7 @@ type Manager struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	wg           sync.WaitGroup
+	asyncWg      sync.WaitGroup // Tracks async background operations
 	mu           sync.RWMutex
 	running      bool
 	stopChan     chan struct{}
@@ -134,6 +135,10 @@ func (m *Manager) Stop() error {
 
 	// Wait for workers to finish
 	m.wg.Wait()
+
+	// Wait for all async background operations to complete
+	m.logger.WithField("pool", m.config.Name).Debug("Waiting for async operations to complete")
+	m.asyncWg.Wait()
 
 	m.logger.WithField("pool", m.config.Name).Info("Pool manager stopped")
 	return nil
@@ -236,8 +241,10 @@ func (m *Manager) Allocate(ctx context.Context, sandboxID string) (*resource.Res
 		"sandbox_id":  sandboxID,
 	}).Info("Resource allocated")
 
-	// Trigger replenishment asynchronously
+	// Trigger replenishment asynchronously (tracked for graceful shutdown)
+	m.asyncWg.Add(1)
 	go func() {
+		defer m.asyncWg.Done()
 		defer func() {
 			if r := recover(); r != nil {
 				m.logger.WithFields(logrus.Fields{
@@ -247,7 +254,10 @@ func (m *Manager) Allocate(ctx context.Context, sandboxID string) (*resource.Res
 			}
 		}()
 		if err := m.ensureMinReady(m.ctx); err != nil {
-			m.logger.WithError(err).Error("Failed to replenish pool after allocation")
+			// Only log if not cancelled
+			if ctx.Err() == nil {
+				m.logger.WithError(err).Error("Failed to replenish pool after allocation")
+			}
 		}
 	}()
 
@@ -299,8 +309,10 @@ func (m *Manager) Release(ctx context.Context, resourceID string) error {
 		return fmt.Errorf("failed to update resource: %w", err)
 	}
 
-	// Trigger replenishment
+	// Trigger replenishment (tracked for graceful shutdown)
+	m.asyncWg.Add(1)
 	go func() {
+		defer m.asyncWg.Done()
 		defer func() {
 			if r := recover(); r != nil {
 				m.logger.WithFields(logrus.Fields{
@@ -310,7 +322,10 @@ func (m *Manager) Release(ctx context.Context, resourceID string) error {
 			}
 		}()
 		if err := m.ensureMinReady(m.ctx); err != nil {
-			m.logger.WithError(err).Error("Failed to replenish pool after release")
+			// Only log if not cancelled
+			if m.ctx.Err() == nil {
+				m.logger.WithError(err).Error("Failed to replenish pool after release")
+			}
 		}
 	}()
 
@@ -616,8 +631,10 @@ func (m *Manager) performHealthChecks(ctx context.Context) error {
 			res.Metadata["health_check_failed"] = true
 			_ = m.repository.Update(ctx, res)
 
-			// Destroy unhealthy resource
+			// Destroy unhealthy resource (tracked for graceful shutdown)
+			m.asyncWg.Add(1)
 			go func(r *resource.Resource) {
+				defer m.asyncWg.Done()
 				defer func() {
 					if rec := recover(); rec != nil {
 						m.logger.WithFields(logrus.Fields{
@@ -628,7 +645,10 @@ func (m *Manager) performHealthChecks(ctx context.Context) error {
 					}
 				}()
 				if err := m.provider.Destroy(ctx, r); err != nil {
-					m.logger.WithError(err).Error("Failed to destroy unhealthy resource")
+					// Only log if not cancelled
+					if ctx.Err() == nil {
+						m.logger.WithError(err).Error("Failed to destroy unhealthy resource")
+					}
 				}
 			}(res)
 		}

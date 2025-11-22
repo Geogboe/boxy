@@ -245,9 +245,10 @@ func (p *Provider) Update(ctx context.Context, res *resource.Resource, updates p
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	_, exists := p.resources[res.ID]
+	// Look up by ProviderID (not ID, since pool manager owns the ID)
+	_, exists := p.resources[res.ProviderID]
 	if !exists {
-		return fmt.Errorf("resource not found: %s", res.ID)
+		return fmt.Errorf("resource not found: %s", res.ProviderID)
 	}
 
 	// Mock: just return success
@@ -255,17 +256,18 @@ func (p *Provider) Update(ctx context.Context, res *resource.Resource, updates p
 }
 
 // Execute runs a command in the resource (mock implementation)
-func (p *Provider) Execute(ctx context.Context, res *resource.Resource, cmd []string) (*provider_pkg.ExecuteResult, error) {
+func (p *Provider) Exec(ctx context.Context, res *resource.Resource, cmd []string) (*provider_pkg.ExecResult, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	_, exists := p.resources[res.ID]
+	// Look up by ProviderID (not ID, since pool manager owns the ID)
+	_, exists := p.resources[res.ProviderID]
 	if !exists {
-		return nil, fmt.Errorf("resource not found: %s", res.ID)
+		return nil, fmt.Errorf("resource not found: %s", res.ProviderID)
 	}
 
 	// Mock: simulate successful command execution
-	return &provider_pkg.ExecuteResult{
+	return &provider_pkg.ExecResult{
 		ExitCode: 0,
 		Stdout:   fmt.Sprintf("Mock output for: %v", cmd),
 		Stderr:   "",

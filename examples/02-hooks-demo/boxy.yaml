@@ -1,0 +1,80 @@
+pools:
+  - name: hooked-pool
+    type: container
+    backend: docker
+    image: ubuntu:22.04
+    min_ready: 2
+    max_total: 5
+    cpus: 1
+    memory_mb: 1024
+
+    # Finalization hooks: Run during pool warming (slow operations)
+    hooks:
+      after_provision:
+        - name: install-tools
+          type: script
+          shell: bash
+          inline: |
+            echo "Starting finalization at $(date)"
+            apt-get update -qq
+            apt-get install -y -qq curl vim htop net-tools
+            echo "Finalization completed at $(date)" > /provisioned.txt
+            echo "Resource ID: ${resource.id}" >> /provisioned.txt
+          timeout: 5m
+          retry: 2
+
+        - name: setup-directories
+          type: script
+          shell: bash
+          inline: |
+            mkdir -p /app /data /logs
+            chmod 755 /app /data /logs
+            echo "Directories ready" > /setup-complete.txt
+          timeout: 30s
+
+      # Personalization hooks: Run during allocation (fast, user-specific)
+      before_allocate:
+        - name: create-user
+          type: script
+          shell: bash
+          inline: |
+            echo "Creating user ${username}"
+            useradd -m -s /bin/bash ${username}
+            echo "${username}:${password}" | chpasswd
+
+            # Create welcome message
+            cat > /home/${username}/welcome.txt <<EOF
+            Welcome ${username}!
+            Your password: ${password}
+            Resource ID: ${resource.id}
+            Pool: ${pool.name}
+            Created: $(date)
+            EOF
+
+            chown ${username}:${username} /home/${username}/welcome.txt
+            echo "User ${username} created successfully"
+          timeout: 30s
+
+        - name: setup-workspace
+          type: script
+          shell: bash
+          inline: |
+            mkdir -p /home/${username}/workspace
+            echo "#!/bin/bash" > /home/${username}/workspace/hello.sh
+            echo "echo 'Hello from ${username}!'" >> /home/${username}/workspace/hello.sh
+            chmod +x /home/${username}/workspace/hello.sh
+            chown -R ${username}:${username} /home/${username}/workspace
+          timeout: 15s
+
+    timeouts:
+      provision: 5m
+      finalization: 10m      # Total time for all after_provision hooks
+      personalization: 2m    # Total time for all before_allocate hooks
+
+storage:
+  type: sqlite
+  path: ./boxy.db
+
+logging:
+  level: info
+  format: text
