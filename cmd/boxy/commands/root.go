@@ -1,8 +1,11 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -86,4 +89,22 @@ func loadConfig() (*config.Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// createSignalContext creates a context that is canceled on SIGINT/SIGTERM
+// This allows graceful shutdown when the user presses Ctrl+C
+func createSignalContext() context.Context {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Setup signal handling
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-sigChan
+		logger.Info("Received interrupt signal, shutting down gracefully...")
+		cancel()
+	}()
+
+	return ctx
 }
