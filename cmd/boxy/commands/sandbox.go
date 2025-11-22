@@ -80,7 +80,11 @@ Example:
 		if err != nil {
 			return fmt.Errorf("failed to initialize storage: %w", err)
 		}
-		defer store.Close()
+		defer func() {
+			if err := store.Close(); err != nil {
+				logger.WithError(err).Error("Failed to close storage")
+			}
+		}()
 
 		// Initialize encryption
 		encryptionKey, err := config.GetEncryptionKey()
@@ -218,7 +222,11 @@ var sandboxListCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to initialize storage: %w", err)
 		}
-		defer store.Close()
+		defer func() {
+			if err := store.Close(); err != nil {
+				logger.WithError(err).Error("Failed to close storage")
+			}
+		}()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -267,7 +275,9 @@ var sandboxListCmd = &cobra.Command{
 			)
 		}
 
-		w.Flush()
+		if err := w.Flush(); err != nil {
+			return fmt.Errorf("failed to flush output: %w", err)
+		}
 		fmt.Println()
 
 		return nil
@@ -290,7 +300,11 @@ var sandboxDestroyCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to initialize storage: %w", err)
 		}
-		defer store.Close()
+		defer func() {
+			if err := store.Close(); err != nil {
+				logger.WithError(err).Error("Failed to close storage")
+			}
+		}()
 
 		// Initialize encryption
 		encryptionKey, err := config.GetEncryptionKey()

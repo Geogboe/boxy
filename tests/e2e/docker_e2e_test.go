@@ -417,12 +417,10 @@ func TestDockerE2E_SandboxOrchestration(t *testing.T) {
 func TestMain(m *testing.M) {
 	code := m.Run()
 
-	// Cleanup any leftover Boxy containers
+	// Cleanup any leftover Boxy containers after tests complete
 	ctx := context.Background()
 	dockerClient, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err == nil {
-		defer dockerClient.Close()
-
 		// List containers with boxy label
 		containers, err := dockerClient.ContainerList(ctx, container.ListOptions{
 			All: true,
@@ -440,6 +438,7 @@ func TestMain(m *testing.M) {
 				}
 			}
 		}
+		dockerClient.Close()
 	}
 
 	os.Exit(code)

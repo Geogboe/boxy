@@ -97,30 +97,3 @@ type vmInfo struct {
 	MemoryStartup     int64     `json:"MemoryStartup"`
 	Generation        int       `json:"Generation"`
 }
-
-// networkAdapterInfo represents network adapter information
-type networkAdapterInfo struct {
-	VMName     string   `json:"VMName"`
-	Name       string   `json:"Name"`
-	IPAddresses []string `json:"IPAddresses"`
-	MacAddress string   `json:"MacAddress"`
-	Status     string   `json:"Status"`
-}
-
-// vhdInfo represents VHD information
-type vhdInfo struct {
-	Path          string `json:"Path"`
-	VhdFormat     string `json:"VhdFormat"`
-	VhdType       string `json:"VhdType"`
-	FileSize      int64  `json:"FileSize"`
-	Size          int64  `json:"Size"`
-	ParentPath    string `json:"ParentPath"`
-}
-
-// checkpointInfo represents checkpoint (snapshot) information
-type checkpointInfo struct {
-	Name         string    `json:"Name"`
-	VMName       string    `json:"VMName"`
-	CreationTime time.Time `json:"CreationTime"`
-	ParentCheckpointName string `json:"ParentCheckpointName"`
-}
