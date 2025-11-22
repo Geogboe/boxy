@@ -92,9 +92,24 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 		"disk_gb":   spec.DiskGB,
 	}).Info("Provisioning Hyper-V VM")
 
+	// Validate resource limits
+	if err := validateResourceLimits(spec.CPUs, spec.MemoryMB); err != nil {
+		return nil, fmt.Errorf("invalid resource limits: %w", err)
+	}
+
+	// Validate image name (prevent path traversal)
+	if err := validateImageName(spec.Image); err != nil {
+		return nil, fmt.Errorf("invalid image name: %w", err)
+	}
+
 	// Generate VM details
 	vmID := uuid.New().String()
 	vmName := fmt.Sprintf("boxy-%s", vmID[:8])
+
+	// Validate generated VM name (should always pass, but defensive)
+	if err := validateVMName(vmName); err != nil {
+		return nil, fmt.Errorf("generated invalid VM name: %w", err)
+	}
 
 	// Generate credentials
 	username := "Administrator"
@@ -113,25 +128,37 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 	baseImagePath := filepath.Join(p.config.BaseImagesPath, spec.Image+".vhdx")
 	vhdPath := filepath.Join(p.config.VHDPath, vmName+".vhdx")
 
+	// Validate paths (defensive - filepath.Join should be safe, but check anyway)
+	if err := validatePath(baseImagePath); err != nil {
+		return nil, fmt.Errorf("invalid base image path: %w", err)
+	}
+	if err := validatePath(vhdPath); err != nil {
+		return nil, fmt.Errorf("invalid VHD path: %w", err)
+	}
+	if err := validatePath(p.config.VMPath); err != nil {
+		return nil, fmt.Errorf("invalid VM path: %w", err)
+	}
+
 	p.logger.WithFields(logrus.Fields{
 		"base_image": baseImagePath,
 		"vhd_path":   vhdPath,
 	}).Debug("Creating differencing disk")
 
 	// Create VHD (differencing disk for fast provisioning)
+	// Use single quotes and escaping to prevent injection
 	createVHDScript := fmt.Sprintf(`
 		$ErrorActionPreference = "Stop"
 
 		# Ensure VHD directory exists
-		$vhdDir = Split-Path -Parent "%s"
+		$vhdDir = Split-Path -Parent '%s'
 		if (-not (Test-Path $vhdDir)) {
 			New-Item -ItemType Directory -Path $vhdDir -Force | Out-Null
 		}
 
 		# Create differencing disk
-		New-VHD -Path "%s" -ParentPath "%s" -Differencing | Out-Null
+		New-VHD -Path '%s' -ParentPath '%s' -Differencing | Out-Null
 		Write-Output "VHD created successfully"
-	`, vhdPath, vhdPath, baseImagePath)
+	`, escapePowerShellString(vhdPath), escapePowerShellString(vhdPath), escapePowerShellString(baseImagePath))
 
 	if _, err := p.ps.exec(ctx, createVHDScript); err != nil {
 		return nil, fmt.Errorf("failed to create VHD: %w", err)
@@ -140,36 +167,42 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 	// Create VM
 	p.logger.WithField("vm_name", vmName).Debug("Creating VM")
 
+	// Validate switch name
+	if err := validateSwitchName(p.config.SwitchName); err != nil {
+		return nil, fmt.Errorf("invalid switch name: %w", err)
+	}
+
+	// Use single quotes and escaping to prevent injection
 	createVMScript := fmt.Sprintf(`
 		$ErrorActionPreference = "Stop"
 
 		# Ensure VM directory exists
-		$vmDir = "%s"
+		$vmDir = '%s'
 		if (-not (Test-Path $vmDir)) {
 			New-Item -ItemType Directory -Path $vmDir -Force | Out-Null
 		}
 
-		# Create VM
-		$vm = New-VM -Name "%s" -MemoryStartupBytes %dMB -Generation %d -VHDPath "%s" -Path "%s"
+		# Create VM - use single quotes for all string parameters
+		$vm = New-VM -Name '%s' -MemoryStartupBytes %dMB -Generation %d -VHDPath '%s' -Path '%s'
 
 		# Configure VM
-		Set-VM -Name "%s" -ProcessorCount %d -AutomaticCheckpointsEnabled $false
+		Set-VM -Name '%s' -ProcessorCount %d -AutomaticCheckpointsEnabled $false
 
 		# Connect to network switch
-		Connect-VMNetworkAdapter -VMName "%s" -SwitchName "%s"
+		Connect-VMNetworkAdapter -VMName '%s' -SwitchName '%s'
 
 		Write-Output "VM created successfully"
 	`,
-		p.config.VMPath,
-		vmName,
+		escapePowerShellString(p.config.VMPath),
+		escapePowerShellString(vmName),
 		spec.MemoryMB,
 		p.config.DefaultGeneration,
-		vhdPath,
-		p.config.VMPath,
-		vmName,
+		escapePowerShellString(vhdPath),
+		escapePowerShellString(p.config.VMPath),
+		escapePowerShellString(vmName),
 		spec.CPUs,
-		vmName,
-		p.config.SwitchName,
+		escapePowerShellString(vmName),
+		escapePowerShellString(p.config.SwitchName),
 	)
 
 	if _, err := p.ps.exec(ctx, createVMScript); err != nil {
@@ -183,9 +216,9 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 
 	startVMScript := fmt.Sprintf(`
 		$ErrorActionPreference = "Stop"
-		Start-VM -Name "%s"
+		Start-VM -Name '%s'
 		Write-Output "VM started successfully"
-	`, vmName)
+	`, escapePowerShellString(vmName))
 
 	if _, err := p.ps.exec(ctx, startVMScript); err != nil {
 		// Cleanup on failure
@@ -237,6 +270,11 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 func (p *Provider) Destroy(ctx context.Context, res *resource.Resource) error {
 	vmName := res.ProviderID
 
+	// Validate VM name
+	if err := validateVMName(vmName); err != nil {
+		return fmt.Errorf("invalid VM name: %w", err)
+	}
+
 	p.logger.WithField("vm_name", vmName).Info("Destroying Hyper-V VM")
 
 	// Get VHD path from metadata if available
@@ -245,12 +283,12 @@ func (p *Provider) Destroy(ctx context.Context, res *resource.Resource) error {
 	// Stop VM if running
 	stopScript := fmt.Sprintf(`
 		$ErrorActionPreference = "Continue"
-		$vm = Get-VM -Name "%s" -ErrorAction SilentlyContinue
+		$vm = Get-VM -Name '%s' -ErrorAction SilentlyContinue
 		if ($vm -and $vm.State -ne "Off") {
-			Stop-VM -Name "%s" -Force -TurnOff
+			Stop-VM -Name '%s' -Force -TurnOff
 		}
 		Write-Output "VM stopped"
-	`, vmName, vmName)
+	`, escapePowerShellString(vmName), escapePowerShellString(vmName))
 
 	if _, err := p.ps.exec(ctx, stopScript); err != nil {
 		p.logger.WithError(err).Warn("Failed to stop VM, continuing with removal")
@@ -259,14 +297,14 @@ func (p *Provider) Destroy(ctx context.Context, res *resource.Resource) error {
 	// Remove VM
 	removeScript := fmt.Sprintf(`
 		$ErrorActionPreference = "Continue"
-		$vm = Get-VM -Name "%s" -ErrorAction SilentlyContinue
+		$vm = Get-VM -Name '%s' -ErrorAction SilentlyContinue
 		if ($vm) {
-			Remove-VM -Name "%s" -Force
+			Remove-VM -Name '%s' -Force
 			Write-Output "VM removed"
 		} else {
 			Write-Output "VM not found, skipping removal"
 		}
-	`, vmName, vmName)
+	`, escapePowerShellString(vmName), escapePowerShellString(vmName))
 
 	if _, err := p.ps.exec(ctx, removeScript); err != nil {
 		p.logger.WithError(err).Warn("Failed to remove VM")
@@ -287,12 +325,17 @@ func (p *Provider) Destroy(ctx context.Context, res *resource.Resource) error {
 func (p *Provider) GetStatus(ctx context.Context, res *resource.Resource) (*resource.ResourceStatus, error) {
 	vmName := res.ProviderID
 
+	// Validate VM name
+	if err := validateVMName(vmName); err != nil {
+		return nil, fmt.Errorf("invalid VM name: %w", err)
+	}
+
 	script := fmt.Sprintf(`
 		$ErrorActionPreference = "Stop"
-		$vm = Get-VM -Name "%s"
+		$vm = Get-VM -Name '%s'
 
 		$vm | Select-Object Name, State, CPUUsage, MemoryAssigned, Uptime, Status, CreationTime | ConvertTo-Json -Compress
-	`, vmName)
+	`, escapePowerShellString(vmName))
 
 	var info vmInfo
 	if err := p.ps.execJSON(ctx, script, &info); err != nil {
@@ -330,6 +373,11 @@ func (p *Provider) GetStatus(ctx context.Context, res *resource.Resource) (*reso
 // GetConnectionInfo returns connection details for a VM
 func (p *Provider) GetConnectionInfo(ctx context.Context, res *resource.Resource) (*resource.ConnectionInfo, error) {
 	vmName := res.ProviderID
+
+	// Validate VM name
+	if err := validateVMName(vmName); err != nil {
+		return nil, fmt.Errorf("invalid VM name: %w", err)
+	}
 
 	// Get IP address from network adapter
 	ipAddress, err := p.getVMIPAddress(ctx, vmName)
@@ -375,6 +423,16 @@ func (p *Provider) GetConnectionInfo(ctx context.Context, res *resource.Resource
 func (p *Provider) Exec(ctx context.Context, res *resource.Resource, cmd []string) (*provider_pkg.ExecResult, error) {
 	vmName := res.ProviderID
 
+	// Validate VM name
+	if err := validateVMName(vmName); err != nil {
+		return nil, fmt.Errorf("invalid VM name: %w", err)
+	}
+
+	// Validate command is not empty
+	if len(cmd) == 0 {
+		return nil, fmt.Errorf("command cannot be empty")
+	}
+
 	p.logger.WithFields(logrus.Fields{
 		"vm_name": vmName,
 		"cmd":     cmd,
@@ -396,18 +454,23 @@ func (p *Provider) Exec(ctx context.Context, res *resource.Resource, cmd []strin
 		return nil, fmt.Errorf("failed to decrypt password: %w", err)
 	}
 
-	// Build command string
+	// Build command string - each argument needs to be properly escaped
+	// Join with spaces - PowerShell will handle argument parsing
 	cmdStr := strings.Join(cmd, " ")
+
+	// Escape the command string for PowerShell ScriptBlock
+	escapedCmd := escapePowerShellString(cmdStr)
 
 	// Use PowerShell Direct (Invoke-Command -VMName)
 	// This works without network connectivity via VM bus
+	// Note: Password and username are escaped, VMName is escaped
 	script := fmt.Sprintf(`
 		$ErrorActionPreference = "Stop"
 
-		$password = ConvertTo-SecureString "%s" -AsPlainText -Force
-		$cred = New-Object System.Management.Automation.PSCredential("%s", $password)
+		$password = ConvertTo-SecureString '%s' -AsPlainText -Force
+		$cred = New-Object System.Management.Automation.PSCredential('%s', $password)
 
-		$result = Invoke-Command -VMName "%s" -Credential $cred -ScriptBlock {
+		$result = Invoke-Command -VMName '%s' -Credential $cred -ScriptBlock {
 			%s
 		} -ErrorVariable execError
 
@@ -416,7 +479,7 @@ func (p *Provider) Exec(ctx context.Context, res *resource.Resource, cmd []strin
 		}
 
 		$result
-	`, string(decPassword), username, vmName, cmdStr)
+	`, escapePowerShellString(string(decPassword)), escapePowerShellString(username), escapePowerShellString(vmName), escapedCmd)
 
 	output, err := p.ps.exec(ctx, script)
 
@@ -443,6 +506,11 @@ func (p *Provider) Exec(ctx context.Context, res *resource.Resource, cmd []strin
 // Update modifies a VM (power state, snapshots, resource limits)
 func (p *Provider) Update(ctx context.Context, res *resource.Resource, updates provider_pkg.ResourceUpdate) error {
 	vmName := res.ProviderID
+
+	// Validate VM name
+	if err := validateVMName(vmName); err != nil {
+		return fmt.Errorf("invalid VM name: %w", err)
+	}
 
 	p.logger.WithFields(logrus.Fields{
 		"vm_name": vmName,
@@ -511,9 +579,9 @@ func (p *Provider) cleanupVM(ctx context.Context, vmName, vhdPath string) {
 	// Try to stop and remove VM
 	script := fmt.Sprintf(`
 		$ErrorActionPreference = "Continue"
-		Stop-VM -Name "%s" -Force -TurnOff -ErrorAction SilentlyContinue
-		Remove-VM -Name "%s" -Force -ErrorAction SilentlyContinue
-	`, vmName, vmName)
+		Stop-VM -Name '%s' -Force -TurnOff -ErrorAction SilentlyContinue
+		Remove-VM -Name '%s' -Force -ErrorAction SilentlyContinue
+	`, escapePowerShellString(vmName), escapePowerShellString(vmName))
 
 	p.ps.exec(ctx, script)
 
@@ -526,10 +594,10 @@ func (p *Provider) cleanupVM(ctx context.Context, vmName, vhdPath string) {
 func (p *Provider) cleanupVHD(ctx context.Context, vhdPath string) error {
 	script := fmt.Sprintf(`
 		$ErrorActionPreference = "Continue"
-		if (Test-Path "%s") {
-			Remove-Item -Path "%s" -Force
+		if (Test-Path '%s') {
+			Remove-Item -Path '%s' -Force
 		}
-	`, vhdPath, vhdPath)
+	`, escapePowerShellString(vhdPath), escapePowerShellString(vhdPath))
 
 	_, err := p.ps.exec(ctx, script)
 	return err
@@ -558,14 +626,14 @@ func (p *Provider) waitForIPAddress(ctx context.Context, vmName string, timeout 
 func (p *Provider) getVMIPAddress(ctx context.Context, vmName string) (string, error) {
 	script := fmt.Sprintf(`
 		$ErrorActionPreference = "Stop"
-		$adapter = Get-VMNetworkAdapter -VMName "%s"
+		$adapter = Get-VMNetworkAdapter -VMName '%s'
 		$ips = $adapter.IPAddresses | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' }
 		if ($ips) {
 			$ips[0]
 		} else {
 			throw "No IPv4 address found"
 		}
-	`, vmName)
+	`, escapePowerShellString(vmName))
 
 	ip, err := p.ps.exec(ctx, script)
 	if err != nil {
@@ -576,23 +644,28 @@ func (p *Provider) getVMIPAddress(ctx context.Context, vmName string) (string, e
 }
 
 func (p *Provider) updatePowerState(ctx context.Context, vmName string, state provider_pkg.PowerState) error {
+	// Validate VM name (defensive check)
+	if err := validateVMName(vmName); err != nil {
+		return fmt.Errorf("invalid VM name: %w", err)
+	}
+
 	var script string
 
 	switch state {
 	case provider_pkg.PowerStateRunning:
-		script = fmt.Sprintf(`Start-VM -Name "%s"`, vmName)
+		script = fmt.Sprintf(`Start-VM -Name '%s'`, escapePowerShellString(vmName))
 		p.logger.WithField("vm_name", vmName).Info("Starting VM")
 
 	case provider_pkg.PowerStateStopped:
-		script = fmt.Sprintf(`Stop-VM -Name "%s" -Force`, vmName)
+		script = fmt.Sprintf(`Stop-VM -Name '%s' -Force`, escapePowerShellString(vmName))
 		p.logger.WithField("vm_name", vmName).Info("Stopping VM")
 
 	case provider_pkg.PowerStateReset:
-		script = fmt.Sprintf(`Restart-VM -Name "%s" -Force`, vmName)
+		script = fmt.Sprintf(`Restart-VM -Name '%s' -Force`, escapePowerShellString(vmName))
 		p.logger.WithField("vm_name", vmName).Info("Restarting VM")
 
 	case provider_pkg.PowerStatePaused:
-		script = fmt.Sprintf(`Suspend-VM -Name "%s"`, vmName)
+		script = fmt.Sprintf(`Suspend-VM -Name '%s'`, escapePowerShellString(vmName))
 		p.logger.WithField("vm_name", vmName).Info("Pausing VM")
 
 	default:
@@ -607,9 +680,21 @@ func (p *Provider) updatePowerState(ctx context.Context, vmName string, state pr
 }
 
 func (p *Provider) updateSnapshot(ctx context.Context, vmName string, snapshot *provider_pkg.SnapshotOp) error {
+	// Validate inputs
+	if err := validateVMName(vmName); err != nil {
+		return fmt.Errorf("invalid VM name: %w", err)
+	}
+	if err := validateSnapshotName(snapshot.Name); err != nil {
+		return fmt.Errorf("invalid snapshot name: %w", err)
+	}
+	if err := validateSnapshotOperation(snapshot.Operation); err != nil {
+		return err
+	}
+
 	switch snapshot.Operation {
 	case "create":
-		script := fmt.Sprintf(`Checkpoint-VM -Name "%s" -SnapshotName "%s"`, vmName, snapshot.Name)
+		script := fmt.Sprintf(`Checkpoint-VM -Name '%s' -SnapshotName '%s'`,
+			escapePowerShellString(vmName), escapePowerShellString(snapshot.Name))
 		p.logger.WithFields(logrus.Fields{
 			"vm_name":       vmName,
 			"snapshot_name": snapshot.Name,
@@ -620,7 +705,8 @@ func (p *Provider) updateSnapshot(ctx context.Context, vmName string, snapshot *
 		}
 
 	case "restore":
-		script := fmt.Sprintf(`Restore-VMCheckpoint -VMName "%s" -Name "%s" -Confirm:$false`, vmName, snapshot.Name)
+		script := fmt.Sprintf(`Restore-VMCheckpoint -VMName '%s' -Name '%s' -Confirm:$false`,
+			escapePowerShellString(vmName), escapePowerShellString(snapshot.Name))
 		p.logger.WithFields(logrus.Fields{
 			"vm_name":       vmName,
 			"snapshot_name": snapshot.Name,
@@ -631,7 +717,8 @@ func (p *Provider) updateSnapshot(ctx context.Context, vmName string, snapshot *
 		}
 
 	case "delete":
-		script := fmt.Sprintf(`Remove-VMCheckpoint -VMName "%s" -Name "%s" -Confirm:$false`, vmName, snapshot.Name)
+		script := fmt.Sprintf(`Remove-VMCheckpoint -VMName '%s' -Name '%s' -Confirm:$false`,
+			escapePowerShellString(vmName), escapePowerShellString(snapshot.Name))
 		p.logger.WithFields(logrus.Fields{
 			"vm_name":       vmName,
 			"snapshot_name": snapshot.Name,
@@ -649,9 +736,18 @@ func (p *Provider) updateSnapshot(ctx context.Context, vmName string, snapshot *
 }
 
 func (p *Provider) updateResources(ctx context.Context, vmName string, resources *provider_pkg.ResourceLimits) error {
+	// Validate VM name
+	if err := validateVMName(vmName); err != nil {
+		return fmt.Errorf("invalid VM name: %w", err)
+	}
+
 	var updates []string
 
 	if resources.CPUs != nil {
+		// Validate CPU count
+		if err := validateResourceLimits(*resources.CPUs, 1024); err != nil {
+			return fmt.Errorf("invalid CPU count: %w", err)
+		}
 		updates = append(updates, fmt.Sprintf("-ProcessorCount %d", *resources.CPUs))
 		p.logger.WithFields(logrus.Fields{
 			"vm_name": vmName,
@@ -660,6 +756,10 @@ func (p *Provider) updateResources(ctx context.Context, vmName string, resources
 	}
 
 	if resources.MemoryMB != nil {
+		// Validate memory
+		if err := validateResourceLimits(1, *resources.MemoryMB); err != nil {
+			return fmt.Errorf("invalid memory size: %w", err)
+		}
 		// Convert MB to bytes for Set-VM
 		memoryBytes := int64(*resources.MemoryMB) * 1024 * 1024
 		updates = append(updates, fmt.Sprintf("-MemoryStartupBytes %d", memoryBytes))
@@ -670,7 +770,7 @@ func (p *Provider) updateResources(ctx context.Context, vmName string, resources
 	}
 
 	if len(updates) > 0 {
-		script := fmt.Sprintf(`Set-VM -Name "%s" %s`, vmName, strings.Join(updates, " "))
+		script := fmt.Sprintf(`Set-VM -Name '%s' %s`, escapePowerShellString(vmName), strings.Join(updates, " "))
 		if _, err := p.ps.exec(ctx, script); err != nil {
 			return err
 		}
