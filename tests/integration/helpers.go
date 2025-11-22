@@ -47,7 +47,9 @@ func SetupTestStore(t *testing.T) storage.Store {
 	require.Equal(t, int64(1), count, "Resources table should exist")
 
 	t.Cleanup(func() {
-		store.Close()
+		if err := store.Close(); err != nil {
+			t.Logf("Failed to close test store: %v", err)
+		}
 	})
 
 	return store

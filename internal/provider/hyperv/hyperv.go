@@ -207,7 +207,9 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 
 	if _, err := p.ps.exec(ctx, createVMScript); err != nil {
 		// Cleanup VHD on failure
-		p.cleanupVHD(context.Background(), vhdPath)
+		if cleanupErr := p.cleanupVHD(context.Background(), vhdPath); cleanupErr != nil {
+			p.logger.WithError(cleanupErr).Warn("Failed to cleanup VHD after VM creation failure")
+		}
 		return nil, fmt.Errorf("failed to create VM: %w", err)
 	}
 
@@ -366,6 +368,7 @@ func (p *Provider) GetStatus(ctx context.Context, res *resource.Resource) (*reso
 		LastCheck:  time.Now(),
 		Uptime:     uptime,
 		CPUUsage:   float64(info.CPUUsage),
+		// #nosec G115 - MemoryAssigned is a valid int64 from Hyper-V, overflow is not a concern
 		MemoryUsed: uint64(info.MemoryAssigned),
 	}, nil
 }
@@ -601,11 +604,15 @@ func (p *Provider) cleanupVM(ctx context.Context, vmName, vhdPath string) {
 		Remove-VM -Name '%s' -Force -ErrorAction SilentlyContinue
 	`, escapePowerShellString(vmName), escapePowerShellString(vmName))
 
-	p.ps.exec(ctx, script)
+	if _, err := p.ps.exec(ctx, script); err != nil {
+		p.logger.WithError(err).Warn("Failed to cleanup VM")
+	}
 
 	// Cleanup VHD
 	if vhdPath != "" {
-		p.cleanupVHD(ctx, vhdPath)
+		if err := p.cleanupVHD(ctx, vhdPath); err != nil {
+			p.logger.WithError(err).Warn("Failed to cleanup VHD")
+		}
 	}
 }
 
@@ -833,10 +840,10 @@ func parseHyperVUptime(uptimeStr string) (time.Duration, error) {
 	var days, hours, minutes int
 	var seconds float64
 
-	fmt.Sscanf(parts[0], "%d", &days)
-	fmt.Sscanf(parts[1], "%d", &hours)
-	fmt.Sscanf(parts[2], "%d", &minutes)
-	fmt.Sscanf(parts[3], "%f", &seconds)
+	_, _ = fmt.Sscanf(parts[0], "%d", &days)
+	_, _ = fmt.Sscanf(parts[1], "%d", &hours)
+	_, _ = fmt.Sscanf(parts[2], "%d", &minutes)
+	_, _ = fmt.Sscanf(parts[3], "%f", &seconds)
 
 	duration := time.Duration(days)*24*time.Hour +
 		time.Duration(hours)*time.Hour +

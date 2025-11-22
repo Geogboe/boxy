@@ -266,14 +266,12 @@ func TestExec_SecurityValidation(t *testing.T) {
 					assert.Contains(t, err.Error(), tt.errMsg)
 				}
 				assert.Nil(t, result)
-			} else {
+			} else if result != nil {
 				// On non-Windows or without Hyper-V, we expect PowerShell execution to fail
 				// But we're testing command construction, not actual execution
 				// The fact that it gets to PowerShell exec proves injection is prevented
-				if result != nil {
-					// Command was constructed and attempted
-					t.Logf("Command constructed successfully: %v", tt.cmd)
-				}
+				// Command was constructed and attempted
+				t.Logf("Command constructed successfully: %v", tt.cmd)
 				// Don't assert success since we're not on Windows with Hyper-V
 			}
 		})

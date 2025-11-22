@@ -12,6 +12,7 @@ import (
 // Helper functions for converting between internal types and proto types
 
 func resourceSpecToProto(spec *resource.ResourceSpec) *pb.ResourceSpec {
+	// #nosec G115 - CPUs, MemoryMB, DiskGB are reasonable resource limits that won't overflow int32
 	return &pb.ResourceSpec{
 		Type:         string(spec.Type),
 		ProviderType: spec.ProviderType,

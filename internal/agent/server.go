@@ -248,8 +248,9 @@ func (s *Server) GetConnectionInfo(ctx context.Context, req *pb.GetConnectionInf
 
 	return &pb.GetConnectionInfoResponse{
 		ConnectionInfo: &pb.ConnectionInfo{
-			Type:        connInfo.Type,
-			Host:        connInfo.Host,
+			Type:     connInfo.Type,
+			Host:     connInfo.Host,
+			// #nosec G115 - Port is a valid port number (0-65535) that fits in int32
 			Port:        int32(connInfo.Port),
 			Username:    connInfo.Username,
 			Password:    connInfo.Password,
@@ -307,6 +308,7 @@ func (s *Server) Exec(ctx context.Context, req *pb.ExecRequest) (*pb.ExecRespons
 	}
 
 	resp := &pb.ExecResponse{
+		// #nosec G115 - ExitCode is a valid exit code (0-255) that fits in int32
 		ExitCode: int32(result.ExitCode),
 		Stdout:   result.Stdout,
 		Stderr:   result.Stderr,

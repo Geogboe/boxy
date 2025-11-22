@@ -63,40 +63,37 @@ func protoToResource(pb *pb.Resource) *resource.Resource {
 func protoToResourceUpdate(action string, params map[string]string) provider_pkg.ResourceUpdate {
 	updates := provider_pkg.ResourceUpdate{}
 
-	// Parse power state actions
-	if action == "power-running" {
+	// Parse power state actions using switch
+	switch action {
+	case "power-running":
 		ps := provider_pkg.PowerStateRunning
 		updates.PowerState = &ps
-	} else if action == "power-stopped" {
+	case "power-stopped":
 		ps := provider_pkg.PowerStateStopped
 		updates.PowerState = &ps
-	} else if action == "power-paused" {
+	case "power-paused":
 		ps := provider_pkg.PowerStatePaused
 		updates.PowerState = &ps
-	} else if action == "power-reset" {
+	case "power-reset":
 		ps := provider_pkg.PowerStateReset
 		updates.PowerState = &ps
-	}
-
-	// Parse snapshot actions
-	if action == "snapshot-create" || action == "snapshot-restore" || action == "snapshot-delete" {
+	case "snapshot-create", "snapshot-restore", "snapshot-delete":
+		// Parse snapshot actions
 		updates.Snapshot = &provider_pkg.SnapshotOp{
 			Operation: params["operation"],
 			Name:      params["name"],
 		}
-	}
-
-	// Parse resource updates
-	if action == "update-resources" {
+	case "update-resources":
+		// Parse resource updates
 		updates.Resources = &provider_pkg.ResourceLimits{}
 		if cpuStr, ok := params["cpus"]; ok {
 			var cpus int
-			fmt.Sscanf(cpuStr, "%d", &cpus)
+			_, _ = fmt.Sscanf(cpuStr, "%d", &cpus)
 			updates.Resources.CPUs = &cpus
 		}
 		if memStr, ok := params["memory_mb"]; ok {
 			var mem int
-			fmt.Sscanf(memStr, "%d", &mem)
+			_, _ = fmt.Sscanf(memStr, "%d", &mem)
 			updates.Resources.MemoryMB = &mem
 		}
 	}
