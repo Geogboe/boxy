@@ -136,7 +136,8 @@ Example:
 			Duration:  duration,
 		}
 
-		ctx := context.Background()
+		// Use signal-aware context for graceful cancellation
+		ctx := createSignalContext()
 		sb, err := sandboxMgr.Create(ctx, createReq)
 		if err != nil {
 			return fmt.Errorf("failed to create sandbox: %w", err)
@@ -219,7 +220,9 @@ var sandboxListCmd = &cobra.Command{
 		}
 		defer store.Close()
 
-		sandboxes, err := store.ListActiveSandboxes(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		sandboxes, err := store.ListActiveSandboxes(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to list sandboxes: %w", err)
 		}
@@ -335,7 +338,11 @@ var sandboxDestroyCmd = &cobra.Command{
 
 		fmt.Printf("Destroying sandbox %s...\n", sandboxID)
 
-		if err := sandboxMgr.Destroy(context.Background(), sandboxID); err != nil {
+		// Use signal-aware context with timeout
+		ctx, cancel := context.WithTimeout(createSignalContext(), 2*time.Minute)
+		defer cancel()
+
+		if err := sandboxMgr.Destroy(ctx, sandboxID); err != nil {
 			return fmt.Errorf("failed to destroy sandbox: %w", err)
 		}
 

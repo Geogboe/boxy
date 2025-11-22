@@ -71,8 +71,10 @@ The service will:
 		providerRegistry.Register("docker", dockerProvider)
 		logger.Info("Docker provider registered")
 
-		// Health check Docker
-		if err := dockerProvider.HealthCheck(context.Background()); err != nil {
+		// Health check Docker with timeout
+		healthCtx, healthCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer healthCancel()
+		if err := dockerProvider.HealthCheck(healthCtx); err != nil {
 			logger.WithError(err).Warn("Docker health check failed - Docker functionality may be limited")
 		} else {
 			logger.Info("Docker daemon is healthy")

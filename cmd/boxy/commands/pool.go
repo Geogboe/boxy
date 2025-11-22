@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -71,7 +72,9 @@ var poolListCmd = &cobra.Command{
 				continue
 			}
 
-			stats, err := manager.GetStats(context.Background())
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			stats, err := manager.GetStats(ctx)
 			if err != nil {
 				logger.WithError(err).WithField("pool", poolCfg.Name).Error("Failed to get pool stats")
 				continue
@@ -158,7 +161,9 @@ var poolStatsCmd = &cobra.Command{
 			return fmt.Errorf("failed to create pool manager: %w", err)
 		}
 
-		stats, err := manager.GetStats(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		stats, err := manager.GetStats(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to get pool stats: %w", err)
 		}
