@@ -1,3 +1,5 @@
+version: "2"
+
 run:
   timeout: 5m
   tests: true
@@ -5,72 +7,69 @@ run:
     - integration
 
 linters:
+  default: none
   enable:
     - errcheck       # Check for unchecked errors
-    - gosimple       # Simplify code
     - govet          # Vet examines Go source code
     - ineffassign    # Detect ineffectual assignments
-    - staticcheck    # Static analysis
+    - staticcheck    # Static analysis (includes gosimple)
     - unused         # Check for unused constants, variables, functions
-    - gofmt          # Check formatting
-    - goimports      # Check imports
     - misspell       # Check for misspelled words
     - revive         # Fast linter
     - gosec          # Security checks
     - gocritic       # Opinionated linter
 
-linters-settings:
-  errcheck:
-    check-blank: false
-    check-type-assertions: false
-    exclude-functions:
-      - (*database/sql.DB).Close
-      - (*database/sql.Rows).Close
-      - fmt.Fprintf
-      - fmt.Fprintln
+  settings:
+    errcheck:
+      check-blank: false
+      check-type-assertions: false
+      exclude-functions:
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - fmt.Fprintf
+        - fmt.Fprintln
 
-  govet:
-    check-shadowing: false
-    enable:
-      - atomicalign
-      - fieldalignment
+    govet:
+      enable:
+        - atomicalign
 
-  gofmt:
-    simplify: true
+    revive:
+      rules:
+        - name: var-naming
+          severity: warning
+          disabled: false
+        - name: package-comments
+          severity: warning
+          disabled: true  # We can enable this later
 
-  revive:
+    gosec:
+      # No exclusions - catch all security issues including weak crypto
+      confidence: medium
+
+  exclusions:
     rules:
-      - name: var-naming
-        severity: warning
-        disabled: false
-      - name: package-comments
-        severity: warning
-        disabled: true  # We can enable this later
+      # Exclude some linters from running on tests files
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
 
-  gosec:
-    # No exclusions - catch all security issues including weak crypto
-    confidence: medium
+      # Exclude known issues
+      - text: "weak cryptographic primitive"
+        linters:
+          - gosec
 
-issues:
-  exclude-rules:
-    # Exclude some linters from running on tests files
-    - path: _test\.go
-      linters:
-        - errcheck
-        - gosec
+    # Maximum issues count per one linter
+    max-issues-per-linter: 0
 
-    # Exclude known issues
-    - text: "weak cryptographic primitive"
-      linters:
-        - gosec
+    # Maximum count of issues with the same text
+    max-same-issues: 0
 
-  # Maximum issues count per one linter
-  max-issues-per-linter: 0
-
-  # Maximum count of issues with the same text
-  max-same-issues: 0
+formatters:
+  default: none
 
 output:
-  format: colored-line-number
-  print-issued-lines: true
-  print-linter-name: true
+  formats:
+    colored-line-number: {}
+  show-lines: true
+  show-linter: true

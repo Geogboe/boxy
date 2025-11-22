@@ -71,6 +71,7 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 	}
 
 	// Simulate random failures
+	// #nosec G404 - Using math/rand for mock provider is acceptable
 	if p.failureRate > 0 && rand.Float64() < p.failureRate {
 		return nil, fmt.Errorf("mock provision failure (simulated)")
 	}
