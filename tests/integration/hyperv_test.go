@@ -1,3 +1,4 @@
+//go:build windows
 // +build windows
 
 package integration
@@ -12,7 +13,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Geogboe/boxy/internal/core/resource"
 	"github.com/Geogboe/boxy/pkg/crypto"
 	provider_pkg "github.com/Geogboe/boxy/pkg/provider"
 	"github.com/Geogboe/boxy/pkg/provider/hyperv"
@@ -57,8 +57,8 @@ func TestHyperVIntegration(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
 
-		spec := resource.ResourceSpec{
-			Type:         resource.ResourceTypeVM,
+		spec := provider_pkg.ResourceSpec{
+			Type:         provider_pkg.ResourceTypeVM,
 			ProviderType: "hyperv",
 			Image:        "test-image", // Must exist in BaseImagesPath
 			CPUs:         2,
@@ -75,7 +75,7 @@ func TestHyperVIntegration(t *testing.T) {
 
 		require.NotNil(t, res)
 		assert.NotEmpty(t, res.ID)
-		assert.Equal(t, resource.ResourceTypeVM, res.Type)
+		assert.Equal(t, provider_pkg.ResourceTypeVM, res.Type)
 		assert.Equal(t, "hyperv", res.ProviderType)
 		assert.NotEmpty(t, res.ProviderID)
 
@@ -100,7 +100,7 @@ func TestHyperVIntegration(t *testing.T) {
 			status, err := p.GetStatus(ctx, res)
 			require.NoError(t, err)
 			assert.NotNil(t, status)
-			assert.Equal(t, resource.StateReady, status.State)
+			assert.Equal(t, provider_pkg.StateReady, status.State)
 			assert.True(t, status.Healthy, "VM should be healthy and running")
 			t.Logf("VM Status: %s, Uptime: %v", status.Message, status.Uptime)
 		})
