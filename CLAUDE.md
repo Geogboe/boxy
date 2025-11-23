@@ -3,6 +3,8 @@
 ## General Guidelines
 
 - During planning, try not to bloat the context window with large amounts of code unless specifically requested.
+- Markdown files should have a newline after headers
+- Go files should have unit tests
 
 ## Project Overview
 
