@@ -1,3 +1,4 @@
+---
 pools:
   - name: hooked-pool
     type: container
@@ -78,3 +79,4 @@ storage:
 logging:
   level: info
   format: text
+---
