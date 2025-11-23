@@ -362,22 +362,22 @@ boxy/
 ### High Priority
 
 1. **Update imports across codebase**
-  - `internal/core/pool/` - Update resource imports
-  - `internal/core/sandbox/` - Update resource imports
-  - `internal/storage/` - Update resource imports (may need GORM tags)
-  - `internal/hooks/` - Update resource imports
-  - `cmd/boxy/` - Update imports
+   - `internal/core/pool/` - Update resource imports
+   - `internal/core/sandbox/` - Update resource imports
+   - `internal/storage/` - Update resource imports (may need GORM tags)
+   - `internal/hooks/` - Update resource imports
+   - `cmd/boxy/` - Update imports
 
 2. **Test compilation**
-  - `go build ./...` - Ensure everything compiles
-  - `go test -short ./...` - Run unit tests
+   - `go build ./...` - Ensure everything compiles
+   - `go test -short ./...` - Run unit tests
 
 3. **Delete old directories**
-  - `internal/core/resource/` - Moved to pkg/provider
-  - `internal/crypto/` - Moved to pkg/crypto
-  - `internal/provider/` - Moved to pkg/provider
-  - `internal/agent/` - Moved to pkg/agent
-  - `pkg/api/` - Empty, can delete
+   - `internal/core/resource/` - Moved to pkg/provider
+   - `internal/crypto/` - Moved to pkg/crypto
+   - `internal/provider/` - Moved to pkg/provider
+   - `internal/agent/` - Moved to pkg/agent
+   - `pkg/api/` - Empty, can delete
 
 ### Medium Priority
 
