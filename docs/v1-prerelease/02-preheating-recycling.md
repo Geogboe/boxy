@@ -26,6 +26,7 @@ related_docs:
 ## Overview
 
 Implement cold vs warm resource management:
+
 - **Cold resources**: Provisioned but stopped (low cost, slower allocation)
 - **Warm resources**: Running and ready (instant allocation, higher cost)
 - **Preheating**: Keep N resources warm for instant allocation
@@ -37,7 +38,7 @@ Implement cold vs warm resource management:
 
 ## Concept: Cold vs Warm Resources
 
-```
+```text
 Pool Resources State Distribution:
 ┌────────────────────────────────────────┐
 │  min_ready: 10  (total resources)     │
@@ -70,7 +71,8 @@ const (
 ```
 
 **State Transitions:**
-```
+
+```text
 Provisioned → Warming → Ready → Allocating → Allocated → Destroyed
                 ↑
                 └────── Recycling ────────┘
@@ -101,6 +103,7 @@ pools:
 ## Implementation Tasks
 
 See V1_IMPLEMENTATION_PLAN.md sections 2.1-2.5 for detailed implementation:
+
 - Preheating worker (maintains warm count)
 - Recycling worker (refreshes resources)  
 - Updated provisionOne (creates cold resources)

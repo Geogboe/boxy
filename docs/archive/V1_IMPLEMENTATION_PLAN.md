@@ -12,6 +12,7 @@
 This document provides a comprehensive implementation plan for Boxy v1, incorporating critical architectural refactors, new features, and consistency updates based on architectural review.
 
 **Key Changes:**
+
 1. ✅ **Security fix applied** - Password generation now uses `crypto/rand` (already committed)
 2. 🏗️ **Architecture refactor** - Pool and Sandbox as equal peers with internal Allocator
 3. 🔥 **Preheating system** - Cold vs warm resources with configurable preheating
@@ -54,7 +55,7 @@ This document provides a comprehensive implementation plan for Boxy v1, incorpor
 
 ### Current Architecture (Problems)
 
-```
+```text
 ┌──────────────┐
 │   Sandbox    │
 │              │ ← Depends on Pool
@@ -72,6 +73,7 @@ This document provides a comprehensive implementation plan for Boxy v1, incorpor
 ```
 
 **Issues:**
+
 - Tight coupling between Sandbox and Pool
 - Dual ownership of resources (both Pool and Sandbox track them)
 - Unclear state management
@@ -79,7 +81,7 @@ This document provides a comprehensive implementation plan for Boxy v1, incorpor
 
 ### New Architecture (v1)
 
-```
+```text
 User-Facing Components:
 ┌──────────────┐          ┌──────────────┐
 │    Pool      │          │   Sandbox    │
@@ -116,6 +118,7 @@ Internal Components:
 **Location:** `internal/core/allocator/allocator.go`
 
 **Interface:**
+
 ```go
 package allocator
 
@@ -170,6 +173,7 @@ func (a *Allocator) GetResourcesForPool(
 ```
 
 **Key Points:**
+
 - ✅ **Internal only** - users never interact with Allocator directly
 - ✅ **Single source of truth** - all resource queries go through Allocator
 - ✅ **Clear ownership** - Pool owns unallocated, Sandbox owns allocated
@@ -201,6 +205,7 @@ func (m *Manager) GetAllResources(ctx context.Context) ([]*resource.Resource, er
 ```
 
 **Pool now focuses on:**
+
 - ✅ Provisioning resources (via provider)
 - ✅ Running on_provision hooks
 - ✅ Maintaining min_ready count
@@ -209,6 +214,7 @@ func (m *Manager) GetAllResources(ctx context.Context) ([]*resource.Resource, er
 - ✅ Recycling (new!)
 
 **Pool does NOT:**
+
 - ❌ Allocate resources to sandboxes (Allocator does this)
 - ❌ Track sandbox ownership (Allocator does this)
 - ❌ Run on_allocate hooks (Allocator does this)
@@ -248,12 +254,14 @@ func (m *Manager) GetResourcesForSandbox(ctx context.Context, sandboxID string) 
 ```
 
 **Sandbox now focuses on:**
+
 - ✅ Creating sandbox records
 - ✅ Tracking sandbox lifecycle (Creating, Ready, Expiring, Destroyed)
 - ✅ Auto-cleanup of expired sandboxes
 - ✅ Coordinating multi-resource allocation
 
 **Sandbox does NOT:**
+
 - ❌ Know about Pool internals
 - ❌ Track resources directly (queries Allocator)
 - ❌ Call Provider directly
@@ -263,13 +271,14 @@ func (m *Manager) GetResourcesForSandbox(ctx context.Context, sandboxID string) 
 **Ownership Rules:**
 
 | Resource State | Owned By | Tracked By | SandboxID |
-|----------------|----------|------------|-----------|
-| Provisioned    | Pool     | Pool       | nil       |
-| Ready          | Pool     | Pool       | nil       |
-| Allocated      | Sandbox  | Allocator  | set       |
-| Destroyed      | None     | Repository | nil       |
+| ---------------- | ---------- | ------------ | ----------- |
+| Provisioned | Pool | Pool | nil |
+| Ready | Pool | Pool | nil |
+| Allocated | Sandbox | Allocator | set |
+| Destroyed | None | Repository | nil |
 
 **Database Schema (no changes needed):**
+
 ```sql
 CREATE TABLE resources (
     id TEXT PRIMARY KEY,
@@ -304,6 +313,7 @@ boxy sandbox destroy <id>
 ```
 
 **Internally:**
+
 - `boxy pool stats` → calls `pool.GetStats()` → queries Allocator for resource counts
 - `boxy sandbox create` → calls `sandboxManager.Create()` → calls `allocator.AllocateFromPool()`
 
@@ -318,7 +328,7 @@ boxy sandbox destroy <id>
 **Current model:** All resources in pool are "ready" (running)
 **New model:** Resources can be cold (stopped) or warm (running/preheated)
 
-```
+```text
 Pool Resources State Distribution:
 ┌────────────────────────────────────────┐
 │  min_ready: 10  (total resources)     │
@@ -351,7 +361,8 @@ const (
 ```
 
 **State Transitions:**
-```
+
+```text
 Provisioned → Warming → Ready → Allocating → Allocated → Destroyed
                 ↑
                 └────── Recycling ────────┘
@@ -397,6 +408,7 @@ type PreheatingConfig struct {
 ```
 
 **Example YAML:**
+
 ```yaml
 pools:
   - name: win-test-vms
@@ -698,10 +710,12 @@ func (m *Manager) provisionOne(ctx context.Context) error {
 **Decision:** Use Option A (two hooks)
 
 **Old naming:**
+
 - `after_provision` → Finalization
 - `before_allocate` → Personalization
 
 **New naming:**
+
 - `on_provision` → Runs after provider creates resource (cold state)
 - `on_allocate` → Runs when user requests resource
 
@@ -746,6 +760,7 @@ hooks:
 **New:** "Preheated resources" vs "Cold resources"
 
 **Rationale:**
+
 - Pools don't have temperature, resources do
 - "Preheated" is clearer than "warm" (matches oven metaphor)
 - "Cold" means stopped/provisioned but not running
@@ -1155,6 +1170,7 @@ boxy pool scale win-test-vms --min-ready 10 --persist
 **User Correction**: "Distributed architecture is v1!!! We need agents now!!"
 
 **Rationale:**
+
 - Hyper-V is PRIMARY backend for production use
 - Hyper-V only runs on Windows hosts
 - Boxy server typically runs on Linux for flexibility
@@ -1166,7 +1182,7 @@ boxy pool scale win-test-vms --min-ready 10 --persist
 
 See [ADR-004: Distributed Agent Architecture](decisions/adr-004-distributed-agent-architecture.md) for complete specification.
 
-```
+```text
 ┌─────────────────────────────────────────┐
 │     Boxy Server (Linux)                  │
 │  ┌────────────────────────────────────┐ │
@@ -1185,6 +1201,7 @@ See [ADR-004: Distributed Agent Architecture](decisions/adr-004-distributed-agen
 ```
 
 **Key Points:**
+
 - **Single binary**: `boxy` runs as server, agent, or both
 - **Transparent proxying**: RemoteProvider implements same Provider interface
 - **gRPC**: Efficient, type-safe RPC with Protocol Buffers
@@ -1404,6 +1421,7 @@ message ProvisionResponse {
 ### 7.6 Implementation Tasks for v1
 
 **Phase 1: Foundation**
+
 - [ ] Define Protocol Buffers schema (provider.proto)
 - [ ] Generate gRPC code (make protobuf)
 - [ ] Create RemoteProvider implementation
@@ -1411,6 +1429,7 @@ message ProvisionResponse {
 - [ ] Unit tests for serialization/deserialization
 
 **Phase 2: Security**
+
 - [ ] Implement CA initialization (`boxy admin init-ca`)
 - [ ] Implement certificate issuance (`boxy admin issue-cert`)
 - [ ] mTLS configuration for server
@@ -1419,6 +1438,7 @@ message ProvisionResponse {
 - [ ] Integration tests for mTLS
 
 **Phase 3: Agent Mode**
+
 - [ ] Add `boxy agent serve` command
 - [ ] Agent registration on startup
 - [ ] Heartbeat mechanism
@@ -1427,6 +1447,7 @@ message ProvisionResponse {
 - [ ] E2E tests with real agents
 
 **Phase 4: Server Integration**
+
 - [ ] Update configuration schema (backend_agent field)
 - [ ] Agent registry in server
 - [ ] Remote provider factory
@@ -1435,6 +1456,7 @@ message ProvisionResponse {
 - [ ] Integration tests
 
 **Phase 5: Testing**
+
 - [ ] Unit tests for RemoteProvider
 - [ ] Unit tests for Agent Server
 - [ ] Integration tests with Docker (testable on Linux)
@@ -1446,6 +1468,7 @@ message ProvisionResponse {
 **Challenge**: Hyper-V only runs on Windows, but CI runs on Linux.
 
 **Solution**:
+
 ```go
 // Stub Hyper-V provider for testing on Linux
 type StubHyperVProvider struct {
@@ -1469,6 +1492,7 @@ func (s *StubHyperVProvider) Provision(ctx context.Context, spec resource.Resour
 ```
 
 **Testing Layers**:
+
 1. **Unit tests**: Test RemoteProvider, Agent Server with mocks (Linux OK)
 2. **Integration tests**: Test with Docker provider via agent (Linux OK)
 3. **E2E tests**: Test with stubbed Hyper-V provider (Linux OK)
@@ -1483,6 +1507,7 @@ func (s *StubHyperVProvider) Provision(ctx context.Context, spec resource.Resour
 ### 8.1 Why We Need This
 
 **Problems without formal schema:**
+
 - Users don't know what fields are valid
 - Typos in config cause runtime errors
 - No IDE autocomplete/validation
@@ -1938,6 +1963,7 @@ storage:
 ```
 
 **Benefits**:
+
 - Autocomplete for all fields
 - Inline documentation
 - Real-time validation
@@ -1948,6 +1974,7 @@ storage:
 ## 9. CLI/API Schema Documentation
 
 **Purpose**: Document all CLI commands and API endpoints for:
+
 - User reference
 - Regression testing
 - Interface approval before implementation
@@ -1958,7 +1985,7 @@ storage:
 
 #### Complete CLI Tree
 
-```
+```text
 boxy
 ├── init                      # Initialize configuration
 ├── serve                     # Start Boxy service
@@ -2144,7 +2171,7 @@ boxy
 
 #### API Structure
 
-```
+```text
 Base URL: https://boxy-server:8443/api/v1
 
 Authentication:
@@ -2155,7 +2182,7 @@ Content-Type: application/json
 
 #### Pool Endpoints
 
-```
+```text
 GET /api/v1/pools
   Description: List all pools
   Query Parameters:
@@ -2207,7 +2234,7 @@ PATCH /api/v1/pools/{pool-name}/scale
 
 #### Sandbox Endpoints
 
-```
+```text
 POST /api/v1/sandboxes
   Description: Create sandbox
   Request Body:
@@ -2312,7 +2339,7 @@ PATCH /api/v1/sandboxes/{sandbox-id}/extend
 
 #### Common Error Codes
 
-```
+```text
 400 Bad Request - Invalid input
 401 Unauthorized - Missing or invalid API token
 403 Forbidden - Quota exceeded, permission denied
@@ -2364,12 +2391,14 @@ logging:
 ```
 
 **Log Levels**:
+
 - `debug`: All operations, including internal state transitions
 - `info`: Normal operations (pool replenishment, sandbox creation)
 - `warn`: Unexpected but handled situations (retry attempts, degraded state)
 - `error`: Failed operations requiring attention
 
 **Key Log Fields**:
+
 ```json
 {
   "level": "error",
@@ -2388,6 +2417,7 @@ logging:
 **1. Pool Not Replenishing**
 
 *Symptoms*:
+
 ```bash
 $ boxy pool stats win-server-2022
 Ready: 0
@@ -2396,6 +2426,7 @@ Status: DEGRADED
 ```
 
 *Debugging Steps*:
+
 ```bash
 # 1. Check pool worker status
 boxy pool inspect win-server-2022 | grep worker
@@ -2412,12 +2443,14 @@ grep "provision" ~/.config/boxy/boxy.log | grep error
 ```
 
 *Common Causes*:
+
 - Provider backend unavailable (Hyper-V service stopped, Docker daemon not running)
 - Insufficient host resources (out of memory, disk space)
 - Network connectivity issues (agent unreachable)
 - Hook execution failures
 
 *Solutions*:
+
 - Verify backend service running: `Get-Service vmms` (Hyper-V) / `systemctl status docker`
 - Check host resources: `free -h`, `df -h`
 - Test agent connectivity: `telnet windows-host-01 8444`
@@ -2426,6 +2459,7 @@ grep "provision" ~/.config/boxy/boxy.log | grep error
 **2. Sandbox Stuck in "Creating" State**
 
 *Symptoms*:
+
 ```bash
 $ boxy sandbox ls
 ID          STATE       RESOURCES
@@ -2433,6 +2467,7 @@ sb-abc123   creating    0/3
 ```
 
 *Debugging Steps*:
+
 ```bash
 # 1. Inspect sandbox details
 boxy sandbox inspect sb-abc123
@@ -2448,11 +2483,13 @@ boxy pool ls
 ```
 
 *Common Causes*:
+
 - No resources available in requested pool
 - Allocation timeout (on_allocate hooks taking too long)
 - Database connection issues
 
 *Solutions*:
+
 - Increase pool size or wait for replenishment
 - Optimize on_allocate hooks (should be < 2 minutes)
 - Check database connectivity
@@ -2460,11 +2497,13 @@ boxy pool ls
 **3. Agent Connection Failures**
 
 *Symptoms*:
-```
+
+```text
 ERROR: failed to connect to agent windows-host-01: connection refused
 ```
 
 *Debugging Steps*:
+
 ```bash
 # 1. Test network connectivity
 ping windows-host-01.internal
@@ -2485,12 +2524,14 @@ boxy admin verify-cert \
 ```
 
 *Common Causes*:
+
 - Agent not running on Windows host
 - Firewall blocking port 8444
 - Certificate expired or invalid
 - Clock skew between server and agent
 
 *Solutions*:
+
 - Start agent: `boxy agent serve ...`
 - Allow port 8444 in Windows Firewall
 - Re-issue certificate: `boxy admin issue-cert ...`
@@ -2499,12 +2540,14 @@ boxy admin verify-cert \
 **4. Hook Execution Failures**
 
 *Symptoms*:
-```
+
+```text
 WARN: hook execution failed: timeout after 5m
 ERROR: on_allocate hook failed: exit code 1
 ```
 
 *Debugging Steps*:
+
 ```bash
 # 1. Check hook configuration
 cat ~/.config/boxy/boxy.yaml | grep -A 10 "hooks:"
@@ -2522,12 +2565,14 @@ boxy pool resources <pool> --format json | jq '.[] | select(.metadata.hook_error
 ```
 
 *Common Causes*:
+
 - Network issues in hook (downloading packages)
 - Insufficient permissions
 - Syntax errors in script
 - Missing dependencies
 
 *Solutions*:
+
 - Add retry logic to hooks
 - Test hooks in isolation before adding to config
 - Increase timeout for slow operations
@@ -2610,6 +2655,7 @@ tcpdump -i eth0 -n port 8444 -w /tmp/agent-traffic.pcap
 ### 10.2 Debugging Checklist
 
 **Before Opening Issue**:
+
 - [ ] Check logs at debug level
 - [ ] Run `boxy admin health-check`
 - [ ] Verify backend services running (Docker, Hyper-V)
@@ -2619,6 +2665,7 @@ tcpdump -i eth0 -n port 8444 -w /tmp/agent-traffic.pcap
 - [ ] Check GitHub issues for similar problems
 
 **Information to Include in Issue**:
+
 - Boxy version: `boxy version`
 - OS and version
 - Backend provider (Docker, Hyper-V, etc.)
@@ -2629,18 +2676,23 @@ tcpdump -i eth0 -n port 8444 -w /tmp/agent-traffic.pcap
 ### 10.3 FAQ
 
 **Q: Why is my pool not warming resources?**
+
 A: Check `preheating.enabled: true` and `preheating.count > 0` in config.
 
 **Q: Can I see hook output?**
+
 A: Hook output is captured in resource metadata. Use `boxy pool resources <pool> --format json` and check `.metadata.hook_output`.
 
 **Q: How do I reset a stuck pool?**
+
 A: Stop Boxy, manually clean up resources in provider, restart Boxy. Pool will reprovision.
 
 **Q: Agent certificate expired, how to renew?**
+
 A: Re-issue cert with `boxy admin issue-cert`, restart agent with new cert.
 
 **Q: How to completely reset Boxy?**
+
 A: Stop service, delete database (`rm ~/.config/boxy/boxy.db`), restart. WARNING: Destroys all state.
 
 ---
@@ -2652,12 +2704,14 @@ A: Stop service, delete database (`rm ~/.config/boxy/boxy.db`), restart. WARNING
 ### 11.1 Problem with Current Approach
 
 **Current (WRONG)**:
+
 ```bash
 ~/.config/boxy/boxy.yaml    # System-wide config in home directory
 ~/.config/boxy/boxy.db      # Database in home directory
 ```
 
 **Issues:**
+
 - ❌ Not standard for service-oriented tools
 - ❌ Difficult to manage multiple Boxy instances
 - ❌ Not clear which config is being used when running from different directories
@@ -2667,12 +2721,14 @@ A: Stop service, delete database (`rm ~/.config/boxy/boxy.db`), restart. WARNING
 ### 11.2 New Approach (CORRECT)
 
 **v1 Standard**:
+
 ```bash
 ./boxy.yaml                 # Config in current directory
 ./boxy.db                   # Database in current directory (or configured path)
 ```
 
 **Benefits:**
+
 - ✅ Standard pattern for modern tools (docker-compose.yml, k8s manifests, etc.)
 - ✅ Clear which config is active (the one in current directory)
 - ✅ Easy to manage multiple Boxy deployments (different directories)
@@ -2684,6 +2740,7 @@ A: Stop service, delete database (`rm ~/.config/boxy/boxy.db`), restart. WARNING
 **Recommended**: `./boxy.yaml`
 
 **Alternatives considered:**
+
 - `./boxy.yml` - Shorter but less common than `.yaml`
 - `./.boxy.yaml` - Hidden file, but adds confusion
 - `./boxy.conf` - Not standard for YAML configs
@@ -2723,6 +2780,7 @@ func LoadConfig() (*Config, error) {
 ```
 
 **Priority order:**
+
 1. `--config` flag (highest priority)
 2. `BOXY_CONFIG` environment variable
 3. `./boxy.yaml` (current directory)
@@ -2742,6 +2800,7 @@ storage:
 ```
 
 **Production recommendations:**
+
 - Development: `./boxy.db` (current directory)
 - Production: `/var/lib/boxy/boxy.db` (system location)
 - Docker: `/data/boxy.db` (mounted volume)
@@ -2785,6 +2844,7 @@ boxy serve
 ### 11.8 Documentation Updates Required
 
 **Files to update:**
+
 - README.md - All config path examples
 - docs/V1_IMPLEMENTATION_PLAN.md - All config examples
 - docs/CONFIG_REFERENCE.md - Config location documentation
@@ -2793,6 +2853,7 @@ boxy serve
 - All code examples in docs/
 
 **Search and replace:**
+
 ```bash
 # Find all instances
 grep -r "~/.config/boxy" docs/
@@ -2811,12 +2872,14 @@ grep -r ".config/boxy" internal/
 ### 12.1 Why Docker Support is Essential
 
 **User needs:**
+
 - Run Boxy server in containerized environment
 - Easy deployment without Go toolchain
 - Consistent environment across dev/staging/prod
 - Integration with existing Docker-based infrastructure
 
 **Use cases:**
+
 - Development: Run Boxy server in Docker, manage local Docker containers
 - Production: Deploy Boxy server as container, manage remote agents
 - CI/CD: Spin up Boxy in pipeline, create ephemeral test environments
@@ -2870,6 +2933,7 @@ CMD ["serve", "--config", "/data/boxy.yaml"]
 ```
 
 **Build and run:**
+
 ```bash
 # Build image
 docker build -t boxy:v1 .
@@ -3021,6 +3085,7 @@ volumes:
 ### 12.4 Docker-Specific Configuration
 
 **Environment variable overrides:**
+
 ```bash
 # Override config values with environment variables
 docker run -d \
@@ -3031,6 +3096,7 @@ docker run -d \
 ```
 
 **Implementation:**
+
 ```go
 // internal/config/loader.go
 func LoadConfig() (*Config, error) {
@@ -3052,6 +3118,7 @@ func LoadConfig() (*Config, error) {
 ### 12.5 Volume Mounts and Persistence
 
 **Critical volumes:**
+
 ```bash
 docker run -d \
   -v $(pwd)/boxy.yaml:/data/boxy.yaml:ro \      # Config (read-only)
@@ -3064,6 +3131,7 @@ docker run -d \
 ### 12.6 Docker Image Distribution
 
 **GitHub Container Registry:**
+
 ```bash
 # Build and tag
 docker build -t ghcr.io/geogboe/boxy:v1.0.0 .
@@ -3078,6 +3146,7 @@ docker pull ghcr.io/geogboe/boxy:latest
 ```
 
 **Docker Hub (optional):**
+
 ```bash
 docker build -t geogboe/boxy:v1.0.0 .
 docker push geogboe/boxy:v1.0.0
@@ -3088,6 +3157,7 @@ docker push geogboe/boxy:v1.0.0
 **Create**: `docs/DOCKER_DEPLOYMENT.md`
 
 Contents:
+
 - Building Docker images
 - Running Boxy in Docker
 - Docker Compose examples
@@ -3100,6 +3170,7 @@ Contents:
 **Create**: `examples/docker-compose/README.md`
 
 Contents:
+
 - Overview of examples
 - Quick start for each example
 - Customization guide
@@ -3152,6 +3223,7 @@ jobs:
 ### 12.9 Testing Docker Deployment
 
 **Add to test suite:**
+
 ```go
 // tests/e2e/docker_test.go
 func TestE2E_DockerDeployment(t *testing.T) {
@@ -3224,10 +3296,12 @@ pools:
 ```
 
 ### Allocator
+
 An **internal orchestration component** that manages resource movement between pools and sandboxes.
 
 **Not user-facing** - users interact with Pools and Sandboxes, Allocator works behind the scenes.
-```
+
+```text
 
 **Section to add: "Hook System"**
 
@@ -3252,6 +3326,7 @@ hooks:
       shell: powershell
       inline: |
         # Validate VM
+
         Test-Connection localhost
 
   on_allocate:
@@ -3259,9 +3334,11 @@ hooks:
       shell: powershell
       inline: |
         # Create user
+
         New-LocalUser -Name "${username}" -Password "${password}"
 ```
-```
+
+```text
 
 ### 7.3 ADR-005: Pool/Sandbox Peer Architecture
 
@@ -3286,6 +3363,7 @@ Original architecture had tight coupling:
 Refactor to peer architecture with internal Allocator:
 
 ```
+
 ┌──────────────┐          ┌──────────────┐
 │    Pool      │          │   Sandbox    │
 │              │          │              │
@@ -3301,7 +3379,8 @@ Refactor to peer architecture with internal Allocator:
          │ Orchestrates resource│
          │ movement             │
          └──────────────────────┘
-```
+
+```text
 
 ## Consequences
 
@@ -3363,7 +3442,7 @@ See docs/V1_IMPLEMENTATION_PLAN.md for detailed implementation guide.
 
 ---
 
-## 8. Testing Strategy
+## 14. Testing Strategy
 
 ### 8.1 Unit Tests
 
@@ -3453,13 +3532,14 @@ func TestE2E_CIRunnerUseCase(t *testing.T) {
 
 ---
 
-## 9. Migration Guide
+## 15. Migration Guide
 
 ### 9.1 Configuration Migration
 
 **No breaking changes to YAML!**
 
 **Old config still works:**
+
 ```yaml
 pools:
   - name: ubuntu-containers
@@ -3472,6 +3552,7 @@ pools:
 ```
 
 **New config recommended:**
+
 ```yaml
 pools:
   - name: ubuntu-containers
@@ -3491,6 +3572,7 @@ pools:
 ```
 
 **Backwards compatibility:**
+
 - `after_provision` → logs warning, maps to `on_provision`
 - `before_allocate` → logs warning, maps to `on_allocate`
 - Missing `preheating` config → defaults to preheating disabled
@@ -3547,6 +3629,7 @@ boxy admin migrate-v1
 **Internal refactor only - no API changes!**
 
 Existing CLI commands work unchanged:
+
 ```bash
 boxy sandbox create -p pool:1 -d 1h  # Works exactly the same
 ```
@@ -3560,12 +3643,14 @@ boxy sandbox create -p pool:1 -d 1h  # Works exactly the same
 User mentioned: "lots of components might need automatic retry"
 
 **Components that could benefit:**
+
 - Provider.Provision() - retry on transient failures
 - Provider.Update() (warmup) - retry if resource slow to start
 - Hook execution - retry on network errors
 - Recycling - retry if destroy fails
 
 **Proposed for v2:**
+
 ```yaml
 pools:
   - name: win-test-vms
@@ -3582,6 +3667,7 @@ pools:
 ```
 
 **Alternative: on_error hook (user suggestion):**
+
 ```yaml
 hooks:
   on_error:
@@ -3612,6 +3698,7 @@ pools:
 ### 10.3 Distributed Agents (v2)
 
 **ADR-004 stays**, but timeline shifts to v2:
+
 - v1: Local providers only (Docker, Hyper-V on same host)
 - v2: Remote agents via gRPC/mTLS
 
@@ -3627,9 +3714,10 @@ pools:
 
 ---
 
-## Implementation Checklist
+## 16. Implementation Checklist
 
 ### Phase 1: Architecture Refactor
+
 - [ ] Create Allocator component (`internal/core/allocator/`)
 - [ ] Refactor Pool to remove Allocate/Release methods
 - [ ] Refactor Sandbox to use Allocator
@@ -3638,6 +3726,7 @@ pools:
 - [ ] Add integration tests for refactored flow
 
 ### Phase 2: Preheating & Recycling
+
 - [ ] Add new resource states (Provisioned, Warming, Recycling)
 - [ ] Update PoolConfig with PreheatingConfig
 - [ ] Implement preheating worker
@@ -3647,12 +3736,14 @@ pools:
 - [ ] Add recycling tests
 
 ### Phase 3: Terminology Updates
+
 - [ ] Rename hooks: after_provision → on_provision, before_allocate → on_allocate
 - [ ] Add backwards compatibility for old names
 - [ ] Update all example configs
 - [ ] Update documentation
 
 ### Phase 4: Multi-Tenancy
+
 - [ ] Create User model and repository
 - [ ] Create Team model and repository (optional)
 - [ ] Add database migrations
@@ -3663,12 +3754,14 @@ pools:
 - [ ] Add user management CLI commands
 
 ### Phase 5: Base Image Validation
+
 - [ ] Add validation config to PoolConfig
 - [ ] Implement validation logic
 - [ ] Add `boxy admin validate-image` command
 - [ ] Create validation tests
 
 ### Phase 6: Pool CLI Commands
+
 - [ ] Add pool lifecycle commands (start, stop, etc.)
 - [ ] Add pool management commands (scale, drain, etc.)
 - [ ] Add pool inspection commands (inspect, resources)
@@ -3676,6 +3769,7 @@ pools:
 - [ ] Update serve command to support new pool model
 
 ### Phase 7: Documentation
+
 - [ ] Update CLAUDE.md
 - [ ] Update MVP_DESIGN.md
 - [ ] Create ADR-005
@@ -3684,6 +3778,7 @@ pools:
 - [ ] Review all docs for consistency
 
 ### Phase 8: Testing
+
 - [ ] Write unit tests for all new components
 - [ ] Write integration tests (Docker)
 - [ ] Write E2E tests for use cases
@@ -3691,11 +3786,13 @@ pools:
 - [ ] Verify no regressions
 
 ### Phase 9: Migration
+
 - [ ] Create database migration tool
 - [ ] Test migration on sample database
 - [ ] Create migration documentation
 
 ### Phase 10: Final Review
+
 - [ ] Code review (if team)
 - [ ] Security audit
 - [ ] Performance testing
@@ -3704,7 +3801,7 @@ pools:
 
 ---
 
-## Success Criteria
+## 17. Success Criteria
 
 v1 is complete when:
 
@@ -3726,16 +3823,19 @@ v1 is complete when:
 **Note:** This is a significant refactor. Estimate 2-3 weeks for full implementation and testing.
 
 **Week 1:**
+
 - Architecture refactor
 - Preheating & recycling
 - Core functionality
 
 **Week 2:**
+
 - Multi-tenancy
 - Pool CLI commands
 - Documentation updates
 
 **Week 3:**
+
 - Testing
 - Migration
 - Final review & polish

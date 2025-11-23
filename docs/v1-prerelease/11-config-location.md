@@ -33,11 +33,12 @@ related_docs:
 
 ## Problem with Current Approach
 
-```
+```text
 ~/.config/boxy/boxy.yaml    ❌ WRONG
 ```
 
 **Issues:**
+
 - Multiple projects can't have different configs
 - Service deployments (systemd, Docker) awkward
 - Config tied to user account, not project
@@ -45,6 +46,7 @@ related_docs:
 - Hard to version control config
 
 **Example failure case:**
+
 ```bash
 # User wants two Boxy instances with different configs
 cd /opt/boxy-prod
@@ -58,11 +60,12 @@ boxy serve    # SAME config! ❌
 
 ## Correct Approach
 
-```
+```text
 ./boxy.yaml                 ✅ CORRECT
 ```
 
 **Benefits:**
+
 - Project-specific: Each directory can have its own config
 - Version control: Config lives with project
 - Docker-friendly: Mount config easily
@@ -70,6 +73,7 @@ boxy serve    # SAME config! ❌
 - Standard practice: Matches docker-compose.yml, k8s manifests, etc.
 
 **Example success case:**
+
 ```bash
 # Two Boxy instances with different configs
 cd /opt/boxy-prod
@@ -88,16 +92,19 @@ boxy serve       # Uses ./boxy.yaml ✅
 **Priority order:**
 
 1. **Explicit flag** (highest priority)
+
    ```bash
    boxy serve --config /path/to/custom.yaml
    ```
 
 2. **Current directory** (project-specific)
+
    ```bash
    ./boxy.yaml
    ```
 
 3. **Error if not found**
+
    ```bash
    Error: config file not found
    Searched: ./boxy.yaml
@@ -208,6 +215,7 @@ storage:
 ```
 
 **Implementation:**
+
 ```go
 func resolveDBPath(configPath, dbPath string) string {
     if filepath.IsAbs(dbPath) {
@@ -332,33 +340,39 @@ WantedBy=multi-user.target
 ### Update Getting Started
 
 **Old:**
+
 ```markdown
 1. Create config at `~/.config/boxy/boxy.yaml`
 2. Run `boxy serve`
 ```
 
 **New:**
+
 ```markdown
 1. Create project directory
    ```bash
    mkdir /opt/boxy && cd /opt/boxy
    ```
 
-2. Create config file
+1. Create config file
+
    ```bash
    cat > boxy.yaml <<EOF
    storage:
      type: sqlite
      path: ./data/boxy.db
    # ...
+
    EOF
    ```
 
-3. Run server
+2. Run server
+
    ```bash
    boxy serve  # Uses ./boxy.yaml
    ```
-```
+
+```text
 
 ### Update QUICKSTART.md
 
@@ -367,18 +381,23 @@ WantedBy=multi-user.target
 
 ```bash
 # 1. Create project directory
+
 mkdir my-boxy-project && cd my-boxy-project
 
 # 2. Initialize config
+
 boxy init
 
 # 3. Edit config
+
 vim boxy.yaml
 
 # 4. Start server
+
 boxy serve
 ```
-```
+
+```text
 
 ---
 
@@ -454,11 +473,13 @@ func TestConfigLoading_NotFound(t *testing.T) {
 ### Breaking Change
 
 **Old behavior:**
+
 ```bash
 boxy serve    # Looked for ~/.config/boxy/boxy.yaml
 ```
 
 **New behavior:**
+
 ```bash
 boxy serve    # Looks for ./boxy.yaml (current directory)
 ```
@@ -466,6 +487,7 @@ boxy serve    # Looks for ./boxy.yaml (current directory)
 ### Migration Required
 
 Users must:
+
 1. Copy config from `~/.config/boxy/` to project directory
 2. Update paths to be project-relative
 3. Update deployment scripts (systemd, Docker)

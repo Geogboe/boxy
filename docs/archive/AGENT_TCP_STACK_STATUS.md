@@ -64,6 +64,7 @@
 **Answer: NO - MVP can ship without distributed agents**
 
 **Rationale:**
+
 - MVP requirement is single-host deployment
 - Docker provider works on single host
 - Mock provider demonstrates hook framework
@@ -73,6 +74,7 @@
 ### Current MVP Capabilities (Single Host)
 
 ✅ **Works Today:**
+
 - Pool management with warm pools
 - Sandbox orchestration
 - Hook-based provisioning (finalization + personalization)
@@ -82,6 +84,7 @@
 - CLI and service commands
 
 ❌ **Requires Distributed Agents (Phase 2):**
+
 - Multi-host deployments
 - Mixed Windows/Linux environments
 - Hyper-V management from Linux control plane
@@ -92,6 +95,7 @@
 ## Implementation Timeline
 
 ### Phase 1 (MVP) - ✅ COMPLETE
+
 - [x] Core pool management
 - [x] Sandbox orchestration
 - [x] Hook framework
@@ -103,19 +107,23 @@
 - [x] Encryption
 
 ### Phase 2 (Distributed Agents) - 📋 DOCUMENTED
+
 Estimated effort: **2-3 weeks**
 
 Week 1:
+
 - [ ] RemoteProvider implementation
 - [ ] Agent server implementation
 - [ ] Certificate management commands
 
 Week 2:
+
 - [ ] Agent CLI commands
 - [ ] Integration tests
 - [ ] Certificate rotation
 
 Week 3:
+
 - [ ] E2E distributed tests
 - [ ] Security audit
 - [ ] Production deployment guide
@@ -140,6 +148,7 @@ Week 3:
 **Status**: Expected limitation, not a regression
 
 **Evidence**:
+
 - Docker binaries downloaded and working (version 27.5.1)
 - dockerd fails with `iptables: Protocol not supported`
 - Same issue with Podman earlier
@@ -150,6 +159,7 @@ Week 3:
 ### Ready for Production ✅
 
 **Single-host deployment on machine with Docker:**
+
 1. Install Boxy binary
 2. Create configuration file (see `examples/`)
 3. Run `boxy serve --config boxy.yaml`
@@ -157,6 +167,7 @@ Week 3:
 5. Create sandboxes via CLI or API
 
 **Works for:**
+
 - Linux host with Docker
 - Windows host with Hyper-V
 - Single datacenter/region
@@ -166,6 +177,7 @@ Week 3:
 ### Not Ready for Production ❌
 
 **Multi-host deployment:**
+
 - Requires Phase 2 implementation
 - No agent system available
 - No certificate management
@@ -176,6 +188,7 @@ Week 3:
 ### Excellent Documentation ✅
 
 All distributed agent architecture is **thoroughly documented**:
+
 - Architecture decisions (ADR-004)
 - Implementation guide with code examples
 - Security guide with certificate procedures
@@ -234,6 +247,7 @@ All distributed agent architecture is **thoroughly documented**:
 **Regression Risk**: Zero - distributed agents are additive features.
 
 **Next Steps**:
+
 - Ship MVP with single-host support
 - Plan Phase 2 implementation when multi-host capability needed
 - Follow implementation guide in `docs/architecture/`

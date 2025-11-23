@@ -33,7 +33,7 @@ Refactor Boxy architecture from tight Pool→Sandbox coupling to **peer architec
 
 ### Current Problem
 
-```
+```text
 ┌──────────────┐
 │   Sandbox    │ ← Depends on Pool
 │              │
@@ -51,6 +51,7 @@ Refactor Boxy architecture from tight Pool→Sandbox coupling to **peer architec
 ```
 
 **Issues:**
+
 - Tight coupling between Sandbox and Pool
 - Dual ownership of resources (both Pool and Sandbox track them)
 - Unclear state management
@@ -58,7 +59,7 @@ Refactor Boxy architecture from tight Pool→Sandbox coupling to **peer architec
 
 ### New Solution
 
-```
+```text
 User-Facing Components:
 ┌──────────────┐          ┌──────────────┐
 │    Pool      │          │   Sandbox    │
@@ -97,6 +98,7 @@ Internal Components:
 **File**: `internal/core/allocator/allocator.go`
 
 **Interface:**
+
 ```go
 package allocator
 
@@ -141,12 +143,14 @@ func (a *Allocator) GetResourcesForPool(
 ```
 
 **Key Points:**
+
 - ✅ **Internal only** - users never interact with Allocator directly
 - ✅ **Single source of truth** - all resource queries go through Allocator
 - ✅ **Clear ownership** - Pool owns unallocated, Sandbox owns allocated
 - ✅ **Clean separation** - Pool and Sandbox don't know about each other
 
 **Tests:**
+
 ```go
 // internal/core/allocator/allocator_test.go
 func TestAllocator_AllocateFromPool(t *testing.T)
@@ -165,16 +169,19 @@ func TestAllocator_GetResourcesForPool(t *testing.T)
 **Changes:**
 
 **REMOVE:**
+
 - `Allocate()` method - moves to Allocator
 - `Release()` method - moves to Allocator
 
 **KEEP:**
+
 - `Start()`, `Stop()` - Pool lifecycle
 - `provisionOne()` - Resource creation
 - `ensureMinReady()` - Pool replenishment
 - Workers (replenishment, health checking)
 
 **ADD:**
+
 ```go
 // Query methods for Allocator
 func (m *Manager) GetAvailableResources(ctx context.Context) ([]*resource.Resource, error) {
@@ -187,6 +194,7 @@ func (m *Manager) GetAllResources(ctx context.Context) ([]*resource.Resource, er
 ```
 
 **Pool now focuses on:**
+
 - ✅ Provisioning resources (via provider)
 - ✅ Running on_provision hooks
 - ✅ Maintaining min_ready count
@@ -195,11 +203,13 @@ func (m *Manager) GetAllResources(ctx context.Context) ([]*resource.Resource, er
 - ✅ Recycling (in 02-preheating-recycling)
 
 **Pool does NOT:**
+
 - ❌ Allocate resources to sandboxes (Allocator does this)
 - ❌ Track sandbox ownership (Allocator does this)
 - ❌ Run on_allocate hooks (Allocator does this)
 
 **Tests:**
+
 ```go
 // internal/core/pool/manager_test.go
 func TestPool_GetAvailableResources(t *testing.T)
@@ -216,6 +226,7 @@ func TestPool_ProvisionOne_WithoutAllocator(t *testing.T)
 **Changes:**
 
 **Constructor:**
+
 ```go
 // OLD
 func NewManager(
@@ -233,6 +244,7 @@ func NewManager(
 ```
 
 **Update methods:**
+
 ```go
 // allocateResourcesAsync now calls Allocator
 func (m *Manager) allocateResourcesAsync(sandboxID string, resourceReqs []ResourceRequest) {
@@ -257,17 +269,20 @@ func (m *Manager) GetResourcesForSandbox(ctx context.Context, sandboxID string) 
 ```
 
 **Sandbox now focuses on:**
+
 - ✅ Creating sandbox records
 - ✅ Tracking sandbox lifecycle (Creating, Ready, Expiring, Destroyed)
 - ✅ Auto-cleanup of expired sandboxes
 - ✅ Coordinating multi-resource allocation
 
 **Sandbox does NOT:**
+
 - ❌ Know about Pool internals
 - ❌ Track resources directly (queries Allocator)
 - ❌ Call Provider directly
 
 **Tests:**
+
 ```go
 // internal/core/sandbox/manager_test.go
 func TestSandbox_CreateWithAllocator(t *testing.T)
@@ -282,6 +297,7 @@ func TestSandbox_GetResourcesFromAllocator(t *testing.T)
 **File**: `cmd/boxy/commands/serve.go`
 
 **Changes:**
+
 ```go
 func (s *Service) Start() error {
     // 1. Load pool configs and create pool managers
@@ -311,13 +327,14 @@ func (s *Service) Start() error {
 ## Resource Ownership Model
 
 | Resource State | Owned By | Tracked By | SandboxID |
-|----------------|----------|------------|-----------|
-| Provisioned    | Pool     | Allocator  | nil       |
-| Ready          | Pool     | Allocator  | nil       |
-| Allocated      | Sandbox  | Allocator  | set       |
-| Destroyed      | None     | Repository | nil       |
+| ---------------- | ---------- | ------------ | ----------- |
+| Provisioned | Pool | Allocator | nil |
+| Ready | Pool | Allocator | nil |
+| Allocated | Sandbox | Allocator | set |
+| Destroyed | None | Repository | nil |
 
 **Database Schema (no changes needed):**
+
 ```sql
 CREATE TABLE resources (
     id TEXT PRIMARY KEY,
@@ -357,6 +374,7 @@ boxy sandbox destroy <id>
 ```
 
 **Internally:**
+
 - `boxy pool stats` → calls `pool.GetStats()` → queries Allocator for resource counts
 - `boxy sandbox create` → calls `sandboxManager.Create()` → calls `allocator.AllocateFromPool()`
 
@@ -367,12 +385,14 @@ boxy sandbox destroy <id>
 ## Testing Strategy
 
 ### Unit Tests
+
 - Test Allocator in isolation with mock pools and repository
 - Test Pool without Allocator (queries only)
 - Test Sandbox with mock Allocator
 - **Coverage target**: > 90% for Allocator
 
 ### Integration Tests
+
 ```go
 // tests/integration/allocator_test.go
 func TestIntegration_FullAllocationFlow(t *testing.T) {
@@ -386,6 +406,7 @@ func TestIntegration_FullAllocationFlow(t *testing.T) {
 ```
 
 ### E2E Tests
+
 ```go
 // tests/e2e/architecture_refactor_test.go
 func TestE2E_SandboxWithNewArchitecture(t *testing.T) {
@@ -398,6 +419,7 @@ func TestE2E_SandboxWithNewArchitecture(t *testing.T) {
 ```
 
 **Regression Tests:**
+
 - All existing E2E tests must still pass
 - No functionality lost from MVP
 
@@ -414,6 +436,7 @@ func TestE2E_SandboxWithNewArchitecture(t *testing.T) {
 3. **Configuration unchanged** - existing `boxy.yaml` works
 
 **Migration steps:**
+
 1. Update Boxy binary
 2. Restart service
 3. Done!

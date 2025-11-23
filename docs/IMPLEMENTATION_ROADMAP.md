@@ -5,11 +5,13 @@ This document provides a phased implementation plan for Boxy with hook-based pro
 ## Overview
 
 **Goal**:
+
 1. Core pool management with hook-based provisioning
 2. Distributed agent architecture for remote providers
 3. Token-based secure agent registration
 
 **Success Criteria**:
+
 - [ ] Server can manage multiple remote agents
 - [ ] Agents authenticate with mTLS
 - [ ] Providers transparently route to local or remote
@@ -22,17 +24,20 @@ This document provides a phased implementation plan for Boxy with hook-based pro
 ### Day 1-2: Provider Interface with Hooks
 
 **Tasks**:
+
 1. Update Provider interface with Execute() method
 2. Add ResourceUpdate for generic updates
 3. Create hook execution framework
 4. Add timeout and retry logic
 
 **Files**:
+
 - `pkg/provider/provider.go` - Provider interface
 - `internal/hooks/executor.go` - Hook execution engine
 - `internal/hooks/types.go` - Hook types and config
 
 **Tests**:
+
 - Unit tests for hook executor
 - Mock provider with Execute()
 - Timeout and retry behavior
@@ -40,17 +45,20 @@ This document provides a phased implementation plan for Boxy with hook-based pro
 ### Day 3-4: Pool Manager Hook Integration
 
 **Tasks**:
+
 1. Add hook execution to pool provisioning
 2. Implement async allocation with status tracking
 3. Add finalization (after_provision) hooks
 4. Add personalization (before_allocate) hooks
 
 **Files**:
+
 - `internal/core/pool/manager.go` - Add hook execution
 - `internal/core/pool/hooks.go` - Hook management
 - `internal/core/resource/types.go` - Add provisioning status
 
 **Tests**:
+
 - Integration tests with Docker provider
 - Test hook failures and retries
 - Test async allocation flow
@@ -58,16 +66,19 @@ This document provides a phased implementation plan for Boxy with hook-based pro
 ### Day 5: CLI Updates for Async
 
 **Tasks**:
+
 1. Update `boxy sandbox create` to wait for provisioning
 2. Add progress indicators
 3. Add `--no-wait` flag for async mode
 4. Add status polling
 
 **Files**:
+
 - `cmd/boxy/commands/sandbox.go`
 - Add spinner/progress library
 
 **Tests**:
+
 - Manual testing with Docker
 - Test wait vs no-wait modes
 
@@ -76,17 +87,20 @@ This document provides a phased implementation plan for Boxy with hook-based pro
 ### Day 1: Protocol Buffers & Code Generation
 
 **Tasks**:
+
 1. ✅ Define Protocol Buffers schema (completed - `pkg/provider/proto/provider.proto`)
 2. Generate Go code from proto files
 3. Add proto generation to build process
 4. Test proto serialization/deserialization
 
 **Deliverables**:
+
 - [ ] Generated gRPC code in `pkg/provider/proto/`
 - [ ] Makefile target: `make proto`
 - [ ] Unit tests for proto conversion functions
 
 **Implementation**:
+
 ```bash
 # Install protoc compiler and Go plugins
 go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
@@ -94,15 +108,16 @@ go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 
 # Add to Makefile
 proto:
-	protoc --go_out=. --go_opt=paths=source_relative \
-	       --go-grpc_out=. --go-grpc_opt=paths=source_relative \
-	       pkg/provider/proto/provider.proto
+ protoc --go_out=. --go_opt=paths=source_relative \
+        --go-grpc_out=. --go-grpc_opt=paths=source_relative \
+        pkg/provider/proto/provider.proto
 
 # Generate code
 make proto
 ```
 
 **Tests**:
+
 ```go
 // pkg/provider/proto/proto_test.go
 func TestResourceSpecConversion(t *testing.T) {
@@ -126,6 +141,7 @@ func TestResourceSpecConversion(t *testing.T) {
 ### Day 2: RemoteProvider Implementation
 
 **Tasks**:
+
 1. Create `pkg/provider/remote` package
 2. Implement RemoteProvider struct
 3. Implement Provider interface methods
@@ -133,12 +149,14 @@ func TestResourceSpecConversion(t *testing.T) {
 5. Implement proto conversion helpers
 
 **Deliverables**:
+
 - [ ] `pkg/provider/remote/remote.go`
 - [ ] `pkg/provider/remote/convert.go` (proto conversions)
 - [ ] `pkg/provider/remote/remote_test.go`
 
 **Code Structure**:
-```
+
+```text
 pkg/provider/remote/
 ├── remote.go       # RemoteProvider implementation
 ├── convert.go      # Proto <-> domain conversions
@@ -147,6 +165,7 @@ pkg/provider/remote/
 ```
 
 **Tests**:
+
 - Unit tests with mock gRPC client
 - Test all Provider interface methods
 - Test connection error handling
@@ -155,6 +174,7 @@ pkg/provider/remote/
 ### Day 3: Agent Server Implementation
 
 **Tasks**:
+
 1. Create `internal/agent` package
 2. Implement Agent Server (gRPC server)
 3. Implement ProviderService RPCs
@@ -162,12 +182,14 @@ pkg/provider/remote/
 5. Add logging and metrics
 
 **Deliverables**:
+
 - [ ] `internal/agent/server.go`
 - [ ] `internal/agent/authorization.go`
 - [ ] `internal/agent/server_test.go`
 
 **Code Structure**:
-```
+
+```text
 internal/agent/
 ├── server.go          # gRPC server implementation
 ├── authorization.go   # mTLS auth and provider authz
@@ -177,6 +199,7 @@ internal/agent/
 ```
 
 **Tests**:
+
 - Unit tests with embedded provider
 - Test each RPC method
 - Test authorization checks
@@ -187,6 +210,7 @@ internal/agent/
 ### Day 4: Certificate Management
 
 **Tasks**:
+
 1. Create `internal/cert` package
 2. Implement CA initialization
 3. Implement certificate issuance
@@ -194,13 +218,15 @@ internal/agent/
 5. Add certificate validation
 
 **Deliverables**:
+
 - [ ] `internal/cert/ca.go`
 - [ ] `internal/cert/cert.go`
 - [ ] `internal/cert/tls.go`
 - [ ] `internal/cert/cert_test.go`
 
 **Code Structure**:
-```
+
+```text
 internal/cert/
 ├── ca.go           # CA operations (init, issue, revoke)
 ├── cert.go         # Certificate helpers
@@ -210,6 +236,7 @@ internal/cert/
 ```
 
 **Tests**:
+
 - Test CA initialization
 - Test certificate issuance
 - Test certificate validation
@@ -218,6 +245,7 @@ internal/cert/
 ### Day 5: CLI Commands for Certificate Management
 
 **Tasks**:
+
 1. Add `boxy admin` command group
 2. Implement `boxy admin init-ca`
 3. Implement `boxy admin issue-cert`
@@ -225,12 +253,14 @@ internal/cert/
 5. Add validation and error handling
 
 **Deliverables**:
+
 - [ ] `cmd/boxy/commands/admin.go`
 - [ ] `cmd/boxy/commands/admin_init_ca.go`
 - [ ] `cmd/boxy/commands/admin_issue_cert.go`
 - [ ] Integration tests for CLI commands
 
 **CLI Commands**:
+
 ```bash
 # Initialize CA
 boxy admin init-ca --output /etc/boxy/ca
@@ -259,6 +289,7 @@ boxy admin verify-cert \
 ```
 
 **Tests**:
+
 - Integration tests for each command
 - Test certificate generation
 - Test validation logic
@@ -269,18 +300,21 @@ boxy admin verify-cert \
 ### Day 6: Agent Registration
 
 **Tasks**:
+
 1. Implement registration client
 2. Implement heartbeat mechanism
 3. Add agent discovery to server
 4. Create agent registry in server
 
 **Deliverables**:
+
 - [ ] `internal/agent/registration.go` (client-side)
 - [ ] `internal/server/agent_registry.go` (server-side)
 - [ ] `internal/server/agent_service.go` (AgentService impl)
 
 **Agent Lifecycle**:
-```
+
+```text
 Agent Start
     ↓
 Load Certificate
@@ -297,6 +331,7 @@ Ready to Serve Requests
 ```
 
 **Tests**:
+
 - Test registration flow
 - Test heartbeat mechanism
 - Test agent registry operations
@@ -305,6 +340,7 @@ Ready to Serve Requests
 ### Day 7: Agent Command Implementation
 
 **Tasks**:
+
 1. Add `boxy agent` command group
 2. Implement `boxy agent serve`
 3. Add agent configuration
@@ -312,11 +348,13 @@ Ready to Serve Requests
 5. Add status reporting
 
 **Deliverables**:
+
 - [ ] `cmd/boxy/commands/agent.go`
 - [ ] `cmd/boxy/commands/agent_serve.go`
 - [ ] Updated configuration schema for agents
 
 **Configuration**:
+
 ```yaml
 # boxy.yaml (agent mode)
 agent:
@@ -341,6 +379,7 @@ agent:
 ```
 
 **Tests**:
+
 - E2E test starting agent
 - Test registration on startup
 - Test graceful shutdown
@@ -349,6 +388,7 @@ agent:
 ### Day 8-9: Health Monitoring & Failover
 
 **Tasks**:
+
 1. Implement agent health tracking
 2. Add agent status endpoints
 3. Implement connection retry logic
@@ -356,11 +396,13 @@ agent:
 5. Implement basic failover (manual)
 
 **Deliverables**:
+
 - [ ] `internal/server/agent_health.go`
 - [ ] `pkg/provider/remote/reconnect.go`
 - [ ] `pkg/provider/remote/circuit_breaker.go`
 
 **Health Tracking**:
+
 ```go
 type AgentHealth struct {
     AgentID           string
@@ -373,6 +415,7 @@ type AgentHealth struct {
 ```
 
 **Tests**:
+
 - Test health status transitions
 - Test connection retry with backoff
 - Test circuit breaker opens/closes
@@ -381,6 +424,7 @@ type AgentHealth struct {
 ### Day 10: Integration Testing
 
 **Tasks**:
+
 1. Set up integration test environment
 2. Create Docker Compose for multi-node testing
 3. Write integration tests for full flow
@@ -388,11 +432,13 @@ type AgentHealth struct {
 5. Test failure scenarios
 
 **Deliverables**:
+
 - [ ] `tests/integration/agent_integration_test.go`
 - [ ] `tests/integration/docker-compose.yml`
 - [ ] Test documentation
 
 **Test Scenarios**:
+
 - Server + 1 agent (Docker provider)
 - Server + 2 agents (different providers)
 - Agent disconnect/reconnect
@@ -404,6 +450,7 @@ type AgentHealth struct {
 ### Day 11: Configuration Updates
 
 **Tasks**:
+
 1. Update configuration schema for agents
 2. Implement agent configuration parsing
 3. Add backend_agent field to pool config
@@ -411,11 +458,13 @@ type AgentHealth struct {
 5. Implement provider routing logic
 
 **Deliverables**:
+
 - [ ] Updated `internal/config/config.go`
 - [ ] `internal/config/agent_config.go`
 - [ ] Updated pool configuration
 
 **Configuration Schema**:
+
 ```yaml
 # Server configuration
 server:
@@ -461,6 +510,7 @@ pools:
 ```
 
 **Tests**:
+
 - Test configuration parsing
 - Test validation (agent exists, authorized providers)
 - Test provider routing
@@ -468,6 +518,7 @@ pools:
 ### Day 12: Provider Factory & Registry Updates
 
 **Tasks**:
+
 1. Create RemoteProvider factory
 2. Update provider registry initialization
 3. Implement provider routing
@@ -475,11 +526,13 @@ pools:
 5. Test mixed local/remote providers
 
 **Deliverables**:
+
 - [ ] `pkg/provider/factory.go`
 - [ ] Updated `cmd/boxy/commands/serve.go`
 - [ ] Integration tests
 
 **Provider Factory**:
+
 ```go
 func NewProvider(cfg ProviderConfig, agentRegistry *AgentRegistry) (provider.Provider, error) {
     if cfg.AgentID == "" {
@@ -504,6 +557,7 @@ func NewProvider(cfg ProviderConfig, agentRegistry *AgentRegistry) (provider.Pro
 ```
 
 **Tests**:
+
 - Test local provider creation
 - Test remote provider creation
 - Test provider routing based on config
@@ -514,6 +568,7 @@ func NewProvider(cfg ProviderConfig, agentRegistry *AgentRegistry) (provider.Pro
 ### Day 13: Metrics
 
 **Tasks**:
+
 1. Add Prometheus metrics
 2. Instrument gRPC calls
 3. Add agent health metrics
@@ -521,11 +576,13 @@ func NewProvider(cfg ProviderConfig, agentRegistry *AgentRegistry) (provider.Pro
 5. Create Grafana dashboards
 
 **Deliverables**:
+
 - [ ] `internal/metrics/metrics.go`
 - [ ] Prometheus metrics exported on `:9090/metrics`
 - [ ] Grafana dashboard JSON
 
 **Metrics**:
+
 ```go
 // gRPC metrics
 grpc_server_requests_total{agent_id, method, status}
@@ -543,6 +600,7 @@ boxy_provision_duration_seconds{agent_id, provider}
 ### Day 14: Distributed Tracing
 
 **Tasks**:
+
 1. Add OpenTelemetry support
 2. Instrument gRPC with tracing
 3. Add trace context propagation
@@ -550,11 +608,13 @@ boxy_provision_duration_seconds{agent_id, provider}
 5. Test distributed traces
 
 **Deliverables**:
+
 - [ ] `internal/tracing/tracing.go`
 - [ ] Jaeger integration
 - [ ] Example traces
 
 **Tracing**:
+
 - Trace provision request from CLI -> Server -> Agent -> Provider
 - Include span metadata (agent_id, provider, resource_id)
 - Link related operations (provision -> health check -> destroy)
@@ -562,6 +622,7 @@ boxy_provision_duration_seconds{agent_id, provider}
 ### Day 15: Logging & Audit
 
 **Tasks**:
+
 1. Implement structured audit logging
 2. Add correlation IDs to all requests
 3. Log all security-relevant events
@@ -569,11 +630,13 @@ boxy_provision_duration_seconds{agent_id, provider}
 5. Create log retention policy
 
 **Deliverables**:
+
 - [ ] `internal/audit/audit.go`
 - [ ] Log aggregation config (ELK or Loki)
 - [ ] Audit event documentation
 
 **Audit Events**:
+
 - Agent registration (success/failure)
 - Authentication failures
 - Authorization denials
@@ -586,6 +649,7 @@ boxy_provision_duration_seconds{agent_id, provider}
 ### Day 16-17: Resilience Features
 
 **Tasks**:
+
 1. Implement retry with exponential backoff
 2. Add timeout configuration
 3. Implement circuit breakers
@@ -594,11 +658,13 @@ boxy_provision_duration_seconds{agent_id, provider}
 6. Add request queuing
 
 **Deliverables**:
+
 - [ ] `pkg/provider/remote/resilience.go`
 - [ ] Configuration for timeouts/retries
 - [ ] Stress tests
 
 **Features**:
+
 ```go
 // Retry configuration
 type RetryConfig struct {
@@ -623,6 +689,7 @@ type RateLimitConfig struct {
 ```
 
 **Tests**:
+
 - Test retry on transient failures
 - Test timeout enforcement
 - Test circuit breaker state transitions
@@ -631,6 +698,7 @@ type RateLimitConfig struct {
 ### Day 18-19: Stress Testing
 
 **Tasks**:
+
 1. Create stress test scenarios
 2. Test with high concurrency
 3. Test with agent failures
@@ -638,11 +706,13 @@ type RateLimitConfig struct {
 5. Identify and fix bottlenecks
 
 **Deliverables**:
+
 - [ ] `tests/stress/distributed_stress_test.go`
 - [ ] Performance benchmarks
 - [ ] Scalability report
 
 **Test Scenarios**:
+
 - 100 concurrent provision requests
 - 10 agents with 1000 resources total
 - Agent restart during provisioning
@@ -650,6 +720,7 @@ type RateLimitConfig struct {
 - Resource leak detection
 
 **Benchmarks**:
+
 ```bash
 # Provision throughput
 go test -bench=BenchmarkProvision -benchtime=30s
@@ -664,6 +735,7 @@ go test -bench=BenchmarkLatency -cpuprofile=cpu.prof
 ### Day 20: Security Audit
 
 **Tasks**:
+
 1. Review authentication implementation
 2. Review authorization logic
 3. Test certificate validation
@@ -672,11 +744,13 @@ go test -bench=BenchmarkLatency -cpuprofile=cpu.prof
 6. Fix identified vulnerabilities
 
 **Deliverables**:
+
 - [ ] Security audit report
 - [ ] Vulnerability fixes
 - [ ] Updated security documentation
 
 **Audit Checklist**:
+
 - [ ] mTLS properly configured
 - [ ] Certificate validation works
 - [ ] Authorization checks enforced
@@ -691,6 +765,7 @@ go test -bench=BenchmarkLatency -cpuprofile=cpu.prof
 ### Day 21: Documentation & Deployment Guide
 
 **Tasks**:
+
 1. Update README with distributed mode
 2. Create deployment guide
 3. Create operations runbook
@@ -699,6 +774,7 @@ go test -bench=BenchmarkLatency -cpuprofile=cpu.prof
 6. Record demo video
 
 **Deliverables**:
+
 - [ ] Updated README.md
 - [ ] `docs/DEPLOYMENT.md`
 - [ ] `docs/OPERATIONS.md`
@@ -708,12 +784,14 @@ go test -bench=BenchmarkLatency -cpuprofile=cpu.prof
 ## Definition of Done
 
 ### Code Complete
+
 - [ ] All code written and reviewed
 - [ ] No TODOs or FIXMEs in main branch
 - [ ] Code follows Go best practices
 - [ ] All linters pass
 
 ### Testing Complete
+
 - [ ] All unit tests pass (>80% coverage)
 - [ ] All integration tests pass
 - [ ] All E2E tests pass
@@ -721,6 +799,7 @@ go test -bench=BenchmarkLatency -cpuprofile=cpu.prof
 - [ ] No memory leaks detected
 
 ### Security Complete
+
 - [ ] Security audit completed
 - [ ] No high/critical vulnerabilities
 - [ ] All credentials encrypted
@@ -728,6 +807,7 @@ go test -bench=BenchmarkLatency -cpuprofile=cpu.prof
 - [ ] Certificate management documented
 
 ### Documentation Complete
+
 - [ ] README updated
 - [ ] Architecture docs complete
 - [ ] API documentation complete
@@ -736,6 +816,7 @@ go test -bench=BenchmarkLatency -cpuprofile=cpu.prof
 - [ ] Troubleshooting guide created
 
 ### Production Ready
+
 - [ ] Metrics and monitoring configured
 - [ ] Distributed tracing working
 - [ ] Graceful shutdown implemented
@@ -748,7 +829,7 @@ go test -bench=BenchmarkLatency -cpuprofile=cpu.prof
 ### Technical Risks
 
 | Risk | Impact | Likelihood | Mitigation |
-|------|--------|------------|------------|
+| ------ | -------- | ------------ | ------------ |
 | gRPC compatibility issues | High | Low | Use stable gRPC versions, extensive testing |
 | Certificate management complexity | Medium | Medium | Comprehensive docs, automation |
 | Network latency issues | Medium | High | Connection pooling, caching, benchmarking |
@@ -758,7 +839,7 @@ go test -bench=BenchmarkLatency -cpuprofile=cpu.prof
 ### Operational Risks
 
 | Risk | Impact | Likelihood | Mitigation |
-|------|--------|------------|------------|
+| ------ | -------- | ------------ | ------------ |
 | Certificate expiration | High | Medium | Automated renewal, monitoring, alerts |
 | Agent misconfiguration | Medium | High | Validation, clear error messages, examples |
 | Network partition | High | Low | Circuit breakers, failover, monitoring |
@@ -767,24 +848,28 @@ go test -bench=BenchmarkLatency -cpuprofile=cpu.prof
 ## Success Metrics
 
 ### Performance
+
 - Provision latency <2s (local) or <5s (remote)
 - Support 1000+ active resources
 - Support 10+ agents
 - Handle 100 concurrent requests
 
 ### Reliability
+
 - 99.9% uptime
 - <0.1% failed provisions
 - Automatic recovery from transient failures
 - No data loss on agent crash
 
 ### Security
+
 - Zero credential leaks
 - All communication encrypted
 - All operations audited
 - Certificate rotation automated
 
 ### Usability
+
 - Clear documentation
 - Simple deployment process
 - Helpful error messages

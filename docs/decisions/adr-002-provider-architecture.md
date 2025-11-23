@@ -47,6 +47,7 @@ registry.Register("kvm", kvm.NewProvider())
 ### Why NOT Go's Plugin System?
 
 Go's built-in `plugin` package has significant limitations:
+
 - ❌ Requires exact Go version match between plugin and host
 - ❌ Doesn't work on Windows
 - ❌ Can't unload plugins
@@ -66,6 +67,7 @@ Go's built-in `plugin` package has significant limitations:
 ### Why NOT gRPC-based Plugins?
 
 While HashiCorp's go-plugin (gRPC-based) is excellent, it adds complexity:
+
 - Process management overhead
 - IPC serialization costs
 - More complex debugging
@@ -76,6 +78,7 @@ While HashiCorp's go-plugin (gRPC-based) is excellent, it adds complexity:
 ## Consequences
 
 ### Positive
+
 - Simple implementation and testing
 - No runtime plugin failures
 - Compile-time type safety
@@ -83,6 +86,7 @@ While HashiCorp's go-plugin (gRPC-based) is excellent, it adds complexity:
 - Fast performance (no IPC)
 
 ### Negative
+
 - Can't add providers without recompiling
 - Larger binary size (all providers included)
 - No third-party provider ecosystem (yet)
@@ -90,6 +94,7 @@ While HashiCorp's go-plugin (gRPC-based) is excellent, it adds complexity:
 ### Migration Path
 
 If we need external plugins in the future (Phase 3+):
+
 1. Keep existing interface unchanged
 2. Add HashiCorp go-plugin wrapper
 3. Support both compiled-in and external providers
@@ -100,14 +105,18 @@ This is a proven approach (Terraform supports both built-in and external provide
 ## Alternatives Considered
 
 ### 1. HashiCorp go-plugin (gRPC)
+
 **Rejected for MVP**: Adds complexity without clear benefit. Revisit if third-party providers are requested.
 
 ### 2. WebAssembly Plugins
+
 **Rejected**: Immature ecosystem, limited system access, unnecessary complexity.
 
 ### 3. Scripting Language Plugins (Lua, JavaScript)
+
 **Rejected**: Performance overhead, limited type safety, complex provider implementation.
 
 ## References
+
 - [Tech Stack Research - Plugin Architecture](../architecture/tech-stack-research.md#pluginprovider-architecture-analysis)
 - [CLAUDE.md - DRY Strategy](../CLAUDE.md#4-dry--dont-reinvent-the-wheel)

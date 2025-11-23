@@ -3,12 +3,14 @@
 ## Current Security Issues ⚠️
 
 ### 1. **Insecure by Default** (CRITICAL)
+
 ```go
 // Current: Defaults to insecure!
 UseTLS: false  // User must explicitly enable TLS
 ```
 
 **Problem**: Agents expose privileged operations (provision VMs, exec commands). Running without TLS means:
+
 - No encryption → credentials visible on network
 - No authentication → anyone can connect
 - No integrity → MITM attacks possible
@@ -16,6 +18,7 @@ UseTLS: false  // User must explicitly enable TLS
 **Fix**: Default to TLS required, allow insecure only for dev with explicit flag
 
 ### 2. **No Mutual Authentication**
+
 Current TLS only validates server certificate. Agent doesn't verify client identity.
 
 **Risk**: Any client with network access can call agent APIs.
@@ -23,11 +26,13 @@ Current TLS only validates server certificate. Agent doesn't verify client ident
 **Fix**: Use mTLS (mutual TLS) where both sides present certificates
 
 ### 3. **Credentials in Logs**
+
 Current code logs full requests/responses which may contain passwords.
 
 **Fix**: Sanitize logs, never log password fields
 
 ### 4. **No Rate Limiting**
+
 Agent accepts unlimited requests from any connected client.
 
 **Risk**: DoS attacks, resource exhaustion
@@ -35,6 +40,7 @@ Agent accepts unlimited requests from any connected client.
 **Fix**: Add rate limiting per connection
 
 ### 5. **No Input Validation**
+
 Proto messages accepted without validation.
 
 **Risk**: Malformed data could crash agent or exploit bugs
@@ -46,13 +52,15 @@ Proto messages accepted without validation.
 ### Current Implementation: Long-Running gRPC Connection
 
 **How it works**:
-```
+
+```text
 Server (Linux) ─────gRPC connection────▶ Agent (Windows)
                      ↓
               Provision/Destroy/Exec RPCs
 ```
 
 **Characteristics**:
+
 - Server initiates connection to agent
 - Connection stays open
 - RPCs sent over same connection
@@ -61,6 +69,7 @@ Server (Linux) ─────gRPC connection────▶ Agent (Windows)
 ### Industry Standards
 
 #### 1. **Kubernetes Model** (kubelet → API server)
+
 - **Pattern**: Agent connects to control plane
 - **Connection**: Long-lived gRPC with bidirectional streaming
 - **Health**: API server tracks agent heartbeats
@@ -68,6 +77,7 @@ Server (Linux) ─────gRPC connection────▶ Agent (Windows)
 - **Used by**: Kubernetes, K3s, K0s
 
 #### 2. **HashiCorp Nomad/Consul**
+
 - **Pattern**: Gossip protocol + RPC
 - **Connection**: TCP with multiplexing (Yamux)
 - **Health**: Serf gossip protocol for failure detection
@@ -75,6 +85,7 @@ Server (Linux) ─────gRPC connection────▶ Agent (Windows)
 - **Used by**: Nomad, Consul, Vault
 
 #### 3. **gRPC Standard Pattern**
+
 - **Pattern**: Client → Server RPC
 - **Connection**: HTTP/2 with multiplexing
 - **Health**: grpc.health.v1.Health service
@@ -84,6 +95,7 @@ Server (Linux) ─────gRPC connection────▶ Agent (Windows)
 ### Our Implementation: Which Pattern?
 
 **Current**: Closest to **gRPC Standard Pattern**
+
 - Server calls agent (client → server RPC)
 - Simple, uses gRPC built-ins
 - Good for MVP, scalable to 10s of agents
@@ -91,12 +103,14 @@ Server (Linux) ─────gRPC connection────▶ Agent (Windows)
 **Problem**: Direction is backwards!
 
 Correct pattern for security:
-```
+
+```text
 Agent (untrusted network) ──connects to──▶ Server (trusted network)
 ```
 
 Not:
-```
+
+```text
 Server (trusted) ──connects to──▶ Agent (untrusted) ❌
 ```
 
@@ -108,7 +122,7 @@ Server (trusted) ──connects to──▶ Agent (untrusted) ❌
 
 **Pattern**: Agent opens tunnel to server, server sends RPCs back through tunnel
 
-```
+```text
 Agent (Windows, firewall) ──TLS tunnel──▶ Server (Linux)
                                             │
                                             ▼
@@ -116,16 +130,19 @@ Agent (Windows, firewall) ──TLS tunnel──▶ Server (Linux)
 ```
 
 **Pros**:
+
 - Works through firewalls/NAT
 - Agent initiates connection (security best practice)
 - Server doesn't need agent network access
 - Agent can be behind corporate firewall
 
 **Cons**:
+
 - More complex implementation
 - Need bidirectional streaming
 
 **Frameworks**:
+
 - **Ngrok/Chisel pattern**: Reverse tunnel
 - **gRPC bidirectional streaming**: Built-in
 - **NATS**: Message queue with request-reply
@@ -134,7 +151,7 @@ Agent (Windows, firewall) ──TLS tunnel──▶ Server (Linux)
 
 **Pattern**: Server puts tasks in queue, agents poll and execute
 
-```
+```text
 Server ──▶ Task Queue (Redis/DB)
               ▲
               │ (poll every 5s)
@@ -143,12 +160,14 @@ Server ──▶ Task Queue (Redis/DB)
 ```
 
 **Pros**:
+
 - Agent initiates all connections
 - Simple to implement
 - Works through firewalls
 - Easy to add multiple agents
 
 **Cons**:
+
 - Higher latency (polling interval)
 - More database load
 
@@ -169,12 +188,14 @@ for {
 ```
 
 **Pros**:
+
 - Low latency (push-based)
 - Agent initiates connection
 - Works through firewalls
 - Built into gRPC
 
 **Cons**:
+
 - Need bidirectional streaming
 
 **Used by**: Kubernetes watch API, etcd watch
@@ -187,6 +208,7 @@ for {
 **Step 4**: Agent executes and responds
 
 **Code pattern**:
+
 ```protobuf
 service AgentService {
   // Agent calls this to stream work
@@ -201,12 +223,14 @@ service AgentService {
 ### Current Implementation
 
 **gRPC Connection**:
+
 - HTTP/2 multiplexing: ✅ Efficient (multiple RPCs on one TCP connection)
 - Connection pooling: ❌ Not implemented (creates new connection per RemoteProvider)
 - Keepalive: ❌ Not configured (connections may die silently)
 - Health monitoring: ⚠️ RPC exists but not used proactively
 
 **Issues**:
+
 1. **No keepalive**: Connection may timeout after idle period
 2. **No connection reuse**: Each pool creates new connection to same agent
 3. **No health probing**: Don't know if agent is down until RPC fails
@@ -253,6 +277,7 @@ go func() {
 **Answer: gRPC is the framework, it's already correct!**
 
 But we should add:
+
 1. **gRPC Keepalive**: Built-in, just need to enable
 2. **gRPC Health Checking**: Standard protocol (grpc.health.v1)
 3. **Connection pooling**: Simple to implement
@@ -263,6 +288,7 @@ But we should add:
 ## Action Plan
 
 ### Phase 1: Fix Current Implementation (2 hours)
+
 1. ✅ Fix compilation errors
 2. ✅ Enable gRPC keepalive (5 lines of code)
 3. ✅ Make TLS default (change UseTLS default)
@@ -270,6 +296,7 @@ But we should add:
 5. ✅ Test with mock agent
 
 ### Phase 2: Proper Security (4 hours)
+
 1. Implement certificate generation commands
 2. Enforce mTLS by default
 3. Add rate limiting
@@ -277,6 +304,7 @@ But we should add:
 5. Input validation
 
 ### Phase 3: Production-Ready (8 hours)
+
 1. Implement agent registration (AgentService)
 2. Add health monitoring from server side
 3. Connection state tracking
@@ -286,17 +314,20 @@ But we should add:
 ## For MVP: What's Reasonable?
 
 **Keep**:
+
 - gRPC (correct choice)
 - Long-running connections (correct for gRPC)
 - Client-side retry (already implemented)
 
 **Add** (simple, high value):
+
 1. gRPC keepalive (5 minutes to add)
 2. TLS by default with --insecure flag for dev (10 minutes)
 3. Connection pooling (30 minutes)
 4. Log sanitization (15 minutes)
 
 **Defer** (complex, lower priority for MVP):
+
 - Agent registration service
 - mTLS with full cert management
 - Rate limiting
@@ -307,6 +338,7 @@ But we should add:
 ## Conclusion
 
 **Current implementation is 80% correct**:
+
 - ✅ gRPC is the right choice
 - ✅ Connection strategy is standard
 - ✅ Retry logic implemented

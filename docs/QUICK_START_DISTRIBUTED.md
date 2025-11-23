@@ -17,7 +17,7 @@ This guide shows how to set up Boxy in distributed mode with a Linux server and 
 
 ## Step 1: Initialize Server
 
-### On Linux Server
+### On Linux Server (Generate Token)
 
 ```bash
 # Initialize CA (one-time)
@@ -75,7 +75,7 @@ Server is now running on `https://<server-ip>:8443`
 
 ## Step 2: Register Windows Agent
 
-### On Linux Server
+### On Linux Server (Configure Pools)
 
 ```bash
 # Generate registration token for Windows agent
@@ -331,6 +331,7 @@ boxy agent install --server https://boxy-server:8443 --ca ca-cert.pem --token <n
 ## Security Recommendations
 
 1. **Firewall Rules**:
+
    ```bash
    # On server: Allow agent connections
    sudo ufw allow from 10.0.1.0/24 to any port 8443 proto tcp
@@ -364,6 +365,7 @@ boxy agent install --server https://boxy-server:8443 --ca ca-cert.pem --token <n
 ## Summary
 
 You now have:
+
 - ✅ Boxy server managing local Docker provider
 - ✅ Boxy agent exposing remote Hyper-V provider
 - ✅ Secure mTLS communication between server and agent

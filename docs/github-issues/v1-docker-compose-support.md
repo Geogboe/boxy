@@ -11,6 +11,7 @@ Ensure Boxy server runs well in Docker with proper documentation and examples fo
 ## Implementation Tasks
 
 ### Phase 1: Dockerfile
+
 - [ ] Create multi-stage `Dockerfile` for minimal image size
   - Builder stage with Go 1.21
   - Final stage with Alpine Linux
@@ -20,6 +21,7 @@ Ensure Boxy server runs well in Docker with proper documentation and examples fo
 - [ ] Verify health check works
 
 ### Phase 2: Docker Compose - Development
+
 - [ ] Create `examples/docker-compose/dev/docker-compose.yml`
   - Boxy server with Docker socket mount
   - PostgreSQL for multi-tenancy
@@ -29,6 +31,7 @@ Ensure Boxy server runs well in Docker with proper documentation and examples fo
 - [ ] Test development example end-to-end
 
 ### Phase 3: Docker Compose - Production
+
 - [ ] Create `examples/docker-compose/production/docker-compose.yml`
   - Boxy server with TLS certs
   - PostgreSQL with persistence
@@ -40,6 +43,7 @@ Ensure Boxy server runs well in Docker with proper documentation and examples fo
 - [ ] Document security best practices
 
 ### Phase 4: Environment Variable Support
+
 - [ ] Implement env var overrides in `internal/config/loader.go`:
   - `BOXY_LOG_LEVEL`
   - `BOXY_SERVER_LISTEN_ADDRESS`
@@ -48,6 +52,7 @@ Ensure Boxy server runs well in Docker with proper documentation and examples fo
 - [ ] Document all supported environment variables
 
 ### Phase 5: CI/CD Integration
+
 - [ ] Create `.github/workflows/docker.yml`
   - Build on tag push
   - Multi-platform builds (amd64, arm64)
@@ -57,6 +62,7 @@ Ensure Boxy server runs well in Docker with proper documentation and examples fo
 - [ ] Document image distribution
 
 ### Phase 6: Documentation
+
 - [ ] Create `docs/DOCKER_DEPLOYMENT.md`:
   - Building Docker images
   - Running Boxy in Docker
@@ -69,6 +75,7 @@ Ensure Boxy server runs well in Docker with proper documentation and examples fo
 - [ ] Create `examples/docker-compose/README.md`
 
 ### Phase 7: Testing
+
 - [ ] Create `tests/e2e/docker_test.go`:
   - Build Docker image
   - Start with docker-compose

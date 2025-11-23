@@ -25,6 +25,7 @@ type ExecuteResult struct {
 **Mechanism**: `docker exec`
 
 **Implementation**:
+
 ```go
 func (p *DockerProvider) Execute(ctx context.Context, res *resource.Resource, cmd []string) (*ExecuteResult, error) {
     // Create exec instance
@@ -64,6 +65,7 @@ func (p *DockerProvider) Execute(ctx context.Context, res *resource.Resource, cm
 ```
 
 **Usage**:
+
 ```go
 result, err := provider.Execute(ctx, resource, []string{"ls", "-la", "/app"})
 if err != nil {
@@ -79,11 +81,13 @@ fmt.Printf("Output:\n%s\n", result.Stdout)
 **Mechanism**: PowerShell Direct (Invoke-Command)
 
 PowerShell Direct allows running commands in Hyper-V VMs without network connectivity. Requires:
+
 - VM is running
 - Integration Services enabled
 - Credentials for VM
 
 **Implementation**:
+
 ```go
 func (p *HyperVProvider) Execute(ctx context.Context, res *resource.Resource, cmd []string) (*ExecuteResult, error) {
     vmName := res.ProviderID // VM name
@@ -140,6 +144,7 @@ func (p *HyperVProvider) executePowerShell(ctx context.Context, script string) (
 ```
 
 **Usage**:
+
 ```go
 // Execute command in Hyper-V VM via PowerShell Direct
 result, err := provider.Execute(ctx, resource, []string{"Get-Service"})
@@ -151,6 +156,7 @@ fmt.Printf("Services:\n%s\n", result.Stdout)
 ```
 
 **Alternative: SSH** (if PowerShell Direct not available)
+
 ```go
 func (p *HyperVProvider) Execute(ctx context.Context, res *resource.Resource, cmd []string) (*ExecuteResult, error) {
     // Fall back to SSH if PowerShell Direct fails
@@ -187,6 +193,7 @@ boxy resource exec res-xyz789 -- Get-Process
 ## API Usage
 
 **REST API**:
+
 ```http
 POST /api/v1/resources/{id}/exec
 Content-Type: application/json
@@ -206,6 +213,7 @@ Response:
 ```
 
 **Go SDK**:
+
 ```go
 import "github.com/Geogboe/boxy/pkg/client"
 
@@ -224,11 +232,13 @@ fmt.Println(result.Stdout)
 ### Credential Management
 
 **Docker**:
+
 - Uses existing container runtime auth
 - No additional credentials needed
 - Inherits container user context
 
 **Hyper-V**:
+
 - Requires VM credentials (username/password)
 - Credentials encrypted at rest
 - Passed securely via PowerShell Direct
@@ -257,12 +267,14 @@ func validateCommand(cmd []string) error {
 ```
 
 **Safe**:
+
 ```go
 // Array form - safe
 Execute(ctx, res, []string{"ls", "-la", "/path/with spaces"})
 ```
 
 **Unsafe** (don't allow):
+
 ```go
 // String form with shell - dangerous
 Execute(ctx, res, []string{"/bin/sh", "-c", "ls -la; rm -rf /"})
@@ -284,14 +296,16 @@ logger.WithFields(logrus.Fields{
 
 ## Implementation Checklist
 
-### Docker Provider
+### Docker Provider Checklist
+
 - [x] Basic docker exec implementation (already works)
 - [ ] Add Execute method to interface
 - [ ] Handle stdin for interactive commands
 - [ ] Stream output for long-running commands
 - [ ] Add timeout support
 
-### Hyper-V Provider
+### Hyper-V Provider Checklist
+
 - [ ] Implement PowerShell Direct execution
 - [ ] Handle credential management
 - [ ] Add fallback to SSH
@@ -299,6 +313,7 @@ logger.WithFields(logrus.Fields{
 - [ ] Test with various PowerShell commands
 
 ### CLI Commands
+
 - [ ] `boxy resource exec` command
 - [ ] `boxy sandbox exec` command (exec in sandbox resource)
 - [ ] Interactive shell support
@@ -306,6 +321,7 @@ logger.WithFields(logrus.Fields{
 - [ ] Timeout and cancellation
 
 ### API Endpoints
+
 - [ ] POST /api/v1/resources/:id/exec
 - [ ] WebSocket for interactive sessions
 - [ ] Request validation
@@ -315,6 +331,7 @@ logger.WithFields(logrus.Fields{
 ## Testing
 
 ### Unit Tests
+
 ```go
 func TestDockerExecute(t *testing.T) {
     provider := NewMockDockerProvider()
@@ -343,6 +360,7 @@ func TestHyperVExecute(t *testing.T) {
 ```
 
 ### Integration Tests
+
 ```go
 func TestExecuteViaAgent(t *testing.T) {
     // Start agent with Docker provider
@@ -366,6 +384,7 @@ func TestExecuteViaAgent(t *testing.T) {
 ## Future Enhancements
 
 ### Streaming Output
+
 ```go
 // Stream output for long-running commands
 type OutputStream interface {
@@ -382,6 +401,7 @@ func (p *Provider) ExecuteStream(
 ```
 
 ### Interactive Sessions
+
 ```go
 // Interactive shell with stdin/stdout/stderr
 type Session interface {
@@ -399,6 +419,7 @@ func (p *Provider) NewSession(
 ```
 
 ### File Transfer
+
 ```go
 // Copy files to/from resources
 func (p *Provider) CopyTo(
@@ -460,6 +481,7 @@ The `Execute` method provides a consistent interface for running commands inside
 - **Hyper-V**: Uses PowerShell Direct (no network required) or SSH fallback
 
 This enables users to interact with resources programmatically, making Boxy suitable for:
+
 - Automated testing
 - Configuration management
 - CI/CD pipelines

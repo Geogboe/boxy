@@ -18,6 +18,7 @@ go test ./tests/integration/ -run "TestPoolManager_Integration_Hooks"
 ```
 
 **Tests:**
+
 - ✅ `HooksAfterProvision` - Finalization hooks execute during pool warming
 - ✅ `HooksBeforeAllocate` - Personalization hooks execute during allocation
 - ✅ `HooksBoth` - Both hook types execute in correct order
@@ -28,6 +29,7 @@ go test ./tests/integration/ -run "TestPoolManager_Integration_Hooks"
 - ✅ `HooksMultipleShellTypes` - Bash and Python shells both work
 
 **What This Verifies:**
+
 - Hook executor calls `Provider.Exec()` correctly
 - Template variable expansion works
 - Timeout and retry logic functional
@@ -42,6 +44,7 @@ go test ./tests/e2e/ -timeout 60s
 ```
 
 **Tests:**
+
 - ✅ `TestE2E_CompleteSandboxLifecycle` (2.4s)
   - Creates sandbox (StateCreating)
   - Waits for async allocation (WaitForReady)
@@ -63,6 +66,7 @@ go test ./tests/e2e/ -timeout 60s
   - Expiration logic verified
 
 **What This Verifies:**
+
 - Async allocation works (Create → WaitForReady → StateReady)
 - Pool manager orchestration works
 - Sandbox manager lifecycle works
@@ -75,6 +79,7 @@ go test ./tests/e2e/ -timeout 60s
 ### 3. Provider Interface Implementation
 
 **Docker Provider** (`internal/provider/docker/docker.go`):
+
 - ✅ Provision() - Creates containers
 - ✅ Destroy() - Removes containers
 - ✅ GetStatus() - Queries container state
@@ -83,12 +88,14 @@ go test ./tests/e2e/ -timeout 60s
 - ✅ Update() - Stub for MVP (restart/stop)
 
 **Hyper-V Provider** (`internal/provider/hyperv/hyperv.go`):
+
 - ✅ Full stub implementation
 - ✅ Exec() - Simulates PowerShell Direct
 - ✅ Update() - Power states, snapshots, resource limits
 - ✅ Ready for distributed testing
 
 **Mock Provider** (`internal/provider/mock/mock.go`):
+
 - ✅ Realistic simulation with delays
 - ✅ Exec() returns successful command execution
 - ✅ Tracks resources by ProviderID
@@ -97,12 +104,14 @@ go test ./tests/e2e/ -timeout 60s
 ### 4. CLI Commands
 
 **Sandbox Create** (`cmd/boxy/commands/sandbox.go`):
+
 - ✅ Async allocation with WaitForReady()
 - ✅ Progress indicator ("Waiting for resources ✓")
 - ✅ Displays connection info after ready
 - ✅ Error handling for allocation failures
 
 **Other Commands**:
+
 - ✅ Sandbox list
 - ✅ Sandbox destroy
 - ✅ Pool status (serve command)
@@ -110,7 +119,7 @@ go test ./tests/e2e/ -timeout 60s
 ## 📊 Test Coverage Matrix
 
 | Component | Unit Tests | Integration Tests | E2E Tests | Status |
-|-----------|------------|-------------------|-----------|--------|
+| ----------- | ------------ | ------------------- | ----------- | -------- |
 | Hook Executor | ✓ | ✓ (8 tests) | ✓ | ✅ |
 | Pool Manager | ✓ | ✓ | ✓ | ✅ |
 | Sandbox Manager | - | - | ✓ (3 tests) | ✅ |
@@ -126,35 +135,42 @@ go test ./tests/e2e/ -timeout 60s
 ## 🎯 What We Know Works
 
 ### Core Architecture
+
 ✅ **Two-Phase Provisioning**
+
 - Phase 1 (Finalization): after_provision hooks during pool warming
 - Phase 2 (Personalization): before_allocate hooks during allocation
 - Verified via integration and E2E tests
 
 ✅ **Hook Execution via Provider.Exec()**
+
 - Hooks call `Provider.Exec(ctx, resource, cmd)`
 - Works for mock provider
 - Docker provider uses `docker exec` API (correct implementation)
 - Hyper-V provider stubs PowerShell Direct (correct concept)
 
 ✅ **Async Allocation**
+
 - sandbox.Create() returns immediately (StateCreating)
 - Background goroutine allocates resources
 - WaitForReady() polls until StateReady
 - CLI uses WaitForReady() with progress indicator
 
 ✅ **Template Variable Expansion**
+
 - `${resource.id}`, `${username}`, `${password}`, etc.
 - Verified in hook integration tests
 - Variables correctly passed to Exec()
 
 ✅ **Pool Management**
+
 - Auto-replenishes after allocation
 - Maintains min_ready count
 - Respects max_total limit
 - Health checks mark unhealthy resources
 
 ✅ **Credentials**
+
 - Auto-generated during personalization
 - Stored in resource metadata
 - Retrieved via GetConnectionInfo()
@@ -162,12 +178,14 @@ go test ./tests/e2e/ -timeout 60s
 ### Known Limitations in Test Environment
 
 ❌ **Real Container Runtime**
+
 - Attempted: Podman 4.9.3
 - Issue: Network configuration errors in restricted environment
 - Workaround: Comprehensive mock-based E2E tests
 - Resolution: Will work in production with proper Docker/Podman setup
 
 ❌ **Real VM Provider**
+
 - Hyper-V requires Windows or nested virtualization
 - KVM/QEMU not available in this environment
 - Workaround: Hyper-V stub provider for testing
@@ -177,18 +195,21 @@ go test ./tests/e2e/ -timeout 60s
 ### Why Mock-Based E2E Tests Are Valid
 
 **Mock Provider Simulates Real Behavior:**
+
 1. **Realistic Delays** - Provision delays (100ms), destroy delays (50ms)
 2. **State Tracking** - Resources tracked by ProviderID
 3. **Execute Simulation** - Returns realistic command output
 4. **Error Conditions** - Can simulate failures
 
 **What Mocks Can't Test:**
+
 - ❌ Real Docker socket interaction
 - ❌ Actual command execution inside containers
 - ❌ Real network configuration
 - ❌ Real filesystem changes
 
 **What Mocks DO Test (More Important):**
+
 - ✅ Orchestration logic (pool → sandbox → allocation flow)
 - ✅ State machine transitions
 - ✅ Error handling and recovery
@@ -244,6 +265,7 @@ PASS
 ## 🚀 Production Readiness
 
 ### Ready for Production
+
 ✅ All orchestration logic tested
 ✅ Hook framework complete
 ✅ Async allocation works
@@ -252,6 +274,7 @@ PASS
 ✅ Configuration examples provided
 
 ### Needs Real Environment Testing
+
 ⚠️ Docker provider with real Docker daemon
 ⚠️ Hyper-V provider on Windows
 ⚠️ Network isolation between sandboxes
@@ -260,6 +283,7 @@ PASS
 ## 📚 Test Commands
 
 ### Run All Tests
+
 ```bash
 # Integration tests (fast)
 go test -v ./tests/integration/ -timeout 60s
@@ -275,6 +299,7 @@ go test -v ./tests/e2e/ -run Docker
 ```
 
 ### Build and Smoke Test
+
 ```bash
 # Build CLI
 go build -o /tmp/boxy ./cmd/boxy
@@ -299,6 +324,7 @@ go build -o /tmp/boxy ./cmd/boxy
 The Docker provider implementation uses correct APIs and will work in production environments with Docker - we just can't test it in this restricted CI environment.
 
 **Next Steps for Production:**
+
 1. Deploy to environment with Docker
 2. Run Docker E2E tests (`go test ./tests/e2e/ -run Docker`)
 3. Test Hyper-V provider on Windows

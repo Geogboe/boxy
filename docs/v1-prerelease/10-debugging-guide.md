@@ -25,6 +25,7 @@ related_docs:
 ## Overview
 
 Comprehensive troubleshooting guide covering:
+
 - Log levels and interpretation
 - Common issues and solutions
 - Diagnostic commands
@@ -48,14 +49,17 @@ BOXY_LOG_FORMAT=json boxy serve
 ## Common Issues
 
 ### "Pool has no ready resources"
+
 - **Cause**: Preheating disabled or provisioning slow
 - **Solution**: Enable preheating or check provider health
 
 ### "Agent connection refused"
+
 - **Cause**: Agent not running or certificate mismatch
 - **Solution**: Check agent status, verify mTLS certs
 
 ### "Quota exceeded"
+
 - **Cause**: User hit sandbox limit
 - **Solution**: Destroy old sandboxes or increase quota
 

@@ -27,6 +27,7 @@ This report addresses your five critical verification questions:
 ### Current State
 
 ✅ **What's Concurrent (Good)**:
+
 - Pool replenishment background workers
 - Sandbox allocation async goroutines
 - Health check workers
@@ -66,12 +67,12 @@ This report addresses your five critical verification questions:
 **Scenario**: User requests 3 Windows VMs with personalization
 
 | Operation | Current | After Fixes | Improvement |
-|-----------|---------|-------------|-------------|
+| ----------- | --------- | ------------- | ------------- |
 | Pool warm-up (10 VMs) | 5 minutes | 30 seconds | **10x faster** |
 | Sandbox allocation (3 VMs) | 90 seconds | 30 seconds | **3x faster** |
 | Health check (50 resources) | 50 seconds | 1 second | **50x faster** |
 
-### Verdict
+### Performance Verdict
 
 **Code is SAFE but NOT FAST** - Needs parallelization for production performance.
 
@@ -136,25 +137,29 @@ This report addresses your five critical verification questions:
 ### Troubleshooting Examples
 
 **Debug Slow Provisioning**:
+
 ```bash
 boxy serve --log-level debug --config boxy.yaml 2>&1 | grep -i provision
 ```
 
 **View Hook Results** (currently requires SQL):
+
 ```bash
 sqlite3 boxy.db "SELECT metadata FROM resources WHERE id='<resource-id>'"
 ```
 
 **Check Pool State**:
+
 ```bash
 boxy pool stats <pool-name>
 ```
 
-### Verdict
+### Debugging Verdict
 
 **Maintainable** - Logging is comprehensive, but needs CLI inspection tools for production.
 
 **Priority**:
+
 - Database logging: Medium (Week 2)
 - Inspect commands: High (Week 1)
 - Metrics: Medium (Week 3)
@@ -190,7 +195,7 @@ boxy pool stats <pool-name>
 **Agent stack is NOT required for MVP** - Single-host deployment is fully functional.
 
 | Feature | Single Host (MVP) | Multi-Host (Phase 2) |
-|---------|-------------------|----------------------|
+| --------- | ------------------- | ---------------------- |
 | Pool management | ✅ Works | 🔄 Requires agents |
 | Sandboxes | ✅ Works | 🔄 Requires agents |
 | Docker provider | ✅ Works | ✅ Works |
@@ -207,11 +212,12 @@ boxy pool stats <pool-name>
 ### Implementation Timeline
 
 **Phase 2** (2-3 weeks when needed):
+
 - Week 1: RemoteProvider + Agent server
 - Week 2: Certificate management + CLI
 - Week 3: Integration tests + E2E tests
 
-### Verdict
+### Agent Stack Verdict
 
 **Distributed agents = Phase 2 feature, not MVP blocker.**
 
@@ -226,19 +232,22 @@ boxy pool stats <pool-name>
 ### Verification Steps
 
 1. **Build Success**:
+
 ```bash
 go build -o /tmp/boxy ./cmd/boxy
 # ✅ SUCCESS
 ```
 
-2. **Version Check**:
+1. **Version Check**:
+
 ```bash
 /tmp/boxy version
 # Output: Boxy vdev, Git commit: unknown, Built: unknown, Go version: go1.24.7
 # ✅ WORKS
 ```
 
-3. **Help System**:
+1. **Help System**:
+
 ```bash
 /tmp/boxy --help          # ✅ WORKS
 /tmp/boxy sandbox --help  # ✅ WORKS
@@ -246,7 +255,7 @@ go build -o /tmp/boxy ./cmd/boxy
 /tmp/boxy serve --help    # ✅ WORKS
 ```
 
-4. **Commands Available**:
+1. **Commands Available**:
    - ✅ `boxy serve` - Start service
    - ✅ `boxy sandbox create` - Create sandbox
    - ✅ `boxy sandbox list` - List sandboxes
@@ -259,11 +268,13 @@ go build -o /tmp/boxy ./cmd/boxy
 ### Environment Limitation
 
 **Cannot fully test commands requiring Docker**:
+
 - Environment: Restricted CI without kernel modules
 - Issue: Docker daemon cannot start (`iptables: Protocol not supported`)
 - Status: **Expected limitation, not a bug**
 
 **Evidence**:
+
 ```bash
 # Docker binary works
 docker --version  # ✅ Docker version 27.5.1
@@ -276,6 +287,7 @@ dockerd --host unix:///home/user/docker.sock
 ### Production Readiness
 
 **On machine with Docker**:
+
 ```bash
 # This will work in production
 boxy serve --config boxy.yaml
@@ -283,13 +295,14 @@ boxy sandbox create --pool test-pool:2 --duration 2h
 ```
 
 **Tested in E2E Tests**:
+
 - ✅ Sandbox creation (programmatically)
 - ✅ Async allocation
 - ✅ WaitForReady polling
 - ✅ Connection info retrieval
 - ✅ Sandbox destruction
 
-### Verdict
+### CLI Verification Verdict
 
 **CLI is functional** - All commands compile and help works. Full testing requires Docker host.
 
@@ -309,20 +322,23 @@ boxy sandbox create --pool test-pool:2 --duration 2h
    - Containerd + nerdctl alternative
 
 2. **✅ Downloaded Docker Static Binaries**:
+
 ```bash
 curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz
 tar xzvf docker.tgz --strip 1 -C /home/user/bin docker/
 # ✅ SUCCESS
 ```
 
-3. **✅ Verified Binary Works**:
+1. **✅ Verified Binary Works**:
+
 ```bash
 /home/user/bin/docker --version
 # Output: Docker version 27.5.1, build 9f9e405
 # ✅ WORKS
 ```
 
-4. **❌ Docker Daemon Cannot Start**:
+1. **❌ Docker Daemon Cannot Start**:
+
 ```bash
 dockerd --data-root /home/user/.docker --host unix:///home/user/docker.sock
 # Error: failed to initialize network controller
@@ -332,6 +348,7 @@ dockerd --data-root /home/user/.docker --host unix:///home/user/docker.sock
 ### Environment Constraints
 
 **Restricted CI Environment**:
+
 - ❌ No kernel modules (iptables, nft)
 - ❌ No /proc/sys access
 - ❌ Cannot modify network stack
@@ -342,6 +359,7 @@ dockerd --data-root /home/user/.docker --host unix:///home/user/docker.sock
 ### Testing Strategy
 
 **Mock-Based E2E Tests**:
+
 - ✅ Test orchestration logic
 - ✅ Test state machines
 - ✅ Test async patterns
@@ -350,18 +368,20 @@ dockerd --data-root /home/user/.docker --host unix:///home/user/docker.sock
 - ✅ **11/11 tests passing**
 
 **What Mocks Can't Test**:
+
 - ❌ Real Docker socket interaction
 - ❌ Actual container execution
 - ❌ Network configuration
 - ❌ Filesystem changes
 
 **But Docker Provider Will Work Because**:
+
 1. Uses official Docker SDK (`github.com/docker/docker`)
 2. Correct API usage (`ContainerExecCreate`, `ContainerExecAttach`)
 3. Same patterns Docker CLI uses
 4. Tested in production environments elsewhere
 
-### Verdict
+### Docker Runtime Verdict
 
 **Docker binaries obtained** - Environment limitation prevents daemon startup. Mock tests validate all logic.
 
@@ -390,12 +410,14 @@ dockerd --data-root /home/user/.docker --host unix:///home/user/docker.sock
 ### 🎯 Production Readiness (Single Host)
 
 **Ready for Production**:
+
 - ✅ Deploy on Linux with Docker
 - ✅ Deploy on Windows with Hyper-V
 - ✅ Small-scale environments (< 50 resources)
 - ✅ Development/testing labs
 
 **Not Ready for Production**:
+
 - ⚠️ High-scale (> 100 resources) - Needs parallelization fixes
 - ❌ Multi-host deployments - Needs Phase 2 agents
 - ⚠️ Enterprise monitoring - Needs metrics/observability
@@ -425,6 +447,7 @@ dockerd --data-root /home/user/.docker --host unix:///home/user/docker.sock
 ### Post-MVP Priorities
 
 **Week 1-2** (High Priority):
+
 1. Fix concurrent performance bottlenecks
 2. Add `boxy resource inspect` command
 3. Add `boxy sandbox inspect` command
@@ -460,7 +483,7 @@ go test ./tests/e2e/ -timeout 60s
 ### Test Coverage
 
 | Component | Unit | Integration | E2E | Status |
-|-----------|------|-------------|-----|--------|
+| ----------- | ------ | ------------- | ----- | -------- |
 | Hook Executor | ✓ | ✓ (8 tests) | ✓ | ✅ |
 | Pool Manager | ✓ | ✓ | ✓ | ✅ |
 | Sandbox Manager | - | - | ✓ (3 tests) | ✅ |
@@ -479,6 +502,7 @@ go test ./tests/e2e/ -timeout 60s
 ### MVP Status: **FUNCTIONALLY COMPLETE** ✅
 
 **All requested verification tasks completed**:
+
 1. ✅ Concurrent performance analyzed - bottlenecks documented
 2. ✅ Debugging support verified - strong foundation, gaps identified
 3. ✅ Agent TCP stack clarified - Phase 2 feature, no regressions
@@ -486,6 +510,7 @@ go test ./tests/e2e/ -timeout 60s
 5. ✅ Container runtime obtained - environment limitations documented
 
 **Next Steps**:
+
 1. Review these verification documents
 2. Address any concerns or questions
 3. Decide on MVP release timeline

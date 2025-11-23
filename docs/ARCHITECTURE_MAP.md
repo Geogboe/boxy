@@ -8,7 +8,7 @@
 
 ## Full System Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           USER INTERFACES                                    │
 │                                                                              │
@@ -200,7 +200,7 @@
 
 ## Resource State Flow
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        RESOURCE LIFECYCLE                            │
 └─────────────────────────────────────────────────────────────────────┘
@@ -278,7 +278,7 @@ Recycling (parallel flow):
 
 ## Data Flow: Sandbox Creation
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────┐
 │            USER CREATES SANDBOX (Full Flow)                          │
 └─────────────────────────────────────────────────────────────────────┘
@@ -419,7 +419,7 @@ Pool replenishes automatically ✅
 
 ## Cold vs Warm Allocation
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────┐
 │               PREHEATING: COLD VS WARM PATHS                         │
 └─────────────────────────────────────────────────────────────────────┘
@@ -481,7 +481,7 @@ Cost/Speed Tradeoff:
 
 ## Distributed Architecture (v2 - Future)
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────┐
 │          DISTRIBUTED DEPLOYMENT (v2)                                 │
 │          Boxy Server on Linux, Hyper-V Agent on Windows              │
@@ -583,10 +583,12 @@ Benefits:
 ---
 
 **Document Purpose:**
+
 This diagram provides a complete architectural map for planning, design,
 and review. Use this to understand the entire system at a glance and
 identify how components interact.
 
 **Next Steps:**
+
 See [V1_IMPLEMENTATION_PLAN.md](V1_IMPLEMENTATION_PLAN.md) for detailed
 implementation guidance.

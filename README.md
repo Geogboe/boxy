@@ -107,7 +107,7 @@ boxy serve
 # - Clean up expired sandboxes
 ```
 
-### 5. Use It!
+### 5. Use It
 
 ```bash
 # Terminal 2: Check pool status
@@ -128,7 +128,7 @@ boxy sandbox destroy <sandbox-id>
 
 ## Architecture
 
-```
+```text
 ┌─────────────────────────────────────────┐
 │           CLI / User Interface           │
 └─────────────────────────────────────────┘
@@ -157,6 +157,7 @@ boxy sandbox destroy <sandbox-id>
 ## Use Cases
 
 ### Primary: Quick Testing Environment
+
 Think **Windows Sandbox** for any platform. Get a clean, isolated VM or container instantly to test software, scripts, or configurations.
 
 ```bash
@@ -169,6 +170,7 @@ boxy sandbox create --pool win11-test:1 --duration 1h
 ```
 
 **Why Boxy?**
+
 - ✅ **Instant**: Preheated resources ready immediately
 - ✅ **Clean**: Always fresh, never reused
 - ✅ **Simple**: One command, no cleanup needed
@@ -177,12 +179,14 @@ boxy sandbox create --pool win11-test:1 --duration 1h
 ### Secondary Use Cases
 
 **CI/CD Runners**
+
 ```bash
 # Ephemeral build agents - always fresh, no contamination
 boxy sandbox create --pool ci-runner:1 --duration 30m
 ```
 
 **Security Red Teaming**
+
 ```bash
 # Isolated malware analysis or attack simulation
 boxy sandbox create \
@@ -192,6 +196,7 @@ boxy sandbox create \
 ```
 
 **Development Environments**
+
 ```bash
 # Full dev stack (DB + web + cache)
 boxy sandbox create \
@@ -202,6 +207,7 @@ boxy sandbox create \
 ```
 
 **Training & Education**
+
 ```bash
 # Provision lab environments for students
 for i in {1..30}; do
@@ -214,7 +220,8 @@ done
 ## CLI Reference
 
 ### Global Flags
-```
+
+```text
 --config string      Config file path (default: ~/.config/boxy/boxy.yaml)
 --db string          Database path (default: ~/.config/boxy/boxy.db)
 --log-level string   Log level: debug, info, warn, error (default: info)
@@ -223,6 +230,7 @@ done
 ### Commands
 
 #### `boxy init`
+
 Initialize configuration file
 
 ```bash
@@ -231,6 +239,7 @@ boxy init --force          # Overwrite existing config
 ```
 
 #### `boxy serve`
+
 Start the Boxy service with warm pool maintenance
 
 ```bash
@@ -239,6 +248,7 @@ boxy serve --log-level=debug  # Start with debug logging
 ```
 
 **What it does:**
+
 - Starts all configured pools
 - Provisions min_ready resources for each pool
 - Runs background workers:
@@ -248,6 +258,7 @@ boxy serve --log-level=debug  # Start with debug logging
 - Graceful shutdown on Ctrl+C
 
 #### `boxy pool`
+
 Manage resource pools
 
 ```bash
@@ -256,13 +267,15 @@ boxy pool stats <name>     # Detailed stats for a pool
 ```
 
 **Output example:**
-```
+
+```text
 NAME                TYPE       BACKEND  IMAGE          READY  ALLOCATED  MIN  MAX  HEALTHY
 ubuntu-containers   container  docker   ubuntu:22.04   3      0          3    10   ✓
 alpine-containers   container  docker   alpine:latest  5      0          5    20   ✓
 ```
 
 #### `boxy sandbox`
+
 Manage sandboxes
 
 ```bash
@@ -281,6 +294,7 @@ boxy sandbox destroy <sandbox-id>
 ```
 
 **Examples:**
+
 ```bash
 # Single pool
 boxy sandbox create -p ubuntu-containers:1 -d 30m
@@ -351,6 +365,7 @@ pools:
 **Status**: ✅ Functional
 
 ### Completed
+
 - ✅ Core domain models (Resource, Pool, Sandbox)
 - ✅ Docker backend provider
 - ✅ Pool manager with warm pool maintenance
@@ -361,6 +376,7 @@ pools:
 - ✅ Automatic expiration and cleanup
 
 ### Roadmap
+
 - [ ] **Phase 2**: Additional providers (Hyper-V, KVM)
 - [ ] **Phase 3**: REST API & service daemon mode
 - [ ] **Phase 4**: Web UI
@@ -370,7 +386,7 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for detailed roadmap.
 
 ## Project Structure
 
-```
+```text
 boxy/
 ├── cmd/
 │   └── boxy/              # CLI entry point
@@ -409,6 +425,7 @@ boxy/
 We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed development guidelines.
 
 **Quick Start**:
+
 ```bash
 # Clone and setup
 git clone https://github.com/Geogboe/boxy
@@ -426,6 +443,7 @@ task --list
 ```
 
 **Key Points**:
+
 - Use conventional commits (`feat:`, `fix:`, `docs:`, etc.)
 - Run tests before committing (`task check`)
 - Add tests for new features
@@ -442,6 +460,7 @@ git push origin v1.0.0
 ```
 
 This automatically:
+
 - Builds binaries for all platforms
 - Generates changelog from commits
 - Creates GitHub release
@@ -452,6 +471,7 @@ See [docs/RELEASE.md](docs/RELEASE.md) for detailed release process.
 ## Architecture Decisions
 
 See [docs/decisions/](docs/decisions/) for Architecture Decision Records (ADRs):
+
 - [ADR-001: Technology Stack](docs/decisions/adr-001-technology-stack.md)
 - [ADR-002: Provider Architecture](docs/decisions/adr-002-provider-architecture.md)
 - [ADR-003: Configuration & State Storage](docs/decisions/adr-003-configuration-state-storage.md)

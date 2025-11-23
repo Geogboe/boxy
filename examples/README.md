@@ -41,11 +41,13 @@ boxy serve --config examples/simple-docker-pool.yaml
 **Hooks demonstration** - Shows finalization and personalization hooks.
 
 **Finalization hooks (after_provision)**:
+
 - Install development tools
 - Validate network connectivity
 - Run during pool warming (slow, background)
 
 **Personalization hooks (before_allocate)**:
+
 - Create user account
 - Set up workspace
 - Run during allocation (fast, user-specific)
@@ -76,6 +78,7 @@ boxy sandbox create --pool build-ubuntu --duration 4h
 **Advanced features** - Demonstrates all hook capabilities.
 
 Features shown:
+
 - **Retry logic**: Retry failed hooks automatically
 - **Continue on failure**: Optional hooks that don't fail allocation
 - **Multiple shell types**: Bash and Python scripts
@@ -160,6 +163,7 @@ Available in hook scripts:
 **Purpose**: Prepare resources during pool warming
 
 **Good for**:
+
 - Installing packages
 - Downloading large files
 - System configuration
@@ -167,12 +171,14 @@ Available in hook scripts:
 - Setting up monitoring
 
 **Characteristics**:
+
 - Slow operations (minutes)
 - Background execution
 - Happens before resource is ready
 - Failure prevents resource from becoming ready
 
 **Example**:
+
 ```yaml
 after_provision:
   - name: install-packages
@@ -189,18 +195,21 @@ after_provision:
 **Purpose**: Customize resources for specific users
 
 **Good for**:
+
 - Creating user accounts
 - Setting passwords
 - Personalizing configuration
 - Setting up user workspaces
 
 **Characteristics**:
+
 - Fast operations (seconds)
 - Synchronous (user waits)
 - Happens during allocation
 - Failure releases resource back to pool
 
 **Example**:
+
 ```yaml
 before_allocate:
   - name: create-user

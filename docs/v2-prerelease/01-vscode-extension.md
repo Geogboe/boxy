@@ -23,6 +23,7 @@ week: "1-3"
 ## Overview
 
 VSCode extension for managing Boxy sandboxes directly from IDE:
+
 - Create/destroy sandboxes from command palette
 - Tree view showing active sandboxes
 - SSH/RDP connection with one click
@@ -36,7 +37,8 @@ VSCode extension for managing Boxy sandboxes directly from IDE:
 ## Features
 
 ### Sidebar Tree View
-```
+
+```text
 BOXY EXTENSION
 ├── 📦 Sandboxes
 │   ├── 🟢 my-dev-env (Ready)
@@ -52,6 +54,7 @@ BOXY EXTENSION
 ```
 
 ### Commands
+
 - `Boxy: Create Sandbox`
 - `Boxy: Destroy Sandbox`
 - `Boxy: Connect to Sandbox`

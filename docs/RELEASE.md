@@ -22,6 +22,7 @@ Boxy uses automated release pipelines triggered by Git tags. When you push a ver
 ### 1. Prepare the Release
 
 **Update VERSION** (if you have a VERSION file):
+
 ```bash
 echo "1.0.0" > VERSION
 git add VERSION
@@ -29,6 +30,7 @@ git commit -m "chore: bump version to 1.0.0"
 ```
 
 **Update CHANGELOG** (if maintaining one manually):
+
 ```bash
 # Edit CHANGELOG.md with new version section
 git add CHANGELOG.md
@@ -36,6 +38,7 @@ git commit -m "docs: update CHANGELOG for v1.0.0"
 ```
 
 **Ensure all changes are merged**:
+
 ```bash
 git checkout main
 git pull origin main
@@ -44,12 +47,14 @@ git pull origin main
 ### 2. Create and Push Tag
 
 **Create an annotated tag**:
+
 ```bash
 # Format: v<MAJOR>.<MINOR>.<PATCH>
 git tag -a v1.0.0 -m "Release v1.0.0"
 ```
 
 **Push the tag to trigger release**:
+
 ```bash
 git push origin v1.0.0
 ```
@@ -75,6 +80,7 @@ Once the workflow completes:
    - Docker image tags
 
 **Download and test a binary**:
+
 ```bash
 # Example for Linux amd64
 wget https://github.com/Geogboe/boxy/releases/download/v1.0.0/boxy-linux-amd64.tar.gz
@@ -83,6 +89,7 @@ tar -xzf boxy-linux-amd64.tar.gz
 ```
 
 **Test the Docker image**:
+
 ```bash
 docker pull ghcr.io/geogboe/boxy:1.0.0
 docker run --rm ghcr.io/geogboe/boxy:1.0.0 version
@@ -91,11 +98,13 @@ docker run --rm ghcr.io/geogboe/boxy:1.0.0 version
 ### 5. Post-Release
 
 **Announce the release**:
+
 - Update README if needed
 - Post on social media/forums
 - Notify users via appropriate channels
 
 **Start next development cycle**:
+
 ```bash
 # Optionally create a new development tag
 git tag -a v1.1.0-dev -m "Start v1.1.0 development"
@@ -129,6 +138,7 @@ git push origin v1.0.0-beta.1
 ```
 
 The release workflow automatically marks releases as "prerelease" if the tag contains:
+
 - `alpha`
 - `beta`
 - `rc`
@@ -148,6 +158,7 @@ Each release includes:
 ### Docker Images
 
 Pushed to GitHub Container Registry with tags:
+
 - `ghcr.io/geogboe/boxy:latest`
 - `ghcr.io/geogboe/boxy:1.0.0`
 - `ghcr.io/geogboe/boxy:1.0`
@@ -160,10 +171,12 @@ Pushed to GitHub Container Registry with tags:
 1. Check the Actions logs for specific errors
 2. Fix the issue in code
 3. Delete the tag locally and remotely:
+
    ```bash
    git tag -d v1.0.0
    git push origin :refs/tags/v1.0.0
    ```
+
 4. Create and push the tag again
 
 ### Binary is missing or corrupt
@@ -181,6 +194,7 @@ Pushed to GitHub Container Registry with tags:
 ### Changelog is wrong
 
 The changelog is auto-generated from commit messages. To improve:
+
 - Use conventional commit format
 - Write descriptive commit messages
 - Manually edit release notes on GitHub after creation
@@ -190,6 +204,7 @@ The changelog is auto-generated from commit messages. To improve:
 If automation fails, you can create a release manually:
 
 1. Build binaries:
+
    ```bash
    make build-all  # If you have a make target
    # Or manually:
@@ -199,6 +214,7 @@ If automation fails, you can create a release manually:
 2. Create GitHub release via web UI
 3. Upload artifacts manually
 4. Build and push Docker image:
+
    ```bash
    docker build -t ghcr.io/geogboe/boxy:1.0.0 .
    docker push ghcr.io/geogboe/boxy:1.0.0
@@ -213,6 +229,7 @@ To add GPG signing to releases (optional):
 1. Generate GPG key
 2. Add to GitHub settings
 3. Sign tags:
+
    ```bash
    git tag -s v1.0.0 -m "Release v1.0.0"
    ```

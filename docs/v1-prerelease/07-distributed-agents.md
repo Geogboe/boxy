@@ -30,6 +30,7 @@ related_docs:
 ### Why This is v1 (Not v2)
 
 **Rationale:**
+
 - Hyper-V is PRIMARY backend for production use
 - Hyper-V only runs on Windows hosts
 - Boxy server typically runs on Linux for flexibility
@@ -39,7 +40,7 @@ related_docs:
 
 ### Architecture
 
-```
+```text
 ┌─────────────────────────────────────────┐
 │     Boxy Server (Linux)                  │
 │  ┌────────────────────────────────────┐ │
@@ -58,6 +59,7 @@ related_docs:
 ```
 
 **Key Points:**
+
 - **Single binary**: `boxy` runs as server, agent, or both
 - **Transparent proxying**: RemoteProvider implements same Provider interface
 - **gRPC**: Efficient, type-safe RPC with Protocol Buffers
@@ -167,6 +169,7 @@ message Resource {
 ```
 
 **Build:**
+
 ```bash
 # Generate Go code from .proto files
 make protobuf
@@ -235,6 +238,7 @@ func (r *RemoteProvider) Provision(ctx context.Context, spec resource.ResourceSp
 ```
 
 **Tests:**
+
 ```go
 // pkg/provider/remote/remote_test.go
 func TestRemoteProvider_Provision(t *testing.T)
@@ -334,6 +338,7 @@ func (s *Server) authInterceptor(ctx context.Context, req interface{}, info *grp
 ```
 
 **Tests:**
+
 ```go
 // internal/agent/server_test.go
 func TestAgentServer_Provision(t *testing.T)
@@ -572,6 +577,7 @@ func (s *StubHyperVProvider) Provision(ctx context.Context, spec resource.Resour
 4. **Manual tests**: Test with real Hyper-V on Windows host (Windows required)
 
 **Test Files:**
+
 ```go
 // pkg/provider/remote/remote_test.go - Unit tests
 // tests/integration/agent_test.go - Integration with Docker
@@ -583,6 +589,7 @@ func (s *StubHyperVProvider) Provision(ctx context.Context, spec resource.Resour
 ## Implementation Phases
 
 ### Phase 1: Foundation (Week 1)
+
 - [ ] Define Protocol Buffers schema (provider.proto)
 - [ ] Generate gRPC code (`make protobuf`)
 - [ ] Create RemoteProvider implementation
@@ -590,6 +597,7 @@ func (s *StubHyperVProvider) Provision(ctx context.Context, spec resource.Resour
 - [ ] Unit tests for serialization/deserialization
 
 ### Phase 2: Security (Week 1-2)
+
 - [ ] Implement CA initialization (`boxy admin init-ca`)
 - [ ] Implement certificate issuance (`boxy admin issue-cert`)
 - [ ] mTLS configuration for server
@@ -598,6 +606,7 @@ func (s *StubHyperVProvider) Provision(ctx context.Context, spec resource.Resour
 - [ ] Integration tests for mTLS
 
 ### Phase 3: Agent Mode (Week 2)
+
 - [ ] Add `boxy agent serve` command
 - [ ] Agent heartbeat mechanism
 - [ ] Agent health monitoring
@@ -605,6 +614,7 @@ func (s *StubHyperVProvider) Provision(ctx context.Context, spec resource.Resour
 - [ ] E2E tests with agent
 
 ### Phase 4: Server Integration (Week 2)
+
 - [ ] Update configuration schema (`backend_agent` field)
 - [ ] Agent registry in server
 - [ ] Remote provider factory
@@ -612,6 +622,7 @@ func (s *StubHyperVProvider) Provision(ctx context.Context, spec resource.Resour
 - [ ] Integration tests
 
 ### Phase 5: Testing (Throughout)
+
 - [ ] Unit tests for RemoteProvider
 - [ ] Unit tests for Agent Server
 - [ ] Integration tests with Docker via agent
@@ -637,6 +648,7 @@ func (s *StubHyperVProvider) Provision(ctx context.Context, spec resource.Resour
 ## User Impact
 
 ### Before (Local Only)
+
 ```yaml
 pools:
   - name: win-vms
@@ -644,6 +656,7 @@ pools:
 ```
 
 ### After (Distributed)
+
 ```yaml
 agents:
   - id: windows-host-01

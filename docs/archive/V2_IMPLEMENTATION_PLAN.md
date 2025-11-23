@@ -12,6 +12,7 @@
 This document outlines planned features for Boxy v2, building on the solid foundation established in v1. v2 focuses on developer experience, advanced scheduling, and enhanced observability.
 
 **Key Features:**
+
 1. 🔌 **VSCode Extension** - IDE integration for managing sandboxes
 2. 📊 **Advanced Scheduling** - Capacity-aware, cost-optimized allocation
 3. 🔄 **Retry Strategies** - Automatic retry with exponential backoff
@@ -40,6 +41,7 @@ This document outlines planned features for Boxy v2, building on the solid found
 ### 1.1 Features
 
 #### Sandbox Management
+
 - **Create sandbox** - Right-click menu or command palette
 - **List sandboxes** - Tree view in sidebar
 - **Connect to sandbox** - SSH into container/VM directly from VSCode
@@ -47,18 +49,20 @@ This document outlines planned features for Boxy v2, building on the solid found
 - **Extend duration** - Extend expiration with one click
 
 #### Pool Visibility
+
 - **View pools** - See available pools and stats
 - **Pool health** - Visual indicators for pool status
 - **Resource availability** - Real-time ready/allocated counts
 
 #### Configuration
+
 - **Schema validation** - Real-time YAML validation for boxy.yaml
 - **Autocomplete** - IntelliSense for all config fields
 - **Snippets** - Common pool/hook templates
 
 ### 1.2 UI Design
 
-```
+```text
 BOXY EXTENSION
 ├── 📦 Sandboxes
 │   ├── 🟢 my-dev-env (Ready)
@@ -84,7 +88,7 @@ BOXY EXTENSION
 
 ### 1.3 Commands
 
-```
+```text
 Boxy: Create Sandbox
 Boxy: List Sandboxes
 Boxy: Connect to Sandbox
@@ -98,12 +102,14 @@ Boxy: Configure Server
 ### 1.4 Implementation
 
 **Tech Stack:**
+
 - Language: TypeScript
 - Framework: VSCode Extension API
 - Communication: Boxy CLI (shell out) or REST API (when available)
 
 **Package Structure:**
-```
+
+```text
 extensions/vscode/
 ├── src/
 │   ├── extension.ts           # Extension entry point
@@ -123,6 +129,7 @@ extensions/vscode/
 ```
 
 **Configuration Schema:**
+
 ```json
 {
   "boxy.serverUrl": "https://boxy.internal:8443",
@@ -147,7 +154,9 @@ extensions/vscode/
 ### 2.1 Scheduling Strategies
 
 #### Capacity-Aware Scheduling
+
 Allocate from pool with most available resources:
+
 ```yaml
 pools:
   - name: win-vms-pool-a
@@ -164,13 +173,16 @@ pools:
 ```
 
 **Algorithm:**
-```
+
+```text
 score = (available_resources / total_resources) * weight
 select pool with highest score
 ```
 
 #### Cost-Optimized Scheduling
+
 Prefer cheaper pools:
+
 ```yaml
 pools:
   - name: spot-instances
@@ -184,7 +196,9 @@ pools:
 ```
 
 #### Performance-Optimized Scheduling
+
 Prefer pools with fastest allocation times:
+
 ```yaml
 pools:
   - name: preheated-pool
@@ -196,12 +210,14 @@ pools:
 ```
 
 **Metrics:**
+
 - Track average allocation time per pool
 - Prefer pools with < 10s allocation time
 
 ### 2.2 Multi-Pool Allocation
 
 Support allocating from multiple pools in single request:
+
 ```bash
 # Allocate from ANY win-server pool
 boxy sandbox create \
@@ -212,6 +228,7 @@ boxy sandbox create \
 ### 2.3 Resource Migration
 
 Move resources between pools (v2.1):
+
 ```bash
 boxy pool migrate \
   --from win-vms-pool-a \
@@ -287,6 +304,7 @@ func (m *Manager) provisionOneWithRetry(ctx context.Context) error {
 ### 3.3 Metrics
 
 Track retry metrics:
+
 - `boxy_retries_total{operation="provision", result="success|failure"}`
 - `boxy_retry_backoff_seconds{operation="provision"}`
 
@@ -299,6 +317,7 @@ Track retry metrics:
 ### 4.1 Metrics (Prometheus)
 
 **Expose metrics endpoint:**
+
 ```bash
 curl http://localhost:9090/metrics
 
@@ -319,7 +338,8 @@ boxy_agent_rpc_duration_seconds{method="Provision",quantile="0.99"} 45.1
 ### 4.2 Distributed Tracing (OpenTelemetry)
 
 **Trace sandbox creation end-to-end:**
-```
+
+```text
 span: sandbox.Create (30s)
   ├─ span: allocator.AllocateFromPool (2s)
   │   ├─ span: pool.GetAvailableResources (100ms)
@@ -331,6 +351,7 @@ span: sandbox.Create (30s)
 ```
 
 **Integration:**
+
 - Export to Jaeger or Zipkin
 - Correlate across server → agent boundary
 - Include trace IDs in logs
@@ -338,6 +359,7 @@ span: sandbox.Create (30s)
 ### 4.3 Structured Logging
 
 **Enhance logging with structured fields:**
+
 ```json
 {
   "timestamp": "2024-11-22T15:30:00Z",
@@ -357,6 +379,7 @@ span: sandbox.Create (30s)
 ### 4.4 Dashboards (Grafana)
 
 **Pre-built dashboards:**
+
 - Pool overview (resources, allocation rate, health)
 - Sandbox lifecycle (creation, duration, expiration)
 - Agent health (connectivity, RPC latency, errors)
@@ -371,6 +394,7 @@ span: sandbox.Create (30s)
 ### 5.1 Overlay Networks (WireGuard/Headscale)
 
 **Configuration:**
+
 ```yaml
 networking:
   overlay:
@@ -387,6 +411,7 @@ sandboxes:
 ```
 
 **Features:**
+
 - Isolated network per sandbox
 - Resources in sandbox can communicate
 - No cross-sandbox communication
@@ -418,6 +443,7 @@ pools:
 See [V1_IMPLEMENTATION_PLAN.md Section 9.2](V1_IMPLEMENTATION_PLAN.md#92-api-endpoint-reference) for complete API reference.
 
 **v2 Additions:**
+
 - WebSocket support for real-time updates
 - GraphQL endpoint (optional)
 - Webhook subscriptions
@@ -425,6 +451,7 @@ See [V1_IMPLEMENTATION_PLAN.md Section 9.2](V1_IMPLEMENTATION_PLAN.md#92-api-end
 ### 6.2 SDKs
 
 **Official SDKs:**
+
 - Go SDK (boxy-go)
 - Python SDK (boxy-py)
 - JavaScript/TypeScript SDK (boxy-js)
@@ -436,18 +463,21 @@ See [V1_IMPLEMENTATION_PLAN.md Section 9.2](V1_IMPLEMENTATION_PLAN.md#92-api-end
 ### 7.1 Phase Breakdown
 
 **v2.0 (First Release)**
+
 - ✅ VSCode Extension (core features)
 - ✅ Advanced Scheduling (capacity-aware)
 - ✅ Retry Strategies
 - ✅ Enhanced Metrics (Prometheus)
 
 **v2.1 (Follow-up)**
+
 - ✅ Network Isolation (WireGuard)
 - ✅ Distributed Tracing
 - ✅ REST API
 - ✅ Official SDKs
 
 **v2.2 (Polish)**
+
 - ✅ Resource Migration
 - ✅ Cost-optimized scheduling
 - ✅ Grafana dashboards
@@ -456,6 +486,7 @@ See [V1_IMPLEMENTATION_PLAN.md Section 9.2](V1_IMPLEMENTATION_PLAN.md#92-api-end
 ### 7.2 Dependencies
 
 **Requires from v1:**
+
 - Distributed agents working
 - Multi-tenancy implemented
 - Pool/Sandbox peer architecture stable

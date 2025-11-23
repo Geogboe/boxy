@@ -29,6 +29,7 @@ related_docs:
 Make Pool a first-class component with full CLI management. Currently pools are configured but not directly manageable. New architecture (01-architecture-refactor) enables independent pool operations.
 
 **New capabilities:**
+
 - Lifecycle management (start, stop, delete)
 - Runtime scaling (adjust min_ready, preheating)
 - Maintenance operations (drain, recycle, validate)
@@ -100,7 +101,8 @@ boxy pool validate <pool-name>
 ### `boxy pool ls`
 
 **Output:**
-```
+
+```text
 NAME                TYPE        BACKEND    READY    ALLOCATED    STATUS
 ubuntu-containers   container   docker     5/10     2            running
 win-server-2022     vm          hyperv     3/10     1            running
@@ -110,7 +112,8 @@ dev-vms             vm          hyperv     0/5      0            stopped
 ### `boxy pool stats <pool-name>`
 
 **Output:**
-```
+
+```text
 Pool: ubuntu-containers
 
 Resources:
@@ -144,6 +147,7 @@ Health:
 ### `boxy pool inspect <pool-name>`
 
 **Output (JSON):**
+
 ```json
 {
   "name": "ubuntu-containers",
@@ -182,7 +186,8 @@ Health:
 ### `boxy pool resources <pool-name>`
 
 **Output:**
-```
+
+```text
 RESOURCE ID          STATE         AGE     SANDBOX
 res-abc123          provisioned    5m      -
 res-def456          provisioned    3m      -
@@ -196,6 +201,7 @@ res-stu901          allocated      10m     sb-abc456
 ### `boxy pool scale <pool-name>`
 
 **Usage:**
+
 ```bash
 # Scale temporarily (until restart)
 boxy pool scale ubuntu-containers --min-ready 15 --preheated 7
@@ -216,6 +222,7 @@ Scaling pool 'ubuntu-containers'...
 ### `boxy pool drain <pool-name>`
 
 **Usage:**
+
 ```bash
 boxy pool drain ubuntu-containers
 
@@ -235,6 +242,7 @@ Draining pool 'ubuntu-containers'...
 ### `boxy pool recycle <pool-name>`
 
 **Usage:**
+
 ```bash
 # Recycle all unallocated resources
 boxy pool recycle ubuntu-containers

@@ -12,6 +12,7 @@
 The original Boxy architecture had tight coupling between Pool and Sandbox components:
 
 **Problems identified:**
+
 1. **Tight coupling**: Sandbox called `pool.Allocate()` directly, creating dependency
 2. **Dual ownership**: Both Pool and Sandbox tracked resource state, causing potential inconsistencies
 3. **Unclear responsibility**: Resource lifecycle management split across components
@@ -19,7 +20,8 @@ The original Boxy architecture had tight coupling between Pool and Sandbox compo
 5. **Scalability concerns**: Difficult to add features like advanced scheduling or multi-pool allocation
 
 **Original architecture:**
-```
+
+```text
 ┌──────────────┐
 │   Sandbox    │ ← Depends on Pool (calls pool.Allocate())
 │              │
@@ -35,6 +37,7 @@ The original Boxy architecture had tight coupling between Pool and Sandbox compo
 ```
 
 **Specific issues:**
+
 - Resource `res-1` exists in Pool's resource list
 - BUT also has `res-1.SandboxID = "sb-123"` pointing to Sandbox
 - Sandbox has `ResourceIDs = ["res-1"]` pointing to Resource
@@ -48,7 +51,7 @@ We will refactor to a **peer architecture** with an internal **Allocator** compo
 
 ### New Architecture
 
-```
+```text
 User-Facing Components (Equal Peers):
 ┌──────────────┐          ┌──────────────┐
 │    Pool      │          │   Sandbox    │
@@ -84,7 +87,9 @@ Internal Components:
 ### Component Responsibilities
 
 #### Pool (User-Facing)
+
 **Manages unallocated resources:**
+
 - Provisions resources via Provider
 - Runs `on_provision` hooks
 - Maintains `min_ready` count
@@ -94,24 +99,30 @@ Internal Components:
 - Provides query interface for available resources
 
 **Does NOT:**
+
 - Allocate resources to sandboxes
 - Track sandbox ownership
 - Run `on_allocate` hooks
 
 #### Sandbox (User-Facing)
+
 **Manages allocated resources:**
+
 - Creates sandbox records
 - Coordinates multi-resource allocation (via Allocator)
 - Tracks lifecycle (Creating, Ready, Expiring, Destroyed)
 - Auto-cleanup of expired sandboxes
 
 **Does NOT:**
+
 - Know about Pool internals
 - Track resources directly (queries via Allocator)
 - Call Provider directly
 
 #### Allocator (Internal)
+
 **Orchestrates resource movement:**
+
 - Tracks resource ownership (pool vs sandbox)
 - Allocates resources from Pool to Sandbox
 - Runs `on_allocate` hooks
@@ -124,13 +135,14 @@ Internal Components:
 ### Resource Ownership Model
 
 | Resource State | Owned By | Tracked By | SandboxID |
-|----------------|----------|------------|-----------|
-| Provisioned    | Pool     | Allocator  | nil       |
-| Ready          | Pool     | Allocator  | nil       |
-| Allocated      | Sandbox  | Allocator  | set       |
-| Destroyed      | None     | Repository | nil       |
+| ---------------- | ---------- | ------------ | ----------- |
+| Provisioned | Pool | Allocator | nil |
+| Ready | Pool | Allocator | nil |
+| Allocated | Sandbox | Allocator | set |
+| Destroyed | None | Repository | nil |
 
 **Clear ownership rules:**
+
 - Unallocated resources (Provisioned, Ready) → Pool owns
 - Allocated resources → Sandbox owns
 - Allocator tracks all, acts as intermediary
@@ -138,6 +150,7 @@ Internal Components:
 ### API/CLI Impact
 
 **User-facing commands remain unchanged:**
+
 ```bash
 # Sandbox operations (no change)
 boxy sandbox create -p pool:1 -d 1h
@@ -158,6 +171,7 @@ boxy pool recycle <pool-name>
 ```
 
 **Internal changes:**
+
 - `boxy sandbox create` → calls `sandboxManager.Create()` → calls `allocator.AllocateFromPool()`
 - `boxy pool stats` → calls `pool.GetStats()` → queries `allocator` for resource counts
 
@@ -168,6 +182,7 @@ boxy pool recycle <pool-name>
 ### Why Peer Architecture?
 
 **Benefits:**
+
 1. **Separation of concerns**: Each component has clear, distinct responsibility
 2. **Independent management**: Pool can be managed via CLI without affecting Sandbox
 3. **Testability**: Can test Pool and Sandbox independently
@@ -177,7 +192,7 @@ boxy pool recycle <pool-name>
 **Comparison with alternatives:**
 
 | Approach | Coupling | Clarity | Extensibility |
-|----------|----------|---------|---------------|
+| ---------- | ---------- | --------- | --------------- |
 | Original (Sandbox → Pool) | High | Medium | Low |
 | Peer + Allocator | Low | High | High |
 | Sandbox owns everything | Medium | Low | Medium |
@@ -187,31 +202,38 @@ boxy pool recycle <pool-name>
 **Considered alternatives:**
 
 **Alternative 1: Sandbox owns Pool**
-```
+
+```text
 Sandbox → Pool (dependency reversed)
 ```
+
 - ❌ Pool still can't be managed independently
 - ❌ Doesn't solve ownership problem
 - ❌ Just moves the coupling
 
 **Alternative 2: Both depend on shared ResourceManager**
-```
+
+```text
 Sandbox → ResourceManager ← Pool
 ```
+
 - ✅ Decoupled
 - ❌ "ResourceManager" is generic, unclear purpose
 - ❌ Feels too enterprise-y
 
 **Alternative 3: Event-driven with message queue**
-```
+
+```text
 Pool publishes → Queue → Sandbox subscribes
 ```
+
 - ✅ Fully decoupled
 - ❌ Over-engineered for v1
 - ❌ Adds operational complexity
 - ❌ Overkill for single-host deployment
 
 **Chosen: Allocator (internal orchestrator)**
+
 - ✅ Clear purpose (allocates resources)
 - ✅ Simple to understand
 - ✅ Internal (no API surface bloat)
@@ -226,6 +248,7 @@ Pool publishes → Queue → Sandbox subscribes
 **Answer:** No, keep it internal.
 
 **Reasoning:**
+
 - Users think in terms of "Pools" and "Sandboxes"
 - Allocator is an implementation detail
 - Exposing it would complicate the mental model
@@ -259,7 +282,7 @@ Pool publishes → Queue → Sandbox subscribes
 ### Risks and Mitigations
 
 | Risk | Impact | Mitigation |
-|------|--------|------------|
+| ------ | -------- | ------------ |
 | Refactor introduces bugs | High | Comprehensive tests (unit, integration, E2E) |
 | Performance overhead | Low | Allocator is in-memory, negligible latency |
 | Complexity confuses contributors | Medium | Clear documentation, architecture diagrams |
@@ -301,14 +324,17 @@ func (a *Allocator) GetResourcesForPool(ctx context.Context, poolName string) ([
 **Changes to `internal/core/pool/manager.go`:**
 
 **Remove:**
+
 - `Allocate()` method
 - `Release()` method
 
 **Add:**
+
 - `GetAvailableResources()` - Query method for Allocator
 - `GetAllResources()` - Query method for pool stats
 
 **Keep:**
+
 - `Start()`, `Stop()` - Lifecycle
 - `provisionOne()` - Resource creation
 - `ensureMinReady()` - Pool replenishment
@@ -319,6 +345,7 @@ func (a *Allocator) GetResourcesForPool(ctx context.Context, poolName string) ([
 **Changes to `internal/core/sandbox/manager.go`:**
 
 **Constructor:**
+
 ```go
 // OLD
 func NewManager(
@@ -336,6 +363,7 @@ func NewManager(
 ```
 
 **Update methods:**
+
 - `allocateResourcesAsync()` - Calls `allocator.AllocateFromPool()`
 - `Destroy()` - Calls `allocator.ReleaseResources()`
 - `GetResourcesForSandbox()` - Calls `allocator.GetResourcesForSandbox()`
@@ -371,16 +399,19 @@ func (s *Service) Start() error {
 ### Testing Strategy
 
 **Unit tests:**
+
 - Test Allocator in isolation with mock pools and repository
 - Test Pool without Allocator (queries only)
 - Test Sandbox with mock Allocator
 
 **Integration tests:**
+
 - Test full flow: Pool provision → Allocator allocate → Sandbox manage
 - Test with real Docker provider
 - Test concurrent allocations
 
 **E2E tests:**
+
 - Full user workflow: create sandbox, use resource, destroy
 - Verify resource ownership transitions correctly
 
@@ -397,6 +428,7 @@ func (s *Service) Start() error {
 3. **Configuration unchanged** - existing `boxy.yaml` works
 
 **Migration steps:**
+
 1. Update Boxy binary
 2. Restart service
 3. Done!
@@ -406,11 +438,13 @@ func (s *Service) Start() error {
 ### For Contributors
 
 **What changed:**
+
 - Pool no longer has `Allocate()` / `Release()` methods
 - Sandbox takes `Allocator` instead of `map[string]PoolAllocator`
 - New `internal/core/allocator` package
 
 **How to update code:**
+
 - Replace `pool.Allocate()` → `allocator.AllocateFromPool()`
 - Replace `pool.Release()` → `allocator.ReleaseResources()`
 - Query resources via Allocator, not Pool directly
@@ -457,17 +491,20 @@ func (m *SandboxManager) allocateResourcesAsync(sandboxID string, reqs []Resourc
 This architecture makes the following features easier to implement:
 
 ### v1
+
 - ✅ Pool as first-class component (CLI management)
 - ✅ Advanced pool inspection
 - ✅ Resource recycling
 
 ### v2
+
 - Multi-pool allocation strategies
 - Capacity-aware scheduling (allocate from least-loaded pool)
 - Cost-optimized allocation (allocate from cheapest pool)
 - Resource migration (move between pools)
 
 ### v3
+
 - Distributed scheduling (allocate across multiple Boxy servers)
 - Advanced reservation system
 - Resource preemption (priority-based allocation)
@@ -486,7 +523,7 @@ This architecture makes the following features easier to implement:
 ## Decision Log
 
 | Date | Decision | Rationale |
-|------|----------|-----------|
+| ------ | ---------- | ----------- |
 | 2024-11-22 | Peer architecture with Allocator | Clear separation of concerns, extensibility |
 | 2024-11-22 | Allocator is internal (not user-facing) | Simplifies mental model, cleaner API |
 | 2024-11-22 | No database migration needed | Existing schema supports new model |

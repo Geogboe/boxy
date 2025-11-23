@@ -6,12 +6,14 @@
 ## What's Implemented ✅
 
 ### 1. Protocol Buffers Schema
+
 - ✅ **Updated proto file** with Exec and Update RPC methods
 - ✅ **Generated Go code** from proto using protoc
 - ✅ **Complete message types** for all operations
 - Location: `pkg/provider/proto/provider.proto`
 
 ### 2. RemoteProvider (gRPC Client)
+
 - ✅ **Full implementation** of Provider interface
 - ✅ **Connection management** with retry logic
 - ✅ **Timeout handling** for all operations
@@ -21,6 +23,7 @@
 - Location: `pkg/provider/remote/remote.go`
 
 ### 3. Agent Server (gRPC Server)
+
 - ✅ **Full gRPC server** implementation
 - ✅ **Provider routing** to local providers
 - ✅ **All RPC methods** implemented (Provision, Destroy, Exec, Update, etc.)
@@ -29,6 +32,7 @@
 - Location: `internal/agent/server.go`
 
 ### 4. Agent CLI Commands
+
 - ✅ **`boxy agent serve`** command implemented
 - ✅ **Auto-detection** of providers based on OS
 - ✅ **TLS configuration** support
@@ -37,12 +41,14 @@
 - Location: `cmd/boxy/commands/agent.go`
 
 ### 5. Configuration Support
+
 - ✅ **AgentConfig** struct added to main config
 - ✅ **YAML support** for agents section
 - ✅ **Remote provider registration** in serve command
 - Location: `internal/config/config.go`, `cmd/boxy/commands/serve.go`
 
 ### 6. Tools and Dependencies
+
 - ✅ **protoc installed** (v30.2)
 - ✅ **protoc-gen-go installed** (latest)
 - ✅ **protoc-gen-go-grpc installed** (latest)
@@ -55,6 +61,7 @@
 The Resource struct has evolved and the proto type conversions need updates:
 
 **Resource struct current fields**:
+
 ```go
 type Resource struct {
     ID           string                 // OK
@@ -73,6 +80,7 @@ type Resource struct {
 ```
 
 **Files needing fixes**:
+
 1. `pkg/provider/remote/remote.go`
    - Line 467: SandboxID conversion (string → *string)
    - Line 473: Metadata conversion (map[string]string → map[string]interface{})
@@ -97,6 +105,7 @@ type Resource struct {
 ### Quick Fix Strategy
 
 **Helper functions needed**:
+
 ```go
 // For converting pointers
 func stringPtr(s string) *string {
@@ -148,6 +157,7 @@ func metadataFromProto(m map[string]string) map[string]interface{} {
 ## What's Not Implemented ❌
 
 ### 1. Certificate Management
+
 - ❌ `boxy cert init` - Create CA
 - ❌ `boxy cert generate` - Issue agent certificates
 - ❌ `boxy cert trust` - Add CA to system trust store
@@ -155,6 +165,7 @@ func metadataFromProto(m map[string]string) map[string]interface{} {
 - **Priority**: Medium (required for production)
 
 ### 2. Agent Registration Service
+
 - ❌ AgentService RPC implementation
 - ❌ Agent registration tracking
 - ❌ Heartbeat monitoring
@@ -162,6 +173,7 @@ func metadataFromProto(m map[string]string) map[string]interface{} {
 - **Priority**: Low (manual config works)
 
 ### 3. Integration Tests
+
 - ❌ gRPC communication tests
 - ❌ Remote provider tests
 - ❌ Agent server tests with real providers
@@ -169,6 +181,7 @@ func metadataFromProto(m map[string]string) map[string]interface{} {
 - **Priority**: High (before production use)
 
 ### 4. E2E Distributed Tests
+
 - ❌ Multi-host scenario tests
 - ❌ Windows + Linux mixed environment tests
 - ❌ Failover and redundancy tests
@@ -176,6 +189,7 @@ func metadataFromProto(m map[string]string) map[string]interface{} {
 - **Priority**: High (before production use)
 
 ### 5. Example Configurations
+
 - ❌ Example config with remote agents
 - ❌ Hyper-V agent setup guide
 - ❌ mTLS setup guide
@@ -187,6 +201,7 @@ func metadataFromProto(m map[string]string) map[string]interface{} {
 ### Without Hyper-V (Development)
 
 **Step 1: Start Mock Agent** (on same machine or remote):
+
 ```bash
 # Terminal 1: Start agent with mock provider
 boxy agent serve --listen :50051 --providers mock
@@ -195,6 +210,7 @@ boxy agent serve --listen :50051 --providers mock
 ```
 
 **Step 2: Configure Boxy Server** to use remote agent:
+
 ```yaml
 # config.yaml
 agents:
@@ -213,6 +229,7 @@ pools:
 ```
 
 **Step 3: Start Boxy Server**:
+
 ```bash
 # Terminal 2: Start server
 boxy serve --config config.yaml
@@ -221,6 +238,7 @@ boxy serve --config config.yaml
 ```
 
 **Step 4: Create Sandbox**:
+
 ```bash
 # Terminal 3: Create sandbox using remote provider
 boxy sandbox create --pool remote-mock-pool:1 --duration 1h
@@ -229,6 +247,7 @@ boxy sandbox create --pool remote-mock-pool:1 --duration 1h
 ### With Hyper-V (Production Scenario)
 
 **On Windows Machine with Hyper-V**:
+
 ```bash
 # Generate certificates first (once cert commands implemented)
 boxy cert generate --agent-id windows-hyperv-01 --output agent-cert.pem
@@ -244,6 +263,7 @@ boxy agent serve \
 ```
 
 **On Linux Control Plane**:
+
 ```yaml
 # config.yaml
 agents:
@@ -273,6 +293,7 @@ boxy sandbox create --pool win-server-pool:1 --duration 2h
 ## Next Steps
 
 ### Immediate (Fix Compilation)
+
 1. Add helper functions for pointer conversions
 2. Fix all type conversions in remote.go
 3. Fix all type conversions in server.go
@@ -280,12 +301,14 @@ boxy sandbox create --pool win-server-pool:1 --duration 2h
 5. Test compilation
 
 ### Short Term (Make It Work)
+
 1. Create example configuration file
 2. Test mock agent → mock provider flow
 3. Add integration tests for gRPC
 4. Document setup process
 
 ### Medium Term (Production Ready)
+
 1. Implement certificate management commands
 2. Add mTLS support and testing
 3. Create E2E distributed tests
@@ -293,6 +316,7 @@ boxy sandbox create --pool win-server-pool:1 --duration 2h
 5. Add monitoring and metrics
 
 ### Long Term (Enhancements)
+
 1. Agent load balancing
 2. Automatic failover
 3. Agent capability discovery

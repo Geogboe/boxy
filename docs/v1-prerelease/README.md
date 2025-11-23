@@ -49,7 +49,7 @@ week: "1-2"  # Estimated implementation timeline
 ### Phase 1: Core Architecture (Week 1-2) 🔴 CRITICAL
 
 | # | Feature | Priority | Effort | Status | Breaking |
-|---|---------|----------|--------|--------|----------|
+| --- | --------- | ---------- | -------- | -------- | ---------- |
 | 01 | [Architecture Refactor](01-architecture-refactor.md) | critical | large | not-started | no |
 | 02 | [Preheating & Recycling](02-preheating-recycling.md) | critical | large | not-started | yes |
 | 03 | [Terminology Updates](03-terminology-updates.md) | high | small | not-started | yes |
@@ -61,7 +61,7 @@ week: "1-2"  # Estimated implementation timeline
 ### Phase 2: Multi-Tenancy & CLI (Week 3-4) 🟠 HIGH
 
 | # | Feature | Priority | Effort | Status | Breaking |
-|---|---------|----------|--------|--------|----------|
+| --- | --------- | ---------- | -------- | -------- | ---------- |
 | 04 | [Multi-Tenancy](04-multi-tenancy.md) | high | large | not-started | yes |
 | 05 | [Base Image Validation](05-base-image-validation.md) | medium | small | not-started | no |
 | 06 | [Pool CLI Commands](06-pool-cli-commands.md) | high | medium | not-started | no |
@@ -75,7 +75,7 @@ week: "1-2"  # Estimated implementation timeline
 ### Phase 3: Distributed & Config (Week 5-6) 🔴 CRITICAL
 
 | # | Feature | Priority | Effort | Status | Breaking |
-|---|---------|----------|--------|--------|----------|
+| --- | --------- | ---------- | -------- | -------- | ---------- |
 | 07 | [Distributed Agents](07-distributed-agents.md) | critical | large | not-started | no |
 | 08 | [Config Schema](08-config-schema.md) | high | medium | not-started | no |
 | 11 | [Config Location](11-config-location.md) | high | small | not-started | yes |
@@ -89,7 +89,7 @@ week: "1-2"  # Estimated implementation timeline
 ### Phase 4: Developer Experience (Week 7-8) 🟡 MEDIUM
 
 | # | Feature | Priority | Effort | Status | Breaking |
-|---|---------|----------|--------|--------|----------|
+| --- | --------- | ---------- | -------- | -------- | ---------- |
 | 12 | [Docker & Compose](12-docker-compose.md) | high | medium | not-started | no |
 | 09 | [CLI/API Schemas](09-cli-api-schemas.md) | medium | small | not-started | no |
 | 10 | [Debugging Guide](10-debugging-guide.md) | medium | small | not-started | no |
@@ -103,7 +103,7 @@ week: "1-2"  # Estimated implementation timeline
 ### Phase 5: Polish & Release Prep (Week 9) 🟢 LOW
 
 | # | Feature | Priority | Effort | Status | Breaking |
-|---|---------|----------|--------|--------|----------|
+| --- | --------- | ---------- | -------- | -------- | ---------- |
 | 13 | [Documentation Updates](13-documentation-updates.md) | low | small | not-started | no |
 | -- | [Testing Strategy](testing-strategy.md) | critical | -- | not-started | no |
 | -- | [Migration Guide](migration-guide.md) | high | small | not-started | no |
@@ -116,7 +116,7 @@ week: "1-2"  # Estimated implementation timeline
 
 ## Dependency Graph
 
-```
+```text
 01-architecture-refactor (foundation)
 ├── 02-preheating-recycling
 ├── 04-multi-tenancy
@@ -143,13 +143,15 @@ week: "1-2"  # Estimated implementation timeline
 
 ## Quick Start: What to Implement First
 
-### Critical Path (must be done in order):
+### Critical Path (must be done in order)
+
 1. **01-architecture-refactor** - Allocator + peer architecture
 2. **07-distributed-agents** - gRPC/mTLS for Windows agents
 3. **02-preheating-recycling** - Resource efficiency
 4. **04-multi-tenancy** - Production readiness
 
-### Parallel Workstreams:
+### Parallel Workstreams
+
 - **Config**: 08, 11 (can be done anytime)
 - **CLI/Docs**: 06, 09, 10, 13 (after core features)
 - **Validation**: 05 (after pools stable)
@@ -175,7 +177,7 @@ v1 Prerelease is complete when:
 ## Breaking Changes Summary
 
 | Feature | Breaking Change | Impact |
-|---------|----------------|--------|
+| --------- | ---------------- | -------- |
 | 02-preheating-recycling | New resource states | Config updates required |
 | 03-terminology-updates | Hook names changed | Config migration needed |
 | 04-multi-tenancy | Auth required | API tokens needed |
@@ -188,6 +190,7 @@ v1 Prerelease is complete when:
 ## Testing Strategy
 
 See [testing-strategy.md](testing-strategy.md) for comprehensive TDD approach with:
+
 - Stub/mock harness for Hyper-V testing
 - Integration tests with real Docker provider
 - E2E smoke tests for critical paths
@@ -198,7 +201,7 @@ See [testing-strategy.md](testing-strategy.md) for comprehensive TDD approach wi
 ## Files in This Directory
 
 | File | Description | Priority | Effort |
-|------|-------------|----------|--------|
+| ------ | ------------- | ---------- | -------- |
 | 01-architecture-refactor.md | Allocator + peer design | critical | large |
 | 02-preheating-recycling.md | Cold/warm resources | critical | large |
 | 03-terminology-updates.md | Hook naming consistency | high | small |

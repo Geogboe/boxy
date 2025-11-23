@@ -27,6 +27,7 @@ related_docs:
 Add users, teams, API tokens, quotas, and ownership tracking. Required for production deployment.
 
 **Key features:**
+
 - User accounts with roles (admin, user)
 - API token authentication
 - Sandbox ownership (user_id, team_id)

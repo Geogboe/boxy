@@ -6,7 +6,7 @@ Agents register with the server using a one-time registration token. This is sim
 
 ## Registration Flow
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────┐
 │ Step 1: Admin generates registration token (on server)      │
 └──────────────────────────────────────────────────────────────┘
@@ -386,6 +386,7 @@ func storeAgentCertificate(cert, key, ca []byte) error {
 ## Agent Configuration File
 
 After installation, agent config stored at:
+
 - Linux: `/etc/boxy/agent.yaml`
 - Windows: `C:\ProgramData\Boxy\agent.yaml`
 - macOS: `/Library/Application Support/Boxy/agent.yaml`
@@ -504,6 +505,7 @@ launchctl load /Library/LaunchDaemons/com.boxy.agent.plist
 ### Token Security
 
 **Best Practices**:
+
 - Generate tokens with high entropy (32+ bytes random)
 - Short expiration (24 hours recommended)
 - One-time use only
@@ -513,6 +515,7 @@ launchctl load /Library/LaunchDaemons/com.boxy.agent.plist
 ### Certificate Security
 
 **Best Practices**:
+
 - Store private keys with restricted permissions (0600)
 - Use OS-specific secure storage when available (DPAPI, Keychain)
 - Short-lived certificates (90 days)
@@ -522,6 +525,7 @@ launchctl load /Library/LaunchDaemons/com.boxy.agent.plist
 ### Network Security
 
 **Best Practices**:
+
 - Require server TLS (verify CA)
 - Require client certificates after registration
 - Strong cipher suites only (TLS 1.2+)
@@ -570,6 +574,7 @@ openssl crl -in crl.pem -noout -text
 ## Summary
 
 Token-based registration provides:
+
 - ✅ **Simple setup**: Copy CA cert + token, run install
 - ✅ **Secure**: One-time tokens, mTLS after registration
 - ✅ **Automated**: Certificate generation handled by server

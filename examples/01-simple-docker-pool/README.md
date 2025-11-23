@@ -43,7 +43,7 @@ boxy pool stats simple-pool
 
 ## Expected Output
 
-```
+```text
 # Pool list shows pool status
 simple-pool    container    2/2 ready    0 allocated
 
