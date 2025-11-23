@@ -49,3 +49,5 @@ temp/
 
 # Local binaries
 .bin/
+
+.cache/
