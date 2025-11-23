@@ -38,29 +38,6 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
 - ❌ No multi-tenancy
 - ❌ No authentication
 
-**Features**:
-
-1. **Pool Management**
-   - Define container pools via config
-   - Maintain min_ready count
-   - Auto-replenish on allocation
-
-2. **Sandbox Operations**
-   - Create sandbox with N containers
-   - Get connection info (ports, credentials)
-   - Set expiration time
-   - Manual and auto-cleanup
-
-3. **CLI**
-
-   ```bash
-   boxy pool create --name ubuntu --image ubuntu:22.04 --min-ready 3
-   boxy pool list
-   boxy sandbox create --containers 2 --pool ubuntu --duration 2h
-   boxy sandbox list
-   boxy sandbox destroy <id>
-   ```
-
 **Deliverables**:
 
 - Working Docker provider
@@ -93,23 +70,6 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
 - Provider-specific configuration
 - Connection info abstraction (RDP, SSH, ports)
 
-**Features**:
-
-1. **Provider Interface**
-   - Standardized provider contract
-   - Provider registration system
-   - Provider-specific config validation
-
-2. **Multiple Providers**
-   - Docker provider (refactored)
-   - KVM/libvirt provider OR Hyper-V provider
-   - Provider selection in pool config
-
-3. **Connection Abstractions**
-   - Different connection types (SSH, RDP, exec, ports)
-   - Provider-specific credential formats
-   - Unified connection info structure
-
 **Deliverables**:
 
 - Provider interface definition
@@ -141,35 +101,6 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
 - Persistent state storage (PostgreSQL)
 - Basic API authentication
 - Background lifecycle management
-
-**Features**:
-
-1. **API Server**
-
-   ```text
-   POST   /api/v1/pools
-   GET    /api/v1/pools
-   GET    /api/v1/pools/:id
-   POST   /api/v1/sandboxes
-   GET    /api/v1/sandboxes/:id
-   DELETE /api/v1/sandboxes/:id
-   PATCH  /api/v1/sandboxes/:id/extend
-   ```
-
-2. **Service Daemon**
-   - Run as background service
-   - Background pool replenishment
-   - Background sandbox cleanup (expiration)
-   - Graceful shutdown handling
-
-3. **Persistent Storage**
-   - PostgreSQL for state
-   - Redis for job queue (optional)
-   - Migration system
-
-4. **Authentication**
-   - API key authentication
-   - Basic RBAC (admin vs user)
 
 **Deliverables**:
 
@@ -204,29 +135,6 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
 - Sandbox management
 - Real-time status updates
 
-**Features**:
-
-1. **Dashboard**
-   - Pool status overview
-   - Active sandboxes count
-   - Resource utilization
-
-2. **Pool Management**
-   - View pools and health
-   - Create/modify pools
-   - See available capacity
-
-3. **Sandbox Management**
-   - List active sandboxes
-   - Create new sandboxes
-   - View connection info
-   - Extend/destroy sandboxes
-
-4. **Real-time Updates**
-   - WebSocket or SSE for live updates
-   - Pool replenishment status
-   - Sandbox expiration timers
-
 **Deliverables**:
 
 - Web UI (React/Vue/Svelte)
@@ -258,35 +166,6 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
 - Quotas and limits
 - Observability (metrics, tracing)
 
-**Features**:
-
-1. **Multi-tenancy**
-   - Tenant isolation
-   - Per-tenant quotas
-   - Usage tracking
-
-2. **Advanced Pools**
-   - Warm pools (pre-provisioned)
-   - Cold pools (on-demand)
-   - Hybrid pools (adaptive)
-   - Autoscaling based on demand
-
-3. **Templates**
-   - Resource templates (pre-configured images)
-   - Template marketplace
-   - Custom image management
-
-4. **Networking**
-   - Network isolation
-   - Inter-resource networking
-   - VPN/overlay networks
-
-5. **Observability**
-   - Prometheus metrics
-   - Distributed tracing
-   - Structured logging
-   - Alerting
-
 **Deliverables**:
 
 - Multi-tenant support
@@ -317,9 +196,13 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
 4. ⏳ Set up project structure
 5. ⏳ Implement MVP (Phase 1)
 
-### Open Questions for Phase 1
+### Detailed Phase Plans and Implementation Guides
 
-See architectural research document for details.
+For more granular details on specific phases or implementation aspects, refer to these documents:
+
+-   **v1 Prerelease Implementation**: [v1-prerelease/README.md](v1-prerelease/README.md) - Provides a detailed breakdown of features planned for the v1 prerelease.
+-   **v2 Prerelease Implementation**: [v2-prerelease/README.md](v2-prerelease/README.md) - Details features planned for the v2 prerelease.
+-   **Distributed Agent Architecture Implementation**: [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md) - Offers a tactical, step-by-step implementation plan for the distributed agent architecture.
 
 ---
 
@@ -374,22 +257,3 @@ See architectural research document for details.
 ## Decision Log
 
 Major decisions will be documented as ADRs in `/docs/decisions/`.
-
-### Decisions Needed (Phase 0)
-
-- [ ] ADR-001: Technology stack (language, frameworks)
-- [ ] ADR-002: State storage approach
-- [ ] ADR-003: Plugin/provider architecture
-- [ ] ADR-004: Configuration format (YAML, TOML, etc.)
-
-### Decisions Made
-
-- None yet (project just started)
-
-## Detailed Phase Plans and Implementation Guides
-
-For more granular details on specific phases or implementation aspects, refer to these documents:
-
--   **v1 Prerelease Implementation**: [docs/v1-prerelease/README.md](v1-prerelease/README.md) - Provides a detailed breakdown of features planned for the v1 prerelease.
--   **v2 Prerelease Implementation**: [docs/v2-prerelease/README.md](v2-prerelease/README.md) - Details features planned for the v2 prerelease.
--   **Distributed Agent Architecture Implementation**: [docs/IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md) - Offers a tactical, step-by-step implementation plan for the distributed agent architecture.

@@ -1,3 +1,5 @@
+For an overview of the entire system architecture, please refer to the [Boxy v1 Complete Architecture Map](../ARCHITECTURE_MAP.md).
+
 # Resource Interaction Guide
 
 ## Overview
@@ -253,7 +255,7 @@ func validateCommand(cmd []string) error {
     }
 
     // Don't allow shell metacharacters in simple mode
-    dangerous := []string{";", "|", "&", "$", "`", ">", "<"}
+    dangerous := []string{ ";", "|", "&", "$", "`", ">", "<"}
     for _, arg := range cmd {
         for _, char := range dangerous {
             if strings.Contains(arg, char) {

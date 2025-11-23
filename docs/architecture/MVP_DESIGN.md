@@ -1,3 +1,5 @@
+For an overview of the entire system architecture, please refer to the [Boxy v1 Complete Architecture Map](../ARCHITECTURE_MAP.md).
+
 # MVP Design Document
 
 This document captures ALL architectural decisions made for Boxy MVP.

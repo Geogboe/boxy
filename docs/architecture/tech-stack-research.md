@@ -1,3 +1,5 @@
+For an overview of the entire system architecture, please refer to the [Boxy v1 Complete Architecture Map](../ARCHITECTURE_MAP.md).
+
 # Technology Stack Research
 
 ## Executive Summary
