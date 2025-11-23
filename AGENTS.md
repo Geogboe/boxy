@@ -374,7 +374,40 @@ Boxy:
 - **MUST run `go test ./tests/e2e/` and verify all tests pass before saying "done"**
 - **MUST actually test CLI commands work (not just compile)**
 
-**Step 5: Use Planning Docs for Roadmapping**
+**Step 5: Definition of Done** ⚠️ **MANDATORY CHECKLIST**
+
+Before claiming any component is "done" or "complete", you **MUST** verify:
+
+✅ **Code Quality:**
+- [ ] Run `golangci-lint run ./path/to/package/...` - All linters pass with zero errors
+- [ ] Code builds successfully (`go build .`)
+- [ ] No compiler warnings or errors
+
+✅ **Testing:**
+- [ ] Unit tests written for all functions (`*_test.go` files)
+- [ ] All tests pass (`go test -v .`)
+- [ ] Test coverage is reasonable (aim for >80% on critical paths)
+- [ ] Edge cases and error scenarios tested
+
+✅ **Documentation:**
+- [ ] Package has README.md with:
+  - Purpose/contract clearly stated
+  - Usage examples that actually work
+  - Dependencies listed
+  - Architecture links
+- [ ] All exported functions have godoc comments
+- [ ] Complex logic has inline comments explaining why
+
+✅ **Integration:**
+- [ ] Package integrates with dependent packages
+- [ ] Import paths are correct
+- [ ] No circular dependencies
+
+**Never say something is "done" or "complete" without completing this checklist.**
+
+If you skip any step, explicitly state which steps remain and why.
+
+**Step 6: Use Planning Docs for Roadmapping**
 
 - **v1/v2/v3 Planning Docs** - Use versioned planning documents to manage work between sessions
   - `V1_IMPLEMENTATION_PLAN.md` - Complete v1 specification
@@ -762,10 +795,6 @@ POST   /api/v1/sandboxes          # Create sandbox
 GET    /api/v1/sandboxes/:id      # Get sandbox details
 DELETE /api/v1/sandboxes/:id      # Destroy sandbox
 PATCH  /api/v1/sandboxes/:id      # Extend time
-
-GET    /api/v1/pools              # List pools
-GET    /api/v1/pools/:id          # Get pool status
-POST   /api/v1/pools              # Create pool
 ```
 
 ---
@@ -783,3 +812,33 @@ This is an ambitious project with real complexity. Your role is to:
 When in doubt, ask questions. The goal is to build something robust and maintainable, not just to ship features quickly.
 
 **Remember**: Every VM costs money, every leak of credentials is a security incident, and every bug in lifecycle management leaves resources orphaned. Build with care.
+
+---
+
+## Local Development and Tooling
+
+To ensure code quality, consistency, and security, this project utilizes several local development tools. New contributors should install and use them as described below.
+
+### Go Tools
+
+These tools are standard in the Go ecosystem and are installed via `go install`.
+
+- **`goimports`**: Automatically formats code and manages imports.
+  - **Installation**: `go install golang.org/x/tools/cmd/goimports@latest`
+  - **Usage**: Run `goimports -w .` in the project root before committing to format your changes. Most Go editors can be configured to run this on save.
+
+- **`govulncheck`**: Scans your project's dependencies for known vulnerabilities.
+  - **Installation**: `go install golang.org/x/vuln/cmd/govulncheck@latest`
+  - **Usage**: Run `govulncheck ./...` in the project root to check for vulnerabilities. This is especially important before proposing a change that adds or updates dependencies.
+
+### Linters and Scanners
+
+These tools are installed in the `.bin/` directory within the project.
+
+- **`hadolint`**: A linter for Dockerfiles to enforce best practices.
+  - **Installation**: Managed via a script. See initial setup.
+  - **Usage**: Run `./.bin/hadolint Dockerfile` to check the project's Dockerfile. The configuration is in `.hadolint.yaml`.
+
+- **`gitleaks`**: A scanner that checks for secrets (like API keys and passwords) in your code and commit history.
+  - **Installation**: Managed via a script. See initial setup.
+  - **Usage**: Run `./.bin/gitleaks detect --source . -v` to scan the repository. This should be run before committing to prevent accidentally exposing secrets. Configuration is in `.gitleaks.toml`.
