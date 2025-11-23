@@ -1,3 +1,4 @@
+---
 # Agent Configuration
 # Run this on your Windows machine with Hyper-V
 #
@@ -17,3 +18,4 @@ logging:
 # --tls-cert /path/to/cert.pem
 # --tls-key /path/to/key.pem
 # --tls-ca /path/to/ca.pem
+---

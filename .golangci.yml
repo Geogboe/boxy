@@ -1,3 +1,4 @@
+---
 run:
   timeout: 5m
   tests: true
@@ -17,44 +18,44 @@ linters:
     - gocritic       # Opinionated linter
 
 linters-settings:
-    errcheck:
-      check-blank: false
-      check-type-assertions: false
-      exclude-functions:
-        - (*database/sql.DB).Close
-        - (*database/sql.Rows).Close
-        - fmt.Fprintf
-        - fmt.Fprintln
+  errcheck:
+    check-blank: false
+    check-type-assertions: false
+    exclude-functions:
+      - (*database/sql.DB).Close
+      - (*database/sql.Rows).Close
+      - fmt.Fprintf
+      - fmt.Fprintln
 
-    govet:
-      enable:
-        - atomicalign
+  govet:
+    enable:
+      - atomicalign
 
-    revive:
-      rules:
-        - name: var-naming
-          severity: warning
-          disabled: false
-        - name: package-comments
-          severity: warning
-          disabled: true  # We can enable this later
+  revive:
+    rules:
+      - name: var-naming
+        severity: warning
+        disabled: false
+      - name: package-comments
+        severity: warning
+        disabled: true  # We can enable this later
 
-    gosec:
-      # No exclusions - catch all security issues including weak crypto
-      confidence: medium
+  gosec:
+    # No exclusions - catch all security issues including weak crypto
+    confidence: medium
 
 issues:
   exclude-rules:
-      # Exclude some linters from running on tests files
-      - path: _test\.go
-        linters:
-          - errcheck
-          - gosec
+    # Exclude some linters from running on tests files
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gosec
 
-      # Exclude known issues
-      - text: "weak cryptographic primitive"
-        linters:
-          - gosec
+    # Exclude known issues
+    - text: "weak cryptographic primitive"
+      linters:
+        - gosec
 
   # Maximum issues count per one linter
   max-issues-per-linter: 0

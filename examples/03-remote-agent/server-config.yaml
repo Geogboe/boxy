@@ -1,3 +1,4 @@
+---
 # Server Configuration
 # Run this on your Linux machine (or any machine)
 #
@@ -48,3 +49,4 @@ storage:
 logging:
   level: info
   format: text
+---

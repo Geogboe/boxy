@@ -1,3 +1,4 @@
+---
 # Multi-pool configuration with different resource types
 # This example shows multiple pools for different use cases
 
@@ -84,3 +85,4 @@ storage:
 logging:
   level: info
   format: text
+---

@@ -1,5 +1,4 @@
-version: '3.8'
-
+---
 services:
   # Boxy service
   boxy:
@@ -16,13 +15,13 @@ services:
       # Optional: mount your config file
       # - ./boxy.yaml:/home/boxy/.config/boxy/boxy.yaml:ro
     environment:
-      # Configuration via environment variables
-      # Uncomment and customize as needed:
-      # - BOXY_STORAGE_TYPE=sqlite
-      # - BOXY_STORAGE_PATH=/home/boxy/.config/boxy/boxy.db
-      # - BOXY_LOGGING_LEVEL=info
-      # - BOXY_LOGGING_FORMAT=text
-      # - BOXY_ENCRYPTION_KEY=<base64-encoded-32-byte-key>
+    # Configuration via environment variables
+    # Uncomment and customize as needed:
+    # - BOXY_STORAGE_TYPE=sqlite
+    # - BOXY_STORAGE_PATH=/home/boxy/.config/boxy/boxy.db
+    # - BOXY_LOGGING_LEVEL=info
+    # - BOXY_LOGGING_FORMAT=text
+    # - BOXY_ENCRYPTION_KEY=<base64-encoded-32-byte-key>
     command: ["serve"]
     networks:
       - boxy-net

@@ -1,3 +1,4 @@
+---
 # Docker pool with lifecycle hooks
 # This example shows finalization and personalization hooks
 
@@ -66,3 +67,4 @@ storage:
 logging:
   level: info
   format: text
+---
