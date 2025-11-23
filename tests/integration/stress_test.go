@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Geogboe/boxy/internal/core/sandbox"
-	"github.com/Geogboe/boxy/internal/provider/mock"
 	provider_pkg "github.com/Geogboe/boxy/pkg/provider"
+	"github.com/Geogboe/boxy/pkg/provider/mock"
 )
 
 // TestProviderRegistry_ConcurrentAccess tests thread-safety of provider registry

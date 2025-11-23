@@ -156,7 +156,7 @@ func (r *RemoteProvider) Type() provider_pkg.ResourceType {
 // **Potential Problem #4 Addressed: Timeout Handling**
 // - Uses context with timeout for all remote calls
 // - Returns clear errors on timeout
-func (r *RemoteProvider) Provision(ctx context.Context, spec resource.ResourceSpec) (*resource.Resource, error) {
+func (r *RemoteProvider) Provision(ctx context.Context, spec provider_pkg.ResourceSpec) (*provider_pkg.Resource, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.requestTimeout)
 	defer cancel()
 
@@ -209,7 +209,7 @@ func (r *RemoteProvider) Provision(ctx context.Context, spec resource.ResourceSp
 }
 
 // Destroy removes a resource on the remote agent
-func (r *RemoteProvider) Destroy(ctx context.Context, res *resource.Resource) error {
+func (r *RemoteProvider) Destroy(ctx context.Context, res *provider_pkg.Resource) error {
 	ctx, cancel := context.WithTimeout(ctx, r.requestTimeout)
 	defer cancel()
 
@@ -252,7 +252,7 @@ func (r *RemoteProvider) Destroy(ctx context.Context, res *resource.Resource) er
 }
 
 // GetStatus retrieves resource status from the remote agent
-func (r *RemoteProvider) GetStatus(ctx context.Context, res *resource.Resource) (*resource.ResourceStatus, error) {
+func (r *RemoteProvider) GetStatus(ctx context.Context, res *provider_pkg.Resource) (*provider_pkg.ResourceStatus, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second) // Shorter timeout for status checks
 	defer cancel()
 
@@ -266,8 +266,8 @@ func (r *RemoteProvider) GetStatus(ctx context.Context, res *resource.Resource) 
 		return nil, fmt.Errorf("get status failed on agent %s: %w", r.agentAddress, err)
 	}
 
-	status := &resource.ResourceStatus{
-		State:      resource.ResourceState(resp.Status.State),
+	status := &provider_pkg.ResourceStatus{
+		State:      provider_pkg.ResourceState(resp.Status.State),
 		Healthy:    resp.Status.Healthy,
 		Message:    resp.Status.Message,
 		LastCheck:  time.Unix(resp.Status.LastCheck, 0),
@@ -280,7 +280,7 @@ func (r *RemoteProvider) GetStatus(ctx context.Context, res *resource.Resource) 
 }
 
 // GetConnectionInfo retrieves connection information from the remote agent
-func (r *RemoteProvider) GetConnectionInfo(ctx context.Context, res *resource.Resource) (*resource.ConnectionInfo, error) {
+func (r *RemoteProvider) GetConnectionInfo(ctx context.Context, res *provider_pkg.Resource) (*provider_pkg.ConnectionInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -294,7 +294,7 @@ func (r *RemoteProvider) GetConnectionInfo(ctx context.Context, res *resource.Re
 		return nil, fmt.Errorf("get connection info failed on agent %s: %w", r.agentAddress, err)
 	}
 
-	connInfo := &resource.ConnectionInfo{
+	connInfo := &provider_pkg.ConnectionInfo{
 		Type:        resp.ConnectionInfo.Type,
 		Host:        resp.ConnectionInfo.Host,
 		Port:        int(resp.ConnectionInfo.Port),
@@ -329,7 +329,7 @@ func (r *RemoteProvider) HealthCheck(ctx context.Context) error {
 }
 
 // Exec runs a command inside the resource on the remote agent
-func (r *RemoteProvider) Exec(ctx context.Context, res *resource.Resource, cmd []string) (*provider_pkg.ExecResult, error) {
+func (r *RemoteProvider) Exec(ctx context.Context, res *provider_pkg.Resource, cmd []string) (*provider_pkg.ExecResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.requestTimeout)
 	defer cancel()
 
@@ -386,7 +386,7 @@ func (r *RemoteProvider) Exec(ctx context.Context, res *resource.Resource, cmd [
 }
 
 // Update applies updates to the resource on the remote agent
-func (r *RemoteProvider) Update(ctx context.Context, res *resource.Resource, updates provider_pkg.ResourceUpdate) error {
+func (r *RemoteProvider) Update(ctx context.Context, res *provider_pkg.Resource, updates provider_pkg.ResourceUpdate) error {
 	ctx, cancel := context.WithTimeout(ctx, r.requestTimeout)
 	defer cancel()
 

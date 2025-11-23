@@ -8,6 +8,7 @@
 - Run `yamllint` against all YAML files before merging; config lives in `.yamllint.yaml`
 - Other agent guides (e.g., `CLAUDE.md`, `GEMINI.md`, future equivalents) should defer to and reference this `AGENTS.md` as the single source of truth for assistant instructions
 - For Python-based tools, prefer invoking via `uv` (`uvx <tool>`) when available instead of global installs
+- Use the `internal/core/allocator` package for pool → sandbox orchestration; avoid calling pool managers directly from sandbox flows
 
 ## Project Overview
 

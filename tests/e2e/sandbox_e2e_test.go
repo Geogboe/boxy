@@ -8,14 +8,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Geogboe/boxy/internal/core/allocator"
 	"github.com/Geogboe/boxy/internal/core/pool"
 	"github.com/Geogboe/boxy/internal/core/resource"
 	"github.com/Geogboe/boxy/internal/core/sandbox"
-	"github.com/Geogboe/boxy/internal/crypto"
 	"github.com/Geogboe/boxy/internal/hooks"
-	"github.com/Geogboe/boxy/internal/provider/mock"
 	"github.com/Geogboe/boxy/internal/storage"
+	"github.com/Geogboe/boxy/pkg/crypto"
 	"github.com/Geogboe/boxy/pkg/provider"
+	"github.com/Geogboe/boxy/pkg/provider/mock"
 	"github.com/sirupsen/logrus"
 )
 
@@ -94,7 +95,7 @@ func TestE2E_CompleteSandboxLifecycle(t *testing.T) {
 	waitForPoolReady(t, poolMgr, 2)
 
 	// Create sandbox manager
-	poolAllocators := map[string]sandbox.PoolAllocator{
+	poolAllocators := map[string]allocator.PoolAllocator{
 		"test-pool": poolMgr,
 	}
 	sandboxMgr := sandbox.NewManager(
@@ -189,7 +190,7 @@ func TestE2E_CompleteSandboxLifecycle(t *testing.T) {
 	time.Sleep(500 * time.Millisecond) // Give time for cleanup and replenishment
 	stats, err = poolMgr.GetStats(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, 0, stats.TotalAllocated) // No more allocated
+	assert.Equal(t, 0, stats.TotalAllocated)      // No more allocated
 	assert.GreaterOrEqual(t, stats.TotalReady, 2) // Pool replenished
 
 	t.Log("✓ Complete lifecycle test passed")
@@ -261,7 +262,7 @@ func TestE2E_MultipleResourceTypes(t *testing.T) {
 	waitForPoolReady(t, poolMgr2, 1)
 
 	// Create sandbox with resources from both pools
-	poolAllocators := map[string]sandbox.PoolAllocator{
+	poolAllocators := map[string]allocator.PoolAllocator{
 		"pool-a": poolMgr1,
 		"pool-b": poolMgr2,
 	}
@@ -337,7 +338,7 @@ func TestE2E_SandboxExpiration(t *testing.T) {
 
 	waitForPoolReady(t, poolMgr, 1)
 
-	poolAllocators := map[string]sandbox.PoolAllocator{"test-pool": poolMgr}
+	poolAllocators := map[string]allocator.PoolAllocator{"test-pool": poolMgr}
 	sandboxMgr := sandbox.NewManager(poolAllocators, store, store, providerRegistry, logger)
 	sandboxMgr.Start()
 	defer sandboxMgr.Stop()

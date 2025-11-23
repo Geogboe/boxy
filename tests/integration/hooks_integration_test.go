@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Geogboe/boxy/internal/hooks"
-	"github.com/Geogboe/boxy/internal/provider/mock"
+	"github.com/Geogboe/boxy/pkg/provider/mock"
 )
 
 func TestPoolManager_Integration_HooksAfterProvision(t *testing.T) {

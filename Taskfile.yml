@@ -39,11 +39,31 @@ tasks:
     cmds:
       - echo "Building for all platforms..."
       - mkdir -p dist
-      - GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="{{.LDFLAGS}}" -trimpath -o dist/boxy-linux-amd64 ./cmd/boxy  # yamllint disable-line rule:line-length
-      - GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="{{.LDFLAGS}}" -trimpath -o dist/boxy-linux-arm64 ./cmd/boxy  # yamllint disable-line rule:line-length
-      - GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="{{.LDFLAGS}}" -trimpath -o dist/boxy-darwin-amd64 ./cmd/boxy  # yamllint disable-line rule:line-length
-      - GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="{{.LDFLAGS}}" -trimpath -o dist/boxy-darwin-arm64 ./cmd/boxy  # yamllint disable-line rule:line-length
-      - GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="{{.LDFLAGS}}" -trimpath -o dist/boxy-windows-amd64.exe ./cmd/boxy  # yamllint disable-line rule:line-length
+      - cmd: go build -ldflags="{{.LDFLAGS}}" -trimpath -o dist/boxy-linux-amd64 ./cmd/boxy
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: 0
+      - cmd: go build -ldflags="{{.LDFLAGS}}" -trimpath -o dist/boxy-linux-arm64 ./cmd/boxy
+        env:
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: 0
+      - cmd: go build -ldflags="{{.LDFLAGS}}" -trimpath -o dist/boxy-darwin-amd64 ./cmd/boxy
+        env:
+          GOOS: darwin
+          GOARCH: amd64
+          CGO_ENABLED: 0
+      - cmd: go build -ldflags="{{.LDFLAGS}}" -trimpath -o dist/boxy-darwin-arm64 ./cmd/boxy
+        env:
+          GOOS: darwin
+          GOARCH: arm64
+          CGO_ENABLED: 0
+      - cmd: go build -ldflags="{{.LDFLAGS}}" -trimpath -o dist/boxy-windows-amd64.exe ./cmd/boxy
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: 0
       - echo "All builds complete in dist/"
       - ls -lh dist/
 
@@ -131,7 +151,11 @@ tasks:
     desc: Lint code
     cmds:
       - echo "Linting code..."
-      - which golangci-lint > /dev/null || (echo "Installing golangci-lint..." && go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest)  # yamllint disable-line rule:line-length
+      - cmd: |
+          which golangci-lint >/dev/null || {
+            echo "Installing golangci-lint..."
+            go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+          }
       - golangci-lint run ./...
       - echo "Lint complete"
 
