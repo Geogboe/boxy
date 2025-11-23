@@ -3,14 +3,14 @@ package pool
 import (
 	"time"
 
-	"github.com/Geogboe/boxy/internal/core/resource"
 	"github.com/Geogboe/boxy/internal/hooks"
+	"github.com/Geogboe/boxy/pkg/provider"
 )
 
 // PoolConfig defines the configuration for a resource pool
 type PoolConfig struct {
 	Name         string                 `yaml:"name" json:"name"`
-	Type         resource.ResourceType  `yaml:"type" json:"type"`
+	Type         provider.ResourceType  `yaml:"type" json:"type"`
 	Backend      string                 `yaml:"backend" json:"backend"` // docker, hyperv, kvm, etc.
 	Image        string                 `yaml:"image" json:"image"`
 	MinReady     int                    `yaml:"min_ready" json:"min_ready"`         // Minimum resources to keep ready
@@ -91,8 +91,8 @@ func (c *PoolConfig) ApplyDefaults() {
 }
 
 // ToResourceSpec converts pool configuration to a resource specification
-func (c *PoolConfig) ToResourceSpec() resource.ResourceSpec {
-	return resource.ResourceSpec{
+func (c *PoolConfig) ToResourceSpec() provider.ResourceSpec {
+	return provider.ResourceSpec{
 		Type:         c.Type,
 		ProviderType: c.Backend,
 		Image:        c.Image,

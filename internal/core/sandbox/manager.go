@@ -8,13 +8,12 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"github.com/Geogboe/boxy/internal/core/resource"
 	"github.com/Geogboe/boxy/pkg/provider"
 )
 
 // PoolAllocator defines the interface for allocating resources from pools
 type PoolAllocator interface {
-	Allocate(ctx context.Context, sandboxID string) (*resource.Resource, error)
+	Allocate(ctx context.Context, sandboxID string) (*provider.Resource, error)
 	Release(ctx context.Context, resourceID string) error
 }
 
@@ -31,9 +30,9 @@ type SandboxRepository interface {
 
 // ResourceRepository defines the interface for resource access
 type ResourceRepository interface {
-	GetResourceByID(ctx context.Context, id string) (*resource.Resource, error)
-	GetResourcesBySandboxID(ctx context.Context, sandboxID string) ([]*resource.Resource, error)
-	UpdateResource(ctx context.Context, res *resource.Resource) error
+	GetResourceByID(ctx context.Context, id string) (*provider.Resource, error)
+	GetResourcesBySandboxID(ctx context.Context, sandboxID string) ([]*provider.Resource, error)
+	UpdateResource(ctx context.Context, res *provider.Resource) error
 }
 
 // Manager manages sandbox lifecycle
@@ -466,6 +465,6 @@ func (m *Manager) cleanupPartialSandbox(ctx context.Context, sandboxID string, r
 
 // ResourceWithConnection combines resource info with connection details
 type ResourceWithConnection struct {
-	Resource   *resource.Resource       `json:"resource"`
-	Connection *resource.ConnectionInfo `json:"connection"`
+	Resource   *provider.Resource       `json:"resource"`
+	Connection *provider.ConnectionInfo `json:"connection"`
 }

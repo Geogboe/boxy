@@ -3,20 +3,20 @@ package storage
 import (
 	"context"
 
-	"github.com/Geogboe/boxy/internal/core/resource"
 	"github.com/Geogboe/boxy/internal/core/sandbox"
+	"github.com/Geogboe/boxy/pkg/provider"
 )
 
 // ResourceRepository defines the interface for resource storage operations
 type ResourceRepository interface {
-	CreateResource(ctx context.Context, res *resource.Resource) error
-	UpdateResource(ctx context.Context, res *resource.Resource) error
+	CreateResource(ctx context.Context, res *provider.Resource) error
+	UpdateResource(ctx context.Context, res *provider.Resource) error
 	DeleteResource(ctx context.Context, id string) error
-	GetResourceByID(ctx context.Context, id string) (*resource.Resource, error)
-	GetResourcesByPoolID(ctx context.Context, poolID string) ([]*resource.Resource, error)
-	GetResourcesByState(ctx context.Context, poolID string, state resource.ResourceState) ([]*resource.Resource, error)
-	CountResourcesByPoolAndState(ctx context.Context, poolID string, state resource.ResourceState) (int, error)
-	GetResourcesBySandboxID(ctx context.Context, sandboxID string) ([]*resource.Resource, error)
+	GetResourceByID(ctx context.Context, id string) (*provider.Resource, error)
+	GetResourcesByPoolID(ctx context.Context, poolID string) ([]*provider.Resource, error)
+	GetResourcesByState(ctx context.Context, poolID string, state provider.ResourceState) ([]*provider.Resource, error)
+	CountResourcesByPoolAndState(ctx context.Context, poolID string, state provider.ResourceState) (int, error)
+	GetResourcesBySandboxID(ctx context.Context, sandboxID string) ([]*provider.Resource, error)
 }
 
 // SandboxRepository defines the interface for sandbox storage operations

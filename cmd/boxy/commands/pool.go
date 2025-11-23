@@ -11,9 +11,9 @@ import (
 
 	"github.com/Geogboe/boxy/internal/config"
 	"github.com/Geogboe/boxy/internal/core/pool"
-	"github.com/Geogboe/boxy/internal/crypto"
-	"github.com/Geogboe/boxy/internal/provider/docker"
 	"github.com/Geogboe/boxy/internal/storage"
+	"github.com/Geogboe/boxy/pkg/crypto"
+	"github.com/Geogboe/boxy/pkg/provider/docker"
 )
 
 var poolCmd = &cobra.Command{

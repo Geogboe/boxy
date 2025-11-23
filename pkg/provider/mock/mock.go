@@ -10,14 +10,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 
-	"github.com/Geogboe/boxy/internal/core/resource"
-	provider_pkg "github.com/Geogboe/boxy/pkg/provider"
+	"github.com/Geogboe/boxy/pkg/provider"
 )
 
 // Provider is a mock provider for testing without Docker
 type Provider struct {
 	mu                sync.Mutex
-	resources         map[string]*resource.Resource
+	resources         map[string]*provider.Resource
 	provisionDelay    time.Duration
 	destroyDelay      time.Duration
 	failureRate       float64 // 0.0 to 1.0
@@ -47,7 +46,7 @@ func NewProvider(logger *logrus.Logger, cfg *Config) *Provider {
 	}
 
 	return &Provider{
-		resources:        make(map[string]*resource.Resource),
+		resources:        make(map[string]*provider.Resource),
 		provisionDelay:   cfg.ProvisionDelay,
 		destroyDelay:     cfg.DestroyDelay,
 		failureRate:      cfg.FailureRate,
@@ -57,7 +56,7 @@ func NewProvider(logger *logrus.Logger, cfg *Config) *Provider {
 }
 
 // Provision creates a mock resource
-func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*resource.Resource, error) {
+func (p *Provider) Provision(ctx context.Context, spec provider.ResourceSpec) (*provider.Resource, error) {
 	p.mu.Lock()
 	p.provisionCount++
 	count := p.provisionCount
@@ -76,10 +75,10 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 		return nil, fmt.Errorf("mock provision failure (simulated)")
 	}
 
-	res := &resource.Resource{
+	res := &provider.Resource{
 		ID:           uuid.New().String(),
 		Type:         spec.Type,
-		State:        resource.StateReady,
+		State:        provider.StateReady,
 		ProviderType: "mock",
 		ProviderID:   fmt.Sprintf("mock-%d", count),
 		Spec: map[string]interface{}{
@@ -106,7 +105,7 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 }
 
 // Destroy removes a mock resource
-func (p *Provider) Destroy(ctx context.Context, res *resource.Resource) error {
+func (p *Provider) Destroy(ctx context.Context, res *provider.Resource) error {
 	p.mu.Lock()
 	p.destroyCount++
 	p.mu.Unlock()
@@ -128,15 +127,15 @@ func (p *Provider) Destroy(ctx context.Context, res *resource.Resource) error {
 }
 
 // GetStatus returns mock status
-func (p *Provider) GetStatus(ctx context.Context, res *resource.Resource) (*resource.ResourceStatus, error) {
+func (p *Provider) GetStatus(ctx context.Context, res *provider.Resource) (*provider.ResourceStatus, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	// Look up by ProviderID (not ID, since pool manager owns the ID)
 	_, exists := p.resources[res.ProviderID]
 	if !exists {
-		return &resource.ResourceStatus{
-			State:     resource.StateDestroyed,
+		return &provider.ResourceStatus{
+			State:     provider.StateDestroyed,
 			Healthy:   false,
 			Message:   "resource not found",
 			LastCheck: time.Now(),
@@ -144,12 +143,12 @@ func (p *Provider) GetStatus(ctx context.Context, res *resource.Resource) (*reso
 	}
 
 	healthy := !p.shouldFailHealth
-	state := resource.StateReady
+	state := provider.StateReady
 	if !healthy {
-		state = resource.StateError
+		state = provider.StateError
 	}
 
-	return &resource.ResourceStatus{
+	return &provider.ResourceStatus{
 		State:     state,
 		Healthy:   healthy,
 		Message:   "mock resource",
@@ -159,7 +158,7 @@ func (p *Provider) GetStatus(ctx context.Context, res *resource.Resource) (*reso
 }
 
 // GetConnectionInfo returns mock connection info
-func (p *Provider) GetConnectionInfo(ctx context.Context, res *resource.Resource) (*resource.ConnectionInfo, error) {
+func (p *Provider) GetConnectionInfo(ctx context.Context, res *provider.Resource) (*provider.ConnectionInfo, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -169,7 +168,7 @@ func (p *Provider) GetConnectionInfo(ctx context.Context, res *resource.Resource
 		return nil, fmt.Errorf("resource not found")
 	}
 
-	return &resource.ConnectionInfo{
+	return &provider.ConnectionInfo{
 		Type:     "mock",
 		Host:     "mock-host",
 		Port:     9999,
@@ -199,8 +198,8 @@ func (p *Provider) Name() string {
 }
 
 // Type returns resource type
-func (p *Provider) Type() resource.ResourceType {
-	return resource.ResourceTypeContainer
+func (p *Provider) Type() provider.ResourceType {
+	return provider.ResourceTypeContainer
 }
 
 // Stats returns mock provider statistics
@@ -235,14 +234,14 @@ func (p *Provider) Reset() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	p.resources = make(map[string]*resource.Resource)
+	p.resources = make(map[string]*provider.Resource)
 	p.provisionCount = 0
 	p.destroyCount = 0
 	p.healthCheckCount = 0
 }
 
 // Update modifies a resource (mock implementation)
-func (p *Provider) Update(ctx context.Context, res *resource.Resource, updates provider_pkg.ResourceUpdate) error {
+func (p *Provider) Update(ctx context.Context, res *provider.Resource, updates provider.ResourceUpdate) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -257,7 +256,7 @@ func (p *Provider) Update(ctx context.Context, res *resource.Resource, updates p
 }
 
 // Execute runs a command in the resource (mock implementation)
-func (p *Provider) Exec(ctx context.Context, res *resource.Resource, cmd []string) (*provider_pkg.ExecResult, error) {
+func (p *Provider) Exec(ctx context.Context, res *provider.Resource, cmd []string) (*provider.ExecResult, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -268,7 +267,7 @@ func (p *Provider) Exec(ctx context.Context, res *resource.Resource, cmd []strin
 	}
 
 	// Mock: simulate successful command execution
-	return &provider_pkg.ExecResult{
+	return &provider.ExecResult{
 		ExitCode: 0,
 		Stdout:   fmt.Sprintf("Mock output for: %v", cmd),
 		Stderr:   "",
@@ -284,4 +283,4 @@ type ProviderStats struct {
 }
 
 // Ensure Provider implements provider.Provider interface
-var _ provider_pkg.Provider = (*Provider)(nil)
+var _ provider.Provider = (*Provider)(nil)

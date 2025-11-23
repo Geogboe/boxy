@@ -8,8 +8,8 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"github.com/Geogboe/boxy/internal/core/resource"
 	"github.com/Geogboe/boxy/internal/core/sandbox"
+	"github.com/Geogboe/boxy/pkg/provider"
 )
 
 // SQLiteStore implements storage using SQLite with GORM
@@ -51,7 +51,7 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 
 // Migrate runs database migrations
 func (s *SQLiteStore) Migrate() error {
-	return s.db.AutoMigrate(&resource.Resource{}, &sandbox.Sandbox{})
+	return s.db.AutoMigrate(&provider.Resource{}, &sandbox.Sandbox{})
 }
 
 // Close closes the database connection
@@ -71,23 +71,23 @@ func (s *SQLiteStore) DB() *gorm.DB {
 // ResourceRepository methods
 
 // CreateResource creates a new resource
-func (s *SQLiteStore) CreateResource(ctx context.Context, res *resource.Resource) error {
+func (s *SQLiteStore) CreateResource(ctx context.Context, res *provider.Resource) error {
 	return s.db.WithContext(ctx).Create(res).Error
 }
 
 // UpdateResource updates an existing resource
-func (s *SQLiteStore) UpdateResource(ctx context.Context, res *resource.Resource) error {
+func (s *SQLiteStore) UpdateResource(ctx context.Context, res *provider.Resource) error {
 	return s.db.WithContext(ctx).Save(res).Error
 }
 
 // DeleteResource deletes a resource by ID
 func (s *SQLiteStore) DeleteResource(ctx context.Context, id string) error {
-	return s.db.WithContext(ctx).Delete(&resource.Resource{}, "id = ?", id).Error
+	return s.db.WithContext(ctx).Delete(&provider.Resource{}, "id = ?", id).Error
 }
 
 // GetResourceByID retrieves a resource by ID
-func (s *SQLiteStore) GetResourceByID(ctx context.Context, id string) (*resource.Resource, error) {
-	var res resource.Resource
+func (s *SQLiteStore) GetResourceByID(ctx context.Context, id string) (*provider.Resource, error) {
+	var res provider.Resource
 	if err := s.db.WithContext(ctx).Where("id = ?", id).First(&res).Error; err != nil {
 		return nil, err
 	}
@@ -95,8 +95,8 @@ func (s *SQLiteStore) GetResourceByID(ctx context.Context, id string) (*resource
 }
 
 // GetResourcesByPoolID retrieves all resources for a pool
-func (s *SQLiteStore) GetResourcesByPoolID(ctx context.Context, poolID string) ([]*resource.Resource, error) {
-	var resources []*resource.Resource
+func (s *SQLiteStore) GetResourcesByPoolID(ctx context.Context, poolID string) ([]*provider.Resource, error) {
+	var resources []*provider.Resource
 	if err := s.db.WithContext(ctx).Where("pool_id = ?", poolID).Find(&resources).Error; err != nil {
 		return nil, err
 	}
@@ -104,8 +104,8 @@ func (s *SQLiteStore) GetResourcesByPoolID(ctx context.Context, poolID string) (
 }
 
 // GetResourcesByState retrieves resources by pool and state
-func (s *SQLiteStore) GetResourcesByState(ctx context.Context, poolID string, state resource.ResourceState) ([]*resource.Resource, error) {
-	var resources []*resource.Resource
+func (s *SQLiteStore) GetResourcesByState(ctx context.Context, poolID string, state provider.ResourceState) ([]*provider.Resource, error) {
+	var resources []*provider.Resource
 	if err := s.db.WithContext(ctx).Where("pool_id = ? AND state = ?", poolID, state).Find(&resources).Error; err != nil {
 		return nil, err
 	}
@@ -113,17 +113,17 @@ func (s *SQLiteStore) GetResourcesByState(ctx context.Context, poolID string, st
 }
 
 // CountResourcesByPoolAndState counts resources by pool and state
-func (s *SQLiteStore) CountResourcesByPoolAndState(ctx context.Context, poolID string, state resource.ResourceState) (int, error) {
+func (s *SQLiteStore) CountResourcesByPoolAndState(ctx context.Context, poolID string, state provider.ResourceState) (int, error) {
 	var count int64
-	if err := s.db.WithContext(ctx).Model(&resource.Resource{}).Where("pool_id = ? AND state = ?", poolID, state).Count(&count).Error; err != nil {
+	if err := s.db.WithContext(ctx).Model(&provider.Resource{}).Where("pool_id = ? AND state = ?", poolID, state).Count(&count).Error; err != nil {
 		return 0, err
 	}
 	return int(count), nil
 }
 
 // GetResourcesBySandboxID retrieves all resources for a sandbox
-func (s *SQLiteStore) GetResourcesBySandboxID(ctx context.Context, sandboxID string) ([]*resource.Resource, error) {
-	var resources []*resource.Resource
+func (s *SQLiteStore) GetResourcesBySandboxID(ctx context.Context, sandboxID string) ([]*provider.Resource, error) {
+	var resources []*provider.Resource
 	if err := s.db.WithContext(ctx).Where("sandbox_id = ?", sandboxID).Find(&resources).Error; err != nil {
 		return nil, err
 	}

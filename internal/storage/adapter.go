@@ -3,8 +3,8 @@ package storage
 import (
 	"context"
 
-	"github.com/Geogboe/boxy/internal/core/resource"
 	"github.com/Geogboe/boxy/internal/core/sandbox"
+	"github.com/Geogboe/boxy/pkg/provider"
 )
 
 // ResourceRepositoryAdapter adapts Store to the pool.ResourceRepository interface
@@ -17,11 +17,11 @@ func NewResourceRepositoryAdapter(store Store) *ResourceRepositoryAdapter {
 	return &ResourceRepositoryAdapter{store: store}
 }
 
-func (a *ResourceRepositoryAdapter) Create(ctx context.Context, res *resource.Resource) error {
+func (a *ResourceRepositoryAdapter) Create(ctx context.Context, res *provider.Resource) error {
 	return a.store.CreateResource(ctx, res)
 }
 
-func (a *ResourceRepositoryAdapter) Update(ctx context.Context, res *resource.Resource) error {
+func (a *ResourceRepositoryAdapter) Update(ctx context.Context, res *provider.Resource) error {
 	return a.store.UpdateResource(ctx, res)
 }
 
@@ -29,31 +29,31 @@ func (a *ResourceRepositoryAdapter) Delete(ctx context.Context, id string) error
 	return a.store.DeleteResource(ctx, id)
 }
 
-func (a *ResourceRepositoryAdapter) GetByID(ctx context.Context, id string) (*resource.Resource, error) {
+func (a *ResourceRepositoryAdapter) GetByID(ctx context.Context, id string) (*provider.Resource, error) {
 	return a.store.GetResourceByID(ctx, id)
 }
 
-func (a *ResourceRepositoryAdapter) GetByPoolID(ctx context.Context, poolID string) ([]*resource.Resource, error) {
+func (a *ResourceRepositoryAdapter) GetByPoolID(ctx context.Context, poolID string) ([]*provider.Resource, error) {
 	return a.store.GetResourcesByPoolID(ctx, poolID)
 }
 
-func (a *ResourceRepositoryAdapter) GetByState(ctx context.Context, poolID string, state resource.ResourceState) ([]*resource.Resource, error) {
+func (a *ResourceRepositoryAdapter) GetByState(ctx context.Context, poolID string, state provider.ResourceState) ([]*provider.Resource, error) {
 	return a.store.GetResourcesByState(ctx, poolID, state)
 }
 
-func (a *ResourceRepositoryAdapter) CountByPoolAndState(ctx context.Context, poolID string, state resource.ResourceState) (int, error) {
+func (a *ResourceRepositoryAdapter) CountByPoolAndState(ctx context.Context, poolID string, state provider.ResourceState) (int, error) {
 	return a.store.CountResourcesByPoolAndState(ctx, poolID, state)
 }
 
-func (a *ResourceRepositoryAdapter) GetResourceByID(ctx context.Context, id string) (*resource.Resource, error) {
+func (a *ResourceRepositoryAdapter) GetResourceByID(ctx context.Context, id string) (*provider.Resource, error) {
 	return a.store.GetResourceByID(ctx, id)
 }
 
-func (a *ResourceRepositoryAdapter) GetResourcesBySandboxID(ctx context.Context, sandboxID string) ([]*resource.Resource, error) {
+func (a *ResourceRepositoryAdapter) GetResourcesBySandboxID(ctx context.Context, sandboxID string) ([]*provider.Resource, error) {
 	return a.store.GetResourcesBySandboxID(ctx, sandboxID)
 }
 
-func (a *ResourceRepositoryAdapter) UpdateResource(ctx context.Context, res *resource.Resource) error {
+func (a *ResourceRepositoryAdapter) UpdateResource(ctx context.Context, res *provider.Resource) error {
 	return a.store.UpdateResource(ctx, res)
 }
 

@@ -3,32 +3,30 @@ package provider
 import (
 	"context"
 	"sync"
-
-	"github.com/Geogboe/boxy/internal/core/resource"
 )
 
 // Provider is the interface that all backend providers must implement.
 // Providers are stateless and dumb - they just translate Boxy commands to backend APIs.
 type Provider interface {
 	// Lifecycle operations
-	Provision(ctx context.Context, spec resource.ResourceSpec) (*resource.Resource, error)
-	Destroy(ctx context.Context, res *resource.Resource) error
+	Provision(ctx context.Context, spec ResourceSpec) (*Resource, error)
+	Destroy(ctx context.Context, res *Resource) error
 
 	// Status and information
-	GetStatus(ctx context.Context, res *resource.Resource) (*resource.ResourceStatus, error)
-	GetConnectionInfo(ctx context.Context, res *resource.Resource) (*resource.ConnectionInfo, error)
+	GetStatus(ctx context.Context, res *Resource) (*ResourceStatus, error)
+	GetConnectionInfo(ctx context.Context, res *Resource) (*ConnectionInfo, error)
 
 	// Resource management
-	Update(ctx context.Context, res *resource.Resource, updates ResourceUpdate) error
+	Update(ctx context.Context, res *Resource, updates ResourceUpdate) error
 	// Exec runs a command inside the resource (aligns with docker exec, kubectl exec)
-	Exec(ctx context.Context, res *resource.Resource, cmd []string) (*ExecResult, error)
+	Exec(ctx context.Context, res *Resource, cmd []string) (*ExecResult, error)
 
 	// Provider health
 	HealthCheck(ctx context.Context) error
 
 	// Metadata
 	Name() string
-	Type() resource.ResourceType
+	Type() ResourceType
 }
 
 // ResourceUpdate contains provider-specific update operations

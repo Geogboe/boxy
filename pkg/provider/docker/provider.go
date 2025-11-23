@@ -2,7 +2,6 @@ package docker
 
 import (
 	"context"
-	"crypto/rand"
 	"fmt"
 	"io"
 	"strings"
@@ -15,9 +14,8 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/sirupsen/logrus"
 
-	"github.com/Geogboe/boxy/internal/core/resource"
-	"github.com/Geogboe/boxy/internal/crypto"
-	provider_pkg "github.com/Geogboe/boxy/pkg/provider"
+	"github.com/Geogboe/boxy/pkg/crypto"
+	"github.com/Geogboe/boxy/pkg/provider"
 )
 
 // Provider implements the provider.Provider interface for Docker
@@ -42,7 +40,7 @@ func NewProvider(logger *logrus.Logger, encryptor *crypto.Encryptor) (*Provider,
 }
 
 // Provision creates a new Docker container
-func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*resource.Resource, error) {
+func (p *Provider) Provision(ctx context.Context, spec provider.ResourceSpec) (*provider.Resource, error) {
 	p.logger.WithFields(logrus.Fields{
 		"image": spec.Image,
 		"type":  spec.Type,
@@ -54,7 +52,16 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 	}
 
 	// Generate random password for the container
-	password := generatePassword(16)
+	password, err := crypto.GeneratePassword(crypto.PasswordOptions{
+		Length:         16,
+		IncludeLower:   true,
+		IncludeUpper:   true,
+		IncludeDigits:  true,
+		IncludeSpecial: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate password: %w", err)
+	}
 
 	// Prepare container configuration
 	config := &container.Config{
@@ -141,9 +148,9 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 		}
 	}
 
-	res := &resource.Resource{
-		Type:         resource.ResourceTypeContainer,
-		State:        resource.StateReady,
+	res := &provider.Resource{
+		Type:         provider.ResourceTypeContainer,
+		State:        provider.StateReady,
 		ProviderType: "docker",
 		ProviderID:   resp.ID,
 		Spec: map[string]interface{}{
@@ -172,7 +179,7 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 }
 
 // Destroy removes a Docker container
-func (p *Provider) Destroy(ctx context.Context, res *resource.Resource) error {
+func (p *Provider) Destroy(ctx context.Context, res *provider.Resource) error {
 	p.logger.WithField("container_id", res.ProviderID).Info("Destroying container")
 
 	// Remove container forcefully
@@ -189,13 +196,13 @@ func (p *Provider) Destroy(ctx context.Context, res *resource.Resource) error {
 }
 
 // GetStatus returns the current status of a container
-func (p *Provider) GetStatus(ctx context.Context, res *resource.Resource) (*resource.ResourceStatus, error) {
+func (p *Provider) GetStatus(ctx context.Context, res *provider.Resource) (*provider.ResourceStatus, error) {
 	inspect, err := p.client.ContainerInspect(ctx, res.ProviderID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to inspect container: %w", err)
 	}
 
-	status := &resource.ResourceStatus{
+	status := &provider.ResourceStatus{
 		Healthy:   inspect.State.Running,
 		Message:   inspect.State.Status,
 		LastCheck: time.Now(),
@@ -204,11 +211,11 @@ func (p *Provider) GetStatus(ctx context.Context, res *resource.Resource) (*reso
 	// Map Docker state to resource state
 	switch {
 	case inspect.State.Running:
-		status.State = resource.StateReady
+		status.State = provider.StateReady
 	case inspect.State.Dead:
-		status.State = resource.StateError
+		status.State = provider.StateError
 	default:
-		status.State = resource.StateProvisioning
+		status.State = provider.StateProvisioning
 	}
 
 	// Get stats (optional, can be heavy)
@@ -229,7 +236,7 @@ func (p *Provider) GetStatus(ctx context.Context, res *resource.Resource) (*reso
 }
 
 // GetConnectionInfo returns connection details for a container
-func (p *Provider) GetConnectionInfo(ctx context.Context, res *resource.Resource) (*resource.ConnectionInfo, error) {
+func (p *Provider) GetConnectionInfo(ctx context.Context, res *provider.Resource) (*provider.ConnectionInfo, error) {
 	inspect, err := p.client.ContainerInspect(ctx, res.ProviderID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to inspect container: %w", err)
@@ -261,7 +268,7 @@ func (p *Provider) GetConnectionInfo(ctx context.Context, res *resource.Resource
 		}
 	}
 
-	connInfo := &resource.ConnectionInfo{
+	connInfo := &provider.ConnectionInfo{
 		Type:     "docker-exec",
 		Host:     ipAddress,
 		Username: "root",
@@ -301,8 +308,8 @@ func (p *Provider) Name() string {
 }
 
 // Type returns the resource type this provider handles
-func (p *Provider) Type() resource.ResourceType {
-	return resource.ResourceTypeContainer
+func (p *Provider) Type() provider.ResourceType {
+	return provider.ResourceTypeContainer
 }
 
 // ensureImage pulls the image if it doesn't exist locally
@@ -337,33 +344,16 @@ func (p *Provider) ensureImage(ctx context.Context, image string) error {
 	return nil
 }
 
-// generatePassword generates a cryptographically secure random password
-func generatePassword(length int) string {
-	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
-	b := make([]byte, length)
-
-	// Use crypto/rand for cryptographically secure random numbers
-	randomBytes := make([]byte, length)
-	if _, err := rand.Read(randomBytes); err != nil {
-		// Fallback to timestamp-based if crypto fails (should never happen)
-		panic(fmt.Sprintf("crypto/rand failed: %v", err))
-	}
-
-	for i := range b {
-		b[i] = charset[int(randomBytes[i])%len(charset)]
-	}
-	return string(b)
-}
 
 // Update modifies a resource (for Docker: resource limits, pause/unpause)
-func (p *Provider) Update(ctx context.Context, res *resource.Resource, updates provider_pkg.ResourceUpdate) error {
+func (p *Provider) Update(ctx context.Context, res *provider.Resource, updates provider.ResourceUpdate) error {
 	// TODO(mvp2): Implement resource limit updates
 	// For now, return not supported
 	return fmt.Errorf("Update not yet implemented for Docker provider")
 }
 
 // Execute runs a command inside the container
-func (p *Provider) Exec(ctx context.Context, res *resource.Resource, cmd []string) (*provider_pkg.ExecResult, error) {
+func (p *Provider) Exec(ctx context.Context, res *provider.Resource, cmd []string) (*provider.ExecResult, error) {
 	p.logger.WithFields(logrus.Fields{
 		"container_id": res.ProviderID,
 		"command":      cmd,
@@ -401,7 +391,7 @@ func (p *Provider) Exec(ctx context.Context, res *resource.Resource, cmd []strin
 		return nil, fmt.Errorf("failed to inspect exec: %w", err)
 	}
 
-	result := &provider_pkg.ExecResult{
+	result := &provider.ExecResult{
 		ExitCode: inspect.ExitCode,
 		Stdout:   stdout.String(),
 		Stderr:   stderr.String(),
@@ -416,4 +406,4 @@ func (p *Provider) Exec(ctx context.Context, res *resource.Resource, cmd []strin
 }
 
 // Ensure Provider implements provider.Provider interface
-var _ provider_pkg.Provider = (*Provider)(nil)
+var _ provider.Provider = (*Provider)(nil)

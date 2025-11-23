@@ -12,16 +12,18 @@ import (
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 
-	"github.com/Geogboe/boxy/internal/core/resource"
-	"github.com/Geogboe/boxy/internal/crypto"
-	provider_pkg "github.com/Geogboe/boxy/pkg/provider"
+	"github.com/Geogboe/boxy/pkg/crypto"
+	"github.com/Geogboe/boxy/pkg/hyperv/psdirect"
+	"github.com/Geogboe/boxy/pkg/powershell"
+	"github.com/Geogboe/boxy/pkg/provider"
 )
 
 // Provider implements the provider.Provider interface for Hyper-V
 type Provider struct {
 	logger    *logrus.Logger
 	encryptor *crypto.Encryptor
-	ps        *psExecutor
+	ps        *powershell.Executor
+	psDirect  *psdirect.Client
 	config    *Config
 }
 
@@ -46,6 +48,20 @@ type Config struct {
 	WaitForIPTimeout time.Duration
 }
 
+// vmInfo represents VM information returned by Get-VM
+type vmInfo struct {
+	Name              string    `json:"Name"`
+	State             string    `json:"State"`
+	CPUUsage          int       `json:"CPUUsage"`
+	MemoryAssigned    int64     `json:"MemoryAssigned"`
+	Uptime            string    `json:"Uptime"`
+	Status            string    `json:"Status"`
+	CreationTime      time.Time `json:"CreationTime"`
+	ProcessorCount    int       `json:"ProcessorCount"`
+	MemoryStartup     int64     `json:"MemoryStartup"`
+	Generation        int       `json:"Generation"`
+}
+
 // DefaultConfig returns default Hyper-V configuration
 func DefaultConfig() *Config {
 	return &Config{
@@ -65,10 +81,12 @@ func NewProvider(logger *logrus.Logger, encryptor *crypto.Encryptor) *Provider {
 
 // NewProviderWithConfig creates a new Hyper-V provider with custom config
 func NewProviderWithConfig(logger *logrus.Logger, encryptor *crypto.Encryptor, config *Config) *Provider {
+	ps := powershell.New(logger)
 	return &Provider{
 		logger:    logger,
 		encryptor: encryptor,
-		ps:        newPSExecutor(logger),
+		ps:        ps,
+		psDirect:  psdirect.NewClient(ps, logger),
 		config:    config,
 	}
 }
@@ -79,12 +97,12 @@ func (p *Provider) Name() string {
 }
 
 // Type returns the resource type this provider manages
-func (p *Provider) Type() resource.ResourceType {
-	return resource.ResourceTypeVM
+func (p *Provider) Type() provider.ResourceType {
+	return provider.ResourceTypeVM
 }
 
 // Provision creates a new VM using Hyper-V
-func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*resource.Resource, error) {
+func (p *Provider) Provision(ctx context.Context, spec provider.ResourceSpec) (*provider.Resource, error) {
 	p.logger.WithFields(logrus.Fields{
 		"image":     spec.Image,
 		"cpus":      spec.CPUs,
@@ -160,7 +178,7 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 		Write-Output "VHD created successfully"
 	`, escapePowerShellString(vhdPath), escapePowerShellString(vhdPath), escapePowerShellString(baseImagePath))
 
-	if _, err := p.ps.exec(ctx, createVHDScript); err != nil {
+	if _, err := p.ps.Exec(ctx, createVHDScript); err != nil {
 		return nil, fmt.Errorf("failed to create VHD: %w", err)
 	}
 
@@ -205,7 +223,7 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 		escapePowerShellString(p.config.SwitchName),
 	)
 
-	if _, err := p.ps.exec(ctx, createVMScript); err != nil {
+	if _, err := p.ps.Exec(ctx, createVMScript); err != nil {
 		// Cleanup VHD on failure
 		if cleanupErr := p.cleanupVHD(context.Background(), vhdPath); cleanupErr != nil {
 			p.logger.WithError(cleanupErr).Warn("Failed to cleanup VHD after VM creation failure")
@@ -222,7 +240,7 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 		Write-Output "VM started successfully"
 	`, escapePowerShellString(vmName))
 
-	if _, err := p.ps.exec(ctx, startVMScript); err != nil {
+	if _, err := p.ps.Exec(ctx, startVMScript); err != nil {
 		// Cleanup on failure
 		p.cleanupVM(context.Background(), vmName, vhdPath)
 		return nil, fmt.Errorf("failed to start VM: %w", err)
@@ -244,12 +262,12 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 	}).Info("Hyper-V VM provisioned successfully")
 
 	// Build resource
-	res := &resource.Resource{
+	res := &provider.Resource{
 		ID:           uuid.New().String(),
-		Type:         resource.ResourceTypeVM,
+		Type:         provider.ResourceTypeVM,
 		ProviderType: "hyperv",
 		ProviderID:   vmName, // Use VM name as provider ID
-		State:        resource.StateReady,
+		State:        provider.StateReady,
 		Metadata: map[string]interface{}{
 			"vm_name":       vmName,
 			"vm_id":         vmID,
@@ -269,7 +287,7 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 }
 
 // Destroy destroys a VM
-func (p *Provider) Destroy(ctx context.Context, res *resource.Resource) error {
+func (p *Provider) Destroy(ctx context.Context, res *provider.Resource) error {
 	vmName := res.ProviderID
 
 	// Validate VM name
@@ -292,7 +310,7 @@ func (p *Provider) Destroy(ctx context.Context, res *resource.Resource) error {
 		Write-Output "VM stopped"
 	`, escapePowerShellString(vmName), escapePowerShellString(vmName))
 
-	if _, err := p.ps.exec(ctx, stopScript); err != nil {
+	if _, err := p.ps.Exec(ctx, stopScript); err != nil {
 		p.logger.WithError(err).Warn("Failed to stop VM, continuing with removal")
 	}
 
@@ -308,7 +326,7 @@ func (p *Provider) Destroy(ctx context.Context, res *resource.Resource) error {
 		}
 	`, escapePowerShellString(vmName), escapePowerShellString(vmName))
 
-	if _, err := p.ps.exec(ctx, removeScript); err != nil {
+	if _, err := p.ps.Exec(ctx, removeScript); err != nil {
 		p.logger.WithError(err).Warn("Failed to remove VM")
 	}
 
@@ -324,7 +342,7 @@ func (p *Provider) Destroy(ctx context.Context, res *resource.Resource) error {
 }
 
 // GetStatus returns the current status of a VM
-func (p *Provider) GetStatus(ctx context.Context, res *resource.Resource) (*resource.ResourceStatus, error) {
+func (p *Provider) GetStatus(ctx context.Context, res *provider.Resource) (*provider.ResourceStatus, error) {
 	vmName := res.ProviderID
 
 	// Validate VM name
@@ -340,9 +358,9 @@ func (p *Provider) GetStatus(ctx context.Context, res *resource.Resource) (*reso
 	`, escapePowerShellString(vmName))
 
 	var info vmInfo
-	if err := p.ps.execJSON(ctx, script, &info); err != nil {
-		return &resource.ResourceStatus{
-			State:   resource.StateError,
+	if err := p.ps.ExecJSON(ctx, script, &info); err != nil {
+		return &provider.ResourceStatus{
+			State:   provider.StateError,
 			Healthy: false,
 			Message: fmt.Sprintf("Failed to get VM status: %v", err),
 		}, nil
@@ -352,16 +370,16 @@ func (p *Provider) GetStatus(ctx context.Context, res *resource.Resource) (*reso
 	uptime, _ := parseHyperVUptime(info.Uptime)
 
 	// Map Hyper-V state to resource state
-	state := resource.StateReady
+	state := provider.StateReady
 	healthy := info.State == "Running"
 
 	if info.State == "Off" || info.State == "Stopped" || info.State == "Paused" {
 		// VM is not running but not in error state
-		state = resource.StateReady
+		state = provider.StateReady
 		healthy = false
 	}
 
-	return &resource.ResourceStatus{
+	return &provider.ResourceStatus{
 		State:      state,
 		Healthy:    healthy,
 		Message:    fmt.Sprintf("VM state: %s, Status: %s", info.State, info.Status),
@@ -374,7 +392,7 @@ func (p *Provider) GetStatus(ctx context.Context, res *resource.Resource) (*reso
 }
 
 // GetConnectionInfo returns connection details for a VM
-func (p *Provider) GetConnectionInfo(ctx context.Context, res *resource.Resource) (*resource.ConnectionInfo, error) {
+func (p *Provider) GetConnectionInfo(ctx context.Context, res *provider.Resource) (*provider.ConnectionInfo, error) {
 	vmName := res.ProviderID
 
 	// Validate VM name
@@ -410,7 +428,7 @@ func (p *Provider) GetConnectionInfo(ctx context.Context, res *resource.Resource
 		return nil, fmt.Errorf("failed to decrypt password: %w", err)
 	}
 
-	return &resource.ConnectionInfo{
+	return &provider.ConnectionInfo{
 		Type:     "rdp",
 		Host:     ipAddress,
 		Port:     3389,
@@ -423,23 +441,13 @@ func (p *Provider) GetConnectionInfo(ctx context.Context, res *resource.Resource
 }
 
 // Exec runs a command inside the VM using PowerShell Direct
-func (p *Provider) Exec(ctx context.Context, res *resource.Resource, cmd []string) (*provider_pkg.ExecResult, error) {
+func (p *Provider) Exec(ctx context.Context, res *provider.Resource, cmd []string) (*provider.ExecResult, error) {
 	vmName := res.ProviderID
 
 	// Validate VM name
 	if err := validateVMName(vmName); err != nil {
 		return nil, fmt.Errorf("invalid VM name: %w", err)
 	}
-
-	// Validate command is not empty
-	if len(cmd) == 0 {
-		return nil, fmt.Errorf("command cannot be empty")
-	}
-
-	p.logger.WithFields(logrus.Fields{
-		"vm_name": vmName,
-		"cmd":     cmd,
-	}).Debug("Executing command via PowerShell Direct")
 
 	// Get credentials
 	username, _ := res.Metadata["username"].(string)
@@ -457,75 +465,24 @@ func (p *Provider) Exec(ctx context.Context, res *resource.Resource, cmd []strin
 		return nil, fmt.Errorf("failed to decrypt password: %w", err)
 	}
 
-	// Use PowerShell Direct (Invoke-Command -VMName) with ArgumentList
-	// This passes the command as DATA via -ArgumentList, not embedded code
-	// This prevents ScriptBlock breakout attacks (e.g., cmd with "}" chars)
-	//
-	// Security approach:
-	// 1. Command array passed as argument (not embedded in ScriptBlock)
-	// 2. ScriptBlock receives it as pure data via param()
-	// 3. Call operator (&) executes command inside VM, not on host
-
-	// Build the command array in PowerShell array syntax
-	// Each element is single-quoted and escaped
-	var cmdElements []string
-	for _, arg := range cmd {
-		cmdElements = append(cmdElements, fmt.Sprintf("'%s'", escapePowerShellString(arg)))
-	}
-	cmdArrayStr := strings.Join(cmdElements, ",")
-
-	script := fmt.Sprintf(`
-		$ErrorActionPreference = "Stop"
-
-		$password = ConvertTo-SecureString '%s' -AsPlainText -Force
-		$cred = New-Object System.Management.Automation.PSCredential('%s', $password)
-
-		# Command array passed as data, not code
-		$cmdArray = @(%s)
-
-		$result = Invoke-Command -VMName '%s' -Credential $cred -ScriptBlock {
-			param([string[]]$command)
-
-			# Execute command inside VM using call operator
-			# First element is executable, rest are arguments
-			if ($command.Length -eq 1) {
-				& $command[0] 2>&1
-			} else {
-				& $command[0] $command[1..($command.Length-1)] 2>&1
-			}
-		} -ArgumentList (,$cmdArray) -ErrorVariable execError
-
-		if ($execError) {
-			throw $execError
-		}
-
-		$result
-	`, escapePowerShellString(string(decPassword)), escapePowerShellString(username), cmdArrayStr, escapePowerShellString(vmName))
-
-	output, err := p.ps.exec(ctx, script)
-
-	result := &provider_pkg.ExecResult{
-		ExitCode: 0,
-		Stdout:   output,
-		Stderr:   "",
-	}
-
+	// Use PowerShell Direct client
+	creds := psdirect.NewCredentials(username, decPassword)
+	result, err := p.psDirect.Exec(ctx, vmName, creds, cmd)
 	if err != nil {
-		result.ExitCode = 1
-		result.Error = err
-		result.Stderr = err.Error()
+		return nil, err
 	}
 
-	p.logger.WithFields(logrus.Fields{
-		"vm_name":   vmName,
-		"exit_code": result.ExitCode,
-	}).Debug("Command executed via PowerShell Direct")
-
-	return result, nil
+	// Convert psdirect.ExecResult to provider.ExecResult
+	return &provider.ExecResult{
+		ExitCode: result.ExitCode,
+		Stdout:   result.Stdout,
+		Stderr:   result.Stderr,
+		Error:    result.Error,
+	}, nil
 }
 
 // Update modifies a VM (power state, snapshots, resource limits)
-func (p *Provider) Update(ctx context.Context, res *resource.Resource, updates provider_pkg.ResourceUpdate) error {
+func (p *Provider) Update(ctx context.Context, res *provider.Resource, updates provider.ResourceUpdate) error {
 	vmName := res.ProviderID
 
 	// Validate VM name
@@ -586,7 +543,7 @@ func (p *Provider) HealthCheck(ctx context.Context) error {
 		Write-Output "Hyper-V is healthy"
 	`
 
-	if _, err := p.ps.exec(ctx, script); err != nil {
+	if _, err := p.ps.Exec(ctx, script); err != nil {
 		return fmt.Errorf("hyper-v health check failed: %w", err)
 	}
 
@@ -604,7 +561,7 @@ func (p *Provider) cleanupVM(ctx context.Context, vmName, vhdPath string) {
 		Remove-VM -Name '%s' -Force -ErrorAction SilentlyContinue
 	`, escapePowerShellString(vmName), escapePowerShellString(vmName))
 
-	if _, err := p.ps.exec(ctx, script); err != nil {
+	if _, err := p.ps.Exec(ctx, script); err != nil {
 		p.logger.WithError(err).Warn("Failed to cleanup VM")
 	}
 
@@ -624,7 +581,7 @@ func (p *Provider) cleanupVHD(ctx context.Context, vhdPath string) error {
 		}
 	`, escapePowerShellString(vhdPath), escapePowerShellString(vhdPath))
 
-	_, err := p.ps.exec(ctx, script)
+	_, err := p.ps.Exec(ctx, script)
 	return err
 }
 
@@ -660,7 +617,7 @@ func (p *Provider) getVMIPAddress(ctx context.Context, vmName string) (string, e
 		}
 	`, escapePowerShellString(vmName))
 
-	ip, err := p.ps.exec(ctx, script)
+	ip, err := p.ps.Exec(ctx, script)
 	if err != nil {
 		return "", err
 	}
@@ -668,7 +625,7 @@ func (p *Provider) getVMIPAddress(ctx context.Context, vmName string) (string, e
 	return strings.TrimSpace(ip), nil
 }
 
-func (p *Provider) updatePowerState(ctx context.Context, vmName string, state provider_pkg.PowerState) error {
+func (p *Provider) updatePowerState(ctx context.Context, vmName string, state provider.PowerState) error {
 	// Validate VM name (defensive check)
 	if err := validateVMName(vmName); err != nil {
 		return fmt.Errorf("invalid VM name: %w", err)
@@ -677,19 +634,19 @@ func (p *Provider) updatePowerState(ctx context.Context, vmName string, state pr
 	var script string
 
 	switch state {
-	case provider_pkg.PowerStateRunning:
+	case provider.PowerStateRunning:
 		script = fmt.Sprintf(`Start-VM -Name '%s'`, escapePowerShellString(vmName))
 		p.logger.WithField("vm_name", vmName).Info("Starting VM")
 
-	case provider_pkg.PowerStateStopped:
+	case provider.PowerStateStopped:
 		script = fmt.Sprintf(`Stop-VM -Name '%s' -Force`, escapePowerShellString(vmName))
 		p.logger.WithField("vm_name", vmName).Info("Stopping VM")
 
-	case provider_pkg.PowerStateReset:
+	case provider.PowerStateReset:
 		script = fmt.Sprintf(`Restart-VM -Name '%s' -Force`, escapePowerShellString(vmName))
 		p.logger.WithField("vm_name", vmName).Info("Restarting VM")
 
-	case provider_pkg.PowerStatePaused:
+	case provider.PowerStatePaused:
 		script = fmt.Sprintf(`Suspend-VM -Name '%s'`, escapePowerShellString(vmName))
 		p.logger.WithField("vm_name", vmName).Info("Pausing VM")
 
@@ -697,14 +654,14 @@ func (p *Provider) updatePowerState(ctx context.Context, vmName string, state pr
 		return fmt.Errorf("unsupported power state: %s", state)
 	}
 
-	if _, err := p.ps.exec(ctx, script); err != nil {
+	if _, err := p.ps.Exec(ctx, script); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (p *Provider) updateSnapshot(ctx context.Context, vmName string, snapshot *provider_pkg.SnapshotOp) error {
+func (p *Provider) updateSnapshot(ctx context.Context, vmName string, snapshot *provider.SnapshotOp) error {
 	// Validate inputs
 	if err := validateVMName(vmName); err != nil {
 		return fmt.Errorf("invalid VM name: %w", err)
@@ -725,7 +682,7 @@ func (p *Provider) updateSnapshot(ctx context.Context, vmName string, snapshot *
 			"snapshot_name": snapshot.Name,
 		}).Info("Creating VM snapshot")
 
-		if _, err := p.ps.exec(ctx, script); err != nil {
+		if _, err := p.ps.Exec(ctx, script); err != nil {
 			return err
 		}
 
@@ -737,7 +694,7 @@ func (p *Provider) updateSnapshot(ctx context.Context, vmName string, snapshot *
 			"snapshot_name": snapshot.Name,
 		}).Info("Restoring VM snapshot")
 
-		if _, err := p.ps.exec(ctx, script); err != nil {
+		if _, err := p.ps.Exec(ctx, script); err != nil {
 			return err
 		}
 
@@ -749,7 +706,7 @@ func (p *Provider) updateSnapshot(ctx context.Context, vmName string, snapshot *
 			"snapshot_name": snapshot.Name,
 		}).Info("Deleting VM snapshot")
 
-		if _, err := p.ps.exec(ctx, script); err != nil {
+		if _, err := p.ps.Exec(ctx, script); err != nil {
 			return err
 		}
 
@@ -760,7 +717,7 @@ func (p *Provider) updateSnapshot(ctx context.Context, vmName string, snapshot *
 	return nil
 }
 
-func (p *Provider) updateResources(ctx context.Context, vmName string, resources *provider_pkg.ResourceLimits) error {
+func (p *Provider) updateResources(ctx context.Context, vmName string, resources *provider.ResourceLimits) error {
 	// Validate VM name
 	if err := validateVMName(vmName); err != nil {
 		return fmt.Errorf("invalid VM name: %w", err)
@@ -796,7 +753,7 @@ func (p *Provider) updateResources(ctx context.Context, vmName string, resources
 
 	if len(updates) > 0 {
 		script := fmt.Sprintf(`Set-VM -Name '%s' %s`, escapePowerShellString(vmName), strings.Join(updates, " "))
-		if _, err := p.ps.exec(ctx, script); err != nil {
+		if _, err := p.ps.Exec(ctx, script); err != nil {
 			return err
 		}
 	}

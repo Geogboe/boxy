@@ -10,7 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Geogboe/boxy/internal/core/pool"
-	"github.com/Geogboe/boxy/internal/crypto"
+	"github.com/Geogboe/boxy/pkg/crypto"
 )
 
 // Config represents the Boxy configuration
