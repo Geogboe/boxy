@@ -1,5 +1,9 @@
 # CLAUDE.md - AI Assistant Guide for Boxy
 
+## General Guidelines
+
+- During planning, try not to bloat the context window with large amounts of code unless specifically requested.
+
 ## Project Overview
 
 **Boxy** is a sandboxing orchestration tool that simplifies the management of mixed virtual environments. It solves the complex problem of spinning up and managing heterogeneous resources (VMs, containers, processes) across different platforms (Windows, Linux) with automated lifecycle management.
