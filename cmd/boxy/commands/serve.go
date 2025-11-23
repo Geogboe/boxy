@@ -11,6 +11,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
+	httpapi "github.com/Geogboe/boxy/internal/api/http"
 	"github.com/Geogboe/boxy/internal/config"
 	"github.com/Geogboe/boxy/internal/core/allocator"
 	"github.com/Geogboe/boxy/internal/core/pool"
@@ -33,6 +34,9 @@ The service will:
 - Automatically clean up expired sandboxes
 - Perform health checks on resources`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
 		// Load configuration
 		cfg, err := loadConfig()
 		if err != nil {
@@ -183,6 +187,30 @@ The service will:
 		)
 		sandboxMgr.Start()
 
+		// Start HTTP API server (single binary)
+		var apiErrCh chan error
+		if cfg.API.Enabled {
+			apiErrCh = make(chan error, 1)
+			apiTimeouts := httpapi.Timeouts{
+				Read:  time.Duration(cfg.API.ReadTimeoutSecs) * time.Second,
+				Write: time.Duration(cfg.API.WriteTimeoutSecs) * time.Second,
+				Idle:  time.Duration(cfg.API.IdleTimeoutSecs) * time.Second,
+			}
+			apiServer := httpapi.NewServer(
+				cfg.API.Listen,
+				httpapi.NewSandboxManagerAdapter(sandboxMgr),
+				httpapi.NewPoolStatsAdapter(poolManagers, resourceRepo, logger),
+				logger,
+				apiTimeouts,
+			)
+
+			go func() {
+				apiErrCh <- apiServer.Run(ctx)
+			}()
+		} else {
+			logger.Info("HTTP API disabled via config")
+		}
+
 		logger.Info("✓ Boxy service started successfully")
 		fmt.Printf("\n")
 		fmt.Printf("✓ Boxy service is running\n")
@@ -190,13 +218,22 @@ The service will:
 		fmt.Printf("  • Database: %s\n", cfg.Storage.Path)
 		fmt.Printf("\nPress Ctrl+C to stop\n\n")
 
-		// Wait for interrupt signal
+		// Wait for interrupt signal or API error
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-		<-sigChan
+		select {
+		case <-sigChan:
+		case err := <-apiErrCh:
+			if err != nil {
+				cancel()
+				return fmt.Errorf("api server error: %w", err)
+			}
+		}
 
 		logger.Info("Shutting down Boxy service...")
 		fmt.Printf("\nShutting down gracefully...\n")
+
+		cancel() // signal HTTP server shutdown
 
 		// Stop sandbox manager
 		sandboxMgr.Stop()

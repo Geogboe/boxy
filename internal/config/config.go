@@ -19,30 +19,40 @@ type Config struct {
 	Agents  []AgentConfig     `yaml:"agents" json:"agents"`
 	Storage StorageConfig     `yaml:"storage" json:"storage"`
 	Logging LoggingConfig     `yaml:"logging" json:"logging"`
+	API     APIConfig         `yaml:"api" json:"api"`
 }
 
 // AgentConfig contains remote agent configuration
 type AgentConfig struct {
-	ID           string `yaml:"id" json:"id"`                       // Unique agent ID
-	Address      string `yaml:"address" json:"address"`             // host:port
-	Providers    []string `yaml:"providers" json:"providers"`       // List of provider names on this agent
-	TLSCertPath  string `yaml:"tls_cert_path" json:"tls_cert_path"` // Client certificate
-	TLSKeyPath   string `yaml:"tls_key_path" json:"tls_key_path"`   // Client key
-	TLSCAPath    string `yaml:"tls_ca_path" json:"tls_ca_path"`     // CA certificate
-	UseTLS       bool   `yaml:"use_tls" json:"use_tls"`             // Enable TLS
+	ID          string   `yaml:"id" json:"id"`                       // Unique agent ID
+	Address     string   `yaml:"address" json:"address"`             // host:port
+	Providers   []string `yaml:"providers" json:"providers"`         // List of provider names on this agent
+	TLSCertPath string   `yaml:"tls_cert_path" json:"tls_cert_path"` // Client certificate
+	TLSKeyPath  string   `yaml:"tls_key_path" json:"tls_key_path"`   // Client key
+	TLSCAPath   string   `yaml:"tls_ca_path" json:"tls_ca_path"`     // CA certificate
+	UseTLS      bool     `yaml:"use_tls" json:"use_tls"`             // Enable TLS
 }
 
 // StorageConfig contains storage configuration
 type StorageConfig struct {
-	Type   string `yaml:"type" json:"type"`     // sqlite, postgres
-	Path   string `yaml:"path" json:"path"`     // for sqlite
-	DSN    string `yaml:"dsn" json:"dsn"`       // for postgres
+	Type string `yaml:"type" json:"type"` // sqlite, postgres
+	Path string `yaml:"path" json:"path"` // for sqlite
+	DSN  string `yaml:"dsn" json:"dsn"`   // for postgres
 }
 
 // LoggingConfig contains logging configuration
 type LoggingConfig struct {
 	Level  string `yaml:"level" json:"level"`   // debug, info, warn, error
 	Format string `yaml:"format" json:"format"` // text, json
+}
+
+// APIConfig controls the embedded HTTP API server
+type APIConfig struct {
+	Enabled          bool   `yaml:"enabled" json:"enabled"`
+	Listen           string `yaml:"listen" json:"listen"`                         // e.g. :8080
+	ReadTimeoutSecs  int    `yaml:"read_timeout_secs" json:"read_timeout_secs"`   // server read timeout
+	WriteTimeoutSecs int    `yaml:"write_timeout_secs" json:"write_timeout_secs"` // server write timeout
+	IdleTimeoutSecs  int    `yaml:"idle_timeout_secs" json:"idle_timeout_secs"`   // keep-alive timeout
 }
 
 // Load loads configuration from file
@@ -73,6 +83,11 @@ func Load(configPath string) (*Config, error) {
 	v.SetDefault("storage.path", filepath.Join(os.Getenv("HOME"), ".config", "boxy", "boxy.db"))
 	v.SetDefault("logging.level", "info")
 	v.SetDefault("logging.format", "text")
+	v.SetDefault("api.enabled", true)
+	v.SetDefault("api.listen", ":8080")
+	v.SetDefault("api.read_timeout_secs", 15)
+	v.SetDefault("api.write_timeout_secs", 15)
+	v.SetDefault("api.idle_timeout_secs", 60)
 
 	// Read config file (optional - will use defaults and env vars if not found)
 	if err := v.ReadInConfig(); err != nil {

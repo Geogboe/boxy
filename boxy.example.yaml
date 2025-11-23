@@ -11,6 +11,14 @@ logging:
   level: info    # debug, info, warn, error
   format: text   # text, json
 
+# HTTP API server
+api:
+  enabled: true
+  listen: ":8080"
+  read_timeout_secs: 15
+  write_timeout_secs: 15
+  idle_timeout_secs: 60
+
 # Pool definitions
 pools:
   # Ubuntu containers
