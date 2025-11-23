@@ -13,13 +13,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Geogboe/boxy/internal/core/allocator"
 	"github.com/Geogboe/boxy/internal/core/pool"
 	"github.com/Geogboe/boxy/internal/core/resource"
 	"github.com/Geogboe/boxy/internal/core/sandbox"
-	"github.com/Geogboe/boxy/internal/crypto"
-	"github.com/Geogboe/boxy/internal/provider/docker"
 	"github.com/Geogboe/boxy/internal/storage"
+	"github.com/Geogboe/boxy/pkg/crypto"
 	provider_pkg "github.com/Geogboe/boxy/pkg/provider"
+	"github.com/Geogboe/boxy/pkg/provider/docker"
 )
 
 // createTestEncryptor creates an encryptor for testing
@@ -354,7 +355,7 @@ func TestDockerE2E_SandboxOrchestration(t *testing.T) {
 	}
 
 	// Create sandbox manager
-	pools := map[string]sandbox.PoolAllocator{
+	pools := map[string]allocator.PoolAllocator{
 		"e2e-alpine":  pool1Manager,
 		"e2e-busybox": pool2Manager,
 	}

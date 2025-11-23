@@ -8,14 +8,9 @@ import (
 
 	"github.com/sirupsen/logrus"
 
+	"github.com/Geogboe/boxy/internal/core/allocator"
 	"github.com/Geogboe/boxy/pkg/provider"
 )
-
-// PoolAllocator defines the interface for allocating resources from pools
-type PoolAllocator interface {
-	Allocate(ctx context.Context, sandboxID string) (*provider.Resource, error)
-	Release(ctx context.Context, resourceID string) error
-}
 
 // SandboxRepository defines the interface for sandbox persistence
 type SandboxRepository interface {
@@ -37,29 +32,30 @@ type ResourceRepository interface {
 
 // Manager manages sandbox lifecycle
 type Manager struct {
-	pools          map[string]PoolAllocator
-	sandboxRepo    SandboxRepository
-	resourceRepo   ResourceRepository
-	providers      *provider.Registry
-	logger         *logrus.Logger
-	ctx            context.Context
-	cancel         context.CancelFunc
-	wg             sync.WaitGroup
-	cleanupTicker  *time.Ticker
+	allocator     *allocator.Allocator
+	sandboxRepo   SandboxRepository
+	resourceRepo  ResourceRepository
+	providers     *provider.Registry
+	logger        *logrus.Logger
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
+	cleanupTicker *time.Ticker
 }
 
 // NewManager creates a new sandbox manager
 func NewManager(
-	pools map[string]PoolAllocator,
+	pools map[string]allocator.PoolAllocator,
 	sandboxRepo SandboxRepository,
 	resourceRepo ResourceRepository,
 	providers *provider.Registry,
 	logger *logrus.Logger,
 ) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
+	alloc := allocator.New(pools, resourceRepo, logger)
 
 	return &Manager{
-		pools:        pools,
+		allocator:    alloc,
 		sandboxRepo:  sandboxRepo,
 		resourceRepo: resourceRepo,
 		providers:    providers,
@@ -109,7 +105,7 @@ func (m *Manager) Create(ctx context.Context, req *CreateRequest) (*Sandbox, err
 
 	// Validate pools exist before creating sandbox
 	for _, resReq := range req.Resources {
-		if _, ok := m.pools[resReq.PoolName]; !ok {
+		if !m.allocator.HasPool(resReq.PoolName) {
 			return nil, fmt.Errorf("pool not found: %s", resReq.PoolName)
 		}
 	}
@@ -206,15 +202,13 @@ func (m *Manager) allocateResourcesAsync(sandboxID string, resourceReqs []Resour
 
 	// Allocate resources from pools
 	for _, resReq := range resourceReqs {
-		pool, ok := m.pools[resReq.PoolName]
-		if !ok {
-			// This shouldn't happen as we validated pools earlier
+		if !m.allocator.HasPool(resReq.PoolName) {
 			m.markSandboxError(sandboxID, fmt.Sprintf("pool not found: %s", resReq.PoolName), allocatedIDs)
 			return
 		}
 
 		for i := 0; i < resReq.Count; i++ {
-			res, err := pool.Allocate(ctx, sandboxID)
+			res, err := m.allocator.Allocate(ctx, resReq.PoolName, sandboxID)
 			if err != nil {
 				m.logger.WithError(err).Errorf("Failed to allocate resource %d from pool %s", i+1, resReq.PoolName)
 				m.markSandboxError(sandboxID, fmt.Sprintf("failed to allocate from pool %s: %v", resReq.PoolName, err), allocatedIDs)
@@ -295,25 +289,10 @@ func (m *Manager) Destroy(ctx context.Context, id string) error {
 	sb.UpdatedAt = time.Now()
 	_ = m.sandboxRepo.UpdateSandbox(ctx, sb)
 
-	// Get all resources for this sandbox
-	resources, err := m.resourceRepo.GetResourcesBySandboxID(ctx, id)
-	if err != nil {
-		return fmt.Errorf("failed to get sandbox resources: %w", err)
-	}
-
-	// Release all resources
-	var releaseErrors []error
-	for _, res := range resources {
-		pool, ok := m.pools[res.PoolID]
-		if !ok {
-			m.logger.WithField("pool_id", res.PoolID).Warn("Pool not found for resource release")
-			continue
-		}
-
-		if err := pool.Release(ctx, res.ID); err != nil {
-			m.logger.WithError(err).WithField("resource_id", res.ID).Error("Failed to release resource")
-			releaseErrors = append(releaseErrors, err)
-		}
+	// Release all resources for the sandbox
+	if err := m.allocator.ReleaseSandbox(ctx, id); err != nil {
+		m.logger.WithError(err).WithField("sandbox_id", id).Warn("Sandbox destroyed with some release errors")
+		return err
 	}
 
 	// Mark sandbox as destroyed
@@ -322,11 +301,6 @@ func (m *Manager) Destroy(ctx context.Context, id string) error {
 
 	if err := m.sandboxRepo.UpdateSandbox(ctx, sb); err != nil {
 		return fmt.Errorf("failed to update sandbox state: %w", err)
-	}
-
-	if len(releaseErrors) > 0 {
-		m.logger.WithField("sandbox_id", id).Warn("Sandbox destroyed with some errors")
-		return fmt.Errorf("sandbox destroyed with %d errors", len(releaseErrors))
 	}
 
 	m.logger.WithField("sandbox_id", id).Info("Sandbox destroyed successfully")
@@ -446,17 +420,7 @@ func (m *Manager) cleanupPartialSandbox(ctx context.Context, sandboxID string, r
 	m.logger.WithField("sandbox_id", sandboxID).Warn("Cleaning up partial sandbox")
 
 	for _, resID := range resourceIDs {
-		res, err := m.resourceRepo.GetResourceByID(ctx, resID)
-		if err != nil {
-			continue
-		}
-
-		pool, ok := m.pools[res.PoolID]
-		if !ok {
-			continue
-		}
-
-		_ = pool.Release(ctx, resID)
+		_ = m.allocator.ReleaseResource(ctx, resID)
 	}
 
 	// Delete sandbox record

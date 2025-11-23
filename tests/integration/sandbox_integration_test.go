@@ -9,11 +9,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Geogboe/boxy/internal/core/allocator"
 	"github.com/Geogboe/boxy/internal/core/pool"
 	"github.com/Geogboe/boxy/internal/core/sandbox"
-	"github.com/Geogboe/boxy/internal/provider/mock"
 	"github.com/Geogboe/boxy/internal/storage"
 	provider_pkg "github.com/Geogboe/boxy/pkg/provider"
+	"github.com/Geogboe/boxy/pkg/provider/mock"
 )
 
 // SetupTestSandboxManager creates a sandbox manager with pools for testing
@@ -50,7 +51,7 @@ func SetupTestSandboxManager(t *testing.T) (*sandbox.Manager, storage.Store) {
 	WaitForPoolReady(t, pool2Manager, 2)
 
 	// Create pool allocators map
-	pools := map[string]sandbox.PoolAllocator{
+	pools := map[string]allocator.PoolAllocator{
 		"pool-ubuntu": pool1Manager,
 		"pool-alpine": pool2Manager,
 	}

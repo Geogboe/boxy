@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Geogboe/boxy/internal/core/pool"
-	"github.com/Geogboe/boxy/internal/provider/mock"
 	"github.com/Geogboe/boxy/internal/storage"
+	"github.com/Geogboe/boxy/pkg/provider/mock"
 )
 
 func TestPoolManager_Integration_BasicLifecycle(t *testing.T) {

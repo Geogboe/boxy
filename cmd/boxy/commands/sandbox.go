@@ -11,12 +11,13 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Geogboe/boxy/internal/config"
+	"github.com/Geogboe/boxy/internal/core/allocator"
 	"github.com/Geogboe/boxy/internal/core/pool"
 	"github.com/Geogboe/boxy/internal/core/sandbox"
-	"github.com/Geogboe/boxy/internal/crypto"
-	"github.com/Geogboe/boxy/internal/provider/docker"
 	"github.com/Geogboe/boxy/internal/storage"
+	"github.com/Geogboe/boxy/pkg/crypto"
 	"github.com/Geogboe/boxy/pkg/provider"
+	"github.com/Geogboe/boxy/pkg/provider/docker"
 )
 
 var (
@@ -107,7 +108,7 @@ Example:
 		resourceRepo := storage.NewResourceRepositoryAdapter(store)
 
 		// Create pool allocators
-		poolAllocators := make(map[string]sandbox.PoolAllocator)
+		poolAllocators := make(map[string]allocator.PoolAllocator)
 		for _, poolCfg := range cfg.Pools {
 			prov, ok := providerRegistry.Get(poolCfg.Backend)
 			if !ok {
@@ -327,7 +328,7 @@ var sandboxDestroyCmd = &cobra.Command{
 		resourceRepo := storage.NewResourceRepositoryAdapter(store)
 
 		// Create pool allocators
-		poolAllocators := make(map[string]sandbox.PoolAllocator)
+		poolAllocators := make(map[string]allocator.PoolAllocator)
 		for _, poolCfg := range cfg.Pools {
 			prov, ok := providerRegistry.Get(poolCfg.Backend)
 			if !ok {

@@ -13,9 +13,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Geogboe/boxy/internal/core/resource"
-	"github.com/Geogboe/boxy/internal/crypto"
-	"github.com/Geogboe/boxy/internal/provider/hyperv"
+	"github.com/Geogboe/boxy/pkg/crypto"
 	provider_pkg "github.com/Geogboe/boxy/pkg/provider"
+	"github.com/Geogboe/boxy/pkg/provider/hyperv"
 )
 
 // TestHyperVIntegration tests the Hyper-V provider against a real Hyper-V installation
