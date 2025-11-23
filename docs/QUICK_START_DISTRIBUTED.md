@@ -341,18 +341,18 @@ boxy agent install --server https://boxy-server:8443 --ca ca-cert.pem --token <n
    ```
 
 2. **Certificate Rotation**:
-  - Set calendar reminder to rotate agent certificates every 60 days
-  - Automate renewal with cron/scheduled task
+   - Set calendar reminder to rotate agent certificates every 60 days
+   - Automate renewal with cron/scheduled task
 
 3. **Monitoring**:
-  - Set up alerts for agent disconnections
-  - Monitor certificate expiration (alert 30 days before)
-  - Track resource usage per agent
+   - Set up alerts for agent disconnections
+   - Monitor certificate expiration (alert 30 days before)
+   - Track resource usage per agent
 
 4. **Access Control**:
-  - Restrict who can generate registration tokens
-  - Audit all agent registrations
-  - Revoke unused tokens
+   - Restrict who can generate registration tokens
+   - Audit all agent registrations
+   - Revoke unused tokens
 
 ## Next Steps
 
