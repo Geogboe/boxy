@@ -46,3 +46,6 @@ boxy.yaml
 # Temporary files
 tmp/
 temp/
+
+# Local binaries
+.bin/

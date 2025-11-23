@@ -20,7 +20,7 @@ func TestPoolConfig_Validate(t *testing.T) {
 			name: "valid config",
 			config: PoolConfig{
 				Name:     "test-pool",
-				Type:     resource.ResourceTypeContainer,
+				Type:     provider.ResourceTypeContainer,
 				Backend:  "docker",
 				Image:    "ubuntu:22.04",
 				MinReady: 3,
@@ -32,7 +32,7 @@ func TestPoolConfig_Validate(t *testing.T) {
 			name: "empty name",
 			config: PoolConfig{
 				Name:     "",
-				Type:     resource.ResourceTypeContainer,
+				Type:     provider.ResourceTypeContainer,
 				Backend:  "docker",
 				Image:    "ubuntu:22.04",
 				MinReady: 3,
@@ -56,7 +56,7 @@ func TestPoolConfig_Validate(t *testing.T) {
 			name: "empty backend",
 			config: PoolConfig{
 				Name:     "test-pool",
-				Type:     resource.ResourceTypeContainer,
+				Type:     provider.ResourceTypeContainer,
 				Backend:  "",
 				Image:    "ubuntu:22.04",
 				MinReady: 3,
@@ -68,7 +68,7 @@ func TestPoolConfig_Validate(t *testing.T) {
 			name: "empty image",
 			config: PoolConfig{
 				Name:     "test-pool",
-				Type:     resource.ResourceTypeContainer,
+				Type:     provider.ResourceTypeContainer,
 				Backend:  "docker",
 				Image:    "",
 				MinReady: 3,
@@ -80,7 +80,7 @@ func TestPoolConfig_Validate(t *testing.T) {
 			name: "negative min_ready",
 			config: PoolConfig{
 				Name:     "test-pool",
-				Type:     resource.ResourceTypeContainer,
+				Type:     provider.ResourceTypeContainer,
 				Backend:  "docker",
 				Image:    "ubuntu:22.04",
 				MinReady: -1,
@@ -92,7 +92,7 @@ func TestPoolConfig_Validate(t *testing.T) {
 			name: "max_total less than min_ready",
 			config: PoolConfig{
 				Name:     "test-pool",
-				Type:     resource.ResourceTypeContainer,
+				Type:     provider.ResourceTypeContainer,
 				Backend:  "docker",
 				Image:    "ubuntu:22.04",
 				MinReady: 10,
@@ -104,7 +104,7 @@ func TestPoolConfig_Validate(t *testing.T) {
 			name: "zero min_ready is valid",
 			config: PoolConfig{
 				Name:     "test-pool",
-				Type:     resource.ResourceTypeContainer,
+				Type:     provider.ResourceTypeContainer,
 				Backend:  "docker",
 				Image:    "ubuntu:22.04",
 				MinReady: 0,
@@ -116,7 +116,7 @@ func TestPoolConfig_Validate(t *testing.T) {
 			name: "min_ready equals max_total is valid",
 			config: PoolConfig{
 				Name:     "test-pool",
-				Type:     resource.ResourceTypeContainer,
+				Type:     provider.ResourceTypeContainer,
 				Backend:  "docker",
 				Image:    "ubuntu:22.04",
 				MinReady: 5,
@@ -141,7 +141,7 @@ func TestPoolConfig_Validate(t *testing.T) {
 func TestPoolConfig_ToResourceSpec(t *testing.T) {
 	config := PoolConfig{
 		Name:     "test-pool",
-		Type:     resource.ResourceTypeContainer,
+		Type:     provider.ResourceTypeContainer,
 		Backend:  "docker",
 		Image:    "ubuntu:22.04",
 		MinReady: 3,
@@ -266,7 +266,7 @@ func TestPoolErrors(t *testing.T) {
 func BenchmarkPoolConfig_Validate(b *testing.B) {
 	config := PoolConfig{
 		Name:     "test-pool",
-		Type:     resource.ResourceTypeContainer,
+		Type:     provider.ResourceTypeContainer,
 		Backend:  "docker",
 		Image:    "ubuntu:22.04",
 		MinReady: 3,
@@ -282,7 +282,7 @@ func BenchmarkPoolConfig_Validate(b *testing.B) {
 func BenchmarkPoolConfig_ToResourceSpec(b *testing.B) {
 	config := PoolConfig{
 		Name:     "test-pool",
-		Type:     resource.ResourceTypeContainer,
+		Type:     provider.ResourceTypeContainer,
 		Backend:  "docker",
 		Image:    "ubuntu:22.04",
 		CPUs:     2,

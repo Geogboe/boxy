@@ -10,9 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Geogboe/boxy/internal/core/pool"
-	"github.com/Geogboe/boxy/internal/core/resource"
-	"github.com/Geogboe/boxy/internal/provider/mock"
 	"github.com/Geogboe/boxy/internal/storage"
+	"github.com/Geogboe/boxy/pkg/provider"
+	"github.com/Geogboe/boxy/pkg/provider/mock"
 )
 
 // TestLogger creates a logger for tests
@@ -59,7 +59,7 @@ func SetupTestStore(t *testing.T) storage.Store {
 func SetupTestPool(name string, minReady, maxTotal int) *pool.PoolConfig {
 	return &pool.PoolConfig{
 		Name:                name,
-		Type:                resource.ResourceTypeContainer,
+		Type:                provider.ResourceTypeContainer,
 		Backend:             "mock",
 		Image:               "test-image:latest",
 		MinReady:            minReady,

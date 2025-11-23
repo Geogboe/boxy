@@ -10,20 +10,19 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"github.com/Geogboe/boxy/internal/core/resource"
 	"github.com/Geogboe/boxy/internal/hooks"
 	"github.com/Geogboe/boxy/pkg/provider"
 )
 
 // ResourceRepository defines the interface for resource persistence
 type ResourceRepository interface {
-	Create(ctx context.Context, res *resource.Resource) error
-	Update(ctx context.Context, res *resource.Resource) error
+	Create(ctx context.Context, res *provider.Resource) error
+	Update(ctx context.Context, res *provider.Resource) error
 	Delete(ctx context.Context, id string) error
-	GetByID(ctx context.Context, id string) (*resource.Resource, error)
-	GetByPoolID(ctx context.Context, poolID string) ([]*resource.Resource, error)
-	GetByState(ctx context.Context, poolID string, state resource.ResourceState) ([]*resource.Resource, error)
-	CountByPoolAndState(ctx context.Context, poolID string, state resource.ResourceState) (int, error)
+	GetByID(ctx context.Context, id string) (*provider.Resource, error)
+	GetByPoolID(ctx context.Context, poolID string) ([]*provider.Resource, error)
+	GetByState(ctx context.Context, poolID string, state provider.ResourceState) ([]*provider.Resource, error)
+	CountByPoolAndState(ctx context.Context, poolID string, state provider.ResourceState) (int, error)
 }
 
 // Manager manages resource pools and their lifecycle
@@ -147,7 +146,7 @@ func (m *Manager) Stop() error {
 }
 
 // Allocate allocates a ready resource from the pool
-func (m *Manager) Allocate(ctx context.Context, sandboxID string) (*resource.Resource, error) {
+func (m *Manager) Allocate(ctx context.Context, sandboxID string) (*provider.Resource, error) {
 	m.logger.WithFields(logrus.Fields{
 		"pool":       m.config.Name,
 		"sandbox_id": sandboxID,
@@ -158,13 +157,13 @@ func (m *Manager) Allocate(ctx context.Context, sandboxID string) (*resource.Res
 	defer m.mu.Unlock()
 
 	// Get ready resources
-	ready, err := m.repository.GetByState(ctx, m.config.Name, resource.StateReady)
+	ready, err := m.repository.GetByState(ctx, m.config.Name, provider.StateReady)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ready resources: %w", err)
 	}
 
 	// Filter for unallocated resources
-	var available []*resource.Resource
+	var available []*provider.Resource
 	for _, res := range ready {
 		if res.IsAvailable() {
 			available = append(available, res)
@@ -230,7 +229,7 @@ func (m *Manager) Allocate(ctx context.Context, sandboxID string) (*resource.Res
 
 	// Mark as allocated
 	res.SandboxID = &sandboxID
-	res.State = resource.StateAllocated
+	res.State = provider.StateAllocated
 	res.UpdatedAt = time.Now()
 
 	if err := m.repository.Update(ctx, res); err != nil {
@@ -304,9 +303,9 @@ func (m *Manager) Release(ctx context.Context, resourceID string) error {
 	if err := m.provider.Destroy(ctx, res); err != nil {
 		m.logger.WithError(err).Error("Failed to destroy resource during release")
 		// Mark as error but continue
-		res.State = resource.StateError
+		res.State = provider.StateError
 	} else {
-		res.State = resource.StateDestroyed
+		res.State = provider.StateDestroyed
 	}
 
 	res.SandboxID = nil
@@ -349,25 +348,25 @@ func (m *Manager) GetStats(ctx context.Context) (*PoolStats, error) {
 	}
 
 	// Count resources by state
-	ready, err := m.repository.CountByPoolAndState(ctx, m.config.Name, resource.StateReady)
+	ready, err := m.repository.CountByPoolAndState(ctx, m.config.Name, provider.StateReady)
 	if err != nil {
 		return nil, err
 	}
 	stats.TotalReady = ready
 
-	allocated, err := m.repository.CountByPoolAndState(ctx, m.config.Name, resource.StateAllocated)
+	allocated, err := m.repository.CountByPoolAndState(ctx, m.config.Name, provider.StateAllocated)
 	if err != nil {
 		return nil, err
 	}
 	stats.TotalAllocated = allocated
 
-	provisioning, err := m.repository.CountByPoolAndState(ctx, m.config.Name, resource.StateProvisioning)
+	provisioning, err := m.repository.CountByPoolAndState(ctx, m.config.Name, provider.StateProvisioning)
 	if err != nil {
 		return nil, err
 	}
 	stats.TotalProvisioning = provisioning
 
-	errorCount, err := m.repository.CountByPoolAndState(ctx, m.config.Name, resource.StateError)
+	errorCount, err := m.repository.CountByPoolAndState(ctx, m.config.Name, provider.StateError)
 	if err != nil {
 		return nil, err
 	}
@@ -443,7 +442,7 @@ func (m *Manager) ensureMinReady(ctx context.Context) error {
 	defer m.mu.Unlock()
 
 	// Count ready resources
-	ready, err := m.repository.GetByState(ctx, m.config.Name, resource.StateReady)
+	ready, err := m.repository.GetByState(ctx, m.config.Name, provider.StateReady)
 	if err != nil {
 		return fmt.Errorf("failed to get ready resources: %w", err)
 	}
@@ -470,7 +469,7 @@ func (m *Manager) ensureMinReady(ctx context.Context) error {
 	// Count non-destroyed resources
 	activeCount := 0
 	for _, res := range all {
-		if res.State != resource.StateDestroyed {
+		if res.State != provider.StateDestroyed {
 			activeCount++
 		}
 	}
@@ -511,8 +510,8 @@ func (m *Manager) provisionOne(ctx context.Context) error {
 	}).Debug("Provisioning resource")
 
 	// Create resource in provisioning state
-	res := resource.NewResource(m.config.Name, spec.Type, spec.ProviderType)
-	res.State = resource.StateProvisioning
+	res := provider.NewResource(m.config.Name, spec.Type, spec.ProviderType)
+	res.State = provider.StateProvisioning
 
 	if err := m.repository.Create(ctx, res); err != nil {
 		return fmt.Errorf("failed to create resource record: %w", err)
@@ -525,7 +524,7 @@ func (m *Manager) provisionOne(ctx context.Context) error {
 	provisioned, err := m.provider.Provision(provCtx, spec)
 	if err != nil {
 		// Mark as error
-		res.State = resource.StateError
+		res.State = provider.StateError
 		res.Metadata = map[string]interface{}{
 			"error": err.Error(),
 		}
@@ -578,7 +577,7 @@ func (m *Manager) provisionOne(ctx context.Context) error {
 
 		if err != nil {
 			m.logger.WithError(err).Error("Finalization hooks failed")
-			res.State = resource.StateError
+			res.State = provider.StateError
 			res.Metadata["error"] = fmt.Sprintf("finalization hooks failed: %v", err)
 			_ = m.repository.Update(ctx, res)
 
@@ -589,7 +588,7 @@ func (m *Manager) provisionOne(ctx context.Context) error {
 	}
 
 	// Mark as ready
-	res.State = resource.StateReady
+	res.State = provider.StateReady
 	res.UpdatedAt = time.Now()
 
 	if err := m.repository.Update(ctx, res); err != nil {
@@ -616,7 +615,7 @@ func getResourceIP(metadata map[string]interface{}) string {
 
 // performHealthChecks checks health of all ready resources
 func (m *Manager) performHealthChecks(ctx context.Context) error {
-	ready, err := m.repository.GetByState(ctx, m.config.Name, resource.StateReady)
+	ready, err := m.repository.GetByState(ctx, m.config.Name, provider.StateReady)
 	if err != nil {
 		return err
 	}
@@ -634,13 +633,13 @@ func (m *Manager) performHealthChecks(ctx context.Context) error {
 		// If unhealthy, mark for destruction
 		if !status.Healthy {
 			m.logger.WithField("resource_id", res.ID).Warn("Resource unhealthy, marking for destruction")
-			res.State = resource.StateError
+			res.State = provider.StateError
 			res.Metadata["health_check_failed"] = true
 			_ = m.repository.Update(ctx, res)
 
 			// Destroy unhealthy resource (tracked for graceful shutdown)
 			m.asyncWg.Add(1)
-			go func(r *resource.Resource) {
+			go func(r *provider.Resource) {
 				defer m.asyncWg.Done()
 				defer func() {
 					if rec := recover(); rec != nil {

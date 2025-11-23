@@ -1,4 +1,4 @@
-package resource
+package provider
 
 import (
 	"time"
@@ -28,16 +28,17 @@ const (
 )
 
 // Resource represents a single compute unit (VM, container, or process)
+// This is the core type that providers create and manage
 type Resource struct {
-	ID           string                 `json:"id" gorm:"primaryKey"`
-	PoolID       string                 `json:"pool_id" gorm:"index"`
-	SandboxID    *string                `json:"sandbox_id,omitempty" gorm:"index"`
+	ID           string                 `json:"id"`
+	PoolID       string                 `json:"pool_id"`
+	SandboxID    *string                `json:"sandbox_id,omitempty"`
 	Type         ResourceType           `json:"type"`
-	State        ResourceState          `json:"state" gorm:"index"`
+	State        ResourceState          `json:"state"`
 	ProviderType string                 `json:"provider_type"` // docker, hyperv, kvm, etc.
 	ProviderID   string                 `json:"provider_id"`   // Provider-specific ID
-	Spec         map[string]interface{} `json:"spec" gorm:"serializer:json"`
-	Metadata     map[string]interface{} `json:"metadata" gorm:"serializer:json"`
+	Spec         map[string]interface{} `json:"spec"`
+	Metadata     map[string]interface{} `json:"metadata"`
 	CreatedAt    time.Time              `json:"created_at"`
 	UpdatedAt    time.Time              `json:"updated_at"`
 	ExpiresAt    *time.Time             `json:"expires_at,omitempty"`
@@ -79,7 +80,7 @@ func (r *Resource) IsExpired() bool {
 
 // ConnectionInfo contains the details needed to connect to a resource
 type ConnectionInfo struct {
-	Type        string                 `json:"type"` // ssh, rdp, http, exec, etc.
+	Type        string                 `json:"type"` // ssh, rdp, http, docker-exec, etc.
 	Host        string                 `json:"host,omitempty"`
 	Port        int                    `json:"port,omitempty"`
 	Username    string                 `json:"username,omitempty"`
@@ -103,11 +104,11 @@ type ResourceStatus struct {
 type ResourceSpec struct {
 	Type         ResourceType           `json:"type"`
 	ProviderType string                 `json:"provider_type"`
-	Image        string                 `json:"image"`
+	Image        string                 `json:"image"` // Docker image, VM template, base image, etc.
 	CPUs         int                    `json:"cpus,omitempty"`
 	MemoryMB     int                    `json:"memory_mb,omitempty"`
 	DiskGB       int                    `json:"disk_gb,omitempty"`
 	Labels       map[string]string      `json:"labels,omitempty"`
 	Environment  map[string]string      `json:"environment,omitempty"`
-	ExtraConfig  map[string]interface{} `json:"extra_config,omitempty"`
+	ExtraConfig  map[string]interface{} `json:"extra_config,omitempty"` // Provider-specific config
 }

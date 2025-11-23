@@ -11,11 +11,11 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
-	"github.com/Geogboe/boxy/internal/agent"
-	"github.com/Geogboe/boxy/internal/crypto"
-	"github.com/Geogboe/boxy/internal/provider/docker"
-	"github.com/Geogboe/boxy/internal/provider/hyperv"
-	"github.com/Geogboe/boxy/internal/provider/mock"
+	"github.com/Geogboe/boxy/pkg/agent"
+	"github.com/Geogboe/boxy/pkg/crypto"
+	"github.com/Geogboe/boxy/pkg/provider/docker"
+	"github.com/Geogboe/boxy/pkg/provider/hyperv"
+	"github.com/Geogboe/boxy/pkg/provider/mock"
 )
 
 var (

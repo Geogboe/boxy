@@ -13,7 +13,6 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 
-	"github.com/Geogboe/boxy/internal/core/resource"
 	provider_pkg "github.com/Geogboe/boxy/pkg/provider"
 	pb "github.com/Geogboe/boxy/pkg/provider/proto"
 )
@@ -27,7 +26,7 @@ import (
 type RemoteProvider struct {
 	name          string
 	providerName  string // Name of the actual provider on the agent (e.g., "hyperv")
-	resourceType  resource.ResourceType
+	resourceType  provider_pkg.ResourceType
 	agentID       string
 	agentAddress  string
 	conn          *grpc.ClientConn
@@ -120,7 +119,7 @@ func NewRemoteProvider(cfg *Config, logger *logrus.Logger) (*RemoteProvider, err
 	rp := &RemoteProvider{
 		name:           cfg.Name,
 		providerName:   cfg.ProviderName,
-		resourceType:   resource.ResourceTypeVM, // TODO: Make configurable
+		resourceType:   provider_pkg.ResourceTypeVM, // TODO: Make configurable
 		agentID:        cfg.AgentID,
 		agentAddress:   cfg.AgentAddress,
 		conn:           conn,
@@ -148,7 +147,7 @@ func (r *RemoteProvider) Name() string {
 }
 
 // Type returns the resource type this provider manages
-func (r *RemoteProvider) Type() resource.ResourceType {
+func (r *RemoteProvider) Type() provider_pkg.ResourceType {
 	return r.resourceType
 }
 

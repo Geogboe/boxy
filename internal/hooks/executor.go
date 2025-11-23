@@ -8,7 +8,6 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"github.com/Geogboe/boxy/internal/core/resource"
 	"github.com/Geogboe/boxy/pkg/provider"
 )
 
@@ -31,7 +30,7 @@ func (e *Executor) ExecuteHooks(
 	hooks []Hook,
 	hookPoint HookPoint,
 	prov provider.Provider,
-	res *resource.Resource,
+	res *provider.Resource,
 	hookCtx HookContext,
 	phaseTimeout time.Duration,
 ) ([]HookResult, error) {
@@ -102,7 +101,7 @@ func (e *Executor) executeHookWithRetry(
 	ctx context.Context,
 	hook Hook,
 	prov provider.Provider,
-	res *resource.Resource,
+	res *provider.Resource,
 	hookCtx HookContext,
 ) (HookResult, error) {
 	maxAttempts := 1
@@ -160,7 +159,7 @@ func (e *Executor) executeHook(
 	ctx context.Context,
 	hook Hook,
 	prov provider.Provider,
-	res *resource.Resource,
+	res *provider.Resource,
 	hookCtx HookContext,
 	attempt int,
 ) (HookResult, error) {

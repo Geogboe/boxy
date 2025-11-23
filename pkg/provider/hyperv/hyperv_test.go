@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Geogboe/boxy/internal/core/resource"
-	"github.com/Geogboe/boxy/internal/crypto"
+	"github.com/Geogboe/boxy/pkg/provider"
+	"github.com/Geogboe/boxy/pkg/crypto"
 	provider_pkg "github.com/Geogboe/boxy/pkg/provider"
 )
 
@@ -22,7 +22,7 @@ func TestProvider_Name(t *testing.T) {
 
 func TestProvider_Type(t *testing.T) {
 	p := createTestProvider(t)
-	assert.Equal(t, resource.ResourceTypeVM, p.Type())
+	assert.Equal(t, provider.ResourceTypeVM, p.Type())
 }
 
 func TestGenerateSecurePassword(t *testing.T) {
@@ -194,7 +194,7 @@ func TestExec_SecurityValidation(t *testing.T) {
 	encPassword, err := p.encryptor.Encrypt(password)
 	require.NoError(t, err)
 
-	res := &resource.Resource{
+	res := &provider.Resource{
 		ProviderID: "test-vm",
 		Metadata: map[string]interface{}{
 			"username":     "Administrator",
@@ -286,7 +286,7 @@ func TestExec_CommandConstruction(t *testing.T) {
 	encPassword, err := p.encryptor.Encrypt(password)
 	require.NoError(t, err)
 
-	res := &resource.Resource{
+	res := &provider.Resource{
 		ProviderID: "test-vm",
 		Metadata: map[string]interface{}{
 			"username":     "Admin",
@@ -324,7 +324,7 @@ func TestExec_InvalidVMName(t *testing.T) {
 	encPassword, err := p.encryptor.Encrypt(password)
 	require.NoError(t, err)
 
-	res := &resource.Resource{
+	res := &provider.Resource{
 		ProviderID: "vm; Remove-VM", // Invalid VM name with injection attempt
 		Metadata: map[string]interface{}{
 			"username":     "Admin",
@@ -340,7 +340,7 @@ func TestExec_InvalidVMName(t *testing.T) {
 func TestExec_MissingPassword(t *testing.T) {
 	p := createTestProvider(t)
 
-	res := &resource.Resource{
+	res := &provider.Resource{
 		ProviderID: "test-vm",
 		Metadata: map[string]interface{}{
 			"username": "Admin",

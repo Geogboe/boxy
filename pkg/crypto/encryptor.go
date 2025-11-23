@@ -9,7 +9,7 @@ import (
 	"io"
 )
 
-// Encryptor handles encryption/decryption of sensitive data
+// Encryptor handles encryption/decryption of sensitive data using AES-256-GCM
 type Encryptor struct {
 	key []byte
 }
