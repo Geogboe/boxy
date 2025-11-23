@@ -1,3 +1,5 @@
+For an overview of the entire system architecture, please refer to the [Boxy v1 Complete Architecture Map](../ARCHITECTURE_MAP.md).
+
 # Agent Registration with Tokens
 
 ## Overview
@@ -28,8 +30,8 @@ Output:
 │                                                 │
 │ To register agent, run on agent host:          │
 │   boxy agent install \                          │
-│     --server https://boxy-server:8443 \         │
-│     --ca /path/to/ca-cert.pem \                 │
+│     --server https://boxy-server:8443 \
+│     --ca /path/to/ca-cert.pem \
 │     --token reg_abc123xyz789def456ghi           │
 └─────────────────────────────────────────────────┘
 
@@ -395,7 +397,7 @@ After installation, agent config stored at:
 # agent.yaml (generated during install)
 agent:
   id: agent-abc123def
-  server_url: https://boxy-server.internal:8443
+  server_url: https://boxy-server:8443
 
   # Certificate paths
   tls:
@@ -491,7 +493,6 @@ cat > /Library/LaunchDaemons/com.boxy.agent.plist <<EOF
     <true/>
     <key>StandardOutPath</key>
     <string>/var/log/boxy-agent.log</string>
-    <key>StandardErrorPath</key>
     <string>/var/log/boxy-agent.log</string>
 </dict>
 </plist>

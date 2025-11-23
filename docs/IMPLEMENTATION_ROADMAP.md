@@ -1,6 +1,6 @@
 # Implementation Roadmap
 
-This document provides a phased implementation plan for Boxy with hook-based provisioning and distributed agent architecture.
+This document provides a phased implementation plan for Boxy with hook-based provisioning and distributed agent architecture. For the broader project vision and other phases, please refer to the [Boxy Development Roadmap](../ROADMAP.md).
 
 ## Overview
 

@@ -2,29 +2,59 @@
 
 ## Overview
 
-Comprehensive testing strategy covering unit, integration, E2E, stress, and edge case testing to ensure Boxy is production-ready.
+Boxy employs a comprehensive, multi-layered testing strategy covering unit, integration, end-to-end (E2E), stress, and edge-case testing to ensure its reliability, performance, and correctness in production. Our philosophy emphasizes Test-Driven Development (TDD) and continuous testing throughout the development lifecycle.
+
+## Philosophy
+
+**Unit tests should be pure logic tests with no external dependencies. Integration tests should test real interactions with external systems.** We test incrementally as features are built, not just at the end, using mocks and stubs to isolate components effectively.
+
+## Testing Pyramid
+
+To guide our testing efforts, we adhere to the Testing Pyramid model:
+
+```text
+        ┌─────────────┐
+        │  Manual     │  Real Hyper-V on Windows (Final Validation)
+        │  Testing    │
+        └─────────────┘
+       ┌───────────────┐
+       │  E2E Tests    │  Full workflows, often with stubs/mocks for complex dependencies
+       │               │
+       └───────────────┘
+      ┌─────────────────┐
+      │ Integration     │  Component interactions with real external systems (e.g., Docker, DB)
+      │ Tests           │
+      └─────────────────┘
+     ┌───────────────────┐
+     │  Unit Tests       │  Isolated components, pure logic
+     │                   │
+     └───────────────────┘
+```
 
 ## Testing Levels
 
 ### 1. Unit Tests
 
-**Goal**: Test individual components in isolation
+**Goal**: Test individual components in isolation.
+**Target**: > 80% Coverage for business logic.
 
-**Coverage**:
-
+**Scope**:
 - Domain models (Resource, Pool, Sandbox)
 - Business logic validation
 - State transitions
 - Helper functions
 
 **Tools**:
-
 - `testing` (Go stdlib)
 - `testify/assert` for assertions
 - `testify/require` for critical checks
-- `testify/mock` for mocking
+- `testify/mock` for mocking (used sparingly for simple cases)
 
-**Location**: `*_test.go` files alongside source
+**Location**: `*_test.go` files alongside source.
+
+**Mocking Strategy**:
+- Use interfaces for dependencies to enable mocking.
+- Create simple, custom mock implementations rather than relying heavily on complex mocking frameworks.
 
 **Example**:
 
@@ -40,27 +70,48 @@ func TestResource_IsAvailable(t *testing.T) {
     res.SandboxID = &sandboxID
     assert.False(t, res.IsAvailable())
 }
+
+// Example using a mock from internal/core/allocator/allocator_test.go
+func TestAllocator_AllocateFromPool(t *testing.T) {
+    mockRepo := &mockResourceRepository{} // Assuming a mock implementation exists
+    mockPool := &mockPoolManager{}       // Assuming a mock implementation exists
+    // ... setup and test allocator logic
+}
 ```
 
 ### 2. Integration Tests
 
-**Goal**: Test component interactions with real dependencies
+**Goal**: Test component interactions with real dependencies.
+**Target**: All major workflows.
 
-**Coverage**:
-
+**Scope**:
 - Pool manager + Storage
 - Sandbox manager + Pool allocators
 - Provider + Docker SDK (requires Docker)
 - Configuration loading
 - Database operations
 
+**Primary Provider**: Docker (used for Linux CI).
+**Stubbed Provider**: Hyper-V (simulated for testing on Linux CI).
+
 **Tools**:
+- Docker-in-Docker for isolated testing.
+- Testcontainers for dependencies.
+- In-memory SQLite for fast database tests.
 
-- Docker-in-Docker for isolated testing
-- Testcontainers for dependencies
-- In-memory SQLite for fast tests
+**Location**: `tests/integration/` or `*_integration_test.go` files (if specific to a package).
 
-**Location**: `tests/integration/`
+**Running Integration Tests**:
+Integration tests are typically slower and platform-specific. They are often skipped during `go test -short`.
+
+```bash
+# Run all integration tests (Go's default will pick them up)
+go test ./... -v
+
+# Run specific integration tests (e.g., those tagged with 'integration')
+# This project uses testing.Short() for skipping.
+# Example: go test ./tests/integration/... -v
+```
 
 **Example**:
 
@@ -71,7 +122,7 @@ func TestPoolManager_Integration(t *testing.T) {
     }
 
     // Setup
-    store := setupTestStore(t)
+    store := setupTestStore(t) // Helper to get a test DB
     provider := docker.NewProvider(logger)
     manager := pool.NewManager(config, provider, store, logger)
 
@@ -83,26 +134,44 @@ func TestPoolManager_Integration(t *testing.T) {
     require.NoError(t, err)
     assert.GreaterOrEqual(t, stats.TotalReady, config.MinReady)
 }
+
+// Example from v1-prerelease (tests/integration/allocator_test.go)
+func TestIntegration_FullAllocationFlow(t *testing.T) {
+    if testing.Short() {
+        t.Skip("skipping integration test")
+    }
+    // Setup: Real Docker provider, real database
+    // ...
+    // Test: Allocate resource via allocator
+    // ...
+    // Verify: Resource is running via provider
+    // ...
+    // Cleanup: Release resource
+}
 ```
 
-### 3. End-to-End Tests
+### 3. End-to-End (E2E) Tests
 
-**Goal**: Test full user workflows
+**Goal**: Test full user workflows.
+**Target**: All documented use cases.
 
-**Coverage**:
+**Scope**:
+- `boxy init` → `boxy serve` → `boxy sandbox create` → cleanup.
+- Multi-pool sandboxes.
+- Expiration and auto-cleanup.
+- Error recovery (e.g., Docker daemon down).
 
-- `boxy init` → `boxy serve` → `boxy sandbox create` → cleanup
-- Multi-pool sandboxes
-- Expiration and auto-cleanup
-- Error recovery
+**Uses**: Real Boxy service (often run in background), real providers (Docker), stubbed providers (Hyper-V).
 
-**Tools**:
+**Location**: `tests/e2e/`.
 
-- Actual CLI execution
-- Docker daemon (real)
-- Temporary config files
+**Running E2E Tests**:
+E2E tests are the slowest and typically run after unit and integration tests have passed.
 
-**Location**: `tests/e2e/`
+```bash
+# Run all e2e tests
+go test ./tests/e2e/... -v
+```
 
 **Example**:
 
@@ -114,151 +183,129 @@ func TestE2E_CreateSandbox(t *testing.T) {
     require.NoError(t, err)
     defer cmd.Process.Kill()
 
-    // Wait for service to be ready
-    time.Sleep(5 * time.Second)
+    // ... (wait for service) ...
 
-    // Create sandbox
+    // Create sandbox via CLI
     out, err := exec.Command("./boxy", "sandbox", "create",
         "-p", "test-pool:1", "-d", "5m").CombinedOutput()
     require.NoError(t, err)
     assert.Contains(t, string(out), "Sandbox created successfully")
 }
+
+// Example from v1-prerelease (tests/e2e/quick_testing_usecase_test.go)
+func TestE2E_QuickTestingUseCase(t *testing.T) {
+    if testing.Short() {
+        t.Skip("skipping e2e test")
+    }
+    // Simulates primary use case from USE_CASES.md
+    // ... (start server, request sandbox via CLI, verify quickly, get connection, destroy) ...
+}
+
+// Example from v1-prerelease (tests/e2e/distributed_agent_test.go)
+func TestE2E_DistributedAgent_StubHyperV(t *testing.T) {
+    // 1. Start agent with stubbed Hyper-V provider
+    // 2. Start server configured to use agent
+    // 3. Create sandbox with Hyper-V pool
+    // 4. Verify communication over gRPC/mTLS
+    // 5. Verify resource created on agent
+}
 ```
 
-### 4. Mock Provider Tests
+### 4. Stress Tests
 
-**Goal**: Test without Docker dependency
+**Goal**: Verify behavior under load and identify performance bottlenecks.
 
-**Coverage**:
-
-- Pool management logic without real containers
-- Sandbox orchestration with fake resources
-- Error scenarios (Docker down, provision failures)
+**Scope**:
+- Concurrent sandbox creation (100+ sandboxes).
+- Pool exhaustion scenarios.
+- Rapid allocation/deallocation.
+- Memory and goroutine leaks (using `go test -race`).
 
 **Tools**:
+- `go test -race` for race detection.
+- `pprof` for profiling.
+- Custom load generators.
 
-- Custom mock provider implementation
-- Controlled delays and failures
+**Location**: `tests/stress/`.
 
-**Location**: `internal/provider/mock/`
+### 5. Edge Case & Error Tests
 
-**Example**:
+**Goal**: Ensure graceful handling of unexpected situations and failures.
+
+**Scope**:
+- Docker daemon down, database corruption.
+- Configuration errors, resource limits exceeded.
+- Network failures, partial failures during sandbox creation/cleanup.
+
+**Location**: Throughout unit, integration, and E2E test files.
+
+## Stub/Mock Strategy for External Dependencies
+
+### Hyper-V Stub for Linux Testing
+
+**Problem**: Hyper-V only runs on Windows, but CI often runs on Linux.
+**Solution**: Use a `StubHyperVProvider` that simulates Hyper-V behavior. This stub provides configurable latency and failure rates to mimic real-world scenarios.
 
 ```go
-type MockProvider struct {
-    provisionDelay time.Duration
-    failureRate    float64
+// pkg/provider/stub/hyperv_stub.go (Illustrative example)
+package stub
+
+type StubHyperVProvider struct {
+    // ... fields to control behavior like latency, failureRate
 }
 
-func (m *MockProvider) Provision(ctx context.Context, spec ResourceSpec) (*Resource, error) {
-    if rand.Float64() < m.failureRate {
-        return nil, errors.New("simulated provision failure")
-    }
-    time.Sleep(m.provisionDelay)
-    return &Resource{ID: uuid.New().String()}, nil
+func NewStubHyperVProvider(latency time.Duration) *StubHyperVProvider { /* ... */ }
+
+func (s *StubHyperVProvider) Provision(ctx context.Context, spec resource.ResourceSpec) (*resource.Resource, error) {
+    // Simulate realistic provision time and potential failures
+    time.Sleep(s.latency)
+    // ... logic to create a stubbed resource
 }
+// ... other Provider methods implemented realistically for testing
+```
+**Usage in Tests**:
+```go
+// Use stub in integration tests or E2E tests for Linux CI
+stubProvider := stub.NewStubHyperVProvider(10 * time.Second)
+pool := pool.NewManager(poolConfig, stubProvider, repo, logger)
 ```
 
-### 5. Stress Tests
+## Smoke Tests
 
-**Goal**: Verify behavior under load
+**Definition**: Minimal sanity checks to confirm core functionality after a change.
+**Run**: After every commit, before pushing.
 
-**Coverage**:
+```bash
+# Example smoke test script
+#!/bin/bash
+set -e
 
-- Concurrent sandbox creation (100+ sandboxes)
-- Pool exhaustion scenarios
-- Rapid allocation/deallocation
-- Memory and goroutine leaks
-- Race condition detection
+echo "Running smoke tests..."
 
-**Tools**:
+# 1. Build
+go build ./cmd/boxy
 
-- `go test -race` for race detection
-- `pprof` for profiling
-- Custom load generators
+# 2. Unit tests (fast)
+go test ./internal/... -short
 
-**Location**: `tests/stress/`
+# 3. Basic E2E (quick run of a few essential E2E tests)
+go test ./tests/e2e/... -run TestE2E_Basic -short
 
-**Example**:
-
-```go
-func TestStress_ConcurrentAllocation(t *testing.T) {
-    const numWorkers = 50
-    const allocationsPerWorker = 20
-
-    var wg sync.WaitGroup
-    errors := make(chan error, numWorkers)
-
-    for i := 0; i < numWorkers; i++ {
-        wg.Add(1)
-        go func() {
-            defer wg.Done()
-            for j := 0; j < allocationsPerWorker; j++ {
-                _, err := manager.Allocate(ctx, fmt.Sprintf("sb-%d-%d", i, j))
-                if err != nil {
-                    errors <- err
-                }
-            }
-        }()
-    }
-
-    wg.Wait()
-    close(errors)
-
-    errorCount := 0
-    for err := range errors {
-        t.Logf("Allocation error: %v", err)
-        errorCount++
-    }
-
-    assert.Less(t, errorCount, 10, "Too many allocation failures")
-}
+echo "✅ Smoke tests passed"
 ```
 
-### 6. Edge Case & Error Tests
+## Regression Tests
 
-**Goal**: Handle failures gracefully
-
-**Coverage**:
-
-- Docker daemon down
-- Database corruption
-- Config file errors
-- Resource limits exceeded
-- Network failures
-- Partial failures during sandbox creation
-- Cleanup failures
-
-**Location**: Throughout test files
-
-**Example**:
+**Goal**: Ensure no functionality is lost or broken by new changes, especially for existing features.
+**Strategy**:
+- Keep all existing E2E tests from previous milestones (e.g., MVP).
+- Run these tests with new architecture and features.
+- All regression tests must pass without modification.
 
 ```go
-func TestError_DockerDown(t *testing.T) {
-    // Stop Docker daemon
-    exec.Command("systemctl", "stop", "docker").Run()
-    defer exec.Command("systemctl", "start", "docker").Run()
-
-    provider := docker.NewProvider(logger)
-    err := provider.HealthCheck(context.Background())
-    assert.Error(t, err)
-    assert.Contains(t, err.Error(), "daemon not reachable")
-}
-
-func TestError_PartialSandboxCreation(t *testing.T) {
-    // Configure pool to fail after 2 allocations
-    mockProvider := &MockProvider{failAfter: 2}
-
-    // Request 5 resources
-    _, err := sandboxManager.Create(ctx, &CreateRequest{
-        Resources: []ResourceRequest{{PoolName: "test", Count: 5}},
-    })
-
-    assert.Error(t, err)
-
-    // Verify cleanup happened
-    resources := store.GetResourcesBySandboxID(ctx, "failed-sb")
-    assert.Empty(t, resources, "Partial resources should be cleaned up")
+// tests/e2e/mvp_regression_test.go (Example)
+func TestRegression_SandboxCreate(t *testing.T) {
+    // Original MVP test - must still pass
 }
 ```
 
@@ -266,162 +313,211 @@ func TestError_PartialSandboxCreation(t *testing.T) {
 
 ```text
 boxy/
-├── internal/
+├── internal/              # Internal business logic and components
 │   ├── core/
 │   │   ├── pool/
 │   │   │   ├── manager.go
 │   │   │   ├── manager_test.go        # Unit tests
-│   │   │   └── types_test.go
-│   │   ├── sandbox/
-│   │   │   ├── manager.go
-│   │   │   └── manager_test.go
-│   │   └── resource/
-│   │       └── types_test.go
+│   │   └── sandbox/
+│   │       └── manager_test.go
 │   ├── provider/
-│   │   ├── mock/
-│   │   │   └── mock.go                # Mock provider
-│   │   └── docker/
-│   │       └── docker_test.go
+│   │   └── mock/                      # Generic mock provider for unit testing
+│   │   └── stub/hyperv_stub.go        # Hyper-V specific stub for Linux CI
 │   └── storage/
 │       └── sqlite_test.go
 ├── tests/
-│   ├── integration/
-│   │   ├── pool_integration_test.go
-│   │   ├── sandbox_integration_test.go
-│   │   └── helpers.go
-│   ├── e2e/
-│   │   ├── cli_test.go
-│   │   ├── full_workflow_test.go
-│   │   └── docker-compose.yml         # Test environment
-│   └── stress/
-│       ├── concurrent_test.go
-│       ├── pool_exhaustion_test.go
-│       └── memory_leak_test.go
-└── Makefile                           # Test runners
+│   ├── integration/         # Tests for component interactions with real dependencies
+│   │   ├── allocator_test.go
+│   │   ├── preheating_test.go
+│   │   ├── multitenancy_test.go
+│   │   └── distributed_agent_test.go
+│   ├── e2e/                 # Full user workflow tests
+│   │   ├── quick_testing_usecase_test.go
+│   │   ├── ci_runner_usecase_test.go
+│   │   └── mvp_regression_test.go
+│   ├── stress/              # Performance and concurrency tests
+│   │   └── concurrent_test.go
+│   └── fixtures/            # Test data (configs, certs, images)
+│       └── configs/
+│       └── certs/
+│       └── images/
+└── Makefile                 # Test runners
 ```
 
-## Test Commands
+## Test Commands (via Makefile)
 
 ```makefile
 # Makefile
 .PHONY: test test-unit test-integration test-e2e test-stress test-all
 
 test-unit:
- go test -v -short ./...
+	go test -v -short ./...
 
 test-integration:
- go test -v -run Integration ./tests/integration/
+	go test -v ./tests/integration/...
 
 test-e2e:
- go test -v -timeout 10m ./tests/e2e/
+	go test -v -timeout 10m ./tests/e2e/...
 
 test-stress:
- go test -v -timeout 30m ./tests/stress/
+	go test -v -timeout 30m ./tests/stress/...
 
 test-race:
- go test -race -short ./...
+	go test -race -short ./...
 
 test-coverage:
- go test -coverprofile=coverage.out ./...
- go tool cover -html=coverage.out -o coverage.html
+	go test -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out -o coverage.html
 
 test-all: test-unit test-integration test-e2e
- @echo "All tests passed!"
+	@echo "All tests passed!"
 
 bench:
- go test -bench=. -benchmem ./...
+	go test -bench=. -benchmem ./...
 ```
 
-## Coverage Goals
-
-- **Unit Tests**: >80% coverage for business logic
-- **Integration Tests**: All critical paths tested
-- **E2E Tests**: Main user workflows covered
-- **Edge Cases**: All error paths tested
-
-## Continuous Integration
-
-GitHub Actions workflow:
+## Continuous Integration (GitHub Actions)
 
 ```yaml
+# .github/workflows/test.yml
 name: Tests
 
 on: [push, pull_request]
 
 jobs:
-  unit-tests:
+  unit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-go@v4
         with:
           go-version: '1.21'
-      - run: make test-unit
-      - run: make test-race
+      - name: Unit tests
+        run: make test-unit
+      - name: Race detection
+        run: make test-race
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
 
-  integration-tests:
+  integration:
     runs-on: ubuntu-latest
     services:
       docker:
-        image: docker:dind
+        image: docker:dind # Docker-in-Docker for isolated integration testing
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-go@v4
-      - run: make test-integration
+      - name: Integration tests
+        run: make test-integration
 
-  e2e-tests:
+  e2e:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-go@v4
-      - run: go build -o boxy ./cmd/boxy
-      - run: make test-e2e
+      - name: Build Boxy CLI
+        run: go build -o boxy ./cmd/boxy
+      - name: E2E tests
+        run: make test-e2e
 ```
 
 ## Test Data Management
 
-- Use `t.TempDir()` for temporary directories
-- Clean up Docker containers with `t.Cleanup()`
-- Use in-memory SQLite (`:memory:`) for fast tests
-- Deterministic UUIDs in tests for reproducibility
+-   Use `t.TempDir()` for temporary directories.
+-   Clean up Docker containers and other resources with `t.Cleanup()`.
+-   Use in-memory SQLite (`:memory:`) for fast database tests.
+-   Deterministic UUIDs in tests for reproducibility where possible.
+
+### Fixtures
+
+Test data, configuration, and certificates are organized in `tests/fixtures/`:
+```text
+tests/
+├── fixtures/
+│   ├── configs/             # Various Boxy configurations (Docker-only, distributed, full)
+│   │   ├── boxy-docker.yaml
+│   │   ├── boxy-distributed.yaml
+│   │   └── boxy-full.yaml
+│   ├── certs/               # Test mTLS certificates
+│   │   ├── test-ca.pem
+│   │   ├── test-agent-cert.pem
+│   │   └── test-agent-key.pem
+│   └── images/              # Dockerfiles or build contexts for test images
+│       └── test-container/Dockerfile
+```
+
+### Test Databases
+
+A utility function for creating and managing temporary SQLite databases for tests:
+```go
+// tests/testutil/db.go (Example)
+func NewTestDB(t *testing.T) *sql.DB {
+    // Create temporary SQLite database
+    db, err := sql.Open("sqlite3", ":memory:")
+    require.NoError(t, err)
+
+    // Run migrations
+    // RunMigrations(db) // Assuming this exists
+
+    // Cleanup
+    t.Cleanup(func() {
+        db.Close()
+    })
+
+    return db
+}
+```
 
 ## Performance Benchmarks
 
-Track key metrics:
-
-- Sandbox creation time
-- Pool replenishment speed
-- Memory usage under load
-- Goroutine count stability
+Track key metrics using Go's built-in benchmarking tools:
+-   Sandbox creation time.
+-   Pool replenishment speed.
+-   Memory usage under load.
+-   Goroutine count stability.
 
 ## Testing Best Practices
 
-1. **Isolation**: Each test is independent
-2. **Fast**: Unit tests run in <1s
-3. **Deterministic**: No flaky tests
-4. **Clear**: Descriptive test names and error messages
-5. **Cleanup**: Always clean up resources
-6. **Parallel**: Use `t.Parallel()` where safe
-7. **Table-Driven**: Use table-driven tests for variations
+1.  **Isolation**: Each test is independent and does not affect others.
+2.  **Fast**: Unit tests should run quickly (< 1s).
+3.  **Deterministic**: Tests should produce the same results every time (no flaky tests).
+4.  **Clear**: Use descriptive test names and provide clear error messages.
+5.  **Cleanup**: Always ensure resources created during tests are properly cleaned up.
+6.  **Parallel**: Utilize `t.Parallel()` where tests are safe to run concurrently.
+7.  **Table-Driven**: Use table-driven tests for variations of inputs or scenarios.
 
-## Current Status
+## Coverage Goals
 
-- [ ] Unit tests for domain models
-- [ ] Mock provider implementation
-- [ ] Integration tests for pool manager
-- [ ] Integration tests for sandbox manager
-- [ ] E2E CLI tests
-- [ ] Stress tests for concurrent operations
-- [ ] Race detection tests
-- [ ] CI/CD pipeline
-- [ ] Performance benchmarks
+| Component | Target | Status (as of v1 Prerelease) |
+| :---------------------- | :-------- | :-------------------------- |
+| `internal/core/allocator` | > 90%     | not-started                 |
+| `internal/core/pool`    | > 85%     | not-started                 |
+| `internal/core/sandbox` | > 85%     | not-started                 |
+| `pkg/provider/remote`   | > 90%     | not-started                 |
+| `internal/agent`        | > 85%     | not-started                 |
+| **Overall**             | **> 80%** | not-started                 |
 
-## Next Steps
+## Current Status (as of v1 Prerelease)
 
-1. Implement mock provider
-2. Add unit tests for core domain
-3. Add integration tests
-4. Create E2E test suite
-5. Run stress tests
-6. Set up CI pipeline
-7. Achieve >80% coverage
+-   [ ] Unit tests for domain models
+-   [ ] Mock provider implementation
+-   [ ] Integration tests for pool manager
+-   [ ] Integration tests for sandbox manager
+-   [ ] E2E CLI tests
+-   [ ] Stress tests for concurrent operations
+-   [ ] Race detection tests
+-   [ ] CI/CD pipeline
+-   [ ] Performance benchmarks
+
+## Next Steps (as of v1 Prerelease)
+
+1.  Implement mock provider.
+2.  Add unit tests for core domain.
+3.  Add integration tests.
+4.  Create E2E test suite.
+5.  Run stress tests.
+6.  Set up CI pipeline.
+7.  Achieve >80% coverage.
+
+**Last Updated**: 2025-11-23
+**Review**: Continuous throughout v1 implementation
