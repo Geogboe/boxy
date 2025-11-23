@@ -1,0 +1,19 @@
+extends: default
+
+rules:
+  line-length:
+    max: 120
+    level: warning
+  truthy:
+    allowed-values: ['true', 'false', 'yes', 'no', 'on', 'off']
+  indentation:
+    indent-sequences: consistent
+
+# Ignore generated binaries and vendor caches
+ignore: |
+  **/node_modules/**
+  **/.git/**
+  **/vendor/**
+  **/bin/**
+  **/obj/**
+  **/dist/**
