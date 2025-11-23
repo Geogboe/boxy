@@ -73,11 +73,11 @@ Once the workflow completes:
 
 1. Go to **Releases** tab
 2. Verify the new release appears with:
-   - Correct version number
-   - Generated changelog
-   - Binary assets for all platforms
-   - SHA256 checksums for each binary
-   - Docker image tags
+  - Correct version number
+  - Generated changelog
+  - Binary assets for all platforms
+  - SHA256 checksums for each binary
+  - Docker image tags
 
 **Download and test a binary**:
 
