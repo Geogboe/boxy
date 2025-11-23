@@ -74,6 +74,13 @@ func NewManager(
 	}, nil
 }
 
+// Config returns a copy of the pool configuration.
+func (m *Manager) Config() PoolConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return *m.config
+}
+
 // Start begins the warm pool maintenance goroutines
 func (m *Manager) Start() error {
 	m.mu.Lock()

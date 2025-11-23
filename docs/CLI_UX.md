@@ -13,6 +13,7 @@ Single entrypoint: `boxy`. All functionality hangs off subcommands; no alternate
 
 - `boxy serve [--config path] [--pprof-addr :6060] [--grpc-addr :50051]`  
   Runs the control-plane service (allocators, schedulers, HTTP/gRPC frontends).
+  - HTTP API (REST): enabled by default, listens on `api.listen` from config (default `:8080`).
 
 ## Agents (`boxy agent ...`)
 
