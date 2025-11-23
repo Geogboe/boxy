@@ -10,7 +10,6 @@ import (
 
 	"github.com/Geogboe/boxy/internal/core/allocator"
 	"github.com/Geogboe/boxy/internal/core/pool"
-	"github.com/Geogboe/boxy/internal/core/resource"
 	"github.com/Geogboe/boxy/internal/core/sandbox"
 	"github.com/Geogboe/boxy/internal/hooks"
 	"github.com/Geogboe/boxy/internal/storage"
@@ -54,7 +53,7 @@ func TestE2E_CompleteSandboxLifecycle(t *testing.T) {
 	// Setup pool configuration with hooks
 	poolCfg := &pool.PoolConfig{
 		Name:     "test-pool",
-		Type:     resource.ResourceTypeContainer,
+		Type:     provider.ResourceTypeContainer,
 		Backend:  "mock",
 		Image:    "test:latest",
 		MinReady: 2,
@@ -67,7 +66,7 @@ func TestE2E_CompleteSandboxLifecycle(t *testing.T) {
 					Name:   "finalize",
 					Type:   hooks.HookTypeScript,
 					Shell:  hooks.ShellBash,
-					Inline: "echo 'Finalization for ${resource.id}'",
+			Inline: "echo 'Finalization for ${resource.id}'",
 				},
 			},
 			BeforeAllocate: []hooks.Hook{
@@ -159,7 +158,7 @@ func TestE2E_CompleteSandboxLifecycle(t *testing.T) {
 	for i, rwc := range resourcesWithConn {
 		t.Logf("Resource %d: %s", i+1, rwc.Resource.ID)
 		assert.NotNil(t, rwc.Connection)
-		assert.Equal(t, resource.StateAllocated, rwc.Resource.State)
+	assert.Equal(t, provider.StateAllocated, rwc.Resource.State)
 
 		// Check that hooks were executed
 		assert.Contains(t, rwc.Resource.Metadata, "finalization_hooks")
@@ -225,7 +224,7 @@ func TestE2E_MultipleResourceTypes(t *testing.T) {
 	// Create two different pools
 	pool1Cfg := &pool.PoolConfig{
 		Name:     "pool-a",
-		Type:     resource.ResourceTypeContainer,
+		Type:     provider.ResourceTypeContainer,
 		Backend:  "mock",
 		Image:    "test-a:latest",
 		MinReady: 1,
@@ -236,7 +235,7 @@ func TestE2E_MultipleResourceTypes(t *testing.T) {
 
 	pool2Cfg := &pool.PoolConfig{
 		Name:     "pool-b",
-		Type:     resource.ResourceTypeContainer,
+		Type:     provider.ResourceTypeContainer,
 		Backend:  "mock",
 		Image:    "test-b:latest",
 		MinReady: 1,
@@ -321,7 +320,7 @@ func TestE2E_SandboxExpiration(t *testing.T) {
 
 	poolCfg := &pool.PoolConfig{
 		Name:     "test-pool",
-		Type:     resource.ResourceTypeContainer,
+		Type:     provider.ResourceTypeContainer,
 		Backend:  "mock",
 		Image:    "test:latest",
 		MinReady: 1,

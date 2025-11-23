@@ -4,16 +4,15 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Geogboe/boxy/pkg/provider"
 	provider_pkg "github.com/Geogboe/boxy/pkg/provider"
 	pb "github.com/Geogboe/boxy/pkg/provider/proto"
 )
 
 // Helper functions for converting between internal types and proto types
 
-func protoToResourceSpec(pbSpec *pb.ResourceSpec) provider.ResourceSpec {
-	return provider.ResourceSpec{
-		Type:         provider.ResourceType(pbSpec.Type),
+func protoToResourceSpec(pbSpec *pb.ResourceSpec) provider_pkg.ResourceSpec {
+	return provider_pkg.ResourceSpec{
+		Type:         provider_pkg.ResourceType(pbSpec.Type),
 		ProviderType: pbSpec.ProviderType, // string field
 		Image:        pbSpec.Image,
 		CPUs:         int(pbSpec.Cpus),
@@ -25,7 +24,7 @@ func protoToResourceSpec(pbSpec *pb.ResourceSpec) provider.ResourceSpec {
 	}
 }
 
-func resourceToProto(res *provider.Resource) *pb.Resource {
+func resourceToProto(res *provider_pkg.Resource) *pb.Resource {
 	return &pb.Resource{
 		Id:           res.ID,
 		PoolId:       res.PoolID,
@@ -42,13 +41,13 @@ func resourceToProto(res *provider.Resource) *pb.Resource {
 	}
 }
 
-func protoToResource(pb *pb.Resource) *provider.Resource {
-	return &provider.Resource{
+func protoToResource(pb *pb.Resource) *provider_pkg.Resource {
+	return &provider_pkg.Resource{
 		ID:           pb.Id,
 		PoolID:       pb.PoolId,
 		SandboxID:    stringPtr(pb.SandboxId),
-		Type:         provider.ResourceType(pb.Type),
-		State:        provider.ResourceState(pb.State),
+		Type:         provider_pkg.ResourceType(pb.Type),
+		State:        provider_pkg.ResourceState(pb.State),
 		ProviderType: pb.ProviderType, // string field
 		ProviderID:   pb.ProviderId,
 		Spec:         stringMapToMap(pb.Spec),
@@ -117,7 +116,7 @@ func stringVal(s *string) string {
 }
 
 func timePtr(t time.Time) *time.Time {
-	if t.IsZero() || t.Unix() == 0 {
+	if t.IsZero() {
 		return nil
 	}
 	return &t

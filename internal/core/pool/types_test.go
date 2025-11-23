@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Geogboe/boxy/internal/core/resource"
+	"github.com/Geogboe/boxy/pkg/provider"
 )
 
 func TestPoolConfig_Validate(t *testing.T) {

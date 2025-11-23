@@ -15,7 +15,6 @@ import (
 
 	"github.com/Geogboe/boxy/internal/core/allocator"
 	"github.com/Geogboe/boxy/internal/core/pool"
-	"github.com/Geogboe/boxy/internal/core/resource"
 	"github.com/Geogboe/boxy/internal/core/sandbox"
 	"github.com/Geogboe/boxy/internal/storage"
 	"github.com/Geogboe/boxy/pkg/crypto"
@@ -70,7 +69,7 @@ func TestDockerE2E_FullLifecycle(t *testing.T) {
 	// Create pool configuration for Alpine containers (small and fast)
 	poolCfg := &pool.PoolConfig{
 		Name:                "e2e-alpine-pool",
-		Type:                resource.ResourceTypeContainer,
+		Type:                provider_pkg.ResourceTypeContainer,
 		Backend:             "docker",
 		Image:               "alpine:latest",
 		MinReady:            2,
@@ -145,7 +144,7 @@ func TestDockerE2E_FullLifecycle(t *testing.T) {
 	status, err := dockerProvider.GetStatus(ctx, res)
 	require.NoError(t, err, "Failed to get status")
 	assert.True(t, status.Healthy, "Container should be healthy")
-	assert.Equal(t, resource.StateReady, status.State)
+	assert.Equal(t, provider_pkg.StateReady, status.State)
 
 	// Test 4: Release container back to pool
 	t.Log("Test 4: Releasing container back to pool...")
@@ -202,7 +201,7 @@ func TestDockerE2E_MultipleContainers(t *testing.T) {
 
 	poolCfg := &pool.PoolConfig{
 		Name:                "e2e-multi-pool",
-		Type:                resource.ResourceTypeContainer,
+		Type:                provider_pkg.ResourceTypeContainer,
 		Backend:             "docker",
 		Image:               "alpine:latest",
 		MinReady:            3,
@@ -235,7 +234,7 @@ func TestDockerE2E_MultipleContainers(t *testing.T) {
 
 	// Allocate 5 containers
 	t.Log("Allocating 5 containers...")
-	containers := make([]*resource.Resource, 5)
+	containers := make([]*provider_pkg.Resource, 5)
 	for i := 0; i < 5; i++ {
 		sandboxID := fmt.Sprintf("e2e-multi-sandbox-%d", i)
 		res, err := poolManager.Allocate(ctx, sandboxID)
@@ -303,7 +302,7 @@ func TestDockerE2E_SandboxOrchestration(t *testing.T) {
 	// Create two different pools (Alpine and BusyBox for variety)
 	pool1Cfg := &pool.PoolConfig{
 		Name:                "e2e-alpine",
-		Type:                resource.ResourceTypeContainer,
+		Type:                provider_pkg.ResourceTypeContainer,
 		Backend:             "docker",
 		Image:               "alpine:latest",
 		MinReady:            2,
@@ -315,7 +314,7 @@ func TestDockerE2E_SandboxOrchestration(t *testing.T) {
 
 	pool2Cfg := &pool.PoolConfig{
 		Name:                "e2e-busybox",
-		Type:                resource.ResourceTypeContainer,
+		Type:                provider_pkg.ResourceTypeContainer,
 		Backend:             "docker",
 		Image:               "busybox:latest",
 		MinReady:            1,
