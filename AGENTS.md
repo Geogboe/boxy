@@ -28,10 +28,12 @@ Currently, creating mixed environments with VMs, containers, and processes acros
 ### Resources
 
 Individual compute units that can be provisioned:
+
 - **VMs** (Virtual Machines) - Full OS instances
 - **Containers** - Lightweight isolated environments
 
 **Resource States:**
+
 - **Provisioned** - Created but cold (stopped/not running)
 - **Ready** - Running and warm (preheated, available for allocation)
 - **Allocated** - In use by a sandbox
@@ -44,11 +46,13 @@ Individual compute units that can be provisioned:
 A **time-bound collection of allocated resources**. Think of it as a "disposable environment" - like Windows Sandbox, but cross-platform.
 
 A sandbox might contain:
+
 - 3 server VMs (Windows Server)
 - 1 client VM (Windows 10)
 - 2 containers (Linux)
 
 Sandboxes are:
+
 - **Time-bound** - Auto-expire after specified duration
 - **Isolated** - Each sandbox is completely independent
 - **Ephemeral** - Destroyed when no longer needed
@@ -66,6 +70,7 @@ A **self-replenishing collection of resources of the same type**. Pools ensure r
 - Automatic **recycling** (refreshing resources regularly to prevent drift)
 
 **Example Pool Configurations:**
+
 ```yaml
 pools:
   - name: win-server-2022
@@ -91,6 +96,7 @@ pools:
 ```
 
 **Cold vs Warm Resources:**
+
 - **Cold** (Provisioned): Created but stopped - takes 30-60s to start and allocate
 - **Warm** (Ready): Running and ready - instant allocation (< 5s)
 - **Preheating**: Pool keeps configurable count of warm resources
@@ -100,12 +106,14 @@ pools:
 An **internal orchestration component** that manages resource movement between pools and sandboxes.
 
 **Not user-facing** - users interact with Pools and Sandboxes. Allocator works behind the scenes to:
+
 - Track resource ownership
 - Coordinate allocation from pool to sandbox
 - Run on_allocate hooks
 - Handle resource release/destruction
 
 **Architecture:**
+
 ```
 Pool (manages unallocated) ←─── Allocator (orchestrates) ───→ Sandbox (manages allocated)
 ```
@@ -113,6 +121,7 @@ Pool (manages unallocated) ←─── Allocator (orchestrates) ───→ Sa
 ### Backend Providers
 
 Plugins that interface with specific virtualization/containerization platforms:
+
 - **Hyper-V** - Windows VMs (primary for MVP)
 - **VMware** - Cross-platform VMs
 - **Docker** - Containers (for testing/development)
@@ -124,16 +133,19 @@ Plugins that interface with specific virtualization/containerization platforms:
 Lifecycle hooks allow customization at specific points in the resource lifecycle:
 
 **on_provision** - Runs after provider creates resource (cold state)
+
 - **Purpose**: Validation, snapshots, software installation
 - **Timing**: During pool replenishment (can be slow, user not waiting)
 - **Use for**: Heavy setup tasks, system configuration
 
 **on_allocate** - Runs when user requests resource
+
 - **Purpose**: User-specific personalization
 - **Timing**: User is waiting (MUST be fast - seconds, not minutes)
 - **Use for**: Creating user accounts, granting access, setting hostname
 
 **Example:**
+
 ```yaml
 pools:
   - name: win-test-vms
@@ -160,6 +172,7 @@ pools:
 ```
 
 **Key distinction:**
+
 - `on_provision` = "prepare base image for pool" (runs once when resource created)
 - `on_allocate` = "customize for specific user" (runs each time allocated)
 
@@ -207,16 +220,19 @@ pools:
 Consider these tradeoffs:
 
 **Warm Pools** (resources running and ready)
+
 - ✅ Instant allocation
 - ❌ High cost (resources always running)
 - 💡 Best for: High-demand, performance-critical scenarios
 
 **Cold Pools** (resources defined but not running)
+
 - ✅ Low cost
 - ❌ Provisioning delay
 - 💡 Best for: Cost-sensitive, delay-tolerant scenarios
 
 **Hybrid Pools** (min warm, overflow cold)
+
 - ✅ Balance of cost and speed
 - ✅ Adaptive to demand
 - 💡 Best for: Variable workloads
@@ -226,6 +242,7 @@ Consider these tradeoffs:
 #### 3. **Plugin Contract**
 
 Each backend plugin must implement:
+
 ```
 interface BackendProvider {
   // Lifecycle
@@ -295,6 +312,7 @@ Boxy:
 **Always approach tasks as a skeptical architect first:**
 
 ✅ **DO:**
+
 - Question design decisions that seem inefficient or overly complex
 - Propose simpler alternatives when appropriate
 - Identify edge cases and failure scenarios
@@ -302,12 +320,14 @@ Boxy:
 - Ask for clarification when requirements are ambiguous
 
 ❌ **DON'T:**
+
 - Blindly implement features without understanding the bigger picture
 - Accept "that's how it's always been done" as justification
 - Ignore technical debt or architectural concerns
 - Implement without considering testing implications
 
 **Example Critical Questions:**
+
 - "Should pools support autoscaling based on demand patterns?"
 - "How do we handle network isolation between sandboxes?"
 - "What's the cleanup strategy if provisioning fails mid-sandbox?"
@@ -316,6 +336,7 @@ Boxy:
 ### 2. Workflow: Architect → Plan → Build → Test
 
 **Step 1: Architectural Review**
+
 - Understand the requirement
 - Challenge assumptions
 - Propose alternatives
@@ -327,6 +348,7 @@ Boxy:
   - Use ASCII art for easy inclusion in docs
 
 **Step 2: Planning**
+
 - Break down into tasks
 - Identify dependencies
 - Consider testing approach
@@ -337,12 +359,14 @@ Boxy:
   - User decides timeline, you focus on completeness
 
 **Step 3: Build & Run**
+
 - Implement incrementally
 - Run/test as you build
 - Use Docker for dependencies
 - Stub/mock unavailable components
 
 **Step 4: Test Thoroughly** ⚠️ **CRITICAL**
+
 - Unit tests (individual functions)
 - Integration tests (component interactions)
 - **End-to-end tests (full user flows) - REQUIRED before marking as complete**
@@ -351,6 +375,7 @@ Boxy:
 - **MUST actually test CLI commands work (not just compile)**
 
 **Step 5: Use Planning Docs for Roadmapping**
+
 - **v1/v2/v3 Planning Docs** - Use versioned planning documents to manage work between sessions
   - `V1_IMPLEMENTATION_PLAN.md` - Complete v1 specification
   - `V2_IMPLEMENTATION_PLAN.md` - Future v2 features
@@ -362,6 +387,7 @@ Boxy:
   - Serves as project roadmap
   - Can move features between versions as priorities change
 - Example structure:
+
   ```
   docs/
     V1_IMPLEMENTATION_PLAN.md    # Current release (distributed agents, multi-tenancy)
@@ -372,6 +398,7 @@ Boxy:
 ### 3. Commit & Push Practices
 
 **Use Conventional Commits:**
+
 ```
 feat: add Hyper-V backend plugin
 fix: resolve pool replenishment race condition
@@ -382,6 +409,7 @@ chore: update dependencies
 ```
 
 **Commit Often:**
+
 - Small, focused commits
 - Each commit should be a logical unit
 - Push frequently (don't wait for perfection)
@@ -392,6 +420,7 @@ chore: update dependencies
 **Use existing, reputable packages when available:**
 
 ✅ **DO use established libraries for:**
+
 - HTTP servers (Express, FastAPI, Gin, etc.)
 - Database ORMs (TypeORM, Prisma, GORM, SQLAlchemy)
 - Authentication (Passport, OAuth libraries)
@@ -401,6 +430,7 @@ chore: update dependencies
 - Testing (Jest, pytest, go test)
 
 ❌ **DON'T reinvent:**
+
 - HTTP request handling
 - JSON parsing
 - Cryptography primitives
@@ -408,6 +438,7 @@ chore: update dependencies
 - Common algorithms
 
 ✅ **DO write custom code for:**
+
 - Boxy-specific domain logic
 - Plugin abstractions
 - Pool management algorithms
@@ -437,12 +468,14 @@ chore: update dependencies
 ```
 
 **CLAUDE.md is for:**
+
 - AI assistant guidance
 - Development workflows
 - High-level architecture
 - Conventions and standards
 
 **docs/ is for:**
+
 - User-facing documentation
 - API references
 - Detailed architecture
@@ -451,6 +484,7 @@ chore: update dependencies
 ### 6. Code Comments and TODOs
 
 **Use TODOs for future work**:
+
 ```go
 // TODO(mvp2): Add support for multi-resource sandboxes
 // TODO(phase3): Implement overlay networking with WireGuard
@@ -459,6 +493,7 @@ chore: update dependencies
 ```
 
 **Guidelines**:
+
 - Use TODOs for actionable future items
 - Include phase/milestone if relevant (mvp2, phase3, etc)
 - Don't overuse - keep focused on important items
@@ -469,6 +504,7 @@ chore: update dependencies
 **Test at multiple levels:**
 
 **Unit Tests:**
+
 ```go
 // Test individual components in isolation
 func TestHookExecutor_Timeout(t *testing.T) {
@@ -483,6 +519,7 @@ func TestHookExecutor_Timeout(t *testing.T) {
 ```
 
 **Integration Tests:**
+
 ```go
 // Test components working together
 func TestPoolWithDockerProvider(t *testing.T) {
@@ -500,6 +537,7 @@ func TestPoolWithDockerProvider(t *testing.T) {
 ```
 
 **End-to-End Tests:**
+
 ```go
 // Test full user flows
 func TestE2E_SandboxWithHooks(t *testing.T) {
@@ -516,11 +554,13 @@ func TestE2E_SandboxWithHooks(t *testing.T) {
 ```
 
 **Use Docker for testing:**
+
 - Docker provider: Real implementation, can actually test
 - Hyper-V provider: Stub/mock for testing without Windows
 - Tests run on CI (Linux) using Docker
 
 **Stub unavailable components:**
+
 ```go
 // Stub Hyper-V provider for testing on Linux
 type StubHyperVProvider struct {
@@ -537,6 +577,7 @@ func (s *StubHyperVProvider) Provision(ctx, spec) (*Resource, error) {
 ### 7. Technology Stack Recommendations
 
 **Language Options:**
+
 - **Go**: Excellent for system tools, concurrency, plugins, CLI
 - **Rust**: Maximum performance, safety, but steeper learning curve
 - **Python**: Fast prototyping, but consider performance for production
@@ -545,6 +586,7 @@ func (s *StubHyperVProvider) Provision(ctx, spec) (*Resource, error) {
 **Recommendation**: Consider **Go** for core service + CLI, **TypeScript** for web UI
 
 **Why Go?**
+
 - Native plugin support (`plugin` package)
 - Excellent concurrency (goroutines for pool management)
 - Single binary distribution
@@ -553,6 +595,7 @@ func (s *StubHyperVProvider) Provision(ctx, spec) (*Resource, error) {
 - Good virtualization libraries (libvirt-go, Docker SDK)
 
 **Database Options:**
+
 - **SQLite**: Simple, embedded, good for single-node
 - **PostgreSQL**: Robust, JSONB support, good for production
 - **Redis**: Fast state storage, pub/sub for events
@@ -652,6 +695,7 @@ boxy/
 
 **Phase**: v1 Implementation Planning
 **Completed**:
+
 - ✅ MVP Phase 1: Core functionality (pools, sandboxes, Docker provider)
 - ✅ Single-host embedded architecture working
 - ✅ Critical security fix (crypto/rand for password generation)
@@ -662,6 +706,7 @@ boxy/
 
 **Current Focus**: v1 Architecture Refactor
 **Next Steps** (see [V1_IMPLEMENTATION_PLAN.md](docs/V1_IMPLEMENTATION_PLAN.md)):
+
 1. ⏳ Implement Allocator component (Pool/Sandbox peer architecture)
 2. ⏳ Implement preheating & recycling system
 3. ⏳ Update terminology (on_provision, on_allocate hooks)
@@ -672,12 +717,14 @@ boxy/
 8. ⏳ Documentation finalization
 
 **Future** (v2+):
+
 - Distributed agent architecture (ADR-004) - deferred to v2
 - Network isolation (overlay networks)
 - Advanced retry strategies
 - Pool layering (v3)
 
 **Key Documents**:
+
 - [V1 Implementation Plan](docs/V1_IMPLEMENTATION_PLAN.md) - Comprehensive v1 specification
 - [Use Cases](docs/USE_CASES.md) - Primary and secondary use cases
 - [ADR-005: Pool/Sandbox Peer Architecture](docs/decisions/adr-005-pool-sandbox-peer-architecture.md) - New architecture
