@@ -25,6 +25,7 @@ related_docs:
 ## Overview
 
 Document complete CLI command tree and API endpoints for:
+
 - Regression testing (detect breaking changes)
 - Client library development
 - Integration documentation
@@ -35,6 +36,7 @@ Document complete CLI command tree and API endpoints for:
 ## CLI Command Reference
 
 Complete tree of all commands with:
+
 - Arguments
 - Flags
 - Output format
@@ -46,6 +48,7 @@ Complete tree of all commands with:
 ## API Endpoint Reference
 
 Complete REST API with:
+
 - Endpoints (GET/POST/DELETE/PATCH)
 - Request schemas
 - Response schemas
@@ -57,6 +60,7 @@ Complete REST API with:
 ## OpenAPI Specification
 
 Generate `docs/openapi.yaml` for:
+
 - API documentation (Swagger UI)
 - Client generation (openapi-generator)
 - Testing (Postman collections)

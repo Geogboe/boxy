@@ -7,6 +7,7 @@
 ## Problem
 
 Current config location (`~/.config/boxy/boxy.yaml`) is not standard for service-oriented tools and causes issues:
+
 - ❌ Doesn't work well with Docker volume mounts
 - ❌ Difficult to manage multiple Boxy instances
 - ❌ Awkward for CI/CD pipelines
@@ -19,6 +20,7 @@ Move config to current working directory: `./boxy.yaml`
 ## Implementation Tasks
 
 ### Phase 1: Config Loader Updates
+
 - [ ] Update `internal/config/loader.go` with new discovery logic:
   1. `--config` flag (highest priority)
   2. `BOXY_CONFIG` environment variable
@@ -29,11 +31,13 @@ Move config to current working directory: `./boxy.yaml`
 - [ ] Add environment variable overrides for Docker
 
 ### Phase 2: CLI Command Updates
+
 - [ ] Update `boxy init` to create `./boxy.yaml` in current directory
 - [ ] Update default `--config` flag to use `./boxy.yaml`
 - [ ] Update `--db` flag default to use `./boxy.db`
 
 ### Phase 3: Documentation Updates
+
 - [ ] Update README.md - all config path examples
 - [ ] Update V1_IMPLEMENTATION_PLAN.md - all config examples
 - [ ] Update docs/CONFIG_REFERENCE.md - config location docs
@@ -42,6 +46,7 @@ Move config to current working directory: `./boxy.yaml`
 - [ ] Update all code examples in docs/
 
 ### Phase 4: Testing
+
 - [ ] Unit tests for config discovery logic
 - [ ] Test backward compatibility warning
 - [ ] Test environment variable overrides
@@ -66,6 +71,7 @@ Move config to current working directory: `./boxy.yaml`
 ## Files to Update
 
 Search and replace `~/.config/boxy` → `./boxy.yaml`:
+
 ```bash
 grep -r "~/.config/boxy" docs/
 grep -r ".config/boxy" internal/

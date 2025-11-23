@@ -23,6 +23,7 @@ week: "4-6"
 ## Overview
 
 Automatic retry with exponential backoff for transient failures:
+
 - Provider operations (Provision, Destroy, Update)
 - Hook execution
 - Agent communication

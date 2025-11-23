@@ -1,11 +1,13 @@
 # Boxy Development Roadmap
 
 ## Vision
+
 Create a sandboxing orchestration tool that makes it trivial to spin up mixed environments (VMs, containers, processes) with automatic lifecycle management and pool-based resource provisioning.
 
 ## Phased Approach
 
 ### Phase 0: Foundation & Planning (Current)
+
 **Goal**: Make architectural decisions and set up project foundation
 
 - [x] Define project vision and concepts
@@ -20,9 +22,11 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
 ---
 
 ### Phase 1: MVP - Single Backend (Docker)
+
 **Goal**: Prove the core concept with a single, easy-to-test backend
 
 **Scope**:
+
 - ✅ Docker-only backend (no VMs yet)
 - ✅ Simple pool management (min_ready, auto-replenish)
 - ✅ Basic CLI for pool/sandbox operations
@@ -35,6 +39,7 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
 - ❌ No authentication
 
 **Features**:
+
 1. **Pool Management**
    - Define container pools via config
    - Maintain min_ready count
@@ -47,6 +52,7 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
    - Manual and auto-cleanup
 
 3. **CLI**
+
    ```bash
    boxy pool create --name ubuntu --image ubuntu:22.04 --min-ready 3
    boxy pool list
@@ -56,6 +62,7 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
    ```
 
 **Deliverables**:
+
 - Working Docker provider
 - Pool manager with auto-replenishment
 - Sandbox orchestrator
@@ -64,6 +71,7 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
 - Documentation
 
 **Success Criteria**:
+
 - Can create a pool of 3 Ubuntu containers
 - Can request a sandbox with 2 containers
 - Containers auto-expire after set duration
@@ -75,15 +83,18 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
 ---
 
 ### Phase 2: Plugin System & Multi-Backend
+
 **Goal**: Generalize to support multiple backend providers
 
 **Scope**:
+
 - Plugin/provider abstraction layer
 - Add second backend (KVM or Hyper-V)
 - Provider-specific configuration
 - Connection info abstraction (RDP, SSH, ports)
 
 **Features**:
+
 1. **Provider Interface**
    - Standardized provider contract
    - Provider registration system
@@ -100,6 +111,7 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
    - Unified connection info structure
 
 **Deliverables**:
+
 - Provider interface definition
 - Refactored Docker provider
 - Second provider implementation
@@ -108,6 +120,7 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
 - Provider-specific tests
 
 **Success Criteria**:
+
 - Can create pools with different providers
 - Can mix provider types in same installation
 - Connection info adapts to provider type
@@ -118,9 +131,11 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
 ---
 
 ### Phase 3: REST API & Service Mode
+
 **Goal**: Run Boxy as a service with HTTP API
 
 **Scope**:
+
 - REST API server
 - Service/daemon mode
 - Persistent state storage (PostgreSQL)
@@ -128,8 +143,10 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
 - Background lifecycle management
 
 **Features**:
+
 1. **API Server**
-   ```
+
+   ```text
    POST   /api/v1/pools
    GET    /api/v1/pools
    GET    /api/v1/pools/:id
@@ -155,6 +172,7 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
    - Basic RBAC (admin vs user)
 
 **Deliverables**:
+
 - REST API implementation
 - Service daemon mode
 - Database migrations
@@ -164,6 +182,7 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
 - API documentation
 
 **Success Criteria**:
+
 - API can manage pools and sandboxes
 - Service runs continuously
 - State persists across restarts
@@ -175,15 +194,18 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
 ---
 
 ### Phase 4: Web UI
+
 **Goal**: Visual interface for managing Boxy
 
 **Scope**:
+
 - Web dashboard
 - Pool monitoring
 - Sandbox management
 - Real-time status updates
 
 **Features**:
+
 1. **Dashboard**
    - Pool status overview
    - Active sandboxes count
@@ -206,12 +228,14 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
    - Sandbox expiration timers
 
 **Deliverables**:
+
 - Web UI (React/Vue/Svelte)
 - Backend API enhancements
 - Real-time update mechanism
 - User documentation
 
 **Success Criteria**:
+
 - Can perform all operations via UI
 - Real-time status updates work
 - UI is responsive and intuitive
@@ -221,9 +245,11 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
 ---
 
 ### Phase 5: Advanced Features
+
 **Goal**: Production-ready features
 
 **Scope**:
+
 - Multi-tenancy
 - Advanced pool strategies (warm/cold/hybrid)
 - Resource templates/images
@@ -233,6 +259,7 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
 - Observability (metrics, tracing)
 
 **Features**:
+
 1. **Multi-tenancy**
    - Tenant isolation
    - Per-tenant quotas
@@ -261,6 +288,7 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
    - Alerting
 
 **Deliverables**:
+
 - Multi-tenant support
 - Advanced pool strategies
 - Template system
@@ -269,6 +297,7 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
 - Production deployment guides
 
 **Success Criteria**:
+
 - Production-ready
 - Scalable to multiple tenants
 - Observable and debuggable
@@ -281,6 +310,7 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
 ## Current Focus: Phase 0 → Phase 1
 
 ### Immediate Next Steps
+
 1. ✅ Create roadmap (this document)
 2. ⏳ Research technology stack
 3. ⏳ Make key architectural decisions
@@ -288,6 +318,7 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
 5. ⏳ Implement MVP (Phase 1)
 
 ### Open Questions for Phase 1
+
 See architectural research document for details.
 
 ---
@@ -295,6 +326,7 @@ See architectural research document for details.
 ## Success Metrics
 
 ### MVP Success (Phase 1)
+
 - [ ] 90%+ test coverage for core logic
 - [ ] Can provision 10 containers in <30 seconds
 - [ ] Pool replenishment works reliably
@@ -302,6 +334,7 @@ See architectural research document for details.
 - [ ] Documentation complete enough for contributors
 
 ### Production Ready (Phase 5)
+
 - [ ] 99.9% uptime SLA
 - [ ] Supports 100+ concurrent sandboxes
 - [ ] Multi-tenant capable
@@ -313,6 +346,7 @@ See architectural research document for details.
 ## Risk Assessment
 
 ### High Risk
+
 - **Complexity Creep**: Trying to do too much too soon
   - *Mitigation*: Strict phase discipline, MVP-first approach
 
@@ -323,6 +357,7 @@ See architectural research document for details.
   - *Mitigation*: Security review at each phase, audit logging
 
 ### Medium Risk
+
 - **Backend Provider Issues**: Provider-specific bugs and quirks
   - *Mitigation*: Extensive provider testing, clear error handling
 
@@ -330,6 +365,7 @@ See architectural research document for details.
   - *Mitigation*: Proper locking, transactions, testing
 
 ### Low Risk
+
 - **Performance**: Slow provisioning
   - *Mitigation*: Profiling, optimization, caching
 
@@ -340,10 +376,12 @@ See architectural research document for details.
 Major decisions will be documented as ADRs in `/docs/decisions/`.
 
 ### Decisions Needed (Phase 0)
+
 - [ ] ADR-001: Technology stack (language, frameworks)
 - [ ] ADR-002: State storage approach
 - [ ] ADR-003: Plugin/provider architecture
 - [ ] ADR-004: Configuration format (YAML, TOML, etc.)
 
 ### Decisions Made
+
 - None yet (project just started)

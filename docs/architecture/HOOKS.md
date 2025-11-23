@@ -7,19 +7,25 @@ Boxy uses **hooks** to allow customization at specific lifecycle points. Hooks a
 ## Two Lifecycle Phases
 
 ### Phase 1: Finalization (Pool Warming)
+
 Background process that prepares resources for the pool:
-```
+
+```text
 Base Image → Provider.Provision() → Hooks (after_provision) → Pool (ready)
 ```
+
 - Can be slow (minutes)
 - User-provided scripts allowed
 - Validates resource is functional
 
 ### Phase 2: Personalization (Allocation)
+
 Fast operations when user requests a resource:
-```
+
+```text
 Pool Resource → Hooks (before_allocate) → User
 ```
+
 - Must be fast (seconds)
 - Makes resource unique (user account, hostname)
 - User is waiting
@@ -84,20 +90,24 @@ pools:
 Boxy provides default hooks that run automatically unless disabled:
 
 **Linux (after_provision)**:
+
 - Wait for network connectivity
 - Basic package manager update
 - Install ca-certificates, curl, wget
 
 **Windows (after_provision)**:
+
 - Wait for network connectivity
 - Ensure WinRM running
 - Set timezone to UTC
 
 **All (before_allocate)**:
+
 - Create user account with random password
 - Set unique hostname
 
 **Disable system hooks**:
+
 ```yaml
 pools:
   - name: my-pool
@@ -129,6 +139,7 @@ Run shell commands:
 ```
 
 **Supported shells**:
+
 - `bash` - Linux shell scripts
 - `powershell` - Windows PowerShell
 - `python` - Python 3 scripts
@@ -192,6 +203,7 @@ Connection Info:
 ```
 
 **API returns immediately**:
+
 ```json
 POST /api/v1/sandboxes
 {
@@ -357,6 +369,7 @@ pools:
 ## Future Enhancements
 
 **Phase 2+**:
+
 - Built-in hook types: `domain-join`, `ssh-key`, `ansible`
 - Conditional hooks: `condition: ${resource.os} == 'windows'`
 - Hook dependencies: `depends_on: [other-hook]`
@@ -366,6 +379,7 @@ pools:
 ## Summary
 
 **Hooks provide**:
+
 - ✅ Flexibility: Run any script at any lifecycle point
 - ✅ Simplicity: Just shell scripts, no complex abstractions
 - ✅ Layering: System defaults + pool-specific + allocation-specific
@@ -373,6 +387,7 @@ pools:
 - ✅ Extensibility: Add new hook points as needed
 
 **MVP Implementation**:
+
 - Two hook points: `after_provision`, `before_allocate`
 - Script hook type only (bash, powershell, python)
 - Timeout and retry support

@@ -27,6 +27,7 @@ related_docs:
 Validate base images meet Boxy's requirements before using in production pools. Catches configuration issues early rather than at allocation time.
 
 **Minimal Contract**: What Boxy requires from a base image:
+
 1. **Ability to execute commands** - SSH, WinRM, or docker exec
 2. **Network connectivity** - Reachable from Boxy server
 3. **Provider lifecycle support** - Start, stop, destroy

@@ -28,7 +28,7 @@ We will implement a **transparent remote provider architecture** using a single 
 
 ### Architecture Diagram
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                     Boxy Server (Linux)                      │
 │  ┌────────────────────────────────────────────────────────┐ │
@@ -579,7 +579,7 @@ func TestWithStubAgent(t *testing.T) {
 ### Mitigation Strategies
 
 | Risk | Mitigation |
-|------|------------|
+| ------ | ------------ |
 | Network failures | Retry with exponential backoff, circuit breakers |
 | Agent crashes | Health checks, automatic failover to other agents |
 | Latency | Connection pooling, keep-alive, local caching |
@@ -626,6 +626,7 @@ pools:
 ### 1. REST API Instead of gRPC
 
 **Rejected**:
+
 - Less efficient (JSON, HTTP/1.1)
 - No streaming support
 - Manual client code
@@ -634,6 +635,7 @@ pools:
 ### 2. Separate Binaries (boxy-server, boxy-agent)
 
 **Rejected**:
+
 - Version skew between server and agent
 - More complex distribution
 - Duplicate code/dependencies
@@ -642,6 +644,7 @@ pools:
 ### 3. Embedded Agents (libvirt-style)
 
 **Rejected**:
+
 - Can't run on different OS (Linux server managing Windows)
 - Doesn't solve security isolation
 - Limited scalability
@@ -649,6 +652,7 @@ pools:
 ### 4. SSH-Based Remote Execution
 
 **Rejected**:
+
 - Less structured than gRPC
 - Harder to manage state
 - No type safety
@@ -659,7 +663,7 @@ pools:
 ### Threat Model
 
 | Threat | Mitigation |
-|--------|------------|
+| -------- | ------------ |
 | Man-in-the-Middle | mTLS with certificate pinning |
 | Rogue Agent | Certificate-based authentication, revocation |
 | Credential Theft | Encrypted credentials, short-lived certs |

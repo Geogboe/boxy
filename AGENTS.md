@@ -114,7 +114,7 @@ An **internal orchestration component** that manages resource movement between p
 
 **Architecture:**
 
-```
+```text
 Pool (manages unallocated) ←─── Allocator (orchestrates) ───→ Sandbox (manages allocated)
 ```
 
@@ -180,7 +180,7 @@ pools:
 
 ### Component Overview
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │                    User Interfaces                       │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌─────────┐ │
@@ -243,7 +243,7 @@ Consider these tradeoffs:
 
 Each backend plugin must implement:
 
-```
+```text
 interface BackendProvider {
   // Lifecycle
   provision(spec: ResourceSpec): Promise<Resource>
@@ -271,7 +271,7 @@ interface BackendProvider {
 
 ### UC1: Single VM for Testing
 
-```
+```text
 User: "I need a Windows Server 2022 VM for 2 hours"
 Boxy:
   1. Allocates VM from win-server-2022 pool
@@ -283,7 +283,7 @@ Boxy:
 
 ### UC2: Complex Lab Environment
 
-```
+```text
 User: "I need an AD lab with 3 DCs, 1 client, 2 web servers"
 Boxy:
   1. Creates sandbox with 6 resources
@@ -295,7 +295,7 @@ Boxy:
 
 ### UC3: Auto-scaling CI/CD Runners
 
-```
+```text
 CI System: Webhook triggers on commit
 Boxy:
   1. Provisions fresh container from pool
@@ -388,7 +388,7 @@ Boxy:
   - Can move features between versions as priorities change
 - Example structure:
 
-  ```
+  ```text
   docs/
     V1_IMPLEMENTATION_PLAN.md    # Current release (distributed agents, multi-tenancy)
     V2_IMPLEMENTATION_PLAN.md    # Next release (VSCode plugin, advanced scheduling)
@@ -399,7 +399,7 @@ Boxy:
 
 **Use Conventional Commits:**
 
-```
+```text
 feat: add Hyper-V backend plugin
 fix: resolve pool replenishment race condition
 docs: update API documentation for sandbox creation
@@ -449,7 +449,7 @@ chore: update dependencies
 
 **Keep documentation organized:**
 
-```
+```text
 /docs
   /architecture
     - overview.md
@@ -630,7 +630,7 @@ func (s *StubHyperVProvider) Provision(ctx, spec) (*Resource, error) {
 
 ## Code Organization (Proposed)
 
-```
+```text
 boxy/
 ├── cmd/
 │   ├── boxy/              # CLI tool
@@ -757,7 +757,7 @@ boxy pool scale ubuntu-containers --min 5
 
 ### API Endpoints (Planned)
 
-```
+```text
 POST   /api/v1/sandboxes          # Create sandbox
 GET    /api/v1/sandboxes/:id      # Get sandbox details
 DELETE /api/v1/sandboxes/:id      # Destroy sandbox

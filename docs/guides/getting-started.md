@@ -41,6 +41,7 @@ boxy init
 ```
 
 This creates:
+
 - `~/.config/boxy/` directory
 - `~/.config/boxy/boxy.yaml` configuration file
 
@@ -71,7 +72,8 @@ boxy serve
 ```
 
 You should see:
-```
+
+```text
 INFO Starting Boxy service
 INFO Storage initialized    db_path=/root/.config/boxy/boxy.db
 INFO Docker provider registered
@@ -85,6 +87,7 @@ Press Ctrl+C to stop
 ```
 
 **What's happening:**
+
 - Boxy connects to Docker
 - Starts pool managers
 - Provisions 2 alpine containers (min_ready=2)
@@ -99,7 +102,8 @@ boxy pool ls
 ```
 
 Output:
-```
+
+```text
 Resource Pools:
 
 NAME              TYPE       BACKEND  IMAGE          READY  ALLOCATED  MIN  MAX  HEALTHY
@@ -116,7 +120,8 @@ boxy sandbox create \
 ```
 
 Output:
-```
+
+```text
 Creating sandbox...
 
 ✓ Sandbox created successfully
@@ -150,19 +155,22 @@ You're now inside an Alpine container!
 ### 8. Watch Auto-Replenishment
 
 In the serve terminal, you'll see:
-```
+
+```text
 INFO Resource allocated       pool=test-containers resource_id=def456...
 INFO Replenishing pool        pool=test-containers needed=1 available=1 min_ready=2
 INFO Resource provisioned and ready   pool=test-containers resource_id=ghi789...
 ```
 
 Check the pool again:
+
 ```bash
 boxy pool ls
 ```
 
 Now shows:
-```
+
+```text
 NAME              READY  ALLOCATED  ...
 test-containers   2      1          ...
 ```
@@ -176,7 +184,8 @@ boxy sandbox ls
 ```
 
 Output:
-```
+
+```text
 Active Sandboxes:
 
 ID        NAME              RESOURCES  CREATED   EXPIRES   TIME REMAINING
@@ -186,12 +195,15 @@ abc123    my-first-sandbox  1          19:05:00  19:15:00  9m45s
 ### 10. Cleanup
 
 #### Manual Destruction
+
 ```bash
 boxy sandbox destroy abc123
 ```
 
 #### Automatic Expiration
+
 Just wait 10 minutes - Boxy will automatically:
+
 1. Mark sandbox as expired
 2. Destroy allocated resources
 3. Replenish the pool
@@ -279,6 +291,7 @@ boxy sandbox create \
 ### "Docker daemon not reachable"
 
 Ensure Docker is running:
+
 ```bash
 sudo systemctl start docker
 docker ps
@@ -287,6 +300,7 @@ docker ps
 ### "Pool not found"
 
 Check your config has the pool defined:
+
 ```bash
 cat ~/.config/boxy/boxy.yaml
 ```
@@ -294,11 +308,13 @@ cat ~/.config/boxy/boxy.yaml
 ### "No resources available"
 
 Pool might be at capacity:
+
 ```bash
 boxy pool stats <pool-name>
 ```
 
 Check if `Total >= MaxTotal`. Either:
+
 1. Increase `max_total` in config
 2. Destroy some sandboxes
 3. Wait for expired sandboxes to clean up

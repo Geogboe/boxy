@@ -7,15 +7,18 @@ Comprehensive testing strategy covering unit, integration, E2E, stress, and edge
 ## Testing Levels
 
 ### 1. Unit Tests
+
 **Goal**: Test individual components in isolation
 
 **Coverage**:
+
 - Domain models (Resource, Pool, Sandbox)
 - Business logic validation
 - State transitions
 - Helper functions
 
 **Tools**:
+
 - `testing` (Go stdlib)
 - `testify/assert` for assertions
 - `testify/require` for critical checks
@@ -24,6 +27,7 @@ Comprehensive testing strategy covering unit, integration, E2E, stress, and edge
 **Location**: `*_test.go` files alongside source
 
 **Example**:
+
 ```go
 func TestResource_IsAvailable(t *testing.T) {
     res := resource.NewResource("pool1", resource.ResourceTypeContainer, "docker")
@@ -39,9 +43,11 @@ func TestResource_IsAvailable(t *testing.T) {
 ```
 
 ### 2. Integration Tests
+
 **Goal**: Test component interactions with real dependencies
 
 **Coverage**:
+
 - Pool manager + Storage
 - Sandbox manager + Pool allocators
 - Provider + Docker SDK (requires Docker)
@@ -49,6 +55,7 @@ func TestResource_IsAvailable(t *testing.T) {
 - Database operations
 
 **Tools**:
+
 - Docker-in-Docker for isolated testing
 - Testcontainers for dependencies
 - In-memory SQLite for fast tests
@@ -56,6 +63,7 @@ func TestResource_IsAvailable(t *testing.T) {
 **Location**: `tests/integration/`
 
 **Example**:
+
 ```go
 func TestPoolManager_Integration(t *testing.T) {
     if testing.Short() {
@@ -78,15 +86,18 @@ func TestPoolManager_Integration(t *testing.T) {
 ```
 
 ### 3. End-to-End Tests
+
 **Goal**: Test full user workflows
 
 **Coverage**:
+
 - `boxy init` → `boxy serve` → `boxy sandbox create` → cleanup
 - Multi-pool sandboxes
 - Expiration and auto-cleanup
 - Error recovery
 
 **Tools**:
+
 - Actual CLI execution
 - Docker daemon (real)
 - Temporary config files
@@ -94,6 +105,7 @@ func TestPoolManager_Integration(t *testing.T) {
 **Location**: `tests/e2e/`
 
 **Example**:
+
 ```go
 func TestE2E_CreateSandbox(t *testing.T) {
     // Start service in background
@@ -114,20 +126,24 @@ func TestE2E_CreateSandbox(t *testing.T) {
 ```
 
 ### 4. Mock Provider Tests
+
 **Goal**: Test without Docker dependency
 
 **Coverage**:
+
 - Pool management logic without real containers
 - Sandbox orchestration with fake resources
 - Error scenarios (Docker down, provision failures)
 
 **Tools**:
+
 - Custom mock provider implementation
 - Controlled delays and failures
 
 **Location**: `internal/provider/mock/`
 
 **Example**:
+
 ```go
 type MockProvider struct {
     provisionDelay time.Duration
@@ -144,9 +160,11 @@ func (m *MockProvider) Provision(ctx context.Context, spec ResourceSpec) (*Resou
 ```
 
 ### 5. Stress Tests
+
 **Goal**: Verify behavior under load
 
 **Coverage**:
+
 - Concurrent sandbox creation (100+ sandboxes)
 - Pool exhaustion scenarios
 - Rapid allocation/deallocation
@@ -154,6 +172,7 @@ func (m *MockProvider) Provision(ctx context.Context, spec ResourceSpec) (*Resou
 - Race condition detection
 
 **Tools**:
+
 - `go test -race` for race detection
 - `pprof` for profiling
 - Custom load generators
@@ -161,6 +180,7 @@ func (m *MockProvider) Provision(ctx context.Context, spec ResourceSpec) (*Resou
 **Location**: `tests/stress/`
 
 **Example**:
+
 ```go
 func TestStress_ConcurrentAllocation(t *testing.T) {
     const numWorkers = 50
@@ -196,9 +216,11 @@ func TestStress_ConcurrentAllocation(t *testing.T) {
 ```
 
 ### 6. Edge Case & Error Tests
+
 **Goal**: Handle failures gracefully
 
 **Coverage**:
+
 - Docker daemon down
 - Database corruption
 - Config file errors
@@ -210,6 +232,7 @@ func TestStress_ConcurrentAllocation(t *testing.T) {
 **Location**: Throughout test files
 
 **Example**:
+
 ```go
 func TestError_DockerDown(t *testing.T) {
     // Stop Docker daemon
@@ -241,7 +264,7 @@ func TestError_PartialSandboxCreation(t *testing.T) {
 
 ## Test Organization
 
-```
+```text
 boxy/
 ├── internal/
 │   ├── core/
@@ -284,29 +307,29 @@ boxy/
 .PHONY: test test-unit test-integration test-e2e test-stress test-all
 
 test-unit:
-	go test -v -short ./...
+ go test -v -short ./...
 
 test-integration:
-	go test -v -run Integration ./tests/integration/
+ go test -v -run Integration ./tests/integration/
 
 test-e2e:
-	go test -v -timeout 10m ./tests/e2e/
+ go test -v -timeout 10m ./tests/e2e/
 
 test-stress:
-	go test -v -timeout 30m ./tests/stress/
+ go test -v -timeout 30m ./tests/stress/
 
 test-race:
-	go test -race -short ./...
+ go test -race -short ./...
 
 test-coverage:
-	go test -coverprofile=coverage.out ./...
-	go tool cover -html=coverage.out -o coverage.html
+ go test -coverprofile=coverage.out ./...
+ go tool cover -html=coverage.out -o coverage.html
 
 test-all: test-unit test-integration test-e2e
-	@echo "All tests passed!"
+ @echo "All tests passed!"
 
 bench:
-	go test -bench=. -benchmem ./...
+ go test -bench=. -benchmem ./...
 ```
 
 ## Coverage Goals
@@ -365,6 +388,7 @@ jobs:
 ## Performance Benchmarks
 
 Track key metrics:
+
 - Sandbox creation time
 - Pool replenishment speed
 - Memory usage under load

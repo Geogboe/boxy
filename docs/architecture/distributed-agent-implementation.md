@@ -16,7 +16,7 @@ This document provides a detailed implementation guide for Boxy's distributed ag
 
 ### High-Level Flow
 
-```
+```text
 ┌──────────────┐                  ┌──────────────┐
 │              │                  │              │
 │  Pool        │  1. Allocate     │  Provider    │
@@ -153,6 +153,7 @@ var _ provider.Provider = (*RemoteProvider)(nil)
 ```
 
 **Key Features**:
+
 - Maintains persistent gRPC connection to agent
 - Translates domain objects to/from Protocol Buffers
 - Handles connection errors and retries
@@ -646,29 +647,35 @@ See [ADR-004](../decisions/adr-004-distributed-agent-architecture.md) for detail
 ### Quick Reference
 
 **Phase 1: Foundation** (Week 1)
+
 - Protocol Buffers & gRPC code generation
 - RemoteProvider implementation
 - Agent Server implementation
 
 **Phase 2: Security** (Week 1)
+
 - CA initialization command
 - Certificate issuance command
 - mTLS configuration
 
 **Phase 3: Agent Mode** (Week 2)
+
 - `boxy agent serve` command
 - Registration & heartbeat
 - Agent health monitoring
 
 **Phase 4: Server Integration** (Week 2)
+
 - Configuration updates
 - Agent registry
 - Provider routing
 
 **Phase 5: Observability** (Week 3)
+
 - Metrics, tracing, logging
 
 **Phase 6: Production Readiness** (Week 3)
+
 - Resilience features
 - Stress testing
 - Security audit
@@ -716,7 +723,7 @@ go test ./... -short
 
 ### Test Pyramid
 
-```
+```text
            ╱╲
           ╱  ╲  E2E Tests (few, slow, real providers)
          ╱────╲
@@ -731,11 +738,13 @@ go test ./... -short
 ### Certificate Lifecycle
 
 1. **Initialization**:
+
    ```bash
    boxy admin init-ca --output /etc/boxy/ca
    ```
 
 2. **Issue Agent Cert**:
+
    ```bash
    boxy admin issue-cert \
      --ca-cert /etc/boxy/ca/ca-cert.pem \
@@ -771,6 +780,7 @@ boxy serve
 ### Multi-Host Production
 
 **Server Host (Linux)**:
+
 ```bash
 # Start server
 boxy serve \
@@ -781,6 +791,7 @@ boxy serve \
 ```
 
 **Agent Host (Windows)**:
+
 ```bash
 # Start agent
 boxy agent serve \
@@ -798,6 +809,7 @@ boxy agent serve \
 ### Common Issues
 
 **1. Agent can't connect to server**
+
 ```bash
 # Check network connectivity
 telnet boxy-server 8443
@@ -810,16 +822,19 @@ openssl s_client -connect boxy-server:8443 \
 ```
 
 **2. Certificate verification failed**
+
 - Ensure CA cert is correct on both server and agent
 - Check certificate hasn't expired: `openssl x509 -in cert.pem -noout -dates`
 - Verify cert is signed by CA: `openssl verify -CAfile ca-cert.pem agent-cert.pem`
 
 **3. Provider not found**
+
 - Check agent registered with correct providers
 - Verify pool config specifies correct `backend_agent`
 - Check agent logs for registration errors
 
 **4. Slow provisioning**
+
 - Check network latency between server and agent
 - Monitor gRPC metrics
 - Consider agent placement closer to server

@@ -24,11 +24,13 @@ The Hyper-V provider enables Boxy to provision and manage Windows virtual machin
 ### Enabling Hyper-V
 
 **Windows 10/11:**
+
 ```powershell
 Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All
 ```
 
 **Windows Server:**
+
 ```powershell
 Install-WindowsFeature -Name Hyper-V -IncludeManagementTools -Restart
 ```
@@ -85,6 +87,7 @@ provider := hyperv.NewProviderWithConfig(logger, encryptor, config)
 ```
 
 **Default Paths:**
+
 - VM Path: `C:\ProgramData\Boxy\VMs`
 - VHD Path: `C:\ProgramData\Boxy\VHDs`
 - Base Images: `C:\ProgramData\Boxy\BaseImages`
@@ -120,15 +123,19 @@ Start-VM -Name "BaseImage-WinServer2022"
 **Step 2: Configure the base image:**
 
 Inside the VM:
+
 1. Install Windows
 2. Install VM guest integration services (usually included)
 3. Run Windows Update
 4. Install any common software (browsers, tools, etc.)
 5. **Enable PowerShell Remoting**:
+
    ```powershell
    Enable-PSRemoting -Force
    ```
+
 6. Generalize with Sysprep (optional, for multi-use images):
+
    ```cmd
    C:\Windows\System32\Sysprep\sysprep.exe /generalize /oobe /shutdown
    ```
@@ -149,7 +156,7 @@ The VHD at `C:\ProgramData\Boxy\BaseImages\windows-server-2022.vhdx` can now be 
 
 ### Example Base Images
 
-```
+```text
 C:\ProgramData\Boxy\BaseImages\
 ├── windows-server-2022.vhdx      (Server 2022 with updates)
 ├── windows-server-2019.vhdx      (Server 2019 with updates)
@@ -164,6 +171,7 @@ C:\ProgramData\Boxy\BaseImages\
 Boxy VMs need network connectivity. Configure a virtual switch:
 
 **Create External Switch** (recommended for internet access):
+
 ```powershell
 New-VMSwitch -Name "External Switch" `
     -NetAdapterName "Ethernet" `
@@ -171,11 +179,13 @@ New-VMSwitch -Name "External Switch" `
 ```
 
 **Create Internal Switch** (for isolated networks):
+
 ```powershell
 New-VMSwitch -Name "Internal Switch" -SwitchType Internal
 ```
 
 **Use Default Switch** (Windows 10/11):
+
 - The "Default Switch" provides NAT and DHCP automatically
 - VMs get internet access but are not accessible from outside
 - Good for development and testing
@@ -191,17 +201,20 @@ If a VM doesn't get an IP within the timeout, provisioning continues but `GetCon
 PowerShell Direct allows Boxy to execute commands inside VMs **without network connectivity** using the VM bus.
 
 **Requirements:**
+
 - Windows host
 - Windows guest (same or newer version as host)
 - VM Integration Services enabled
 - Guest must be fully booted
 
 **Benefits:**
+
 - Works even if network is down
 - No firewall configuration needed
 - More secure than network-based remoting
 
 **Example Hook Using PowerShell Direct:**
+
 ```yaml
 hooks:
   after_provision:
@@ -220,6 +233,7 @@ Boxy automatically uses PowerShell Direct via `Invoke-Command -VMName`.
 ### Automatic Generation
 
 Boxy automatically generates secure random passwords for each VM:
+
 - Username: `Administrator`
 - Password: Cryptographically secure 16-character password
 - Stored encrypted in database
@@ -240,6 +254,7 @@ boxy sandbox get sb-12345
 ### Custom Credentials (Future Enhancement)
 
 Currently, credentials are auto-generated. Future versions may support:
+
 - User-provided passwords
 - Active Directory integration
 - SSH key authentication
@@ -271,17 +286,20 @@ Currently, credentials are auto-generated. Future versions may support:
 Boxy supports runtime updates to VMs:
 
 **Power State:**
+
 - `running` - Start VM
 - `stopped` - Stop VM (forced)
 - `paused` - Suspend VM
 - `reset` - Restart VM
 
 **Snapshots:**
+
 - `create` - Create checkpoint
 - `restore` - Restore from checkpoint
 - `delete` - Remove checkpoint
 
 **Resources:**
+
 - Adjust CPU count (VM must be stopped)
 - Adjust memory (VM must be stopped for Generation 2 VMs)
 
@@ -292,6 +310,7 @@ Boxy supports runtime updates to VMs:
 **Error**: `Hyper-V Virtual Machine Management service not found`
 
 **Solution**: Install Hyper-V role:
+
 ```powershell
 Install-WindowsFeature -Name Hyper-V -IncludeManagementTools -Restart
 ```
@@ -301,6 +320,7 @@ Install-WindowsFeature -Name Hyper-V -IncludeManagementTools -Restart
 **Error**: `Hyper-V Virtual Machine Management service is not running`
 
 **Solution**: Start the service:
+
 ```powershell
 Start-Service vmms
 ```
@@ -310,6 +330,7 @@ Start-Service vmms
 **Error**: `failed to create VHD: parent path not found`
 
 **Solution**: Ensure base image exists:
+
 ```powershell
 Test-Path "C:\ProgramData\Boxy\BaseImages\your-image.vhdx"
 ```
@@ -319,6 +340,7 @@ Test-Path "C:\ProgramData\Boxy\BaseImages\your-image.vhdx"
 **Error**: `failed to create VM: switch not found`
 
 **Solution**: Create the virtual switch or update config:
+
 ```powershell
 # List available switches
 Get-VMSwitch
@@ -334,12 +356,15 @@ New-VMSwitch -Name "Default Switch" -SwitchType Internal
 **Cause**: VM didn't get IP within timeout
 
 **Solutions**:
+
 1. Check DHCP is available on the virtual switch
 2. Use "Default Switch" which includes DHCP
 3. Increase timeout in config:
+
    ```yaml
    # Custom timeout (not yet supported in YAML, requires code change)
    ```
+
 4. VMs can still be used, IP will be available later
 
 ### PowerShell Direct Fails
@@ -347,12 +372,14 @@ New-VMSwitch -Name "Default Switch" -SwitchType Internal
 **Error**: `Invoke-Command failed: cannot connect to VM`
 
 **Possible Causes:**
+
 1. VM not fully booted yet
 2. Guest integration services not installed
 3. Different OS version between host and guest
 4. VM credentials incorrect
 
 **Solutions**:
+
 1. Wait for VM to fully boot (check with `Get-VM`)
 2. Install/update guest integration services in the VM
 3. Ensure guest OS is Windows and compatible version
@@ -363,6 +390,7 @@ New-VMSwitch -Name "Default Switch" -SwitchType Internal
 **Error**: `Access is denied` when running Boxy commands
 
 **Solution**: Run Boxy with Administrator privileges:
+
 ```powershell
 # Run as Administrator
 # Right-click PowerShell/CMD -> Run as Administrator
@@ -373,6 +401,7 @@ New-VMSwitch -Name "Default Switch" -SwitchType Internal
 **Error**: Path length exceeds Windows limit
 
 **Solution**: Use shorter paths or move Boxy data closer to root:
+
 ```go
 config := &hyperv.Config{
     VMPath:  "D:\\VMs",
@@ -385,6 +414,7 @@ config := &hyperv.Config{
 ### Use SSD Storage
 
 Store VHDs on SSD for better performance:
+
 - Base images on SSD
 - Differencing disks on SSD
 - Significant improvement in VM boot time
@@ -392,6 +422,7 @@ Store VHDs on SSD for better performance:
 ### Differencing Disk Benefits
 
 Boxy uses differencing disks by default:
+
 - ✅ Instant provisioning (seconds vs minutes)
 - ✅ Minimal disk space (only stores changes)
 - ✅ Base image is never modified
@@ -400,6 +431,7 @@ Boxy uses differencing disks by default:
 ### Resource Allocation
 
 **Recommendations:**
+
 - Don't over-provision CPU (Hyper-V will time-slice)
 - Leave memory for host OS (at least 4GB for Hyper-V host)
 - Use dynamic memory for better utilization
@@ -455,6 +487,7 @@ pools:
 The Hyper-V provider implements comprehensive security measures to prevent PowerShell injection attacks:
 
 **Input Validation**:
+
 - ✅ VM names validated (alphanumeric, hyphens, underscores only)
 - ✅ Snapshot names validated (prevents dangerous characters)
 - ✅ File paths validated (blocks injection chars, requires absolute paths)
@@ -464,12 +497,14 @@ The Hyper-V provider implements comprehensive security measures to prevent Power
 - ✅ Windows reserved names blocked (CON, PRN, NUL, COM1-9, LPT1-9)
 
 **PowerShell Command Protection**:
+
 - ✅ All commands use single-quoted strings (prevents variable expansion)
 - ✅ Single quotes in user input are escaped (doubled: `'` → `''`)
 - ✅ Dangerous characters rejected before PowerShell execution
 - ✅ No double-quote interpolation that could enable injection
 
 **Blocked Characters**:
+
 - Semicolons (`;`) - command chaining
 - Backticks (`` ` ``) - escape sequences
 - Dollar signs (`$`) - variable expansion
@@ -479,6 +514,7 @@ The Hyper-V provider implements comprehensive security measures to prevent Power
 - Carets (`^`) - escape character
 
 **Example Protection**:
+
 ```go
 // User input: vm"; Remove-VM -Name "other
 // BEFORE (vulnerable): New-VM -Name "vm"; Remove-VM -Name "other"
@@ -607,6 +643,7 @@ go test -tags windows ./tests/integration/...
 ```
 
 **Integration test requirements:**
+
 - Windows OS
 - Hyper-V installed
 - Administrator privileges

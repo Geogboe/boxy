@@ -1,6 +1,7 @@
 # Example 2: Hook-Based Provisioning
 
 This example demonstrates Boxy's powerful hook system for two-phase provisioning:
+
 - **Finalization** (after_provision): Run during pool warming
 - **Personalization** (before_allocate): Run during allocation
 
@@ -85,7 +86,7 @@ Available during hook execution:
 
 ## Expected Output
 
-```
+```text
 # After provisioning (finalization phase)
 Container provisioned: container-abc123
 Finalization hooks executed:
@@ -147,6 +148,7 @@ timeouts:
 **Without hooks**: Every allocation waits for slow setup (5+ minutes)
 
 **With two-phase hooks**:
+
 1. Finalization (5 min) - Happens in background during pool warming
 2. Personalization (30 sec) - Happens during allocation
 

@@ -7,6 +7,7 @@ This document captures ALL architectural decisions made for Boxy MVP.
 **Boxy is "serverless compute" for ephemeral sandbox environments across heterogeneous backends.**
 
 **Key innovations**:
+
 - **Warm pools**: Resources always ready (no wait time)
 - **Auto-cleanup**: Time-bound resources, no orphans
 - **Heterogeneous**: Docker + Hyper-V unified
@@ -17,7 +18,9 @@ This document captures ALL architectural decisions made for Boxy MVP.
 ## Component Roles
 
 ### Provider
+
 **Dumb, stateless CRUD interface**:
+
 - No decisions, no state management
 - Just translates Boxy commands to backend APIs
 - Methods: Provision, Destroy, GetStatus, GetConnectionInfo, Execute, Update, HealthCheck
@@ -26,22 +29,28 @@ This document captures ALL architectural decisions made for Boxy MVP.
 
 **Update() purpose**: Generic modifications (power state, snapshot, resource limits)
 
-###Agent
+### Agent
+
 **Pure proxy, no autonomy**:
+
 - No decision making, no state
 - Polls server or responds to RPC
 - Just remote execution of provider methods
 - Uses mTLS with client certificates
 
 ### Server
+
 **Orchestrator (the brain)**:
+
 - Manages pools and sandboxes
 - Tracks state and expiration
 - Routes requests to providers (local or remote)
 - Runs lifecycle hooks
 
 ### Hooks
+
 **Lifecycle scripts at specific points**:
+
 - **after_provision** (finalization): Slow setup during pool warming
 - **before_allocate** (personalization): Fast user-specific setup
 - Shell scripts: bash, powershell, python
@@ -49,7 +58,8 @@ This document captures ALL architectural decisions made for Boxy MVP.
 ## Two-Phase Provisioning
 
 ### Phase 1: Finalization (Pool Warming)
-```
+
+```text
 Base Image → Provider.Provision() → Hooks (after_provision) → Ready → Pool
 ```
 
@@ -58,17 +68,20 @@ Base Image → Provider.Provision() → Hooks (after_provision) → Ready → Po
 **User involvement**: None (happens automatically)
 
 **Common tasks**:
+
 - Network validation
 - Optional software installation (user scripts)
 - Health checks
 
 **Base image expectations**:
+
 - Should be mostly ready
 - Hooks for optional finalization only
 - Heavy setup should be in base image
 
 ### Phase 2: Personalization (Allocation)
-```
+
+```text
 Pool Resource → Hooks (before_allocate) → User
 ```
 
@@ -77,6 +90,7 @@ Pool Resource → Hooks (before_allocate) → User
 **User involvement**: User requested resource
 
 **Common tasks**:
+
 - Create user account with random password
 - Set unique hostname
 - Quick customization
@@ -85,13 +99,14 @@ Pool Resource → Hooks (before_allocate) → User
 
 ## Resource Lifecycle States
 
-```
+```text
 StateProvisioning → StateReady → StateAllocated → StateDestroyed
                         ↑             ↓
                      (in pool)   (user has it)
 ```
 
 **State transitions**:
+
 1. `Provisioning`: Provider creating + finalization hooks running
 2. `Ready`: In pool, available for allocation
 3. `Allocated`: User has it, expires after duration
@@ -102,7 +117,9 @@ StateProvisioning → StateReady → StateAllocated → StateDestroyed
 ## Pools vs Sandboxes
 
 ### Pool
+
 **Inventory of pre-provisioned resources of same type**:
+
 ```yaml
 Pool "win-server-vms":
   Config: min_ready=3, max_total=10
@@ -110,12 +127,15 @@ Pool "win-server-vms":
 ```
 
 **Responsibilities**:
+
 - Maintain min_ready count
 - Replenish when resources allocated
 - Run finalization hooks on new resources
 
 ### Sandbox
+
 **Logical wrapper around allocated resource(s)**:
+
 ```yaml
 Sandbox "sb-123":
   Resources: [res-abc from pool "win-server-vms"]
@@ -125,6 +145,7 @@ Sandbox "sb-123":
 ```
 
 **Responsibilities**:
+
 - Track which resource(s) belong together
 - Handle expiration
 - Provide connection info to user
@@ -137,6 +158,7 @@ Sandbox "sb-123":
 Allocation may take time (hooks running), so it's async:
 
 **CLI behavior** (auto-waits):
+
 ```bash
 $ boxy sandbox create -p win-server-vms:1 -d 8h
 
@@ -147,7 +169,8 @@ Finalizing... ━━━━━━━━━━━━━━━━━━━━━━
 ```
 
 **API behavior** (immediate response):
-```
+
+```text
 POST /api/v1/sandboxes → 202 Accepted (status: provisioning)
 GET /api/v1/sandboxes/:id → 200 OK (status: ready)
 ```
@@ -209,6 +232,7 @@ pools:
 ```
 
 **Differencing disks** (Hyper-V specific):
+
 - Base VHDX is read-only, shared
 - Each VM gets differencing disk (changes only)
 - Pool replenishment is instant (just create diff disk)
@@ -316,12 +340,14 @@ token: bxy_abc123xyz789  # API token for auth
 ### Remote
 
 **TCP with TLS + API tokens**:
-```
+
+```text
 Client → Server: HTTPS with API token in header
 Server validates token
 ```
 
 **Token generation**:
+
 ```bash
 boxy admin create-token --name john-cli --expires 90d
 → bxy_abc123xyz789
@@ -363,7 +389,8 @@ boxy admin resource test-personalization <res> --debug
 ### CLI/API Parity
 
 **Every CLI command maps to API endpoint**:
-```
+
+```text
 boxy sandbox create → POST /api/v1/sandboxes
 boxy sandbox ls → GET /api/v1/sandboxes
 boxy sandbox get <id> → GET /api/v1/sandboxes/:id
@@ -407,6 +434,7 @@ type ResourceUpdate struct {
 ### In Scope
 
 **Core Functionality**:
+
 - ✅ Pool management with warm pools
 - ✅ Hook-based provisioning (after_provision, before_allocate)
 - ✅ Async allocation with auto-wait CLI
@@ -418,12 +446,14 @@ type ResourceUpdate struct {
 - ✅ Manual cleanup (no auto-cleanup of unhealthy)
 
 **Testing**:
+
 - ✅ Unit tests for all components
 - ✅ Integration tests with Docker
 - ✅ E2E tests with Docker
 - ✅ Stub Hyper-V for cross-platform testing
 
 **Commands**:
+
 - ✅ `boxy serve`, `boxy agent`, `boxy admin`
 - ✅ `boxy pool ls/stats`
 - ✅ `boxy sandbox create/ls/get/extend/destroy`
@@ -432,6 +462,7 @@ type ResourceUpdate struct {
 ### Explicitly Out of Scope (Later)
 
 **MVP2**:
+
 - Multi-resource sandboxes (Docker + Hyper-V in one sandbox)
 - Overlay networking (WireGuard/Headscale)
 - Sandbox-as-code (declarative YAML)
@@ -439,6 +470,7 @@ type ResourceUpdate struct {
 - Complex provisioners (Ansible, DSC)
 
 **Future**:
+
 - Auto-cleanup of unhealthy resources
 - Tag-based provider selection
 - Capacity-aware scheduling
@@ -451,13 +483,15 @@ type ResourceUpdate struct {
 ### Docker-First Testing
 
 **Why Docker**:
+
 - Runs on all platforms (Linux CI, Mac dev, Windows if needed)
 - Fast (seconds to provision)
 - Reliable (no flaky VMs)
 - Real implementation (not mocked)
 
 **Test pyramid**:
-```
+
+```text
      E2E (Docker)
     /            \
    Integration    \
@@ -468,6 +502,7 @@ type ResourceUpdate struct {
 ### Hyper-V Stubbing
 
 **Stub provider** for testing distributed architecture:
+
 ```go
 type StubHyperVProvider struct {
     vms map[string]*stubVM
@@ -490,6 +525,7 @@ func (s *StubHyperVProvider) Execute(ctx, res, cmd) (*ExecuteResult, error) {
 ### Debug & Troubleshooting
 
 **Verbose logging**:
+
 ```bash
 boxy serve --log-level debug
 
@@ -501,6 +537,7 @@ boxy serve --log-level debug
 ```
 
 **Manual testing**:
+
 ```bash
 # Test finalization independently
 boxy admin pool test-finalization my-pool --debug
@@ -515,16 +552,19 @@ boxy admin resource test-personalization res-abc123 \
 ## Performance Targets
 
 **Pool replenishment**:
+
 - Docker: <10 seconds
 - Hyper-V (with differencing disk): <30 seconds
 - Hyper-V (full copy): <3 minutes
 
 **Allocation (personalization)**:
+
 - Target: <10 seconds
 - Max acceptable: 30 seconds
 - If slower, user should optimize hooks or base image
 
 **Timeouts** (configurable per pool):
+
 - Provision: 300s default
 - Finalization: 600s default
 - Personalization: 30s default
@@ -554,6 +594,7 @@ boxy admin resource test-personalization res-abc123 \
 ## Summary
 
 **MVP delivers**:
+
 - Working pool management with Docker
 - Hook-based customization
 - Async allocation with good UX

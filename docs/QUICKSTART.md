@@ -114,7 +114,8 @@ boxy sandbox create \
 ```
 
 Example output:
-```
+
+```text
 Sandbox created: sb-abc123
 Resources: 2 containers provisioned
 
@@ -162,7 +163,8 @@ boxy pool list
 ```
 
 Example output:
-```
+
+```text
 Pool Name       Ready  Allocated  Provisioning  Error  Total  Healthy
 ubuntu-pool     2      2          0             0      4      ✓
 alpine-pool     3      0          0             0      3      ✓
@@ -309,6 +311,7 @@ boxy pool list
 ```
 
 If you see "Docker health check failed":
+
 - Ensure Docker daemon is running
 - Verify user has Docker permissions: `groups` should show `docker`
 - On Linux: `sudo usermod -aG docker $USER && newgrp docker`
@@ -359,6 +362,7 @@ boxy pool list
 ```
 
 If pools show errors:
+
 - Check Docker image exists: `docker pull ubuntu:22.04`
 - Check Docker has resources available (memory, disk)
 - Check logs: `sudo journalctl -u boxy -f` (if running as service)
@@ -385,6 +389,6 @@ logging:
 
 ## Getting Help
 
-- **Issues**: https://github.com/Geogboe/boxy/issues
-- **Discussions**: https://github.com/Geogboe/boxy/discussions
-- **Documentation**: https://github.com/Geogboe/boxy/tree/main/docs
+- **Issues**: <https://github.com/Geogboe/boxy/issues>
+- **Discussions**: <https://github.com/Geogboe/boxy/discussions>
+- **Documentation**: <https://github.com/Geogboe/boxy/tree/main/docs>

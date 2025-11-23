@@ -23,6 +23,7 @@ week: "1-3"
 ## Overview
 
 Full HTTP REST API for programmatic access:
+
 - Complements CLI (CLI can use API internally)
 - JSON request/response
 - RESTful design
@@ -33,7 +34,7 @@ Full HTTP REST API for programmatic access:
 
 ## Key Endpoints
 
-```
+```text
 # Sandboxes
 POST   /api/v1/sandboxes          # Create
 GET    /api/v1/sandboxes           # List

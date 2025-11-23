@@ -6,6 +6,7 @@
 ## Context
 
 Boxy requires a technology stack that supports:
+
 - Complex concurrency (warm pool maintenance, background workers)
 - System-level resource management (Docker, VMs)
 - Single binary distribution for easy deployment
@@ -16,11 +17,13 @@ Boxy requires a technology stack that supports:
 We will use **Go** as the primary language with the following supporting technologies:
 
 ### Core Stack
+
 - **Language**: Go 1.21+
 - **Database**: SQLite (MVP), PostgreSQL (Production)
 - **Cache/Queue**: Redis (Phase 3+)
 
 ### Key Libraries
+
 - `github.com/spf13/cobra` - CLI framework
 - `github.com/spf13/viper` - Configuration management
 - `gorm.io/gorm` - ORM (supports both SQLite and PostgreSQL)
@@ -49,16 +52,19 @@ We will use **Go** as the primary language with the following supporting technol
 ### Why Not Alternatives?
 
 **Python**:
+
 - GIL limits true concurrency (critical for warm pools)
 - Runtime dependency management complexity
 - Slower performance for resource-intensive operations
 
 **Rust**:
+
 - Slower development velocity
 - Less mature virtualization ecosystem
 - Overkill for this problem domain
 
 **TypeScript/Node.js**:
+
 - Single-threaded (worker threads are awkward)
 - Not ideal for system-level tools
 - Less mature virtualization SDKs
@@ -79,6 +85,7 @@ We will use **Go** as the primary language with the following supporting technol
 ## Consequences
 
 ### Positive
+
 - Fast, reliable concurrency for warm pools
 - Strong type safety reduces bugs
 - Easy distribution (single binary)
@@ -86,14 +93,17 @@ We will use **Go** as the primary language with the following supporting technol
 - Excellent tooling and IDE support
 
 ### Negative
+
 - More verbose than dynamic languages
 - Smaller talent pool than JavaScript/Python
 - Generic support only in recent versions (Go 1.18+)
 
 ### Neutral
+
 - Need to use database abstraction (GORM) to keep PostgreSQL migration path open
 - No runtime plugin system (use compiled-in providers)
 
 ## References
+
 - [CLAUDE.md - Technology Stack Recommendations](../CLAUDE.md#7-technology-stack-recommendations)
 - [Tech Stack Research](../architecture/tech-stack-research.md)

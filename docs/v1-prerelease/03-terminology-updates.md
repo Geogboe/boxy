@@ -26,6 +26,7 @@ related_docs:
 ## Overview
 
 Update terminology across codebase and documentation for consistency and clarity:
+
 - Hook names: `after_provision` → `on_provision`, `before_allocate` → `on_allocate`
 - Pool terminology: "warm pools" → "preheated resources"
 - Resource state names: Align with new lifecycle
@@ -39,19 +40,23 @@ Update terminology across codebase and documentation for consistency and clarity
 **Decision**: Use clear, action-based names
 
 **Old naming:**
+
 - `after_provision` → Finalization hook
 - `before_allocate` → Personalization hook
 
 **New naming:**
+
 - `on_provision` → Runs after provider creates resource (cold state)
 - `on_allocate` → Runs when user requests resource
 
 **Rationale:**
+
 - "on_X" is clearer than "after_X" or "before_X"
 - Describes WHEN it runs, not position in sequence
 - Matches common event naming patterns
 
 **Update in:**
+
 ```go
 // internal/hooks/hooks.go
 type HookPoint string
@@ -63,6 +68,7 @@ const (
 ```
 
 **Configuration:**
+
 ```yaml
 # OLD
 hooks:
@@ -91,12 +97,14 @@ hooks:
 **New**: "Preheated resources" vs "Cold resources"
 
 **Rationale:**
+
 - Pools don't have temperature, resources do
 - "Preheated" is clearer than "warm" (matches oven metaphor)
 - "Cold" means stopped/provisioned but not running
 - Pools can have BOTH cold and preheated resources
 
 **Examples:**
+
 ```markdown
 # OLD (confusing)
 "Create a warm pool for instant allocation"
@@ -109,6 +117,7 @@ hooks:
 ```
 
 **Update in:**
+
 - CLAUDE.md
 - README.md
 - All docs/
@@ -121,6 +130,7 @@ hooks:
 See [02-preheating-recycling.md](02-preheating-recycling.md) for complete state definitions.
 
 **New states:**
+
 ```go
 const (
     StateProvisioned  ResourceState = "provisioned"   // Created but cold (stopped)
@@ -135,6 +145,7 @@ const (
 ```
 
 **Clarity improvements:**
+
 - "Provisioned" = cold/stopped (not "ready")
 - "Ready" = warm/running (available for allocation)
 - "Warming" = transitioning from cold to ready
@@ -256,6 +267,7 @@ sed -i 's/cold pool/cold resource/g' docs/**/*.md
 ```
 
 **Key files to update:**
+
 - `CLAUDE.md` - Core concepts section
 - `docs/architecture/HOOKS.md` - Hook documentation
 - `docs/architecture/MVP_DESIGN.md` - Component descriptions
@@ -268,6 +280,7 @@ sed -i 's/cold pool/cold resource/g' docs/**/*.md
 ### Backwards Compatibility
 
 **Phase 1 (v1.0-v1.2)**: Both old and new names work
+
 ```yaml
 # Both work, but old names log warnings
 hooks:
@@ -276,6 +289,7 @@ hooks:
 ```
 
 **Phase 2 (v1.3+)**: Deprecation warnings become errors
+
 ```yaml
 # Old names cause config validation errors
 hooks:
@@ -350,6 +364,7 @@ func TestParseHooks_BackwardsCompatibility(t *testing.T) {
 **Good news**: Your configs still work!
 
 **Action required** (eventually):
+
 ```yaml
 # Update your configs when convenient
 # Old names work in v1.0-v1.2, but log warnings
@@ -361,6 +376,7 @@ hooks:
 ### For New Users
 
 Use new names from the start:
+
 - `on_provision` - When resource is created
 - `on_allocate` - When resource is allocated to sandbox
 

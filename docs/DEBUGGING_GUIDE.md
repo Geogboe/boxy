@@ -1,6 +1,7 @@
 # Boxy Debugging and Troubleshooting Guide
 
 ## Table of Contents
+
 1. [Logging System](#logging-system)
 2. [Current Logging Coverage](#current-logging-coverage)
 3. [Debug Mode Usage](#debug-mode-usage)
@@ -19,6 +20,7 @@
 ### Log Levels
 
 Boxy uses **logrus** for structured logging with the following levels:
+
 - `debug` - Detailed execution flow, command parameters, internal state changes
 - `info` - Normal operational messages (default)
 - `warn` - Warning conditions that don't prevent operation
@@ -59,13 +61,15 @@ export BOXY_STORAGE_TYPE=sqlite
 ### Log Format
 
 All logs include:
+
 - **Timestamp** (full timestamp enabled)
 - **Log Level**
 - **Message**
 - **Structured Fields** (context-specific data)
 
 Example log output:
-```
+
+```text
 INFO[2025-01-21T10:15:30-05:00] Starting pool manager  pool=ubuntu-containers min_ready=3 max_total=10
 DEBUG[2025-01-21T10:15:31-05:00] Provisioning resource  pool=ubuntu-containers image=ubuntu:22.04
 INFO[2025-01-21T10:15:35-05:00] Resource provisioned and ready  pool=ubuntu-containers resource_id=abc123
@@ -78,6 +82,7 @@ INFO[2025-01-21T10:15:35-05:00] Resource provisioned and ready  pool=ubuntu-cont
 ### ✅ Well-Logged Components
 
 #### **Commands Layer** (`cmd/boxy/commands/`)
+
 - **File**: `root.go`
   - Log level initialization
   - Config loading errors
@@ -95,6 +100,7 @@ INFO[2025-01-21T10:15:35-05:00] Resource provisioned and ready  pool=ubuntu-cont
   - Resource allocation errors (line 176, 220)
 
 #### **Pool Manager** (`internal/core/pool/manager.go`)
+
 - **Provisioning Flow** (30+ log points):
   - Pool start/stop (lines 84-88, 129, 138)
   - Resource allocation (lines 144-147, 233-237, 281-284)
@@ -115,6 +121,7 @@ INFO[2025-01-21T10:15:35-05:00] Resource provisioned and ready  pool=ubuntu-cont
   - All goroutines have panic recovery with logging (lines 105-110, 241-247, 304-310, 364-369, 393-398, 621-628)
 
 #### **Sandbox Manager** (`internal/core/sandbox/manager.go`)
+
 - **Lifecycle Operations** (20+ log points):
   - Sandbox creation (lines 75, 94, 105-109, 129, 246-249)
   - Sandbox destruction (lines 283, 310, 315, 329, 333)
@@ -133,6 +140,7 @@ INFO[2025-01-21T10:15:35-05:00] Resource provisioned and ready  pool=ubuntu-cont
   - Cleanup worker panic recovery (lines 404-408)
 
 #### **Hook Executor** (`internal/hooks/executor.go`)
+
 - **Hook Execution Flow** (10+ log points):
   - Hook batch execution (lines 39-42, 46-50, 92-95)
   - Individual hook execution (lines 59-64, 138-143, 204-209)
@@ -142,6 +150,7 @@ INFO[2025-01-21T10:15:35-05:00] Resource provisioned and ready  pool=ubuntu-cont
   - Retry attempts (lines 118-123)
 
 #### **Docker Provider** (`internal/provider/docker/docker.go`)
+
 - **Resource Lifecycle** (8+ log points):
   - Provisioning (lines 46-49, 147-150)
   - Image pulling (lines 272, 287)
@@ -151,6 +160,7 @@ INFO[2025-01-21T10:15:35-05:00] Resource provisioned and ready  pool=ubuntu-cont
   - Exec operations (lines 318-321, 361-364)
 
 #### **Mock Provider** (`internal/provider/mock/mock.go`)
+
 - Debug-level logging for:
   - Mock provisioning (line 102)
   - Mock destruction (line 124)
@@ -158,6 +168,7 @@ INFO[2025-01-21T10:15:35-05:00] Resource provisioned and ready  pool=ubuntu-cont
 ### ⚠️ Limited Logging
 
 #### **Storage Layer** (`internal/storage/sqlite.go`)
+
 - **ISSUE**: GORM logging set to **Silent** mode (line 23)
 - No visibility into:
   - SQL queries
@@ -166,6 +177,7 @@ INFO[2025-01-21T10:15:35-05:00] Resource provisioned and ready  pool=ubuntu-cont
   - Connection pool problems
 
 #### **Hyper-V Provider** (`internal/provider/hyperv/hyperv.go`)
+
 - Stub implementation with minimal logging
 
 ---
@@ -188,6 +200,7 @@ boxy --log-level debug serve
 ### Debugging Specific Operations
 
 #### Pool Operations
+
 ```bash
 # Debug pool provisioning
 boxy --log-level debug pool list
@@ -197,6 +210,7 @@ boxy --log-level debug pool stats ubuntu-containers
 ```
 
 #### Sandbox Operations
+
 ```bash
 # Debug sandbox creation (shows allocation flow)
 boxy --log-level debug sandbox create \
@@ -216,18 +230,21 @@ boxy --log-level debug sandbox destroy sb-abc123
 Key debug messages to look for:
 
 1. **Resource Allocation**:
-   ```
+
+   ```text
    DEBUG[...] Allocating resource from pool  pool=X sandbox_id=Y
    ```
 
 2. **Hook Execution**:
-   ```
+
+   ```text
    INFO[...] Executing hooks  resource_id=X hook_point=after_provision hook_count=2
    DEBUG[...] Executing command via provider.Exec()  resource_id=X hook_name=Y command=[...]
    ```
 
 3. **Provider Operations**:
-   ```
+
+   ```text
    DEBUG[...] Executing command in container  container_id=X command=[/bin/bash -c ...]
    DEBUG[...] Command execution completed  container_id=X exit_code=0
    ```
@@ -241,7 +258,9 @@ Key debug messages to look for:
 **Symptoms**: `pool stats` shows `Ready: 0`, pool not replenishing
 
 **Debug Steps**:
+
 1. Enable debug logging:
+
    ```bash
    boxy --log-level debug serve
    ```
@@ -252,6 +271,7 @@ Key debug messages to look for:
    - `"Docker health check failed"` - Docker daemon issue
 
 3. Check pool configuration:
+
    ```bash
    boxy pool stats <pool-name>
    ```
@@ -261,6 +281,7 @@ Key debug messages to look for:
    - Check provider-specific logs
 
 **Common Causes**:
+
 - Docker daemon not running
 - Image pull failures (network issues, invalid image name)
 - Resource limits exceeded (CPU, memory, disk)
@@ -271,12 +292,15 @@ Key debug messages to look for:
 **Symptoms**: Sandbox stays in `StateCreating`, never becomes ready
 
 **Debug Steps**:
+
 1. Check sandbox state:
+
    ```bash
    boxy sandbox list
    ```
 
 2. Enable debug logging and watch allocation:
+
    ```bash
    boxy --log-level debug sandbox create --pool ubuntu-containers:1
    ```
@@ -287,6 +311,7 @@ Key debug messages to look for:
    - `"Personalization hooks failed"` - Hook execution error
 
 4. Check database state:
+
    ```bash
    # Connect to SQLite database
    sqlite3 ~/.config/boxy/boxy.db
@@ -299,6 +324,7 @@ Key debug messages to look for:
    ```
 
 **Common Causes**:
+
 - No resources available in pool
 - Hook execution failures
 - Timeout during allocation
@@ -309,13 +335,16 @@ Key debug messages to look for:
 **Symptoms**: Resources stuck in provisioning, allocation fails
 
 **Debug Steps**:
+
 1. Enable debug logging:
+
    ```bash
    boxy --log-level debug serve
    ```
 
 2. Watch for hook execution:
-   ```
+
+   ```text
    INFO[...] Executing hooks  hook_count=2 hook_point=after_provision
    INFO[...] Executing hook  hook_index=1 hook_name=validate-network
    ERROR[...] Hook failed (critical)  hook_name=validate-network error="execution failed..."
@@ -324,6 +353,7 @@ Key debug messages to look for:
 3. Check hook results in database (see [Hook Debugging](#hook-debugging))
 
 4. Test hooks manually:
+
    ```bash
    # For Docker containers
    docker exec -it <container_id> /bin/bash
@@ -331,6 +361,7 @@ Key debug messages to look for:
    ```
 
 **Common Causes**:
+
 - Script syntax errors
 - Missing dependencies in container
 - Network issues (for network validation hooks)
@@ -342,19 +373,23 @@ Key debug messages to look for:
 **Symptoms**: Resources not being destroyed, disk space growing
 
 **Debug Steps**:
+
 1. Check active resources:
+
    ```bash
    # Count Docker containers
    docker ps -a --filter "label=boxy.managed=true" | wc -l
    ```
 
 2. Check database vs actual resources:
+
    ```bash
    sqlite3 ~/.config/boxy/boxy.db
    SELECT state, COUNT(*) FROM resources GROUP BY state;
    ```
 
 3. Enable debug logging for cleanup:
+
    ```bash
    boxy --log-level debug serve
    # Watch logs for:
@@ -363,6 +398,7 @@ Key debug messages to look for:
    ```
 
 4. Check provider-specific resources:
+
    ```bash
    # Docker
    docker ps -a --filter "label=boxy.managed=true"
@@ -371,6 +407,7 @@ Key debug messages to look for:
    ```
 
 **Common Causes**:
+
 - Provider.Destroy() failures
 - Panic during cleanup
 - Database inconsistency (state mismatch)
@@ -383,23 +420,28 @@ Key debug messages to look for:
 **Context**: SQLite uses file-based locking, single writer at a time
 
 **Debug Steps**:
+
 1. Check for concurrent operations:
+
    ```bash
    # Look for multiple boxy processes
    ps aux | grep boxy
    ```
 
 2. Verify connection pool settings (internal/storage/sqlite.go:37-40):
+
    ```go
    sqlDB.SetMaxOpenConns(1)  // Single writer
    ```
 
 3. Check database file permissions:
+
    ```bash
    ls -la ~/.config/boxy/boxy.db
    ```
 
 **Solutions**:
+
 - Ensure only one `boxy serve` instance running
 - Check file permissions (should be 0644)
 - Consider PostgreSQL for multi-writer scenarios
@@ -409,12 +451,15 @@ Key debug messages to look for:
 **Symptoms**: `"failed to decrypt password"` errors
 
 **Debug Steps**:
+
 1. Check encryption key:
+
    ```bash
    ls -la ~/.config/boxy/encryption.key
    ```
 
 2. Verify key length:
+
    ```bash
    cat ~/.config/boxy/encryption.key | base64 -d | wc -c
    # Should output: 32
@@ -424,12 +469,14 @@ Key debug messages to look for:
    - If key file was regenerated, old resources won't decrypt
 
 4. Enable debug logging:
+
    ```bash
    boxy --log-level debug sandbox create ...
    # Look for encryption/decryption errors
    ```
 
 **Solutions**:
+
 - Use `BOXY_ENCRYPTION_KEY` env var for consistent key
 - Don't delete/regenerate encryption.key
 - For key rotation, destroy all resources first
@@ -441,6 +488,7 @@ Key debug messages to look for:
 ### Database Inspection
 
 Connect to SQLite database:
+
 ```bash
 sqlite3 ~/.config/boxy/boxy.db
 ```
@@ -482,6 +530,7 @@ GROUP BY state;
 ### Provider-Specific Inspection
 
 #### Docker
+
 ```bash
 # List all Boxy-managed containers
 docker ps -a --filter "label=boxy.managed=true"
@@ -500,6 +549,7 @@ docker exec -it <container_id> /bin/bash
 ```
 
 #### System Resources
+
 ```bash
 # Check disk space (important for Docker)
 df -h
@@ -517,11 +567,13 @@ ps aux | grep boxy
 ### Config Inspection
 
 View active configuration:
+
 ```bash
 cat ~/.config/boxy/boxy.yaml
 ```
 
 Check config validity:
+
 ```bash
 # Try loading config (will show validation errors)
 boxy --config ~/.config/boxy/boxy.yaml pool list
@@ -534,6 +586,7 @@ boxy --config ~/.config/boxy/boxy.yaml pool list
 ### Hook Execution Flow
 
 Hooks are executed at two lifecycle points:
+
 1. **after_provision** - After `provider.Provision()`, during pool warming
 2. **before_allocate** - Before allocating resource to user (personalization)
 
@@ -571,7 +624,8 @@ boxy --log-level debug serve
 ```
 
 Key log messages:
-```
+
+```text
 INFO[...] Running finalization hooks  pool=X resource_id=Y
 INFO[...] Executing hooks  resource_id=X hook_point=after_provision hook_count=2
 INFO[...] Executing hook  resource_id=X hook_name=validate-network hook_index=1 hook_total=2
@@ -597,7 +651,8 @@ echo 'your hook script here' | /bin/bash
 #### Hook Retry Debugging
 
 Hooks support retry with delay:
-```
+
+```text
 INFO[...] Retrying hook  resource_id=X hook_name=Y attempt=2 max_attempts=4
 WARN[...] Hook attempt failed  resource_id=X hook_name=Y attempt=2 error="..."
 ```
@@ -605,28 +660,34 @@ WARN[...] Hook attempt failed  resource_id=X hook_name=Y attempt=2 error="..."
 #### Hook Failure Modes
 
 1. **Critical failure** (`continue_on_failure: false`):
-   ```
+
+   ```text
    ERROR[...] Hook failed (critical)  resource_id=X hook_name=Y error="..."
    ```
+
    - Resource marked as `StateError`
    - Provisioning fails
    - Resource destroyed
 
 2. **Non-critical failure** (`continue_on_failure: true`):
-   ```
+
+   ```text
    WARN[...] Hook failed (non-critical, continuing)  resource_id=X hook_name=Y error="..."
    ```
+
    - Execution continues to next hook
    - Resource still becomes ready
 
 #### Hook Timeout Debugging
 
 Phase-level timeouts:
+
 - **Provision**: `timeouts.provision` (default: 5 minutes)
 - **Finalization**: `timeouts.finalization` (default: 10 minutes)
 - **Personalization**: `timeouts.personalization` (default: 30 seconds)
 
 Individual hook timeout:
+
 ```yaml
 hooks:
   after_provision:
@@ -635,14 +696,15 @@ hooks:
 ```
 
 Timeout error:
-```
+
+```text
 ERROR[...] phase timeout exceeded after executing 2/3 hooks
 ```
 
 ### Common Hook Issues
 
 | Issue | Symptoms | Solution |
-|-------|----------|----------|
+| ------- | ---------- | ---------- |
 | Script syntax error | `exit_code: 127` or non-zero | Test script manually in container |
 | Missing dependencies | `command not found` | Install deps in base image or hook |
 | Network unreachable | Timeout or connection errors | Check container networking |
@@ -658,12 +720,14 @@ ERROR[...] phase timeout exceeded after executing 2/3 hooks
 #### Provisioning Issues
 
 Enable debug logging:
+
 ```bash
 boxy --log-level debug serve
 ```
 
 Look for:
-```
+
+```text
 INFO[...] Provisioning Docker container  image=ubuntu:22.04 type=container
 INFO[...] Pulling Docker image  image=ubuntu:22.04
 INFO[...] Image pulled successfully  image=ubuntu:22.04
@@ -671,32 +735,40 @@ INFO[...] Container provisioned successfully  container_id=abc123 image=ubuntu:2
 ```
 
 Common issues:
+
 1. **Image pull failures**:
-   ```
+
+   ```text
    ERROR[...] failed to pull image: ...
    ```
+
    - Check image name/tag
    - Check network connectivity
    - Check Docker Hub rate limits
 
 2. **Container start failures**:
-   ```
+
+   ```text
    ERROR[...] failed to start container: ...
    ```
+
    - Check resource limits (CPU, memory)
    - Check port conflicts
    - Inspect container: `docker inspect <container_id>`
 
 3. **Exec failures**:
-   ```
+
+   ```text
    ERROR[...] failed to create exec: ...
    ```
+
    - Container may be stopped
    - Command may not exist in container
 
 #### Docker Daemon Issues
 
 Check Docker daemon:
+
 ```bash
 # Test Docker connectivity
 docker ps
@@ -709,19 +781,22 @@ sudo systemctl restart docker
 ```
 
 Health check failures:
-```
+
+```text
 WARN[...] Docker health check failed - Docker functionality may be limited
 ```
 
 ### Mock Provider (Testing)
 
 The mock provider includes debug logging:
-```
+
+```text
 DEBUG[...] Mock resource provisioned  resource_id=X
 DEBUG[...] Mock resource destroyed  resource_id=X
 ```
 
 Mock provider supports failure simulation:
+
 ```go
 // Configure failure rate for testing
 mockProvider.SetFailureRate(0.2) // 20% failure rate
@@ -739,15 +814,19 @@ Currently a stub implementation. No real provisioning occurs.
 ### Slow Provisioning
 
 **Diagnosis**:
+
 1. Enable debug logging:
+
    ```bash
    boxy --log-level debug serve
    ```
 
 2. Look for timing in logs:
-   ```
+
+   ```text
    INFO[...] Resource provisioned and ready  pool=X resource_id=Y
    ```
+
    - Check time between "Provisioning resource" and "ready"
 
 3. Profile hook execution:
@@ -755,6 +834,7 @@ Currently a stub implementation. No real provisioning occurs.
    - Check metadata for slow hooks
 
 **Common causes**:
+
 - Slow image pulls (large images, slow network)
 - Slow hooks (network validation, package installation)
 - Provider overhead (VM boot time)
@@ -762,6 +842,7 @@ Currently a stub implementation. No real provisioning occurs.
 ### High Memory Usage
 
 **Diagnosis**:
+
 ```bash
 # Check Go heap
 ps aux | grep boxy
@@ -778,19 +859,23 @@ docker inspect <container_id> | grep Memory
 **Issue**: Database locked errors, slow queries
 
 **Diagnosis**:
+
 1. Check connection pool (should be 1 for SQLite):
+
    ```go
    // internal/storage/sqlite.go:38
    sqlDB.SetMaxOpenConns(1)
    ```
 
 2. Enable GORM debug logging (currently disabled):
+
    ```go
    // internal/storage/sqlite.go:23
    Logger: logger.Default.LogMode(logger.Silent), // Change to logger.Info
    ```
 
 3. Check database size:
+
    ```bash
    ls -lh ~/.config/boxy/boxy.db
    ```
@@ -824,34 +909,34 @@ docker inspect <container_id> | grep Memory
 
 ### Moderate Gaps
 
-5. **⚠️ No verbose/trace logging level**
+1. **⚠️ No verbose/trace logging level**
    - Only debug/info/warn/error
    - Can't enable extra-verbose output
    - **Impact**: Medium - some operations lack detail
 
-6. **⚠️ No metrics/observability**
+2. **⚠️ No metrics/observability**
    - No Prometheus metrics
    - No health check endpoint
    - No performance counters
    - **Impact**: Medium - hard to monitor in production
 
-7. **⚠️ Limited error context in some paths**
+3. **⚠️ Limited error context in some paths**
    - Some errors don't include full context
    - Example: storage errors don't always include query details
    - **Impact**: Low-Medium
 
-8. **⚠️ No profiling support**
+4. **⚠️ No profiling support**
    - No pprof HTTP endpoint
    - Can't profile CPU/memory in production
    - **Impact**: Low - mainly for performance tuning
 
 ### Minor Gaps
 
-9. **⚠️ No command to validate config**
+1. **⚠️ No command to validate config**
    - Must run command to check config validity
    - **Impact**: Low
 
-10. **⚠️ No audit log**
+2. **⚠️ No audit log**
     - Who requested what resource?
     - No record of user actions
     - **Impact**: Low-Medium (important for multi-user)
@@ -883,6 +968,7 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 ```
 
 **Usage**:
+
 ```bash
 BOXY_DEBUG_SQL=1 boxy serve
 ```
@@ -964,6 +1050,7 @@ rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info",
 ```
 
 Trace level would include:
+
 - All function entry/exit points
 - Variable values
 - Detailed state transitions
@@ -997,7 +1084,8 @@ boxy config validate [--config path]
 **File**: New `internal/metrics/prometheus.go`
 
 Expose Prometheus metrics:
-```
+
+```text
 # Pool metrics
 boxy_pool_resources_total{pool="ubuntu-containers",state="ready"} 5
 boxy_pool_resources_total{pool="ubuntu-containers",state="allocated"} 2
@@ -1034,12 +1122,14 @@ boxy health
 **File**: `cmd/boxy/commands/serve.go`
 
 Add optional pprof HTTP server:
+
 ```bash
 boxy serve --pprof-addr :6060
 ```
 
 Access at:
-```
+
+```text
 http://localhost:6060/debug/pprof/
 ```
 
@@ -1050,7 +1140,8 @@ http://localhost:6060/debug/pprof/
 **File**: New `internal/audit/logger.go`
 
 Log all user actions:
-```
+
+```text
 [AUDIT] user=admin action=sandbox.create sandbox_id=sb-123 pools=[ubuntu:2]
 [AUDIT] user=admin action=sandbox.destroy sandbox_id=sb-123
 [AUDIT] user=operator action=pool.scale pool=ubuntu min_ready=5
@@ -1108,6 +1199,7 @@ When troubleshooting an issue:
 - [ ] Check for orphaned resources
 
 Common commands:
+
 ```bash
 # Enable debug
 boxy --log-level debug serve
@@ -1130,6 +1222,7 @@ docker ps -a --filter "label=boxy.managed=true"
 ## Conclusion
 
 Boxy has a **solid foundation** for debugging with:
+
 - ✅ Comprehensive structured logging via logrus
 - ✅ Configurable log levels
 - ✅ Good error wrapping and context
@@ -1137,6 +1230,7 @@ Boxy has a **solid foundation** for debugging with:
 - ✅ Hook result storage in metadata
 
 However, there are **key gaps** that should be addressed:
+
 1. **Database visibility** (GORM silent logging)
 2. **CLI inspection tools** (resource/sandbox inspect)
 3. **Hook debugging** (no way to view hook output)

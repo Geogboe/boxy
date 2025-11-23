@@ -19,7 +19,8 @@ The Boxy codebase demonstrates **excellent architecture** and **strong security 
 ### 1. Architecture & Organization (**A+**)
 
 **Directory Structure**:
-```
+
+```text
 cmd/boxy/          - CLI entry point, follows Go convention
   commands/        - Cobra command implementations
 internal/          - Private application code (properly isolated)
@@ -35,6 +36,7 @@ tests/            - Integration and E2E tests
 ```
 
 **Separation of Concerns**:
+
 - ✅ Clean domain boundaries (pool, sandbox, resource)
 - ✅ Interface-based design (`provider.Provider`)
 - ✅ Plugin architecture (provider registry)
@@ -43,6 +45,7 @@ tests/            - Integration and E2E tests
 ### 2. Error Handling (**A**)
 
 **Sentinel Errors**:
+
 ```go
 // pool/errors.go - Clear, reusable errors
 var (
@@ -52,11 +55,13 @@ var (
 ```
 
 **Error Wrapping**:
+
 ```go
 return fmt.Errorf("failed to create pool: %w", err)  // ✅ Good
 ```
 
 **User-Friendly Messages**:
+
 ```go
 return fmt.Errorf("config file not found: %s\nRun 'boxy init' to create configuration", cfgFile)
 ```
@@ -64,16 +69,19 @@ return fmt.Errorf("config file not found: %s\nRun 'boxy init' to create configur
 ### 3. Security (**A+**)
 
 **Input Validation**:
+
 - ✅ Comprehensive PowerShell injection prevention (Hyper-V)
 - ✅ Path traversal prevention
 - ✅ Resource limit validation
 
 **Credential Management**:
+
 - ✅ AES-256-GCM encryption
 - ✅ Passwords never logged
 - ✅ Secure random generation
 
 **Network Security**:
+
 - ✅ mTLS support for agent communication
 - ✅ Certificate-based authentication
 
@@ -100,6 +108,7 @@ return fmt.Errorf("config file not found: %s\nRun 'boxy init' to create configur
 **Location**: `internal/core/pool/manager.go`
 
 **Problem**:
+
 ```go
 // Line 240 - NOT tracked in WaitGroup
 go func() {
@@ -124,6 +133,7 @@ go func(r *resource.Resource) {
 ```
 
 **Impact**:
+
 - Goroutines continue running after `manager.Stop()`
 - Resources leaked on shutdown
 - No graceful shutdown
@@ -137,6 +147,7 @@ go func(r *resource.Resource) {
 **Location**: `cmd/boxy/commands/*.go`
 
 **Problem**:
+
 ```go
 // sandbox.go:139 - No signal handling
 ctx := context.Background()
@@ -146,6 +157,7 @@ dockerProvider.HealthCheck(context.Background())
 ```
 
 **Impact**:
+
 - CLI commands can't be interrupted with Ctrl+C
 - No timeout for long operations
 - Poor user experience
@@ -159,11 +171,13 @@ dockerProvider.HealthCheck(context.Background())
 **Location**: `cmd/boxy/commands/serve.go`
 
 **Problem**:
+
 - No check if Docker is installed before registering provider
 - No check if Hyper-V is available on Windows
 - Generic errors when providers fail
 
 **Impact**:
+
 - Confusing error messages
 - Difficult to diagnose issues
 
@@ -178,10 +192,12 @@ dockerProvider.HealthCheck(context.Background())
 **Location**: Various
 
 **Problem**:
+
 - Some deferred `Close()` calls missing
 - No explicit cleanup in all error paths
 
 **Example**:
+
 ```go
 store, err := storage.NewSQLiteStore(cfg.Storage.Path)
 if err != nil {
@@ -195,6 +211,7 @@ defer store.Close()  // ✅ But should be immediately after creation
 **Location**: Various exported types
 
 **Problem**:
+
 ```go
 // ❌ Missing comment
 type SnapshotOp struct {
@@ -214,6 +231,7 @@ type Provider interface {
 **Location**: `cmd/boxy/commands/sandbox.go`
 
 **Problem**:
+
 - No validation that pool names exist before creating sandbox
 - Creates sandbox with invalid pool names, then fails
 
@@ -242,25 +260,25 @@ type Provider interface {
 
 ### Phase 2: Quality Improvements (Medium Priority)
 
-4. ✅ Improve CLI validation
+1. ✅ Improve CLI validation
    - Validate pool names before sandbox creation
    - Check resource availability
    - Better error messages
 
-5. ✅ Add missing godoc comments
+2. ✅ Add missing godoc comments
    - Document all exported types
    - Add package-level documentation
 
-6. ✅ Resource cleanup audit
+3. ✅ Resource cleanup audit
    - Ensure all `defer Close()` calls present
    - Add cleanup in error paths
 
 ### Phase 3: Testing & QA (Before PR)
 
-7. ✅ Run full test suite
-8. ✅ Manual QA of CLI commands
-9. ✅ Test graceful shutdown
-10. ✅ Test error scenarios
+1. ✅ Run full test suite
+2. ✅ Manual QA of CLI commands
+3. ✅ Test graceful shutdown
+4. ✅ Test error scenarios
 
 ---
 
@@ -277,16 +295,19 @@ type Provider interface {
 ## 📊 Metrics
 
 **Code Quality**:
+
 - Lines of Code: ~5,000
 - Test Coverage: ~60% (good)
 - Cyclomatic Complexity: Low (good)
 
 **Architecture**:
+
 - Package Coupling: Low (excellent)
 - Interface Segregation: Good
 - Dependency Direction: Correct (inward)
 
 **Security**:
+
 - Input Validation: Comprehensive
 - Credential Management: Secure
 - Injection Prevention: Excellent
@@ -298,6 +319,7 @@ type Provider interface {
 Boxy is a well-architected project with strong fundamentals. The critical issues identified are fixable without major refactoring. After addressing the goroutine leaks and context management, the codebase will be production-ready with excellent maintainability.
 
 **Recommended Actions**:
+
 1. Implement Phase 1 fixes immediately
 2. Complete Phase 2 before next release
 3. Add static analysis tools to CI/CD

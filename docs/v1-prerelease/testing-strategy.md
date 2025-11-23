@@ -23,6 +23,7 @@ week: "ongoing"
 ## Overview
 
 v1 Prerelease uses **Test-Driven Development** with emphasis on:
+
 - **Smoke tests** - Quick sanity checks
 - **Integration tests** - Component interactions with real providers
 - **E2E tests** - Full user workflows
@@ -34,7 +35,7 @@ v1 Prerelease uses **Test-Driven Development** with emphasis on:
 
 ## Testing Pyramid
 
-```
+```text
         ┌─────────────┐
         │  Manual     │  Real Hyper-V on Windows
         │  Testing    │
@@ -62,6 +63,7 @@ v1 Prerelease uses **Test-Driven Development** with emphasis on:
 **Scope**: Test individual components in isolation
 
 **Examples:**
+
 ```go
 // internal/core/allocator/allocator_test.go
 func TestAllocator_AllocateFromPool(t *testing.T) {
@@ -94,6 +96,7 @@ func TestSandbox_CreateWithAllocator(t *testing.T) {
 ```
 
 **Mocking Strategy:**
+
 - Use interfaces for dependencies
 - Create simple mock implementations
 - Avoid heavy mocking frameworks (keep it simple)
@@ -109,7 +112,7 @@ func TestSandbox_CreateWithAllocator(t *testing.T) {
 **Primary Provider**: Docker (runs on Linux CI)
 **Stubbed Provider**: Hyper-V (stub for testing on Linux)
 
-### Examples
+### Integration Examples
 
 ```go
 // tests/integration/allocator_test.go
@@ -180,6 +183,7 @@ func TestAgent_DockerViaRemote(t *testing.T) {
 ```
 
 **Running Integration Tests:**
+
 ```bash
 # Run all integration tests
 go test ./tests/integration/... -v
@@ -201,7 +205,7 @@ go test ./tests/integration/... -run TestPreheating
 
 **Uses**: Real Docker provider + Stubbed Hyper-V provider
 
-### Examples
+### E2E Examples
 
 ```go
 // tests/e2e/quick_testing_usecase_test.go
@@ -277,6 +281,7 @@ func TestE2E_SandboxWithNewArchitecture(t *testing.T) {
 ```
 
 **Running E2E Tests:**
+
 ```bash
 # Run all e2e tests
 go test ./tests/e2e/... -v
@@ -380,6 +385,7 @@ func (s *StubHyperVProvider) GetConnectionInfo(ctx context.Context, res *resourc
 ```
 
 **Usage in Tests:**
+
 ```go
 // Use stub in integration tests
 stubProvider := stub.NewStubHyperVProvider(10 * time.Second)
@@ -420,6 +426,7 @@ echo "✅ Smoke tests passed"
 **Goal**: Ensure no functionality lost from MVP
 
 **Strategy**:
+
 - Keep ALL existing E2E tests from MVP
 - Run with new architecture
 - Must pass without modification
@@ -444,12 +451,14 @@ func TestRegression_PoolStats(t *testing.T) {
 **Required**: At least once before v1 release
 
 **Setup**:
+
 1. Windows Server with Hyper-V enabled
 2. Install Boxy agent on Windows
 3. Linux server with Boxy server
 4. Configure mTLS certificates
 
 **Test Cases**:
+
 - [ ] Agent connects to server successfully
 - [ ] Hyper-V pool provisions VMs
 - [ ] Preheating works with VMs
@@ -512,7 +521,7 @@ jobs:
 
 ### Fixtures
 
-```
+```text
 tests/
 ├── fixtures/
 │   ├── configs/
@@ -553,7 +562,7 @@ func NewTestDB(t *testing.T) *sql.DB {
 ## Coverage Targets
 
 | Component | Target | Status |
-|-----------|--------|--------|
+| ----------- | -------- | -------- |
 | internal/core/allocator | > 90% | not-started |
 | internal/core/pool | > 85% | not-started |
 | internal/core/sandbox | > 85% | not-started |
@@ -565,7 +574,7 @@ func NewTestDB(t *testing.T) *sql.DB {
 
 ## Test Organization
 
-```
+```text
 tests/
 ├── unit/                   # (optional, can live with code)
 ├── integration/

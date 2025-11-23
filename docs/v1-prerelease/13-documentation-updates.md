@@ -25,6 +25,7 @@ related_docs:
 ## Overview
 
 Final consistency pass across all documentation:
+
 - Update CLAUDE.md with new architecture
 - Update ADRs with v1 decisions
 - Update README.md with v1 features

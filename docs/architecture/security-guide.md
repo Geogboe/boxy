@@ -30,7 +30,7 @@
 ### Attack Scenarios & Mitigations
 
 | Attack | Impact | Mitigation |
-|--------|--------|------------|
+| ------ | ------ | ---------- |
 | **Man-in-the-Middle** | Intercept/modify agent-server traffic | mTLS with certificate pinning |
 | **Rogue Agent** | Unauthorized resource provisioning | Certificate-based auth + agent authorization |
 | **Credential Theft** | Access to provisioned resources | Encryption at rest, short-lived creds |
@@ -44,7 +44,7 @@
 
 ### Certificate Hierarchy
 
-```
+```text
 ┌─────────────────────────┐
 │      Root CA            │
 │  (10-year validity)     │
@@ -82,6 +82,7 @@ boxy admin init-ca \
 ```
 
 **Security Requirements**:
+
 - [ ] Generate on offline, trusted machine
 - [ ] Use strong entropy source
 - [ ] Store private key on encrypted volume
@@ -128,6 +129,7 @@ boxy admin issue-cert \
 ```
 
 **Agent Cert Fields**:
+
 - `Common Name (CN)`: Agent ID (used for authorization)
 - `Organization (O)`: Your organization
 - `Validity`: 90 days (short-lived for better security)
@@ -137,6 +139,7 @@ boxy admin issue-cert \
 ### Certificate Distribution
 
 **Secure Transfer**:
+
 ```bash
 # Option 1: SCP with SSH key auth (recommended)
 scp /etc/boxy/agents/windows-01/* admin@windows-host-01:C:/boxy/
@@ -149,6 +152,7 @@ scp /etc/boxy/agents/windows-01/* admin@windows-host-01:C:/boxy/
 ```
 
 **Verification on Agent**:
+
 ```bash
 # Verify certificate is valid
 openssl x509 -in agent-cert.pem -noout -text
@@ -188,6 +192,7 @@ systemctl restart boxy-agent
 ```
 
 **Monitoring**:
+
 ```bash
 # Prometheus metric
 boxy_certificate_expiry_seconds{agent_id="windows-host-01"} 2592000
@@ -220,6 +225,7 @@ scp /etc/boxy/ca-crl.pem boxy-server:/etc/boxy/
 ```
 
 **Server Configuration**:
+
 ```yaml
 # boxy.yaml
 server:
@@ -236,6 +242,7 @@ server:
 **Minimum TLS Version**: TLS 1.2 (prefer TLS 1.3)
 
 **Allowed Cipher Suites** (strong only):
+
 ```go
 tlsConfig := &tls.Config{
     MinVersion: tls.VersionTLS12,
@@ -276,6 +283,7 @@ New-NetFirewallRule -DisplayName "Boxy Agent" \
 ```
 
 **Network Segmentation**:
+
 - Server and agents on dedicated management VLAN
 - Provisioned resources on separate VLAN
 - No direct access from provisioned resources to control plane
@@ -283,6 +291,7 @@ New-NetFirewallRule -DisplayName "Boxy Agent" \
 ### Rate Limiting
 
 **Server-Side**:
+
 ```go
 // Limit 100 requests per second per agent
 rateLimiter := ratelimit.New(100)
@@ -294,6 +303,7 @@ interceptor := func(ctx context.Context, req interface{}, info *grpc.UnaryServer
 ```
 
 **Connection Limits**:
+
 ```go
 grpcServer := grpc.NewServer(
     grpc.MaxConcurrentStreams(100),
@@ -311,12 +321,13 @@ grpcServer := grpc.NewServer(
 **Agent Authorization Matrix**:
 
 | Agent ID | Authorized Providers |
-|----------|---------------------|
+| ---------- | --------------------- |
 | windows-host-01 | hyperv |
 | linux-host-01 | docker, kvm |
 | docker-host-02 | docker |
 
 **Configuration**:
+
 ```yaml
 # boxy.yaml (server)
 agents:
@@ -333,6 +344,7 @@ agents:
 ```
 
 **Enforcement**:
+
 ```go
 func (s *Server) authorizeProviderAccess(agentID, providerName string) error {
     agent, ok := s.config.GetAgent(agentID)
@@ -351,6 +363,7 @@ func (s *Server) authorizeProviderAccess(agentID, providerName string) error {
 ### Request Authentication
 
 **Extract Agent ID from Certificate**:
+
 ```go
 func getAgentIDFromContext(ctx context.Context) (string, error) {
     peer, ok := peer.FromContext(ctx)
@@ -377,6 +390,7 @@ func getAgentIDFromContext(ctx context.Context) (string, error) {
 ### Resource Quotas
 
 **Per-Agent Limits**:
+
 ```go
 type AgentQuota struct {
     MaxResources      int
@@ -410,6 +424,7 @@ func (s *Server) checkQuota(agentID string, spec ResourceSpec) error {
 ### Encryption at Rest
 
 **Resource Credentials**:
+
 - Stored encrypted in database
 - Encryption key derived from server's master key
 - Master key stored in environment variable or secure vault
@@ -433,6 +448,7 @@ connectionInfo.Password = password
 ### Credential Rotation
 
 **Auto-Rotation**:
+
 ```go
 // Rotate credentials after 24 hours
 func (s *Service) rotateResourceCredentials(ctx context.Context, resourceID string) error {
@@ -459,6 +475,7 @@ func (s *Service) rotateResourceCredentials(ctx context.Context, resourceID stri
 ### No Credential Logging
 
 **Redact Sensitive Fields**:
+
 ```go
 func (ci *ConnectionInfo) Redacted() *ConnectionInfo {
     redacted := *ci
@@ -480,16 +497,19 @@ logger.WithField("connection_info", connInfo.Redacted()).Info("Resource ready")
 ### What to Log
 
 **Authentication Events**:
+
 - Agent registration attempts (success/failure)
 - Certificate validation failures
 - Agent disconnections
 
 **Authorization Events**:
+
 - Provider access attempts (allowed/denied)
 - Quota violations
 - Unauthorized requests
 
 **Resource Operations**:
+
 - Provision requests (who, what, when, result)
 - Destroy operations
 - Status checks
@@ -498,6 +518,7 @@ logger.WithField("connection_info", connInfo.Redacted()).Info("Resource ready")
 ### Log Format
 
 **Structured Logging** (JSON):
+
 ```json
 {
   "timestamp": "2025-11-20T10:30:00Z",
@@ -523,6 +544,7 @@ logger.WithField("connection_info", connInfo.Redacted()).Info("Resource ready")
 ### Monitoring & Alerting
 
 **Critical Alerts**:
+
 ```yaml
 # Prometheus alert rules
 groups:
@@ -583,6 +605,7 @@ groups:
 ### Incident Response
 
 **Compromised Agent**:
+
 1. Revoke agent certificate immediately
 2. Update and distribute CRL
 3. Investigate what resources were accessed
@@ -591,6 +614,7 @@ groups:
 6. Issue new certificate with different ID after remediation
 
 **CA Key Compromise**:
+
 1. **CRITICAL**: Generate new CA immediately
 2. Issue new certificates for all servers and agents
 3. Distribute new CA cert to all components
@@ -599,6 +623,7 @@ groups:
 6. Notify stakeholders
 
 **Credential Leak**:
+
 1. Rotate affected credentials immediately
 2. Destroy and re-provision affected resources
 3. Review audit logs for unauthorized access

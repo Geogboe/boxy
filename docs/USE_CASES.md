@@ -7,12 +7,15 @@ This document describes the primary and secondary use cases that drive Boxy's de
 ## Primary Use Case: Quick Testing Environment
 
 **Problem:**
+
 Developers and testers need instant, clean, isolated environments to test software, configurations, or scripts without affecting their main system or other projects.
 
 **User Story:**
+
 > "I need to quickly test this installer on a clean Windows 11 machine, but I don't want to spend 10 minutes provisioning a VM or worry about cleanup afterward."
 
 **Boxy Solution:**
+
 1. User requests a sandbox: `boxy sandbox create -p win11-test:1 -d 1h`
 2. If preheated resource available → **instant allocation** (< 5 seconds)
 3. If only cold resource available → start VM → allocate (30-60 seconds)
@@ -23,6 +26,7 @@ Developers and testers need instant, clean, isolated environments to test softwa
 8. Pool automatically replenishes with new VM
 
 **Example Configuration:**
+
 ```yaml
 pools:
   - name: win11-test
@@ -60,12 +64,14 @@ pools:
 ```
 
 **Key Benefits:**
+
 - ✅ **Speed**: Preheated VMs available instantly
 - ✅ **Cleanliness**: Always fresh, no state drift
 - ✅ **Simplicity**: One command to get working environment
 - ✅ **Auto-cleanup**: No orphaned resources
 
 **Similar to:**
+
 - Windows Sandbox feature
 - Docker containers for testing
 - Disposable VMs in cloud providers
@@ -77,12 +83,15 @@ pools:
 ### UC2: CI/CD Ephemeral Runners
 
 **Problem:**
+
 CI/CD pipelines need fresh, isolated environments for each build to prevent test contamination and ensure reproducibility.
 
 **User Story:**
+
 > "Our Jenkins builds sometimes fail due to leftover state from previous builds. We need truly ephemeral build agents."
 
 **Boxy Solution:**
+
 ```yaml
 # CI pipeline script
 sandbox_id=$(boxy sandbox create -p ci-runner:1 -d 30m --json | jq -r '.id')
@@ -91,6 +100,7 @@ boxy sandbox destroy $sandbox_id
 ```
 
 **Configuration:**
+
 ```yaml
 pools:
   - name: ci-runner
@@ -122,6 +132,7 @@ pools:
 ```
 
 **Key Benefits:**
+
 - ✅ **Isolation**: Each build in fresh environment
 - ✅ **Speed**: Preheated containers ready instantly
 - ✅ **Scalability**: Auto-replenish during high load
@@ -132,12 +143,15 @@ pools:
 ### UC3: Security Red Teaming
 
 **Problem:**
+
 Security researchers need isolated, disposable environments for malware analysis, exploit testing, and attack simulation.
 
 **User Story:**
+
 > "I need to detonate malware samples in isolated VMs without contaminating my lab infrastructure."
 
 **Boxy Solution:**
+
 ```bash
 # Create isolated malware analysis lab
 boxy sandbox create \
@@ -148,6 +162,7 @@ boxy sandbox create \
 ```
 
 **Configuration:**
+
 ```yaml
 pools:
   - name: malware-analysis
@@ -180,12 +195,14 @@ pools:
 ```
 
 **Key Benefits:**
+
 - ✅ **Security**: Complete isolation per analysis session
 - ✅ **Cleanliness**: Always fresh VMs, no contamination
 - ✅ **Recycling**: Automatic refresh prevents persistence
 - ✅ **Snapshots**: Easy to restore to known-good state (via differencing disks)
 
 **Future Enhancement (v2):**
+
 - Network isolation between sandboxes
 - Overlay networks (WireGuard/Headscale)
 - Snapshot/restore capabilities via hooks
@@ -195,12 +212,15 @@ pools:
 ### UC4: Development Environments
 
 **Problem:**
+
 Developers need quick, reproducible development environments for feature branches or experimentation.
 
 **User Story:**
+
 > "I want to quickly spin up a full dev stack (database + web server + cache) to test my feature branch."
 
 **Boxy Solution:**
+
 ```bash
 # Multi-resource sandbox
 boxy sandbox create \
@@ -212,6 +232,7 @@ boxy sandbox create \
 ```
 
 **Configuration:**
+
 ```yaml
 pools:
   - name: postgres-db
@@ -257,6 +278,7 @@ pools:
 ```
 
 **Key Benefits:**
+
 - ✅ **Speed**: Entire stack ready in seconds
 - ✅ **Isolation**: Feature branches don't interfere
 - ✅ **Reproducibility**: Same environment every time
@@ -267,12 +289,15 @@ pools:
 ### UC5: Training & Education
 
 **Problem:**
+
 Instructors need to provision identical lab environments for students in workshops or training sessions.
 
 **User Story:**
+
 > "I'm teaching a Docker workshop with 30 students. Each needs their own Ubuntu VM with Docker installed."
 
 **Boxy Solution:**
+
 ```bash
 # Provision 30 sandboxes
 for i in {1..30}; do
@@ -281,6 +306,7 @@ done
 ```
 
 **Configuration:**
+
 ```yaml
 pools:
   - name: docker-training
@@ -310,6 +336,7 @@ pools:
 ```
 
 **Key Benefits:**
+
 - ✅ **Scale**: Provision many environments quickly
 - ✅ **Consistency**: Every student has identical setup
 - ✅ **Simplicity**: One command per student
@@ -320,12 +347,15 @@ pools:
 ### UC6: Compliance & Audit Testing
 
 **Problem:**
+
 Organizations need to test compliance controls in isolated environments without affecting production.
 
 **User Story:**
+
 > "We need to validate our security controls meet SOC2 requirements in a test environment."
 
 **Boxy Solution:**
+
 ```bash
 boxy sandbox create \
   -p compliance-test-env:3 \
@@ -334,6 +364,7 @@ boxy sandbox create \
 ```
 
 **Configuration:**
+
 ```yaml
 pools:
   - name: compliance-test-env
@@ -364,6 +395,7 @@ pools:
 ```
 
 **Key Benefits:**
+
 - ✅ **Isolation**: Test without production impact
 - ✅ **Reproducibility**: Same environment for each audit
 - ✅ **Documentation**: Track which sandbox used for which audit
@@ -374,7 +406,7 @@ pools:
 ## Use Case Comparison Matrix
 
 | Use Case | Primary Resource Type | Preheating | Typical Duration | Volume |
-|----------|----------------------|------------|------------------|--------|
+| ---------- | ---------------------- | ------------ | ------------------ | -------- |
 | Quick Testing | VMs | High (3-5) | 1-2 hours | Low |
 | CI/CD Runners | Containers | High (5-10) | 10-30 minutes | High |
 | Red Teaming | VMs | Medium (2-3) | 4-8 hours | Low |
@@ -387,21 +419,25 @@ pools:
 ## Anti-Patterns (What Boxy is NOT For)
 
 ### ❌ Long-Running Production Services
+
 **Why not:** Boxy is designed for ephemeral, disposable environments. Production services should use dedicated infrastructure.
 
 **Use instead:** Docker Swarm, Kubernetes, traditional VMs
 
 ### ❌ Stateful Databases (Production)
+
 **Why not:** Resources are destroyed on release. No persistence guarantees.
 
 **Use instead:** Managed database services, dedicated DB servers
 
 ### ❌ Cost-Insensitive Workloads
+
 **Why not:** Preheating keeps resources running, which costs money. Only use for workloads where speed justifies cost.
 
 **Use instead:** On-demand provisioning, serverless functions
 
 ### ❌ Multi-Month Environments
+
 **Why not:** Boxy optimizes for quick allocation and cleanup. Long-running environments waste preheated resources.
 
 **Use instead:** Traditional VMs, persistent infrastructure

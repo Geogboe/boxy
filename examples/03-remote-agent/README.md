@@ -10,7 +10,7 @@ This example shows Boxy's **distributed agent architecture**, which enables:
 
 ## Architecture Overview
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │                   Linux Machine                          │
 │                                                          │
@@ -50,6 +50,7 @@ This example shows Boxy's **distributed agent architecture**, which enables:
 **Problem**: You want to manage Windows VMs with Hyper-V, but you're running Boxy on a Linux machine.
 
 **Solution**:
+
 1. Run `boxy agent serve` on your Windows machine (exposes Hyper-V locally)
 2. Run `boxy serve` on your Linux machine (coordinates everything)
 3. Server sends gRPC requests to agent when provisioning VMs
@@ -81,12 +82,14 @@ boxy agent serve --config agent-config.yaml
 ```
 
 The agent will:
+
 - Listen on port 50051 (default)
 - Auto-detect and enable Hyper-V provider
 - Wait for connections from the server
 
 Expected output:
-```
+
+```text
 INFO[0000] Starting Boxy Agent                           arch=amd64 os=windows version=vdev
 INFO[0000] Auto-detected Windows platform, enabling Hyper-V provider
 INFO[0000] Registered Hyper-V provider
@@ -102,13 +105,15 @@ On your Linux machine:
 ```
 
 The server will:
+
 - Connect to the remote agent at `windows-host:50051`
 - Register the remote Hyper-V provider
 - Create pools using the remote provider
 - Start accepting requests
 
 Expected output:
-```
+
+```text
 INFO[0000] Starting Boxy Service
 INFO[0000] Registering remote provider                   agent=windows-agent name=windows-agent-hyperv provider=hyperv
 INFO[0000] Connected to remote agent                     address=windows-host:50051
@@ -124,6 +129,7 @@ INFO[0000] Boxy service started                         address=:8080
 ```
 
 This will:
+
 1. Check pool status (should show warming Hyper-V VMs)
 2. Create a sandbox (triggers remote VM creation)
 3. Get connection info (RDP details for the VM)
@@ -180,6 +186,7 @@ logging:
 ```
 
 Key points:
+
 - `agents[]` defines remote agents to connect to
 - `pools[].backend` uses format `{agent-id}-{provider-name}`
 - Server stores all state (agents are stateless)
@@ -187,6 +194,7 @@ Key points:
 ## Connection Security
 
 This example uses **insecure mode** (`use_tls: false`) for simplicity. This is fine for:
+
 - Testing/development
 - Trusted internal networks (LAN)
 - Lab environments
@@ -213,6 +221,7 @@ See the Security Guide for certificate setup.
 **Error**: `Failed to create agent server: listen tcp :50051: bind: address already in use`
 
 **Solution**: Another process is using port 50051. Either:
+
 - Stop the other process
 - Change the port: `boxy agent serve --listen :50052`
 
@@ -221,6 +230,7 @@ See the Security Guide for certificate setup.
 **Error**: `Failed to register providers: unsupported platform: windows`
 
 **Solution**: Hyper-V provider not available. Check:
+
 - Are you on Windows? (`echo $OSENV` should show Windows)
 - Is Hyper-V installed? (`Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V`)
 - Use `--providers mock` for testing without Hyper-V
@@ -230,6 +240,7 @@ See the Security Guide for certificate setup.
 **Error**: `Failed to connect to remote agent: connection refused`
 
 **Solution**:
+
 - Check agent is running: `ps aux | grep "boxy agent"`
 - Verify firewall allows port 50051
 - Ping the Windows machine: `ping windows-host`
@@ -240,6 +251,7 @@ See the Security Guide for certificate setup.
 **Error**: `context deadline exceeded` when connecting
 
 **Solution**:
+
 - Network latency too high
 - Agent may be under heavy load
 - Increase timeout in server config (future enhancement)
@@ -249,6 +261,7 @@ See the Security Guide for certificate setup.
 **Error**: `Provision failed: Hyper-V service not running`
 
 **Solution**: On Windows machine:
+
 ```powershell
 Get-Service vmms  # Check Hyper-V Virtual Machine Management service
 Start-Service vmms  # Start if stopped
@@ -259,6 +272,7 @@ Start-Service vmms  # Start if stopped
 **Error**: `Provision failed: insufficient memory`
 
 **Solution**: Reduce VM memory in pool config:
+
 ```yaml
 memory_mb: 2048  # Instead of 4096
 ```
@@ -280,6 +294,7 @@ When you create a sandbox with a remote pool:
 11. **Server returns to user**: Sandbox created with connection info
 
 All communication uses:
+
 - **Protocol Buffers** for efficient serialization
 - **gRPC** for RPC transport
 - **HTTP/2** for connection multiplexing
@@ -290,11 +305,13 @@ All communication uses:
 If you don't have Hyper-V available, you can test the agent architecture using the **mock provider**:
 
 **On agent machine**:
+
 ```bash
 boxy agent serve --providers mock --listen :50051
 ```
 
 **In server-config.yaml**:
+
 ```yaml
 agents:
   - id: test-agent
@@ -315,6 +332,7 @@ The mock provider simulates realistic provisioning delays and responses without 
 ## Next Steps
 
 After understanding the agent architecture, see:
+
 - **Example 4: Complete Lab Environment** - Multi-pool, multi-agent setup
 - **Security Guide** - Setting up mTLS for production
 - **Deployment Guide** - Running agents as services
@@ -322,19 +340,23 @@ After understanding the agent architecture, see:
 ## Key Takeaways
 
 ✅ **Agents enable cross-platform orchestration**
+
 - Run server on Linux, manage Windows VMs seamlessly
 
 ✅ **Agents are stateless**
+
 - Server stores all state
 - Agents just execute commands
 - Easy to add/remove agents
 
 ✅ **Communication is efficient**
+
 - Long-running HTTP/2 connections
 - Connection multiplexing
 - Built-in keepalive
 
 ✅ **Security is configurable**
+
 - Insecure mode for testing
 - mTLS for production
 - No credentials over network

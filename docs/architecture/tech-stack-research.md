@@ -13,6 +13,7 @@
 ### Option 1: Go ⭐ RECOMMENDED
 
 **Pros**:
+
 - ✅ Excellent concurrency model (goroutines for pool management, background workers)
 - ✅ Strong ecosystem for system tools and virtualization
   - Docker SDK: `github.com/docker/docker/client`
@@ -27,12 +28,14 @@
 - ✅ Native support for plugins (though see skepticism below)
 
 **Cons**:
+
 - ⚠️ Go plugins are problematic (version matching, platform-specific)
 - ⚠️ Verbose error handling
 - ⚠️ No generics until recently (Go 1.18+)
 
 **Key Libraries Available**:
-```
+
+```text
 github.com/spf13/cobra          # CLI framework
 github.com/gin-gonic/gin        # HTTP framework
 github.com/docker/docker        # Docker SDK
@@ -50,12 +53,14 @@ github.com/go-redis/redis       # Redis client
 ### Option 2: Rust
 
 **Pros**:
+
 - ✅ Maximum safety and performance
 - ✅ No garbage collector (predictable latency)
 - ✅ Strong type system prevents many bugs
 - ✅ Growing ecosystem
 
 **Cons**:
+
 - ❌ Steeper learning curve
 - ❌ Slower development velocity
 - ❌ Less mature virtualization SDKs
@@ -70,6 +75,7 @@ github.com/go-redis/redis       # Redis client
 ### Option 3: Python
 
 **Pros**:
+
 - ✅ Rapid development
 - ✅ Extensive libraries
 - ✅ Great for prototyping
@@ -77,6 +83,7 @@ github.com/go-redis/redis       # Redis client
 - ✅ Libvirt bindings available
 
 **Cons**:
+
 - ❌ GIL limits true concurrency (critical for pool management)
 - ❌ Runtime dependency issues
 - ❌ Slower execution (matters when managing many resources)
@@ -90,12 +97,14 @@ github.com/go-redis/redis       # Redis client
 ### Option 4: TypeScript/Node.js
 
 **Pros**:
+
 - ✅ Great for Web UI backend
 - ✅ Large ecosystem
 - ✅ Good Docker SDK (`dockerode`)
 - ✅ Unified language for frontend and backend
 
 **Cons**:
+
 - ❌ Single-threaded (worker threads exist but awkward)
 - ❌ Less mature virtualization SDKs
 - ❌ Runtime dependency management
@@ -109,6 +118,7 @@ github.com/go-redis/redis       # Redis client
 ## 🎯 Language Recommendation: **Go**
 
 For a system tool that manages resources with complex concurrency needs, Go is the clear winner. It has the right balance of:
+
 - Developer productivity
 - Performance
 - Ecosystem maturity
@@ -121,6 +131,7 @@ For a system tool that manages resources with complex concurrency needs, Go is t
 ### Option 1: PostgreSQL ⭐ RECOMMENDED
 
 **Pros**:
+
 - ✅ Robust, battle-tested
 - ✅ JSONB support (flexible schema for provider-specific data)
 - ✅ Excellent ACID guarantees
@@ -130,10 +141,12 @@ For a system tool that manages resources with complex concurrency needs, Go is t
 - ✅ Scalable to production
 
 **Cons**:
+
 - ⚠️ Requires separate process (but this is normal for production)
 - ⚠️ More complex than SQLite for development
 
 **Use Cases**:
+
 - Store pool configurations
 - Track sandbox state
 - Record resource allocations
@@ -146,12 +159,14 @@ For a system tool that manages resources with complex concurrency needs, Go is t
 ### Option 2: SQLite
 
 **Pros**:
+
 - ✅ Zero configuration
 - ✅ Single file
 - ✅ Perfect for development and testing
 - ✅ No separate process
 
 **Cons**:
+
 - ❌ Concurrent writes are limited
 - ❌ Not suitable for distributed deployments
 - ❌ Limited JSON support compared to PostgreSQL
@@ -163,12 +178,14 @@ For a system tool that manages resources with complex concurrency needs, Go is t
 ### Option 3: Redis
 
 **Pros**:
+
 - ✅ Extremely fast
 - ✅ Built-in pub/sub (great for events)
 - ✅ Job queue support
 - ✅ TTL support (auto-cleanup)
 
 **Cons**:
+
 - ❌ Primarily in-memory (persistence options exist but not primary use case)
 - ❌ Not suitable as primary state store
 - ❌ Limited query capabilities
@@ -180,6 +197,7 @@ For a system tool that manages resources with complex concurrency needs, Go is t
 ## 🎯 Database Recommendation: **PostgreSQL (primary) + Redis (secondary)**
 
 **Strategy**:
+
 - **PostgreSQL**: Authoritative state storage
 - **Redis**: Job queue, caching, pub/sub for real-time updates
 - **SQLite**: Development/testing (via same ORM, easy to swap)
@@ -193,6 +211,7 @@ For a system tool that manages resources with complex concurrency needs, Go is t
 Go has a `plugin` package, but it's **problematic**:
 
 **Issues**:
+
 - ❌ Requires exact same Go version for plugin and host
 - ❌ Platform-specific (doesn't work on Windows)
 - ❌ Can't unload plugins
@@ -222,12 +241,14 @@ type KVMProvider struct{}
 ```
 
 **Pros**:
+
 - ✅ Simple, no runtime complexity
 - ✅ Compile-time type safety
 - ✅ Easy to test
 - ✅ No versioning issues
 
 **Cons**:
+
 - ⚠️ All providers must be compiled in (binary size)
 - ⚠️ Can't add providers without recompilation
 
@@ -248,12 +269,14 @@ service ProviderService {
 ```
 
 **Pros**:
+
 - ✅ Language-agnostic (providers can be written in anything)
 - ✅ Process isolation
 - ✅ Can add providers without recompilation
 - ✅ Hashicorp uses this approach (Terraform, Vault, etc.)
 
 **Cons**:
+
 - ⚠️ More complex (process management, RPC overhead)
 - ⚠️ Harder to debug
 - ⚠️ More moving parts
@@ -271,12 +294,14 @@ import "github.com/hashicorp/go-plugin"
 ```
 
 **Pros**:
+
 - ✅ Production-tested (used by Terraform, Vault, Nomad)
 - ✅ Handles process management
 - ✅ gRPC-based
 - ✅ Well-documented
 
 **Cons**:
+
 - ⚠️ Still complex for MVP
 - ⚠️ External dependency
 
@@ -296,6 +321,7 @@ import "github.com/hashicorp/go-plugin"
 ### Options: YAML vs TOML vs JSON
 
 **YAML** ⭐ RECOMMENDED
+
 ```yaml
 pools:
   - name: ubuntu-containers
@@ -307,12 +333,14 @@ pools:
 ```
 
 **Pros**:
+
 - ✅ Human-readable
 - ✅ Supports comments
 - ✅ Common in cloud-native tools (Kubernetes, Docker Compose)
 - ✅ Go library: `gopkg.in/yaml.v3`
 
 **Cons**:
+
 - ⚠️ Whitespace-sensitive
 
 **Verdict**: Standard choice for configuration
@@ -324,7 +352,9 @@ pools:
 ### Core Dependencies for Go MVP
 
 #### 1. CLI Framework
+
 **Package**: `github.com/spf13/cobra`
+
 - Used by: kubectl, gh, docker, hugo
 - Comprehensive, well-documented
 - Subcommand support
@@ -338,7 +368,9 @@ pools:
 ---
 
 #### 2. Configuration Management
+
 **Package**: `github.com/spf13/viper`
+
 - Config file support (YAML, TOML, JSON)
 - Environment variable binding
 - Remote config (optional)
@@ -349,7 +381,9 @@ pools:
 ---
 
 #### 3. HTTP Framework
+
 **Package**: `github.com/gin-gonic/gin`
+
 - Fast, minimal overhead
 - Middleware support
 - Good JSON handling
@@ -362,7 +396,9 @@ pools:
 ---
 
 #### 4. ORM/Database
+
 **Package**: `gorm.io/gorm` v2
+
 - Supports PostgreSQL, SQLite, MySQL
 - Migration support
 - Relationship handling
@@ -375,7 +411,9 @@ pools:
 ---
 
 #### 5. Docker SDK
+
 **Package**: `github.com/docker/docker/client`
+
 - Official Docker client for Go
 - Comprehensive API coverage
 - Well-maintained
@@ -385,7 +423,9 @@ pools:
 ---
 
 #### 6. Logging
+
 **Package**: `github.com/sirupsen/logrus`
+
 - Structured logging
 - Multiple output formats (JSON, text)
 - Hook system
@@ -398,7 +438,9 @@ pools:
 ---
 
 #### 7. Testing
+
 **Package**: `github.com/stretchr/testify`
+
 - Assert and require helpers
 - Mock support
 - Suite support
@@ -410,7 +452,9 @@ pools:
 ---
 
 #### 8. Redis Client
+
 **Package**: `github.com/redis/go-redis/v9`
+
 - Official Redis client
 - Supports Redis 6+ features
 - Connection pooling
@@ -420,7 +464,9 @@ pools:
 ---
 
 #### 9. Validation
+
 **Package**: `github.com/go-playground/validator/v10`
+
 - Struct validation via tags
 - Custom validators
 - Extensive rule library
@@ -432,6 +478,7 @@ pools:
 ## What NOT to Build (DRY Violations to Avoid)
 
 ❌ **Don't build**:
+
 - HTTP server (use Gin/Echo)
 - ORM (use GORM)
 - CLI framework (use Cobra)
@@ -443,6 +490,7 @@ pools:
 - JWT handling (use `github.com/golang-jwt/jwt`)
 
 ✅ **Do build**:
+
 - Pool management logic
 - Sandbox orchestration
 - Provider interface and implementations
@@ -455,12 +503,14 @@ pools:
 ## MVP Technology Stack (Final Recommendation)
 
 ### Core
+
 - **Language**: Go 1.21+
 - **Database**: PostgreSQL 15+ (SQLite for dev)
 - **Cache/Queue**: Redis 7+
 
 ### Key Libraries
-```
+
+```text
 # CLI & Config
 github.com/spf13/cobra          v1.8+
 github.com/spf13/viper          v1.18+
@@ -486,6 +536,7 @@ github.com/stretchr/testify     v1.8+
 ```
 
 ### Development Tools
+
 - **Testing**: Go test + testify
 - **Linting**: golangci-lint
 - **Formatting**: gofmt, goimports
@@ -499,11 +550,13 @@ github.com/stretchr/testify     v1.8+
 ### 🤔 Question 1: Warm Pools in MVP?
 
 **Concern**: Maintaining warm pools (pre-provisioned containers) adds significant complexity:
+
 - Background workers to maintain min_ready count
 - Health checking provisioned resources
 - Startup/shutdown edge cases
 
 **Proposal**: For MVP, what if we do **on-demand provisioning only**?
+
 - Simpler to implement and test
 - Still demonstrates core value
 - Add warm pools in Phase 2
@@ -517,6 +570,7 @@ github.com/stretchr/testify     v1.8+
 **Concern**: Setting up PostgreSQL adds deployment complexity for early testing/demos.
 
 **Proposal**:
+
 - Use SQLite for Phase 1 (single file, zero config)
 - Design with ORM so PostgreSQL swap is trivial (GORM supports both)
 - Migrate to PostgreSQL in Phase 3 (when we add API server)
@@ -528,10 +582,12 @@ github.com/stretchr/testify     v1.8+
 ### 🤔 Question 3: Configuration vs Database
 
 **Concern**: Should pool definitions live in:
+
 - **Config files** (YAML) - Simple, version-controllable
 - **Database** - Dynamic, API-manageable
 
 **Proposal**:
+
 - Phase 1: Config files (simpler)
 - Phase 3: Migrate to database (when API added)
 
@@ -542,11 +598,13 @@ github.com/stretchr/testify     v1.8+
 ### 🤔 Question 4: Credential Storage
 
 **Concern**: Where/how do we store generated credentials?
+
 - In database (encrypted at rest)
 - In memory only (lost on restart, but more secure)
 - External secrets manager (HashiCorp Vault)
 
 **Proposal**:
+
 - Phase 1: In-memory only (ephemeral sandboxes)
 - Phase 2+: Database encrypted with at-rest encryption
 - Phase 3+: Optional Vault integration

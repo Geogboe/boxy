@@ -25,6 +25,7 @@ related_docs:
 ## Overview
 
 Define formal YAML schema using JSON Schema for:
+
 - Config validation (catch errors early)
 - IDE autocomplete/validation (VSCode, IntelliJ)
 - Auto-generated documentation

@@ -11,12 +11,14 @@ The Boxy codebase has **good foundational concurrency** with goroutines, mutexes
 ### Key Findings
 
 ✅ **Strengths**:
+
 - Proper use of sync.RWMutex for read-heavy operations
 - Background workers properly tracked with WaitGroups
 - Panic recovery in all goroutines
 - Context-based cancellation working correctly
 
 ⚠️ **Critical Issues** (Performance Bottlenecks):
+
 1. Pool replenishment provisions resources **sequentially** (should be parallel)
 2. Health checks run **sequentially** across all resources (should be parallel)
 3. Sandbox resource allocation happens **sequentially** (should be parallel)
@@ -56,6 +58,7 @@ func (m *Manager) Start() error {
 ```
 
 **Assessment**: ✅ Excellent
+
 - Properly tracked in WaitGroup
 - Panic recovery present
 - Context-based cancellation
@@ -84,11 +87,13 @@ func (m *Manager) ensureMinReady(ctx context.Context) error {
 ```
 
 **Problem**:
+
 - If `needed = 10` and each `provisionOne()` takes 30 seconds, this takes **5 minutes**
 - Holds exclusive lock the entire time, blocking allocations
 - No parallelism for expensive I/O operations
 
 **Recommendation**: ⚠️ **HIGH PRIORITY**
+
 ```go
 // Parallel provisioning approach
 var wg sync.WaitGroup
@@ -134,6 +139,7 @@ go func() {
 ```
 
 **Assessment**: ✅ Good
+
 - Non-blocking replenishment
 - Proper panic recovery
 - However, still suffers from sequential provisioning inside `ensureMinReady()`
@@ -168,11 +174,13 @@ func (m *Manager) performHealthChecks(ctx context.Context) error {
 ```
 
 **Problem**:
+
 - If pool has 50 resources and each health check takes 1 second, this takes **50 seconds**
 - Blocks the health check worker from processing other pools
 - Network calls are prime candidates for parallelization
 
 **Recommendation**: ⚠️ **MEDIUM PRIORITY**
+
 ```go
 var wg sync.WaitGroup
 for _, res := range ready {
@@ -211,11 +219,13 @@ func (m *Manager) Allocate(ctx context.Context, sandboxID string) (*resource.Res
 ```
 
 **Problem**:
+
 - Personalization hooks can take 30+ seconds (installing software, configuring system)
 - During this time, **all other allocations are blocked**
 - With sequential hooks for one allocation, other users wait unnecessarily
 
 **Recommendation**: ⚠️ **HIGH PRIORITY**
+
 ```go
 // 1. Find and mark resource under lock (fast)
 m.mu.Lock()
@@ -284,6 +294,7 @@ func (m *Manager) cleanupWorker() {
 ```
 
 **Assessment**: ✅ Excellent
+
 - Proper WaitGroup tracking
 - Panic recovery
 - Context cancellation
@@ -334,12 +345,14 @@ func (m *Manager) allocateResourcesAsync(sandboxID string, resourceReqs []Resour
 ```
 
 **Problem**:
+
 - User requests: 3 Windows VMs + 2 Linux containers
 - Current: Allocates sequentially (5 allocations one after another)
 - If each allocation takes 30 seconds (including hooks), total time = **2.5 minutes**
 - User sees "Creating..." state for 2.5 minutes
 
 **Recommendation**: ⚠️ **HIGH PRIORITY**
+
 ```go
 var wg sync.WaitGroup
 var mu sync.Mutex
@@ -417,11 +430,13 @@ func (m *Manager) cleanupExpired(ctx context.Context) error {
 ```
 
 **Problem**:
+
 - If 10 sandboxes expire at once and each takes 10 seconds to destroy, cleanup takes **100 seconds**
 - Next cleanup cycle delayed
 - Resources not freed quickly
 
 **Recommendation**: ⚠️ **MEDIUM PRIORITY**
+
 ```go
 var wg sync.WaitGroup
 for _, sb := range expired {
@@ -467,10 +482,12 @@ func (m *Manager) Destroy(ctx context.Context, id string) error {
 ```
 
 **Problem**:
+
 - Sandbox with 5 resources, each takes 10 seconds to destroy = **50 seconds**
 - User waiting for "destroy" command to complete
 
 **Recommendation**: ⚠️ **MEDIUM PRIORITY**
+
 ```go
 var wg sync.WaitGroup
 var mu sync.Mutex
@@ -544,12 +561,14 @@ func (e *Executor) ExecuteHooks(
 ```
 
 **Assessment**: ✅ **Correct Design**
+
 - Hooks often have dependencies (e.g., "install software" → "configure software")
 - Sequential execution ensures ordering
 - `ContinueOnFailure` flag provides flexibility
 - Phase timeout prevents runaway hooks
 
 **Recommendation**: ✅ No change needed
+
 - Consider future enhancement: allow parallel execution for hooks marked as "independent"
 - Not a bottleneck compared to other issues
 
@@ -560,12 +579,14 @@ func (e *Executor) ExecuteHooks(
 #### 4.1 Docker Provider (`internal/provider/docker/docker.go`)
 
 **All operations are synchronous**: ✅ Correct
+
 - `Provision()`: Creates and starts container (lines 45-152)
 - `Destroy()`: Removes container (lines 155-170)
 - `GetStatus()`: Inspects container (lines 172-203)
 - `Exec()`: Executes command (lines 316-367)
 
 **Assessment**: ✅ **Correct Design**
+
 - Provider interface is designed to be synchronous
 - Concurrency handled at pool/sandbox manager level
 - Clean, simple implementation
@@ -579,11 +600,13 @@ func (e *Executor) ExecuteHooks(
 **Minimal channel usage found**:
 
 1. **Pool Manager** (line 39, 71):
+
    ```go
    stopChan chan struct{}  // Unbuffered, used for shutdown signaling
    ```
 
 2. **Tests** (stress_test.go):
+
    ```go
    errors := make(chan error, numWorkers)  // Buffered
    done := make(chan struct{})             // Unbuffered
@@ -591,16 +614,19 @@ func (e *Executor) ExecuteHooks(
    ```
 
 3. **Serve Command** (cmd/boxy/commands/serve.go:132):
+
    ```go
    sigChan := make(chan os.Signal, 1)  // Buffered for signal handling
    ```
 
 **Assessment**: ✅ Adequate
+
 - Channels used appropriately for signaling
 - No need for worker pools with channels (goroutines + WaitGroups work fine)
 - Test channels properly buffered
 
 **Recommendation**: ✅ No change needed
+
 - Current pattern of "spawn goroutine + WaitGroup" is appropriate for the workload
 - If adding work distribution in the future, consider channels
 
@@ -611,23 +637,27 @@ func (e *Executor) ExecuteHooks(
 #### 6.1 Lock Analysis 🔒
 
 **Pool Manager Locks**:
+
 - Uses `sync.RWMutex` ✅ (good for read-heavy operations)
 - `Allocate()`: Holds exclusive lock (lines 150-151)
 - `ensureMinReady()`: Holds exclusive lock (lines 420-421)
 - Lock held during expensive operations (hooks) ⚠️
 
 **Provider Registry Locks** (pkg/provider/provider.go):
+
 - Uses `sync.RWMutex` ✅
 - `Register()`: Exclusive lock (lines 92-93)
 - `Get()`, `List()`: Read lock (lines 99-100, 107-108)
 - Properly designed for concurrent read access ✅
 
 **Mock Provider Locks** (internal/provider/mock/mock.go):
+
 - Uses `sync.Mutex` ✅
 - Fine-grained locking per operation ✅
 - No long-held locks ✅
 
 **Assessment**: ✅ Good mutex usage overall, but:
+
 - ⚠️ Pool manager holds exclusive lock too long during allocation hooks
 - ⚠️ Pool manager holds exclusive lock during entire provisioning loop
 
@@ -638,12 +668,14 @@ func (e *Executor) ExecuteHooks(
 #### 7.1 Potential Race Conditions 🔍
 
 **Examined areas**:
+
 1. ✅ Pool resource allocation - protected by mutex
 2. ✅ Provider registry access - protected by RWMutex
 3. ✅ Sandbox state updates - each operation atomic
 4. ✅ Background worker shutdown - properly coordinated with WaitGroup + context
 
 **Testing Evidence**:
+
 - CI runs tests with `-race` flag (.github/workflows/ci.yml:43, 46)
 - Stress tests verify concurrent access (tests/integration/stress_test.go)
 - No race conditions detected in current implementation
@@ -657,7 +689,7 @@ func (e *Executor) ExecuteHooks(
 ### Current Sequential Operations
 
 | Operation | Resources | Time per Resource | Total Time (Sequential) | Total Time (Parallel) | Speedup |
-|-----------|-----------|-------------------|------------------------|---------------------|---------|
+| ----------- | ----------- | ------------------- | ------------------------ | --------------------- | --------- |
 | Pool replenishment | 10 VMs | 30s | **5 minutes** | 30s | **10x** |
 | Health checks | 50 resources | 1s | **50 seconds** | 1s | **50x** |
 | Sandbox allocation | 5 resources | 30s | **2.5 minutes** | 30s | **5x** |
@@ -669,11 +701,13 @@ func (e *Executor) ExecuteHooks(
 **Scenario**: User requests sandbox with 3 Windows VMs, each with personalization hooks
 
 **Current Experience**:
+
 1. Request submitted (instant)
 2. Waiting for resources... (90+ seconds) ⏱️
 3. Sandbox ready
 
 **With Parallel Allocation**:
+
 1. Request submitted (instant)
 2. Waiting for resources... (30 seconds) ⚡
 3. Sandbox ready
@@ -706,19 +740,19 @@ func (e *Executor) ExecuteHooks(
 
 ### 🟡 Medium Priority (Background Operations)
 
-4. **Parallel Health Checks** (performHealthChecks)
+1. **Parallel Health Checks** (performHealthChecks)
    - File: `internal/core/pool/manager.go:595-638`
    - Impact: 50x faster health check cycles
    - Complexity: Low
    - Risk: Low (independent operations)
 
-5. **Parallel Sandbox Destroy** (Destroy)
+2. **Parallel Sandbox Destroy** (Destroy)
    - File: `internal/core/sandbox/manager.go:281-335`
    - Impact: 5x faster cleanup
    - Complexity: Low
    - Risk: Low (independent operations)
 
-6. **Parallel Expired Cleanup** (cleanupExpired)
+3. **Parallel Expired Cleanup** (cleanupExpired)
    - File: `internal/core/sandbox/manager.go:423-443`
    - Impact: 10x faster batch cleanup
    - Complexity: Low
@@ -726,13 +760,13 @@ func (e *Executor) ExecuteHooks(
 
 ### 🟢 Low Priority (Future Enhancements)
 
-7. **Buffered Work Channels** (optional)
+1. **Buffered Work Channels** (optional)
    - Impact: More predictable resource usage
    - Complexity: High
    - Risk: Medium (architectural change)
    - Recommendation: Only if needed for rate limiting
 
-8. **Parallel Independent Hooks** (optional)
+2. **Parallel Independent Hooks** (optional)
    - Impact: Faster hook execution for independent hooks
    - Complexity: High
    - Risk: Medium (need dependency analysis)
@@ -771,12 +805,14 @@ wg.Wait()
 ```
 
 **When to use**:
+
 - I/O-bound operations (network, disk)
 - Resource provisioning
 - External API calls
 - Health checks
 
 **Benefits**:
+
 - Prevents overwhelming external systems
 - Predictable resource usage
 - Graceful degradation
@@ -803,6 +839,7 @@ wg.Wait()
 ```
 
 **When to use**:
+
 - CPU-bound operations
 - In-memory processing
 - Independent database queries (with connection pool)
@@ -846,6 +883,7 @@ return results, nil
 ```
 
 **When to use**:
+
 - Collecting results from parallel operations
 - Error handling with fail-fast
 - Aggregating data
@@ -875,6 +913,7 @@ func BenchmarkEnsureMinReady_Parallel(b *testing.B) {
 ```
 
 Run with:
+
 ```bash
 go test -bench=BenchmarkEnsureMinReady -benchtime=10s -benchmem
 ```
@@ -884,6 +923,7 @@ go test -bench=BenchmarkEnsureMinReady -benchtime=10s -benchmem
 Already have good stress tests in `tests/integration/stress_test.go` ✅
 
 Add specific tests for:
+
 - Parallel provisioning under load
 - Concurrent allocations during replenishment
 - Health checks during allocation storms
@@ -893,6 +933,7 @@ Add specific tests for:
 CI already runs with `-race` ✅
 
 Add to development workflow:
+
 ```bash
 make test-race    # Already in Makefile line 93
 ```

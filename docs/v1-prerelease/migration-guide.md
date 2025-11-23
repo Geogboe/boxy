@@ -29,7 +29,7 @@ This guide covers migration from MVP to v1 Prerelease. Since v1 is **pre-release
 ## Breaking Changes Summary
 
 | Change | Impact | Migration Required |
-|--------|--------|-------------------|
+| -------- | -------- | ------------------- |
 | Hook names changed | Config | Update YAML |
 | New resource states | Code | Automatic migration |
 | Multi-tenancy | Auth | Create users |
@@ -43,6 +43,7 @@ This guide covers migration from MVP to v1 Prerelease. Since v1 is **pre-release
 ### Hook Names
 
 **Before:**
+
 ```yaml
 pools:
   - name: ubuntu-containers
@@ -57,6 +58,7 @@ pools:
 ```
 
 **After:**
+
 ```yaml
 pools:
   - name: ubuntu-containers
@@ -75,6 +77,7 @@ pools:
 ### Preheating Configuration
 
 **New:**
+
 ```yaml
 pools:
   - name: ubuntu-containers
@@ -94,6 +97,7 @@ pools:
 ### Distributed Agents
 
 **New:**
+
 ```yaml
 server:
   mode: server
@@ -203,12 +207,14 @@ boxy sandbox ls  # Should show all sandboxes owned by admin
 ## Config File Location
 
 ### Old Location
-```
+
+```text
 ~/.config/boxy/boxy.yaml    # User-specific (WRONG for service)
 ```
 
 ### New Location
-```
+
+```text
 ./boxy.yaml                 # Project directory (CORRECT)
 ```
 
@@ -278,6 +284,7 @@ curl -H "Authorization: Bearer bxy_<token>" \
 ### Pool Interface
 
 **Before:**
+
 ```go
 // Sandbox directly called pool.Allocate()
 pool, _ := pools["ubuntu-containers"]
@@ -285,6 +292,7 @@ res, err := pool.Allocate(ctx, sandboxID)
 ```
 
 **After:**
+
 ```go
 // Use Allocator
 allocator := ... // Get from service
@@ -294,6 +302,7 @@ res, err := allocator.AllocateFromPool(ctx, "ubuntu-containers", sandboxID)
 ### Resource States
 
 **New states added:**
+
 ```go
 const (
     StateProvisioned  // Cold (stopped)
@@ -386,6 +395,7 @@ boxy sandbox destroy $SANDBOX_ID
 ### Step 1: Backup
 
 **Before migrating, always backup:**
+
 ```bash
 # Backup database
 cp ~/.local/share/boxy/boxy.db ~/.local/share/boxy/boxy.db.backup
@@ -425,6 +435,7 @@ systemctl start boxy
 **Cause**: Multi-tenancy now enforced
 
 **Fix:**
+
 ```bash
 # Get admin token from migration output
 # OR generate new token
@@ -436,6 +447,7 @@ boxy admin reset-token --username admin
 **Cause**: Config not in current directory
 
 **Fix:**
+
 ```bash
 # Specify config explicitly
 boxy serve --config /path/to/boxy.yaml
@@ -455,6 +467,7 @@ cp /old/path/boxy.yaml ./boxy.yaml
 **Cause**: Preheating disabled, resources are cold
 
 **Fix:** Either:
+
 1. Enable preheating in config
 2. Wait for resources to warm on-demand
 
@@ -478,7 +491,7 @@ cp /old/path/boxy.yaml ./boxy.yaml
 1. Check logs: `journalctl -u boxy -f`
 2. Enable debug logging: `BOXY_LOG_LEVEL=debug boxy serve`
 3. Review [10-debugging-guide.md](10-debugging-guide.md)
-4. Open issue: https://github.com/geogboe/boxy/issues
+4. Open issue: <https://github.com/geogboe/boxy/issues>
 
 ---
 

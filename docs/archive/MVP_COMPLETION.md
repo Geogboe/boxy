@@ -8,17 +8,20 @@
 The Boxy MVP is now **feature-complete** with distributed agent architecture fully implemented. The system supports:
 
 ✅ **Core Functionality**
+
 - Pool management with auto-replenishment
 - Sandbox lifecycle management
 - Multiple resource types (VMs, containers)
 - Hook system for provisioning customization
 
 ✅ **Distributed Architecture**
+
 - gRPC-based remote agent system
 - Cross-platform orchestration (Linux server → Windows Hyper-V)
 - Secure and efficient communication
 
 ✅ **Examples and Documentation**
+
 - 3 comprehensive end-to-end examples
 - Complete setup and testing scripts
 - Troubleshooting guides
@@ -30,9 +33,11 @@ The Boxy MVP is now **feature-complete** with distributed agent architecture ful
 The key requirement for MVP - enabling cross-platform resource management.
 
 #### Protocol Buffers Schema
+
 **File**: `pkg/provider/proto/provider.proto`
 
 Added two critical RPC methods:
+
 - `Exec` - Execute commands inside resources
 - `Update` - Modify resource state (power, snapshots, resources)
 
@@ -44,17 +49,21 @@ service ProviderService {
 ```
 
 #### RemoteProvider (gRPC Client)
+
 **Files**:
+
 - `pkg/provider/remote/remote.go` - Full implementation
 - `pkg/provider/remote/convert.go` - Type conversions
 
 **Key Features**:
+
 - Implements Provider interface by proxying to remote agent
 - gRPC keepalive (10s ping, 5s timeout) for connection health
 - Secure by default with TLS support (insecure mode for testing)
 - Type-safe conversions between internal and proto types
 
 **Security Enhancements**:
+
 ```go
 // Enhanced security warnings
 if !cfg.UseTLS {
@@ -72,17 +81,21 @@ opts = append(opts, grpc.WithKeepaliveParams(keepalive.ClientParameters{
 ```
 
 #### Agent Server (gRPC Server)
+
 **Files**:
+
 - `internal/agent/server.go` - Full gRPC server
 - `internal/agent/convert.go` - Type conversions
 
 **Key Features**:
+
 - Routes RPC calls to local provider implementations
 - Runs on remote machines (Windows with Hyper-V, etc.)
 - Stateless design (server stores all state)
 - Provider registry with validation
 
 **Implementation**:
+
 ```go
 func (s *Server) Provision(ctx context.Context, req *pb.ProvisionRequest) (*pb.ProvisionResponse, error) {
     prov, err := s.getProvider(req.ProviderName)  // Validate provider exists
@@ -95,17 +108,20 @@ func (s *Server) Provision(ctx context.Context, req *pb.ProvisionRequest) (*pb.P
 ```
 
 #### Agent CLI Command
+
 **File**: `cmd/boxy/commands/agent.go`
 
 New command: `boxy agent serve`
 
 **Features**:
+
 - Auto-detects providers based on OS (Hyper-V on Windows, Docker on Linux)
 - Manual override with `--providers` flag
 - TLS and insecure modes
 - Signal handling for graceful shutdown
 
 **Usage**:
+
 ```bash
 # Auto-detect providers
 boxy agent serve --listen :50051
@@ -122,11 +138,14 @@ boxy agent serve --listen :50051 \
 ```
 
 #### Configuration Support
+
 **Files**:
+
 - `internal/config/config.go` - Added AgentConfig struct
 - `cmd/boxy/commands/serve.go` - Remote provider registration
 
 **New Configuration**:
+
 ```yaml
 agents:
   - id: windows-agent
@@ -145,9 +164,11 @@ pools:
 ```
 
 #### Provider Updates
+
 **File**: `internal/provider/hyperv/hyperv.go`
 
 Added missing interface methods:
+
 - `Type()` - Returns ResourceTypeVM
 - `HealthCheck()` - Verifies provider health
 
@@ -156,16 +177,19 @@ Added missing interface methods:
 Fixed multiple type conversion issues discovered during implementation:
 
 **Pointer Types**:
+
 - `Resource.SandboxID` is `*string` (optional)
 - `Resource.ExpiresAt` is `*time.Time` (optional)
 - Added helper functions: `stringPtr()`, `stringVal()`, `timePtr()`, `timeVal()`
 
 **Map Types**:
+
 - `Resource.Metadata` is `map[string]interface{}` internally
 - Proto uses `map[string]string`
 - Conversion helpers: `mapToStringMap()`, `stringMapToMap()`
 
 **Provider Interface**:
+
 - `Provision()` takes `ResourceSpec` by value (not pointer)
 - `Update()` takes `ResourceUpdate` struct (not action/params)
 - `Exec()` returns `ExecResult` struct
@@ -175,15 +199,18 @@ Fixed multiple type conversion issues discovered during implementation:
 Created 3 complete end-to-end examples in `examples/` directory.
 
 #### Example 1: Simple Docker Pool
+
 **Location**: `examples/01-simple-docker-pool/`
 
 **Demonstrates**:
+
 - Basic pool configuration
 - Pool warming and replenishment
 - Sandbox creation and destruction
 - Resource lifecycle
 
 **Files**:
+
 - `README.md` - Complete documentation
 - `boxy.yaml` - Minimal configuration
 - `run.sh` - Start Boxy service
@@ -192,15 +219,18 @@ Created 3 complete end-to-end examples in `examples/` directory.
 **Key Learning**: Understanding core Boxy concepts
 
 #### Example 2: Hooks Demo
+
 **Location**: `examples/02-hooks-demo/`
 
 **Demonstrates**:
+
 - Two-phase provisioning (finalization + personalization)
 - Hook system with template variables
 - Slow vs fast operations
 - User creation and workspace setup
 
 **Files**:
+
 - `README.md` - Comprehensive hook documentation
 - `boxy.yaml` - Full hook configuration with comments
 - `run.sh` - Start Boxy service
@@ -210,6 +240,7 @@ Created 3 complete end-to-end examples in `examples/` directory.
 **Key Learning**: Advanced provisioning with customization
 
 **Hook Phases**:
+
 ```yaml
 hooks:
   after_provision:      # Finalization (slow, once per resource)
@@ -227,15 +258,18 @@ hooks:
 ```
 
 #### Example 3: Remote Agent
+
 **Location**: `examples/03-remote-agent/`
 
 **Demonstrates**:
+
 - Distributed agent architecture
 - Cross-platform orchestration (Linux → Windows)
 - Remote resource management
 - gRPC communication
 
 **Files**:
+
 - `README.md` - Architecture overview and setup guide
 - `agent-config.yaml` - Agent configuration (Windows machine)
 - `server-config.yaml` - Server configuration (Linux machine)
@@ -246,7 +280,8 @@ hooks:
 **Key Learning**: How distributed Boxy works
 
 **Architecture**:
-```
+
+```text
 Linux Server (boxy serve)
     │
     │ gRPC/HTTP2
@@ -262,6 +297,7 @@ Hyper-V VMs
 Created comprehensive technical documentation:
 
 **SECURITY_AND_CONNECTION_STRATEGY.md**
+
 - Complete security analysis
 - Industry standard comparison (gRPC vs alternatives)
 - Why gRPC is correct for this use case
@@ -269,12 +305,14 @@ Created comprehensive technical documentation:
 - Security recommendations
 
 **AGENT_IMPLEMENTATION_STATUS.md**
+
 - Complete implementation status
 - What exists vs what doesn't
 - Testing plan
 - Known limitations
 
 **Example READMEs**
+
 - Step-by-step setup instructions
 - Troubleshooting sections
 - Expected output samples
@@ -321,6 +359,7 @@ Created comprehensive technical documentation:
 Full production-ready implementation of the Hyper-V provider.
 
 **Files**:
+
 - `internal/provider/hyperv/hyperv.go` - Complete provider implementation
 - `internal/provider/hyperv/powershell.go` - PowerShell executor
 - `internal/provider/hyperv/hyperv_test.go` - Unit tests
@@ -328,6 +367,7 @@ Full production-ready implementation of the Hyper-V provider.
 - `docs/providers/hyperv.md` - Complete documentation
 
 **Key Features**:
+
 - **VM Provisioning** - Creates VMs using PowerShell cmdlets (New-VM, New-VHD)
 - **Differencing Disks** - Fast provisioning from base images (~30 seconds)
 - **Power Management** - Start, stop, pause, restart operations
@@ -339,6 +379,7 @@ Full production-ready implementation of the Hyper-V provider.
 - **Health Checks** - Verify Hyper-V service status
 
 **Implementation Highlights**:
+
 ```go
 // PowerShell execution with JSON parsing
 type psExecutor struct {
@@ -372,12 +413,14 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 ```
 
 **Testing**:
+
 - ✅ Unit tests pass on all platforms
 - ✅ Integration tests ready (requires Windows + Hyper-V)
 - ✅ No compilation errors
 - ✅ No regression in existing tests
 
 **Documentation**:
+
 - Complete setup guide with prerequisites
 - Base image creation instructions
 - Network configuration examples
@@ -418,6 +461,7 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 ### ✅ Ready to Test
 
 1. **Simple Docker Pool** (Example 1)
+
    ```bash
    cd examples/01-simple-docker-pool
    ./run.sh    # In terminal 1
@@ -425,6 +469,7 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
    ```
 
 2. **Hooks Demo** (Example 2)
+
    ```bash
    cd examples/02-hooks-demo
    ./run.sh           # In terminal 1
@@ -433,6 +478,7 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
    ```
 
 3. **Remote Agent** (Example 3)
+
    ```bash
    # On Windows machine with Hyper-V
    cd examples/03-remote-agent
@@ -448,12 +494,14 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 ### ⚠️ Testing Notes
 
 **Hyper-V Testing**:
+
 - ✅ Hyper-V provider fully implemented
 - ✅ Unit tests pass on all platforms
 - ⚠️ Integration tests require Windows + Hyper-V installation
 - ⚠️ Need base VHD images for provisioning tests
 
 **Testing Strategy**:
+
 1. **On Linux**: Test Examples 1 & 2 with Docker (fully functional)
 2. **On Linux**: Test Example 3 agent architecture with mock provider
 3. **On Windows**: Test Hyper-V provider unit tests
@@ -467,6 +515,7 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 The system supports two modes:
 
 ### Insecure Mode (No Certs)
+
 ```yaml
 agents:
   - id: windows-agent
@@ -475,11 +524,13 @@ agents:
 ```
 
 **Use for**:
+
 - Testing and development
 - Trusted internal networks (LAN)
 - Lab environments
 
 ### TLS Mode (Certs Required)
+
 ```yaml
 agents:
   - id: windows-agent
@@ -491,11 +542,13 @@ agents:
 ```
 
 **Use for**:
+
 - Production deployments
 - Untrusted networks
 - Multi-tenant environments
 
 **Future Enhancement**: Add CLI commands for certificate generation:
+
 ```bash
 boxy cert init          # Create CA
 boxy cert create-agent  # Create agent cert
@@ -507,17 +560,20 @@ boxy cert create-client # Create client cert
 ### Current Security Posture
 
 **✅ Secure**:
+
 - gRPC with optional mTLS support
 - No credentials logged
 - Encrypted credential storage (AES-256)
 - Connection keepalive prevents silent failures
 
 **⚠️ Insecure by Default** (By Design for MVP):
+
 - `use_tls: false` is default in examples
 - Clear warnings displayed when running insecure
 - Documentation emphasizes trusted network requirement
 
 **Recommendations**:
+
 1. Use insecure mode for MVP testing on trusted networks
 2. Enable TLS for production deployments
 3. Add certificate management in post-MVP phase
@@ -526,18 +582,21 @@ boxy cert create-client # Create client cert
 ## Known Issues and Limitations
 
 ### 1. No Agent Health Monitoring
+
 **Issue**: Server doesn't automatically check agent health
 **Impact**: Dead agents not detected until provisioning fails
 **Workaround**: gRPC keepalive detects connection failures
 **Fix**: Add periodic health checks from server
 
 ### 3. No Agent Discovery (Intentional)
+
 **Issue**: Agents must be manually configured
 **Impact**: More manual configuration required
 **Workaround**: This is acceptable for MVP (user confirmed)
 **Fix**: Could add mDNS/DNS-SD discovery in future
 
 ### 3. Limited Error Recovery
+
 **Issue**: No automatic retry on transient failures
 **Impact**: Provisioning may fail due to temporary network issues
 **Workaround**: Manual retry
@@ -546,7 +605,8 @@ boxy cert create-client # Create client cert
 ## Files Modified/Created
 
 ### New Files
-```
+
+```text
 pkg/provider/remote/remote.go              # RemoteProvider implementation
 pkg/provider/remote/convert.go             # Type conversions
 internal/agent/server.go                   # Agent gRPC server
@@ -561,7 +621,8 @@ MVP_COMPLETION.md                          # This document
 ```
 
 ### Modified Files
-```
+
+```text
 pkg/provider/proto/provider.proto          # Added Exec and Update RPCs
 internal/config/config.go                  # Added AgentConfig
 cmd/boxy/commands/serve.go                 # Remote provider registration
@@ -569,6 +630,7 @@ internal/provider/hyperv/hyperv.go         # Added Type() and HealthCheck()
 ```
 
 ### Compilation Status
+
 ✅ All code compiles successfully
 ✅ No type errors
 ✅ No import errors
@@ -579,24 +641,29 @@ internal/provider/hyperv/hyperv.go         # Added Type() and HealthCheck()
 ### Immediate Testing (30 minutes)
 
 1. **Test Simple Docker Pool**:
+
    ```bash
    cd examples/01-simple-docker-pool
    ./run.sh &
    sleep 5
    ./test.sh
    ```
+
    **Expected**: Pool warms, sandbox created, resources cleaned up
 
 2. **Test Hooks System**:
+
    ```bash
    cd examples/02-hooks-demo
    ./run.sh &
    sleep 5
    ./test.sh
    ```
+
    **Expected**: Hooks execute, user created, tools installed
 
 3. **Test Agent Architecture** (mock provider):
+
    ```bash
    # Terminal 1
    cd examples/03-remote-agent
@@ -610,11 +677,13 @@ internal/provider/hyperv/hyperv.go         # Added Type() and HealthCheck()
    # Terminal 3
    ./test.sh
    ```
+
    **Expected**: Remote provisioning works, agent receives RPCs
 
 ### Next Steps
 
 #### Phase 1: Integration Testing on Windows (Immediate - 1-2 days)
+
 **Status**: ✅ Implementation complete, ready for testing
 
 1. **Set up Windows Test Environment**
@@ -624,12 +693,14 @@ internal/provider/hyperv/hyperv.go         # Added Type() and HealthCheck()
    - Configure virtual switch
 
 2. **Run Integration Tests**
+
    ```bash
    # On Windows machine
    go test -tags windows ./tests/integration/...
    ```
 
 3. **Test End-to-End with Agent**
+
    ```bash
    # On Windows: Start agent
    boxy agent serve --listen :50051
@@ -695,6 +766,7 @@ internal/provider/hyperv/hyperv.go         # Added Type() and HealthCheck()
 ## Success Criteria
 
 ### MVP Success (✅ FULLY ACHIEVED)
+
 - [x] Core pool and sandbox functionality
 - [x] Hook system for provisioning
 - [x] Distributed agent architecture
@@ -707,6 +779,7 @@ internal/provider/hyperv/hyperv.go         # Added Type() and HealthCheck()
 - [x] No regressions
 
 ### Production Ready (🔜 NEXT PHASE)
+
 - [x] Hyper-V provider implemented
 - [ ] Hyper-V integration tests passing on Windows
 - [ ] TLS enabled by default
@@ -721,6 +794,7 @@ internal/provider/hyperv/hyperv.go         # Added Type() and HealthCheck()
 The Boxy MVP is **100% feature-complete** and ready for production testing. All core functionality has been implemented including the full Hyper-V provider.
 
 ### What Works ✅
+
 - ✅ Pool management with auto-replenishment
 - ✅ Sandbox lifecycle management
 - ✅ Hook system for provisioning customization (finalization + personalization)
@@ -738,6 +812,7 @@ The Boxy MVP is **100% feature-complete** and ready for production testing. All 
 - ✅ No regressions
 
 ### What's Next 🚀
+
 1. **Integration Testing** (1-2 days)
    - Test Hyper-V provider on Windows
    - Verify cross-platform agent architecture
@@ -756,11 +831,13 @@ The Boxy MVP is **100% feature-complete** and ready for production testing. All 
 ### Testing Now
 
 **Immediate Testing (Linux)**:
+
 - ✅ Example 1: Simple Docker Pool - Fully functional
 - ✅ Example 2: Hooks Demo - Fully functional
 - ✅ Example 3: Remote Agent (with mock) - Architecture verified
 
 **Windows Testing (Next)**:
+
 - 🧪 Hyper-V provider integration tests
 - 🧪 Cross-platform agent communication
 - 🧪 Full VM lifecycle (provision, update, destroy)
@@ -770,6 +847,7 @@ The Boxy MVP is **100% feature-complete** and ready for production testing. All 
 ---
 
 **Questions or Issues?**
+
 - Check example READMEs for troubleshooting
 - Review SECURITY_AND_CONNECTION_STRATEGY.md for security guidance
 - See AGENT_IMPLEMENTATION_STATUS.md for implementation details

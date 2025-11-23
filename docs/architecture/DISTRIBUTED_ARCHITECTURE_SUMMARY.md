@@ -15,7 +15,7 @@ Boxy currently runs all providers embedded in a single process on the same host.
 
 **Distributed Agent Architecture** with transparent remote provider proxying:
 
-```
+```text
 Server (Linux)                    Agent (Windows)
 ┌─────────────────┐              ┌──────────────────┐
 │  Pool Manager   │              │  Hyper-V         │
@@ -89,6 +89,7 @@ boxy serve
 ### Distributed Multi-Host (New)
 
 **Server Configuration**:
+
 ```yaml
 # boxy.yaml (server)
 agents:
@@ -104,6 +105,7 @@ pools:
 ```
 
 **Agent Configuration**:
+
 ```yaml
 # agent.yaml (agent)
 agent:
@@ -119,6 +121,7 @@ agent:
 ```
 
 **Commands**:
+
 ```bash
 # Initialize CA (one-time)
 boxy admin init-ca --output /etc/boxy/ca
@@ -160,31 +163,37 @@ boxy agent serve --config agent.yaml
 ## Implementation Phases
 
 ### Phase 1: Foundation (Week 1)
+
 - Protocol Buffers & gRPC code generation
 - RemoteProvider implementation
 - Agent Server implementation
 
 ### Phase 2: Security (Week 1)
+
 - Certificate management commands
 - mTLS configuration
 - Authorization logic
 
 ### Phase 3: Agent Mode (Week 2)
+
 - `boxy agent serve` command
 - Agent registration & heartbeat
 - Health monitoring
 
 ### Phase 4: Server Integration (Week 2)
+
 - Configuration schema updates
 - Provider routing
 - Agent registry
 
 ### Phase 5: Observability (Week 3)
+
 - Metrics (Prometheus)
 - Tracing (OpenTelemetry)
 - Audit logging
 
 ### Phase 6: Production Readiness (Week 3)
+
 - Resilience (retries, circuit breakers)
 - Stress testing
 - Security audit
@@ -194,22 +203,26 @@ boxy agent serve --config agent.yaml
 ## Benefits
 
 ### Flexibility
+
 - ✅ Mix Windows and Linux providers
 - ✅ Distribute load across hosts
 - ✅ Isolate providers for security
 
 ### Scalability
+
 - ✅ Add agents as needed
 - ✅ Scale providers independently
 - ✅ No single point of bottleneck
 
-### Security
+### Security Checklist
+
 - ✅ mTLS authentication
 - ✅ Provider-level authorization
 - ✅ Audit all operations
 - ✅ Certificate rotation
 
 ### Maintainability
+
 - ✅ Single binary (no version skew)
 - ✅ Backwards compatible
 - ✅ Clear abstractions
@@ -218,12 +231,14 @@ boxy agent serve --config agent.yaml
 ## Trade-offs
 
 ### Complexity Added
+
 - ❌ Certificate management overhead
 - ❌ Network communication (latency, failures)
 - ❌ More operational complexity
 - ❌ Additional monitoring required
 
 ### Mitigation Strategies
+
 - ✅ Automate certificate renewal
 - ✅ Connection pooling and caching
 - ✅ Comprehensive documentation
@@ -232,21 +247,25 @@ boxy agent serve --config agent.yaml
 ## Testing Strategy
 
 ### Unit Tests
+
 - Mock gRPC clients/servers
 - Test proto conversions
 - Test authorization logic
 
 ### Integration Tests
+
 - Real gRPC communication
 - Stubbed providers
 - Test failure scenarios
 
 ### End-to-End Tests
+
 - Full server + agent setup
 - Real providers (Docker as analog)
 - Test distributed provisioning
 
 ### Stress Tests
+
 - High concurrency (100+ requests)
 - Multiple agents (10+)
 - Large resource counts (1000+)
@@ -255,23 +274,27 @@ boxy agent serve --config agent.yaml
 ## Success Criteria
 
 ### Performance
+
 - [ ] Provision latency <5s for remote providers
 - [ ] Support 1000+ resources across agents
 - [ ] Support 10+ agents
 - [ ] Handle 100 concurrent requests
 
 ### Reliability
+
 - [ ] 99.9% uptime
 - [ ] Automatic retry on transient failures
 - [ ] Graceful degradation on agent failures
 
 ### Security
+
 - [ ] All communication encrypted (mTLS)
 - [ ] No credential leaks
 - [ ] All operations audited
 - [ ] Certificate rotation automated
 
 ### Usability
+
 - [ ] Simple configuration
 - [ ] Clear error messages
 - [ ] Comprehensive documentation
@@ -280,12 +303,15 @@ boxy agent serve --config agent.yaml
 ## Migration Path
 
 ### Phase 0: Current State (No Changes)
+
 All pools use local providers - continues to work
 
 ### Phase 1: Opt-In Remote Providers
+
 Some pools route to agents, others stay local
 
 ### Phase 2: Full Distributed
+
 All providers on dedicated agent hosts
 
 **Key Point**: Existing deployments continue working without any changes.
@@ -293,15 +319,18 @@ All providers on dedicated agent hosts
 ## Documentation
 
 ### Architecture
+
 - ✅ [ADR-004: Distributed Agent Architecture](../decisions/adr-004-distributed-agent-architecture.md)
 - ✅ [Implementation Guide](distributed-agent-implementation.md)
 - ✅ [Security Guide](security-guide.md)
 
 ### Implementation
+
 - ✅ [Implementation Roadmap](../IMPLEMENTATION_ROADMAP.md)
 - ✅ [Protocol Buffers](../../pkg/provider/proto/provider.proto)
 
 ### Operations
+
 - ⏳ Deployment Guide (to be created)
 - ⏳ Operations Runbook (to be created)
 - ⏳ Troubleshooting Guide (to be created)
@@ -318,21 +347,27 @@ All providers on dedicated agent hosts
 ## Questions & Answers
 
 ### Q: Why not just use SSH to run commands on remote hosts?
+
 **A**: SSH lacks type safety, structured error handling, and requires shell scripting. gRPC provides a clean, typed API with built-in auth, retries, and streaming.
 
 ### Q: Why single binary instead of separate server/agent binaries?
+
 **A**: Prevents version skew, simplifies deployment, allows running in "both" mode for small deployments, shares code between server and agent.
 
 ### Q: What if an agent crashes during provisioning?
+
 **A**: Provisioning is idempotent. On restart, agent reports existing resources. Server can detect incomplete provisions and retry or mark as failed.
 
 ### Q: How do we handle network partitions?
+
 **A**: Circuit breakers prevent cascading failures. Agents buffer heartbeats. Server marks agents as degraded after missed heartbeats. Manual intervention may be required for long partitions.
 
 ### Q: Can we add providers without recompiling?
+
 **A**: Not in Phase 1. Phase 1 uses compiled-in providers exposed via agents. Future enhancement could support plugin loading on agents.
 
 ### Q: How do we load balance across multiple agents with same provider?
+
 **A**: Phase 1: Manual assignment per pool. Phase 2+: Round-robin or capacity-based routing.
 
 ## Conclusion

@@ -1,1 +1,3 @@
+# GEMINI
+
 See @AGENTS.md
