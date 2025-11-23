@@ -374,10 +374,10 @@ boxy/
 
 3. **Delete old directories**
   - `internal/core/resource/` - Moved to pkg/provider
-   - `internal/crypto/` - Moved to pkg/crypto
-   - `internal/provider/` - Moved to pkg/provider
-   - `internal/agent/` - Moved to pkg/agent
-   - `pkg/api/` - Empty, can delete
+  - `internal/crypto/` - Moved to pkg/crypto
+  - `internal/provider/` - Moved to pkg/provider
+  - `internal/agent/` - Moved to pkg/agent
+  - `pkg/api/` - Empty, can delete
 
 ### Medium Priority
 
