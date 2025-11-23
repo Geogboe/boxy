@@ -70,13 +70,6 @@ func TestResource_IsAvailable(t *testing.T) {
     res.SandboxID = &sandboxID
     assert.False(t, res.IsAvailable())
 }
-
-// Example using a mock from internal/core/allocator/allocator_test.go
-func TestAllocator_AllocateFromPool(t *testing.T) {
-    mockRepo := &mockResourceRepository{} // Assuming a mock implementation exists
-    mockPool := &mockPoolManager{}       // Assuming a mock implementation exists
-    // ... setup and test allocator logic
-}
 ```
 
 ### 2. Integration Tests
@@ -134,20 +127,6 @@ func TestPoolManager_Integration(t *testing.T) {
     require.NoError(t, err)
     assert.GreaterOrEqual(t, stats.TotalReady, config.MinReady)
 }
-
-// Example from v1-prerelease (tests/integration/allocator_test.go)
-func TestIntegration_FullAllocationFlow(t *testing.T) {
-    if testing.Short() {
-        t.Skip("skipping integration test")
-    }
-    // Setup: Real Docker provider, real database
-    // ...
-    // Test: Allocate resource via allocator
-    // ...
-    // Verify: Resource is running via provider
-    // ...
-    // Cleanup: Release resource
-}
 ```
 
 ### 3. End-to-End (E2E) Tests
@@ -190,24 +169,6 @@ func TestE2E_CreateSandbox(t *testing.T) {
         "-p", "test-pool:1", "-d", "5m").CombinedOutput()
     require.NoError(t, err)
     assert.Contains(t, string(out), "Sandbox created successfully")
-}
-
-// Example from v1-prerelease (tests/e2e/quick_testing_usecase_test.go)
-func TestE2E_QuickTestingUseCase(t *testing.T) {
-    if testing.Short() {
-        t.Skip("skipping e2e test")
-    }
-    // Simulates primary use case from USE_CASES.md
-    // ... (start server, request sandbox via CLI, verify quickly, get connection, destroy) ...
-}
-
-// Example from v1-prerelease (tests/e2e/distributed_agent_test.go)
-func TestE2E_DistributedAgent_StubHyperV(t *testing.T) {
-    // 1. Start agent with stubbed Hyper-V provider
-    // 2. Start server configured to use agent
-    // 3. Create sandbox with Hyper-V pool
-    // 4. Verify communication over gRPC/mTLS
-    // 5. Verify resource created on agent
 }
 ```
 
@@ -446,28 +407,6 @@ tests/
 │       └── test-container/Dockerfile
 ```
 
-### Test Databases
-
-A utility function for creating and managing temporary SQLite databases for tests:
-```go
-// tests/testutil/db.go (Example)
-func NewTestDB(t *testing.T) *sql.DB {
-    // Create temporary SQLite database
-    db, err := sql.Open("sqlite3", ":memory:")
-    require.NoError(t, err)
-
-    // Run migrations
-    // RunMigrations(db) // Assuming this exists
-
-    // Cleanup
-    t.Cleanup(func() {
-        db.Close()
-    })
-
-    return db
-}
-```
-
 ## Performance Benchmarks
 
 Track key metrics using Go's built-in benchmarking tools:
@@ -485,39 +424,3 @@ Track key metrics using Go's built-in benchmarking tools:
 5.  **Cleanup**: Always ensure resources created during tests are properly cleaned up.
 6.  **Parallel**: Utilize `t.Parallel()` where tests are safe to run concurrently.
 7.  **Table-Driven**: Use table-driven tests for variations of inputs or scenarios.
-
-## Coverage Goals
-
-| Component | Target | Status (as of v1 Prerelease) |
-| :---------------------- | :-------- | :-------------------------- |
-| `internal/core/allocator` | > 90%     | not-started                 |
-| `internal/core/pool`    | > 85%     | not-started                 |
-| `internal/core/sandbox` | > 85%     | not-started                 |
-| `pkg/provider/remote`   | > 90%     | not-started                 |
-| `internal/agent`        | > 85%     | not-started                 |
-| **Overall**             | **> 80%** | not-started                 |
-
-## Current Status (as of v1 Prerelease)
-
--   [ ] Unit tests for domain models
--   [ ] Mock provider implementation
--   [ ] Integration tests for pool manager
--   [ ] Integration tests for sandbox manager
--   [ ] E2E CLI tests
--   [ ] Stress tests for concurrent operations
--   [ ] Race detection tests
--   [ ] CI/CD pipeline
--   [ ] Performance benchmarks
-
-## Next Steps (as of v1 Prerelease)
-
-1.  Implement mock provider.
-2.  Add unit tests for core domain.
-3.  Add integration tests.
-4.  Create E2E test suite.
-5.  Run stress tests.
-6.  Set up CI pipeline.
-7.  Achieve >80% coverage.
-
-**Last Updated**: 2025-11-23
-**Review**: Continuous throughout v1 implementation

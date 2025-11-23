@@ -372,7 +372,7 @@ export BOXY_ENCRYPTION_KEY=$(cat ~/.config/boxy/encryption.key | base64)
 
 ## Running as a System Service
 
-For production deployments, it\'s recommended to run Boxy as a system service.
+For production deployments, it's recommended to run Boxy as a system service.
 
 ### Linux (systemd)
 
@@ -381,7 +381,7 @@ For production deployments, it\'s recommended to run Boxy as a system service.
     sudo useradd -r -s /bin/false boxy
     sudo usermod -aG docker boxy # Add boxy user to docker group
     ```
-2.  **Copy Configuration**: Copy your `boxy.yaml` and `encryption.key` to the system user\'s config path.
+2.  **Copy Configuration**: Copy your `boxy.yaml` and `encryption.key` to the system user's config path.
     ```bash
     sudo mkdir -p /home/boxy/.config/boxy
     sudo cp ~/.config/boxy/boxy.yaml /home/boxy/.config/boxy/
@@ -478,6 +478,18 @@ For production deployments, it\'s recommended to run Boxy as a system service.
     # sudo usermod -aG docker $USER && newgrp docker
     ```
 
+### Database Locked Errors
+
+SQLite can have locking issues under heavy load or if multiple Boxy instances try to access the same DB file.
+```bash
+# Check if multiple Boxy instances are running
+ps aux | grep boxy
+
+# Kill duplicate processes
+kill <pid>
+```
+*For production use with high concurrency, consider configuring Boxy to use an external PostgreSQL database (support planned for a future release).*
+
 ### Orphaned Containers
 
 If Boxy crashes unexpectedly, some containers managed by Boxy might be left running.
@@ -529,7 +541,7 @@ logging:
 -   Read the [CLI Reference](/README.md#cli-reference) for all commands (Note: This link assumes `README.md` at root has a CLI reference, otherwise adjust.)
 -   Explore the [Roadmap](../ROADMAP.md) for upcoming features.
 -   Check out [Examples](/examples/) for common use cases.
--   Learn about [Boxy\'s Architecture](../architecture/overview.md) to understand how it works.
+-   Learn about [Boxy's Architecture](../architecture/overview.md) to understand how it works.
 -   **For distributed setups (Linux server + Windows agents), see the [Distributed Quick Start Guide](../QUICK_START_DISTRIBUTED.md).**
 
 ## Tips
@@ -540,4 +552,4 @@ logging:
 4.  **Short Durations**: Use short durations (e.g., `15m`, `30m`) while testing to avoid resource buildup.
 5.  **Clean Slate**: Delete `~/.config/boxy/boxy.db` to reset all state (losing all sandbox info).
 
-**You\'re ready to start using Boxy! 🎉**
+**You're ready to start using Boxy! 🎉**

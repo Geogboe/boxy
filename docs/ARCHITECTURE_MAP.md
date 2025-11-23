@@ -4,7 +4,7 @@
 **Date:** 2024-11-22
 **Purpose:** Complete system architecture for review and planning
 
-For the overarching project vision and other phases, please refer to the [Boxy Development Roadmap](../../ROADMAP.md).
+For the overarching project vision and other phases, please refer to the [Boxy Development Roadmap](../ROADMAP.md).
 
 ---
 
@@ -15,14 +15,15 @@ For the overarching project vision and other phases, please refer to the [Boxy D
 │                           USER INTERFACES                                    │
 │                                                                              │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │
-│  │     CLI      │  │   Web UI     │  │  REST API    │  │   SDK/LIB    │  (v2) │
-│  │ boxy pool    │  │ Dashboard    │  │ HTTP/JSON    │  │ Go Client    │       │
-│  │ boxy sandbox │  │ Pool Mgmt    │  │ Auth: Token  │  │ Programmatic │       │
-│  │ boxy admin   │  │ (v2)         │  │              │  │ (v2)         │       │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘       │
-│         │                 │                 │                 │                │
-│         └─────────────────┴─────────────────┴─────────────────┘                │
-└─────────────────────────────────────┬──────────────────────────────────────────┘
+│  │     CLI      │  │   Web UI     │  │  REST API    │  │   SDK/LIB    │   │
+│  │              │  │              │  │              │  │              │   │
+│  │ boxy pool    │  │ Dashboard    │  │ HTTP/JSON    │  │ Go Client    │   │
+│  │ boxy sandbox │  │ Pool Mgmt    │  │ Auth: Token  │  │ Programmatic │   │
+│  │ boxy admin   │  │ (v2)         │  │              │  │ (v2)         │   │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘   │
+│         │                 │                 │                 │            │
+│         └─────────────────┴─────────────────┴─────────────────┘            │
+└─────────────────────────────────────┬───────────────────────────────────────┘
                                       │
                                       ↓
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -130,21 +131,21 @@ For the overarching project vision and other phases, please refer to the [Boxy D
 │  │  Queries:                                                              │ │
 │  │  - Get available resources for pool                                   │ │
 │  │  - Get allocated resources for sandbox                                │ │
-│  │  - Count resources by state                                           │  │
-│  │  - Get expired sandboxes                                              │  │
-│  │  - User authentication by token                                       │  │
-│  └────────────────────────────────────────────────────────────────────────┘  │
-│                                                                               │
-│  ┌────────────────────────────────────────────────────────────────────────┐  │
-│  │  CONFIGURATION STORE                                                   │  │
-│  │                                                                        │  │
-│  │  ~/.config/boxy/boxy.yaml                                              │  │
-│  │  - Pool definitions                                                    │  │
-│  │  - Provider settings                                                   │  │
-│  │  - Preheating config                                                   │  │
-│  │  - Hook definitions                                                    │  │
-│  │  - Server settings                                                     │  │
-│  └────────────────────────────────────────────────────────────────────────┘  │
+│  │  - Count resources by state                                           │ │
+│  │  - Get expired sandboxes                                              │ │
+│  │  - User authentication by token                                       │ │
+│  └────────────────────────────────────────────────────────────────────────┘ │
+│                                                                              │
+│  ┌────────────────────────────────────────────────────────────────────────┐ │
+│  │  CONFIGURATION STORE                                                   │ │
+│  │                                                                        │ │
+│  │  ~/.config/boxy/boxy.yaml                                              │ │
+│  │  - Pool definitions                                                    │ │
+│  │  - Provider settings                                                   │ │
+│  │  - Preheating config                                                   │ │
+│  │  - Hook definitions                                                    │ │
+│  │  - Server settings                                                     │ │
+│  └────────────────────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────┬───────────────────────────────────────┘
                                       │
                                       ↓
@@ -163,7 +164,7 @@ For the overarching project vision and other phases, please refer to the [Boxy D
 │  │              │  │              │  │              │  │              │   │
 │  │ Local:       │  │ Local/Remote:│  │ Local:       │  │ Remote:      │   │
 │  │ - Embedded   │  │ - Embedded   │  │ - Embedded   │  │ - Via agent  │   │
-│  │ - Docker API │  │ - PowerShell │  │ - libvirt    │  │ - gRPC       │  │
+│  │ - Docker API │  │ - PowerShell │  │ - libvirt    │  │ - gRPC       │   │
 │  │              │  │ - COM/WMI    │  │              │  │              │   │
 │  │              │  │ Remote:      │  │              │  │              │   │
 │  │              │  │ - Via agent  │  │              │  │              │   │
@@ -553,7 +554,7 @@ Benefits:
    - Pool manages unallocated
    - Sandbox manages allocated
    - Allocator orchestrates between them
-   - See also: [docs/architecture/MVP_DESIGN.md](architecture/MVP_DESIGN.md) for MVP design principles.
+   - See also: [architecture/MVP_DESIGN.md](architecture/MVP_DESIGN.md) for MVP design principles.
 
 2. **Single Source of Truth**
    - Allocator owns resource ownership tracking
@@ -568,12 +569,12 @@ Benefits:
    - Providers are dumb CRUD interfaces
    - No logic, no state
    - Easily swappable
-   - See also: [docs/decisions/adr-002-provider-architecture.md](decisions/adr-002-provider-architecture.md) for provider architecture decisions.
+   - See also: [decisions/adr-002-provider-architecture.md](decisions/adr-002-provider-architecture.md) for provider architecture decisions.
 
 5. **Hook System**
    - on_provision: Heavy setup (pool warming)
    - on_allocate: User personalization (fast)
-   - See also: [docs/architecture/HOOKS.md](architecture/HOOKS.md) for detailed hook design.
+   - See also: [architecture/HOOKS.md](architecture/HOOKS.md) for detailed hook design.
 
 6. **Resource Lifecycle**
    - Cold → Warm → Allocated → Destroyed
@@ -589,6 +590,4 @@ Benefits:
 
 **Document Purpose:**
 
-This diagram provides a complete architectural map for planning, design,
-and review. Use this to understand the entire system at a glance and
-identify how components interact.
+This document provides a complete architectural map for planning, design, and review. Use this to understand the entire system at a glance and identify how components interact. For more detail on specific areas, refer to the documents in the `architecture/` and `decisions/` directories.
