@@ -385,3 +385,11 @@ Major decisions will be documented as ADRs in `/docs/decisions/`.
 ### Decisions Made
 
 - None yet (project just started)
+
+## Detailed Phase Plans and Implementation Guides
+
+For more granular details on specific phases or implementation aspects, refer to these documents:
+
+-   **v1 Prerelease Implementation**: [docs/v1-prerelease/README.md](v1-prerelease/README.md) - Provides a detailed breakdown of features planned for the v1 prerelease.
+-   **v2 Prerelease Implementation**: [docs/v2-prerelease/README.md](v2-prerelease/README.md) - Details features planned for the v2 prerelease.
+-   **Distributed Agent Architecture Implementation**: [docs/IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md) - Offers a tactical, step-by-step implementation plan for the distributed agent architecture.
