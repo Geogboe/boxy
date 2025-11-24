@@ -383,17 +383,20 @@ Boxy:
 Before claiming any component is "done" or "complete", you **MUST** verify:
 
 ✅ **Code Quality:**
+
 - [ ] Run `golangci-lint run ./path/to/package/...` - All linters pass with zero errors
 - [ ] Code builds successfully (`go build .`)
 - [ ] No compiler warnings or errors
 
 ✅ **Testing:**
+
 - [ ] Unit tests written for all functions (`*_test.go` files)
 - [ ] All tests pass (`go test -v .`)
 - [ ] Test coverage is reasonable (aim for >80% on critical paths)
 - [ ] Edge cases and error scenarios tested
 
 ✅ **Documentation:**
+
 - [ ] Package has README.md with:
   - Purpose/contract clearly stated
   - Usage examples that actually work
@@ -403,6 +406,7 @@ Before claiming any component is "done" or "complete", you **MUST** verify:
 - [ ] Complex logic has inline comments explaining why
 
 ✅ **Integration:**
+
 - [ ] Package integrates with dependent packages
 - [ ] Import paths are correct
 - [ ] No circular dependencies

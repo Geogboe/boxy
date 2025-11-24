@@ -39,12 +39,14 @@ To guide our testing efforts, we adhere to the Testing Pyramid model:
 **Target**: > 80% Coverage for business logic.
 
 **Scope**:
+
 - Domain models (Resource, Pool, Sandbox)
 - Business logic validation
 - State transitions
 - Helper functions
 
 **Tools**:
+
 - `testing` (Go stdlib)
 - `testify/assert` for assertions
 - `testify/require` for critical checks
@@ -53,6 +55,7 @@ To guide our testing efforts, we adhere to the Testing Pyramid model:
 **Location**: `*_test.go` files alongside source.
 
 **Mocking Strategy**:
+
 - Use interfaces for dependencies to enable mocking.
 - Create simple, custom mock implementations rather than relying heavily on complex mocking frameworks.
 
@@ -78,6 +81,7 @@ func TestResource_IsAvailable(t *testing.T) {
 **Target**: All major workflows.
 
 **Scope**:
+
 - Pool manager + Storage
 - Sandbox manager + Pool allocators
 - Provider + Docker SDK (requires Docker)
@@ -88,6 +92,7 @@ func TestResource_IsAvailable(t *testing.T) {
 **Stubbed Provider**: Hyper-V (simulated for testing on Linux CI).
 
 **Tools**:
+
 - Docker-in-Docker for isolated testing.
 - Testcontainers for dependencies.
 - In-memory SQLite for fast database tests.
@@ -135,6 +140,7 @@ func TestPoolManager_Integration(t *testing.T) {
 **Target**: All documented use cases.
 
 **Scope**:
+
 - `boxy init` → `boxy serve` → `boxy sandbox create` → cleanup.
 - Multi-pool sandboxes.
 - Expiration and auto-cleanup.
@@ -177,12 +183,14 @@ func TestE2E_CreateSandbox(t *testing.T) {
 **Goal**: Verify behavior under load and identify performance bottlenecks.
 
 **Scope**:
+
 - Concurrent sandbox creation (100+ sandboxes).
 - Pool exhaustion scenarios.
 - Rapid allocation/deallocation.
 - Memory and goroutine leaks (using `go test -race`).
 
 **Tools**:
+
 - `go test -race` for race detection.
 - `pprof` for profiling.
 - Custom load generators.
@@ -194,6 +202,7 @@ func TestE2E_CreateSandbox(t *testing.T) {
 **Goal**: Ensure graceful handling of unexpected situations and failures.
 
 **Scope**:
+
 - Docker daemon down, database corruption.
 - Configuration errors, resource limits exceeded.
 - Network failures, partial failures during sandbox creation/cleanup.
@@ -224,7 +233,9 @@ func (s *StubHyperVProvider) Provision(ctx context.Context, spec resource.Resour
 }
 // ... other Provider methods implemented realistically for testing
 ```
+
 **Usage in Tests**:
+
 ```go
 // Use stub in integration tests or E2E tests for Linux CI
 stubProvider := stub.NewStubHyperVProvider(10 * time.Second)
@@ -259,6 +270,7 @@ echo "✅ Smoke tests passed"
 
 **Goal**: Ensure no functionality is lost or broken by new changes, especially for existing features.
 **Strategy**:
+
 - Keep all existing E2E tests from previous milestones (e.g., MVP).
 - Run these tests with new architecture and features.
 - All regression tests must pass without modification.
@@ -312,29 +324,29 @@ boxy/
 .PHONY: test test-unit test-integration test-e2e test-stress test-all
 
 test-unit:
-	go test -v -short ./...
+ go test -v -short ./...
 
 test-integration:
-	go test -v ./tests/integration/...
+ go test -v ./tests/integration/...
 
 test-e2e:
-	go test -v -timeout 10m ./tests/e2e/...
+ go test -v -timeout 10m ./tests/e2e/...
 
 test-stress:
-	go test -v -timeout 30m ./tests/stress/...
+ go test -v -timeout 30m ./tests/stress/...
 
 test-race:
-	go test -race -short ./...
+ go test -race -short ./...
 
 test-coverage:
-	go test -coverprofile=coverage.out ./...
-	go tool cover -html=coverage.out -o coverage.html
+ go test -coverprofile=coverage.out ./...
+ go tool cover -html=coverage.out -o coverage.html
 
 test-all: test-unit test-integration test-e2e
-	@echo "All tests passed!"
+ @echo "All tests passed!"
 
 bench:
-	go test -bench=. -benchmem ./...
+ go test -bench=. -benchmem ./...
 ```
 
 ## Continuous Integration (GitHub Actions)
@@ -384,14 +396,15 @@ jobs:
 
 ## Test Data Management
 
--   Use `t.TempDir()` for temporary directories.
--   Clean up Docker containers and other resources with `t.Cleanup()`.
--   Use in-memory SQLite (`:memory:`) for fast database tests.
--   Deterministic UUIDs in tests for reproducibility where possible.
+- Use `t.TempDir()` for temporary directories.
+- Clean up Docker containers and other resources with `t.Cleanup()`.
+- Use in-memory SQLite (`:memory:`) for fast database tests.
+- Deterministic UUIDs in tests for reproducibility where possible.
 
 ### Fixtures
 
 Test data, configuration, and certificates are organized in `tests/fixtures/`:
+
 ```text
 tests/
 ├── fixtures/
@@ -410,17 +423,18 @@ tests/
 ## Performance Benchmarks
 
 Track key metrics using Go's built-in benchmarking tools:
--   Sandbox creation time.
--   Pool replenishment speed.
--   Memory usage under load.
--   Goroutine count stability.
+
+- Sandbox creation time.
+- Pool replenishment speed.
+- Memory usage under load.
+- Goroutine count stability.
 
 ## Testing Best Practices
 
-1.  **Isolation**: Each test is independent and does not affect others.
-2.  **Fast**: Unit tests should run quickly (< 1s).
-3.  **Deterministic**: Tests should produce the same results every time (no flaky tests).
-4.  **Clear**: Use descriptive test names and provide clear error messages.
-5.  **Cleanup**: Always ensure resources created during tests are properly cleaned up.
-6.  **Parallel**: Utilize `t.Parallel()` where tests are safe to run concurrently.
-7.  **Table-Driven**: Use table-driven tests for variations of inputs or scenarios.
+1. **Isolation**: Each test is independent and does not affect others.
+2. **Fast**: Unit tests should run quickly (< 1s).
+3. **Deterministic**: Tests should produce the same results every time (no flaky tests).
+4. **Clear**: Use descriptive test names and provide clear error messages.
+5. **Cleanup**: Always ensure resources created during tests are properly cleaned up.
+6. **Parallel**: Utilize `t.Parallel()` where tests are safe to run concurrently.
+7. **Table-Driven**: Use table-driven tests for variations of inputs or scenarios.

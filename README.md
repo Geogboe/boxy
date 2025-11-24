@@ -450,24 +450,6 @@ task --list
 - Update documentation as needed
 - See [CLAUDE.md](CLAUDE.md) for AI assistant development guidelines
 
-## Releases
-
-Releases are automated via GitHub Actions when version tags are pushed:
-
-```bash
-git tag -a v1.0.0 -m "Release v1.0.0"
-git push origin v1.0.0
-```
-
-This automatically:
-
-- Builds binaries for all platforms
-- Generates changelog from commits
-- Creates GitHub release
-- Builds and pushes Docker images
-
-See [docs/RELEASE.md](docs/RELEASE.md) for detailed release process.
-
 ## Architecture Decisions
 
 See [docs/decisions/](docs/decisions/) for Architecture Decision Records (ADRs):

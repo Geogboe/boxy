@@ -8,17 +8,17 @@ The `Provider` interface defines a set of capabilities for managing the lifecycl
 
 Each subdirectory in this package contains a concrete implementation of the `Provider` interface.
 
--   **`docker/`**: Manages local Docker containers by communicating with the Docker daemon.
--   **`hyperv/`**: Manages local Hyper-V VMs by executing PowerShell commands.
--   **`mock/`**: A "fake" provider used during testing to simulate provider actions without any real-world side effects.
--   **`remote/`**: A special provider that acts as a network client to a remote Boxy Agent, delegating all actions.
+- **`docker/`**: Manages local Docker containers by communicating with the Docker daemon.
+- **`hyperv/`**: Manages local Hyper-V VMs by executing PowerShell commands.
+- **`mock/`**: A "fake" provider used during testing to simulate provider actions without any real-world side effects.
+- **`remote/`**: A special provider that acts as a network client to a remote Boxy Agent, delegating all actions.
 
 ## The `remote` and `proto` Relationship
 
 The `remote` and `proto` packages work together to enable Boxy's distributed agent architecture.
 
--   **`proto/`**: This directory contains the "language" for network communication, defined using **gRPC** and **Protocol Buffers**. The `.proto` files here are the blueprints for the API between a client and a server.
--   **`remote/`**: This provider uses the "language" defined in `proto/` to talk to a Boxy Agent running on another machine. It doesn't manage resources itself; it acts as a **remote control**.
+- **`proto/`**: This directory contains the "language" for network communication, defined using **gRPC** and **Protocol Buffers**. The `.proto` files here are the blueprints for the API between a client and a server.
+- **`remote/`**: This provider uses the "language" defined in `proto/` to talk to a Boxy Agent running on another machine. It doesn't manage resources itself; it acts as a **remote control**.
 
 ### Workflow Diagram
 

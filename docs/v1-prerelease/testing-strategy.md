@@ -14,6 +14,6 @@ This document contains specific testing considerations and examples relevant to 
 
 ### Key v1 Test Scenarios
 
--   **Integration**: `TestIntegration_FullAllocationFlow`, `TestPreheating_DockerContainers`, `TestRecycling_RollingStrategy`, `TestMultiTenancy_QuotaEnforcement`, `TestAgent_DockerViaRemote`.
--   **E2E**: `TestE2E_QuickTestingUseCase`, `TestE2E_CIRunnerUseCase`, `TestE2E_DistributedAgent_StubHyperV`.
--   **Manual**: A full manual test pass on a Windows host with a real Hyper-V provider is required before v1 release.
+- **Integration**: `TestIntegration_FullAllocationFlow`, `TestPreheating_DockerContainers`, `TestRecycling_RollingStrategy`, `TestMultiTenancy_QuotaEnforcement`, `TestAgent_DockerViaRemote`.
+- **E2E**: `TestE2E_QuickTestingUseCase`, `TestE2E_CIRunnerUseCase`, `TestE2E_DistributedAgent_StubHyperV`.
+- **Manual**: A full manual test pass on a Windows host with a real Hyper-V provider is required before v1 release.

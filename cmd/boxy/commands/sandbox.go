@@ -18,6 +18,7 @@ import (
 	"github.com/Geogboe/boxy/pkg/crypto"
 	"github.com/Geogboe/boxy/pkg/provider"
 	"github.com/Geogboe/boxy/pkg/provider/docker"
+	"github.com/Geogboe/boxy/pkg/provider/scratch/shell"
 )
 
 var (
@@ -97,13 +98,18 @@ Example:
 			return fmt.Errorf("failed to create encryptor: %w", err)
 		}
 
-		dockerProvider, err := docker.NewProvider(logger, encryptor)
-		if err != nil {
-			return fmt.Errorf("failed to create Docker provider: %w", err)
-		}
-
 		providerRegistry := provider.NewRegistry()
-		providerRegistry.Register("docker", dockerProvider)
+		shCfg := scratchShellConfigFromPools(cfg.Pools)
+		dockerProvider, err := docker.NewProvider(logger, encryptor)
+		if err == nil {
+			providerRegistry.Register("docker", dockerProvider)
+		} else {
+			logger.WithError(err).Warn("Docker provider unavailable")
+		}
+		if needsScratchShell(cfg.Pools) {
+			shProvider := shell.New(logger, shCfg)
+			providerRegistry.Register(shProvider.Name(), shProvider)
+		}
 
 		resourceRepo := storage.NewResourceRepositoryAdapter(store)
 
@@ -378,4 +384,47 @@ func init() {
 
 	sandboxCmd.AddCommand(sandboxListCmd)
 	sandboxCmd.AddCommand(sandboxDestroyCmd)
+}
+
+func scratchShellConfigFromPools(pools []pool.PoolConfig) shell.Config {
+	cfg := shell.Config{}
+	for _, p := range pools {
+		if p.Backend != "scratch/shell" {
+			continue
+		}
+		if base, ok := p.ExtraConfig["base_dir"].(string); ok {
+			cfg.BaseDir = base
+		}
+		if shellsRaw, ok := p.ExtraConfig["allowed_shells"]; ok {
+			if list, ok := shellsRaw.([]interface{}); ok {
+				var shells []string
+				for _, s := range list {
+					if str, ok := s.(string); ok {
+						shells = append(shells, str)
+					}
+				}
+				if len(shells) > 0 {
+					cfg.AllowedShells = shells
+				}
+			}
+		}
+		if minFree, ok := p.ExtraConfig["min_free_bytes"]; ok {
+			switch v := minFree.(type) {
+			case int:
+				if v > 0 {
+					cfg.MinFreeBytes = uint64(v)
+				}
+			case int64:
+				if v > 0 {
+					cfg.MinFreeBytes = uint64(v)
+				}
+			case float64:
+				if v > 0 {
+					cfg.MinFreeBytes = uint64(v)
+				}
+			}
+		}
+		break
+	}
+	return cfg
 }

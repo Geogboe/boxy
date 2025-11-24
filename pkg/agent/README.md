@@ -66,8 +66,8 @@ if err := srv.Start(); err != nil {
 ### CLI Usage
 
 ```bash
-# Start agent with Docker provider (insecure, for testing)
-boxy agent serve --listen :50051 --providers docker
+# Start agent with Docker + scratch/shell providers (insecure, for testing)
+boxy agent serve --listen :50051 --providers docker,scratch/shell
 
 # Start agent with mTLS (production)
 boxy agent serve --listen :50051 \
@@ -76,6 +76,9 @@ boxy agent serve --listen :50051 \
   --tls-key /path/to/agent.key \
   --tls-ca /path/to/ca.crt \
   --use-tls
+
+# Auto-detect providers (default): Windows → hyperv + scratch/shell; Linux → docker + scratch/shell
+boxy agent serve --listen :50051
 ```
 
 ## Configuration
@@ -138,19 +141,20 @@ openssl x509 -req -in agent.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out ag
 
 The agent implements the `ProviderService` gRPC interface:
 
-| Method | Description |
-|--------|-------------|
-| `Provision` | Create a new resource (VM/container) |
-| `Destroy` | Remove a resource |
-| `GetStatus` | Get resource health and metrics |
-| `GetConnectionInfo` | Get SSH/RDP connection details |
-| `Exec` | Execute command inside resource |
-| `Update` | Apply updates (power state, resources, snapshots) |
-| `HealthCheck` | Verify provider health |
+| Method              | Description                                       |
+| ------------------- | ------------------------------------------------- |
+| `Provision`         | Create a new resource (VM/container)              |
+| `Destroy`           | Remove a resource                                 |
+| `GetStatus`         | Get resource health and metrics                   |
+| `GetConnectionInfo` | Get SSH/RDP connection details                    |
+| `Exec`              | Execute command inside resource                   |
+| `Update`            | Apply updates (power state, resources, snapshots) |
+| `HealthCheck`       | Verify provider health                            |
 
 ## Type Conversions
 
 The `convert.go` file handles conversion between:
+
 - Internal provider types (`provider.Resource`, `provider.ResourceSpec`)
 - Protocol buffer types (`pb.Resource`, `pb.ResourceSpec`)
 
@@ -167,12 +171,14 @@ The agent translates provider errors to gRPC status codes:
 ## Monitoring
 
 The agent logs:
+
 - Provider registration events
 - RPC request/response (debug level)
 - Operation durations
 - Error details
 
 Use structured logging with fields:
+
 ```go
 logger.WithFields(logrus.Fields{
     "agent_id": agentID,
@@ -184,6 +190,7 @@ logger.WithFields(logrus.Fields{
 ## Testing
 
 See `server_test.go` for examples of:
+
 - Mock provider registration
 - RPC call testing
 - Error handling validation

@@ -1,8 +1,8 @@
+# Distributed Architecture Summary
+
 For an overview of the entire system architecture, please refer to the [Boxy v1 Complete Architecture Map](../ARCHITECTURE_MAP.md).
 
-# Distributed Agent Architecture - Executive Summary
-
-## Problem Statement
+## Overview
 
 Boxy currently runs all providers embedded in a single process on the same host. This creates limitations:
 
