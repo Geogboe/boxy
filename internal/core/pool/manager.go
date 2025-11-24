@@ -10,7 +10,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"github.com/Geogboe/boxy/internal/hooks"
+	"github.com/Geogboe/boxy/internal/core/lifecycle/hooks"
 	"github.com/Geogboe/boxy/pkg/provider"
 )
 

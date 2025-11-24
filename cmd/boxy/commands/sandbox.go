@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Geogboe/boxy/internal/config"
-	"github.com/Geogboe/boxy/internal/server"
+	"github.com/Geogboe/boxy/internal/runtime"
 	"github.com/Geogboe/boxy/pkg/crypto"
 )
 
@@ -55,7 +55,7 @@ var sandboxCreateCmd = &cobra.Command{
 		}
 
 		// Storage
-		store, err := server.OpenStorage(cfg)
+		store, err := runtime.OpenStorage(cfg)
 		if err != nil {
 			return err
 		}
@@ -72,28 +72,28 @@ var sandboxCreateCmd = &cobra.Command{
 		}
 
 		ctx := context.Background()
-		registry := server.BuildRegistry(ctx, cfg.Pools, logger, encryptor)
-		rt, err := server.StartSandboxRuntime(ctx, cfg, registry, store, logger)
+		registry := runtime.BuildRegistry(ctx, cfg.Pools, logger, encryptor)
+		rt, err := runtime.StartSandboxRuntime(ctx, cfg, registry, store, logger)
 		if err != nil {
 			return err
 		}
 		defer rt.Stop(logger)
 
 		fmt.Println("Creating sandbox...")
-		createReq := server.CreateSandboxRequest{
+		createReq := runtime.CreateSandboxRequest{
 			Name:      sandboxName,
 			Resources: resources,
 			Duration:  duration,
 		}
 
-		sb, err := server.CreateSandbox(ctx, rt, createReq)
+		sb, err := runtime.CreateSandbox(ctx, rt, createReq)
 		if err != nil {
 			return fmt.Errorf("failed to create sandbox: %w", err)
 		}
 
 		fmt.Printf("✓ Sandbox %s created (allocating resources...)\n", sb.ID[:8])
 		fmt.Print("Waiting for resources")
-		sb, err = server.WaitSandboxReady(ctx, rt, sb.ID, 5*time.Minute)
+		sb, err = runtime.WaitSandboxReady(ctx, rt, sb.ID, 5*time.Minute)
 		if err != nil {
 			fmt.Println(" ✗")
 			return fmt.Errorf("failed to allocate resources: %w", err)
@@ -107,7 +107,7 @@ var sandboxCreateCmd = &cobra.Command{
 		}
 
 		printSandboxSummary(sb)
-		resourcesWithConn, err := server.GetSandboxResources(ctx, rt, sb.ID)
+		resourcesWithConn, err := runtime.GetSandboxResources(ctx, rt, sb.ID)
 		if err != nil {
 			logger.WithError(err).Warn("Failed to get connection info")
 			return nil
@@ -125,13 +125,13 @@ var sandboxListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		store, err := server.OpenStorage(cfg)
+		store, err := runtime.OpenStorage(cfg)
 		if err != nil {
 			return err
 		}
 		defer store.Close()
 
-		sbList, err := server.ListSandboxes(context.Background(), store)
+		sbList, err := runtime.ListSandboxes(context.Background(), store)
 		if err != nil {
 			return err
 		}
@@ -160,14 +160,14 @@ var sandboxDestroyCmd = &cobra.Command{
 			return err
 		}
 
-		store, err := server.OpenStorage(cfg)
+		store, err := runtime.OpenStorage(cfg)
 		if err != nil {
 			return err
 		}
 		defer store.Close()
 
 		ctx := createSignalContext()
-		if err := server.DestroySandbox(ctx, store, sandboxID); err != nil {
+		if err := runtime.DestroySandbox(ctx, store, sandboxID); err != nil {
 			return fmt.Errorf("failed to destroy sandbox: %w", err)
 		}
 		fmt.Printf("✓ Sandbox destroyed\n")
@@ -188,8 +188,8 @@ func init() {
 	sandboxCmd.AddCommand(sandboxDestroyCmd)
 }
 
-func parsePoolRequests(reqs []string) ([]server.ResourceRequest, error) {
-	var out []server.ResourceRequest
+func parsePoolRequests(reqs []string) ([]runtime.ResourceRequest, error) {
+	var out []runtime.ResourceRequest
 	for _, req := range reqs {
 		var poolName string
 		var count int
@@ -197,7 +197,7 @@ func parsePoolRequests(reqs []string) ([]server.ResourceRequest, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid pool format: %s (expected: pool-name:count)", req)
 		}
-		out = append(out, server.ResourceRequest{
+		out = append(out, runtime.ResourceRequest{
 			PoolName: poolName,
 			Count:    count,
 		})
@@ -205,7 +205,7 @@ func parsePoolRequests(reqs []string) ([]server.ResourceRequest, error) {
 	return out, nil
 }
 
-func printSandboxSummary(sb server.SandboxView) {
+func printSandboxSummary(sb runtime.SandboxView) {
 	fmt.Printf("\n✓ Sandbox ready\n\n")
 	fmt.Printf("ID:         %s\n", sb.ID)
 	if sb.Name != "" {
@@ -219,7 +219,7 @@ func printSandboxSummary(sb server.SandboxView) {
 	fmt.Println()
 }
 
-func printConnections(resources []server.ResourceWithConn) {
+func printConnections(resources []runtime.ResourceWithConn) {
 	fmt.Println("Resource Connection Info:")
 	fmt.Println("─────────────────────────")
 	for i, rwc := range resources {

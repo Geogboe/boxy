@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Geogboe/boxy/internal/core/allocator"
+	"github.com/Geogboe/boxy/internal/core/lifecycle/hooks"
 	"github.com/Geogboe/boxy/internal/core/pool"
 	"github.com/Geogboe/boxy/internal/core/sandbox"
-	"github.com/Geogboe/boxy/internal/hooks"
 	"github.com/Geogboe/boxy/internal/storage"
 	"github.com/Geogboe/boxy/pkg/crypto"
 	"github.com/Geogboe/boxy/pkg/provider"

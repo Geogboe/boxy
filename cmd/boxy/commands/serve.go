@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Geogboe/boxy/internal/server"
+	"github.com/Geogboe/boxy/internal/runtime"
 )
 
 var serveCmd = &cobra.Command{
@@ -26,7 +26,7 @@ var serveCmd = &cobra.Command{
 
 		logger.Info("Starting Boxy service")
 
-		rt, err := server.Start(ctx, cfg, logger)
+		rt, err := runtime.Start(ctx, cfg, logger)
 		if err != nil {
 			return err
 		}
