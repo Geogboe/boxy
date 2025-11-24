@@ -344,7 +344,6 @@ func (p *Provider) ensureImage(ctx context.Context, image string) error {
 	return nil
 }
 
-
 // Update modifies a resource (for Docker: resource limits, pause/unpause)
 func (p *Provider) Update(ctx context.Context, res *provider.Resource, updates provider.ResourceUpdate) error {
 	// TODO(mvp2): Implement resource limit updates

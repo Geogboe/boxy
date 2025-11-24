@@ -32,8 +32,8 @@ type Provider interface {
 // ResourceUpdate contains provider-specific update operations
 type ResourceUpdate struct {
 	// VM-specific operations
-	PowerState *PowerState   // start, stop, pause, reset
-	Snapshot   *SnapshotOp   // create, restore, delete snapshot
+	PowerState *PowerState // start, stop, pause, reset
+	Snapshot   *SnapshotOp // create, restore, delete snapshot
 
 	// Container-specific operations
 	Resources *ResourceLimits // CPU, memory adjustments

@@ -3,7 +3,7 @@
 // It is used by the Hyper-V provider to run commands during provisioning and
 // configuration, including before a VM has network access.
 //
-// Overview
+// # Overview
 //
 // PowerShell Direct allows commands to be invoked inside a running VM via
 // Hyper-V integration services. This package wraps that mechanism with a
@@ -13,26 +13,26 @@
 //   - Avoids PowerShell injection vulnerabilities
 //   - Captures stdout, stderr, and exit codes
 //
-// Requirements
+// # Requirements
 //
 // The host must be Windows with Hyper-V enabled, the VM must be running and have
 // integration services available, and valid guest credentials must be supplied.
 // Network connectivity is not required.
 //
-// API Notes
+// # API Notes
 //
 // A Client is constructed with a PowerShell executor. Exec invokes a command
 // inside a VM given its name, credentials, and an argument vector. Commands are
 // passed as data through PowerShell’s -ArgumentList to avoid ScriptBlock
 // injection risks. Result values include exit code, stdout, and stderr.
 //
-// Security
+// # Security
 //
 // The package uses an invocation pattern that treats the command to be executed
 // as a parameter rather than interpolated code. This prevents injection attacks
 // where untrusted command fragments could escape a ScriptBlock context.
 //
-// Dependencies
+// # Dependencies
 //
 // The only external dependency is pkg/powershell, which provides the host-side
 // PowerShell execution layer. The package contains no Hyper-V management logic;

@@ -115,9 +115,9 @@ func (e *Executor) executeHookWithRetry(
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if attempt > 1 {
 			e.logger.WithFields(logrus.Fields{
-				"resource_id": res.ID,
-				"hook_name":   hook.Name,
-				"attempt":     attempt,
+				"resource_id":  res.ID,
+				"hook_name":    hook.Name,
+				"attempt":      attempt,
 				"max_attempts": maxAttempts,
 			}).Info("Retrying hook")
 

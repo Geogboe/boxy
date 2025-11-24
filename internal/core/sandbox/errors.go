@@ -10,9 +10,9 @@ var (
 	ErrInvalidResourceCount = errors.New("resource count must be positive")
 
 	// Operational errors
-	ErrSandboxNotFound      = errors.New("sandbox not found")
-	ErrSandboxAlreadyExists = errors.New("sandbox already exists")
-	ErrSandboxExpired       = errors.New("sandbox has expired")
+	ErrSandboxNotFound       = errors.New("sandbox not found")
+	ErrSandboxAlreadyExists  = errors.New("sandbox already exists")
+	ErrSandboxExpired        = errors.New("sandbox has expired")
 	ErrInsufficientResources = errors.New("insufficient resources available")
 	ErrSandboxCreationFailed = errors.New("failed to create sandbox")
 )

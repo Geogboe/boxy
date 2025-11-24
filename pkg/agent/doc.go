@@ -3,7 +3,7 @@
 // It runs on remote machines and allows the central Boxy service to delegate
 // provisioning and lifecycle operations to those hosts.
 //
-// Overview
+// # Overview
 //
 // An agent instance hosts a gRPC server (optionally with mTLS) and exposes any
 // registered provider implementations. Incoming RPCs are routed to those
@@ -13,20 +13,20 @@
 //
 // Typical deployment:
 //
-//   Central Boxy Service
-//        |
-//        | gRPC (mTLS optional)
-//        |
-//     Agent Server
-//        |
-//        +-- Docker Provider
-//        +-- Hyper-V Provider
-//        +-- Mock Provider
+//	Central Boxy Service
+//	     |
+//	     | gRPC (mTLS optional)
+//	     |
+//	  Agent Server
+//	     |
+//	     +-- Docker Provider
+//	     +-- Hyper-V Provider
+//	     +-- Mock Provider
 //
 // The server manages provider lifecycle, health checks, and conversion between
 // internal provider types and protobuf messages.
 //
-// Usage
+// # Usage
 //
 // Server instances are created with NewServer and configured via Config. After
 // creation, providers are registered with RegisterProvider and the server is
@@ -34,13 +34,13 @@
 // caller is responsible for supplying provider implementations appropriate for
 // the host.
 //
-// Security
+// # Security
 //
 // The agent supports TLS and mutual TLS. When mTLS is enabled, both client and
 // server must present certificates signed by a shared CA. Certificate paths and
 // TLS settings are supplied through Config.
 //
-// RPC Surface
+// # RPC Surface
 //
 // The agent implements the ProviderService gRPC interface, supporting
 // operations such as:
@@ -68,5 +68,4 @@
 //   - No CLI parsing or flag handling (done in the CLI layer).
 //   - No opinionated certificate generation.
 //   - No direct domain logic outside provider delegation.
-//
 package agent

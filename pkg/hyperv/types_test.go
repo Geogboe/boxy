@@ -12,16 +12,16 @@ func TestVMInfo(t *testing.T) {
 		now := time.Now()
 
 		info := VMInfo{
-			Name:              "TestVM",
-			State:             "Running",
-			CPUUsage:          50,
-			MemoryAssigned:    2048,
-			Uptime:            "01:30:00",
-			Status:            "Operating normally",
-			CreationTime:      now,
-			ProcessorCount:    4,
-			MemoryStartup:     2048,
-			Generation:        2,
+			Name:           "TestVM",
+			State:          "Running",
+			CPUUsage:       50,
+			MemoryAssigned: 2048,
+			Uptime:         "01:30:00",
+			Status:         "Operating normally",
+			CreationTime:   now,
+			ProcessorCount: 4,
+			MemoryStartup:  2048,
+			Generation:     2,
 		}
 
 		assert.Equal(t, "TestVM", info.Name)

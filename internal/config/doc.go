@@ -6,9 +6,9 @@
 // # Search Paths
 //
 // Configuration files are searched in order:
-//   1. ./boxy.yaml
-//   2. ~/.config/boxy/boxy.yaml
-//   3. /etc/boxy/boxy.yaml
+//  1. ./boxy.yaml
+//  2. ~/.config/boxy/boxy.yaml
+//  3. /etc/boxy/boxy.yaml
 //
 // # Environment Variables
 //

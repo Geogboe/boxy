@@ -164,7 +164,7 @@ func TestPoolManager_Integration_HooksWithRetry(t *testing.T) {
 				Type:   hooks.HookTypeScript,
 				Shell:  hooks.ShellBash,
 				Inline: "echo 'Attempting operation...'", // Mock provider always succeeds
-				Retry:  2, // Allow 2 retries
+				Retry:  2,                                // Allow 2 retries
 			},
 		},
 	}

@@ -3,7 +3,7 @@
 // context-aware cancellation, and safe command invocation with JSON marshalling
 // support.
 //
-// Overview
+// # Overview
 //
 // The executor runs each script via exec.CommandContext in non-interactive
 // mode, capturing stdout, stderr, exit codes, and respecting context timeouts.
@@ -19,13 +19,13 @@
 //   - No interactive prompts (PowerShell -NonInteractive).
 //   - No use of shells beyond powershell.exe.
 //
-// Requirements
+// # Requirements
 //
 // The host must be Windows with powershell.exe available. Each invocation is
 // synchronous and stateless; the package does not maintain persistent
 // PowerShell sessions.
 //
-// Intended Use
+// # Intended Use
 //
 // The package is used by Hyper-V–related components that rely on PowerShell
 // for VM inspection and management, as well as by psdirect for PowerShell

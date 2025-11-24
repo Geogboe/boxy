@@ -38,19 +38,19 @@ const (
 type Hook struct {
 	Name              string        `yaml:"name" json:"name"`
 	Type              HookType      `yaml:"type" json:"type"`
-	Shell             ShellType     `yaml:"shell" json:"shell"`                                         // bash, powershell, python
-	Inline            string        `yaml:"inline,omitempty" json:"inline,omitempty"`                   // Inline script content
-	Path              string        `yaml:"path,omitempty" json:"path,omitempty"`                       // Path to script file
-	Timeout           time.Duration `yaml:"timeout,omitempty" json:"timeout,omitempty"`                 // Individual hook timeout
-	Retry             int           `yaml:"retry,omitempty" json:"retry,omitempty"`                     // Number of retry attempts
+	Shell             ShellType     `yaml:"shell" json:"shell"`                                                 // bash, powershell, python
+	Inline            string        `yaml:"inline,omitempty" json:"inline,omitempty"`                           // Inline script content
+	Path              string        `yaml:"path,omitempty" json:"path,omitempty"`                               // Path to script file
+	Timeout           time.Duration `yaml:"timeout,omitempty" json:"timeout,omitempty"`                         // Individual hook timeout
+	Retry             int           `yaml:"retry,omitempty" json:"retry,omitempty"`                             // Number of retry attempts
 	ContinueOnFailure bool          `yaml:"continue_on_failure,omitempty" json:"continue_on_failure,omitempty"` // Don't fail if this hook fails
 }
 
 // HookConfig contains all hooks for a pool
 type HookConfig struct {
-	AfterProvision  []Hook `yaml:"after_provision,omitempty" json:"after_provision,omitempty"`
-	BeforeAllocate  []Hook `yaml:"before_allocate,omitempty" json:"before_allocate,omitempty"`
-	UseSystemHooks  bool   `yaml:"use_system_hooks,omitempty" json:"use_system_hooks,omitempty"` // Enable Boxy's default hooks
+	AfterProvision []Hook `yaml:"after_provision,omitempty" json:"after_provision,omitempty"`
+	BeforeAllocate []Hook `yaml:"before_allocate,omitempty" json:"before_allocate,omitempty"`
+	UseSystemHooks bool   `yaml:"use_system_hooks,omitempty" json:"use_system_hooks,omitempty"` // Enable Boxy's default hooks
 }
 
 // TimeoutConfig contains phase-level timeouts
@@ -73,29 +73,29 @@ func DefaultTimeouts() TimeoutConfig {
 
 // HookResult contains the result of hook execution
 type HookResult struct {
-	Hook      string        `json:"hook_name"`
-	Success   bool          `json:"success"`
-	ExitCode  int           `json:"exit_code"`
-	Stdout    string        `json:"stdout,omitempty"`
-	Stderr    string        `json:"stderr,omitempty"`
-	Error     string        `json:"error,omitempty"`
-	Duration  time.Duration `json:"duration"`
-	Attempt   int           `json:"attempt"`  // Which retry attempt (1 = first try)
+	Hook     string        `json:"hook_name"`
+	Success  bool          `json:"success"`
+	ExitCode int           `json:"exit_code"`
+	Stdout   string        `json:"stdout,omitempty"`
+	Stderr   string        `json:"stderr,omitempty"`
+	Error    string        `json:"error,omitempty"`
+	Duration time.Duration `json:"duration"`
+	Attempt  int           `json:"attempt"` // Which retry attempt (1 = first try)
 }
 
 // HookContext contains context information for hook execution
 type HookContext struct {
 	// Resource information
-	ResourceID   string            `json:"resource_id"`
-	ResourceIP   string            `json:"resource_ip,omitempty"`
-	ResourceType string            `json:"resource_type"`
-	ProviderID   string            `json:"provider_id"`
-	PoolName     string            `json:"pool_name"`
+	ResourceID   string `json:"resource_id"`
+	ResourceIP   string `json:"resource_ip,omitempty"`
+	ResourceType string `json:"resource_type"`
+	ProviderID   string `json:"provider_id"`
+	PoolName     string `json:"pool_name"`
 
 	// Credentials (for before_allocate hooks)
-	Username     string            `json:"username,omitempty"`
-	Password     string            `json:"password,omitempty"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
 
 	// Additional metadata
-	Metadata     map[string]string `json:"metadata,omitempty"`
+	Metadata map[string]string `json:"metadata,omitempty"`
 }

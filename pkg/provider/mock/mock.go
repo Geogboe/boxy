@@ -15,16 +15,16 @@ import (
 
 // Provider is a mock provider for testing without Docker
 type Provider struct {
-	mu                sync.Mutex
-	resources         map[string]*provider.Resource
-	provisionDelay    time.Duration
-	destroyDelay      time.Duration
-	failureRate       float64 // 0.0 to 1.0
-	provisionCount    int
-	destroyCount      int
-	healthCheckCount  int
-	shouldFailHealth  bool
-	logger            *logrus.Logger
+	mu               sync.Mutex
+	resources        map[string]*provider.Resource
+	provisionDelay   time.Duration
+	destroyDelay     time.Duration
+	failureRate      float64 // 0.0 to 1.0
+	provisionCount   int
+	destroyCount     int
+	healthCheckCount int
+	shouldFailHealth bool
+	logger           *logrus.Logger
 }
 
 // Config for mock provider
