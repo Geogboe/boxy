@@ -13,7 +13,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
-	"github.com/Geogboe/boxy/internal/server"
+	boxyruntime "github.com/Geogboe/boxy/internal/runtime"
 	"github.com/Geogboe/boxy/pkg/agent"
 	"github.com/Geogboe/boxy/pkg/crypto"
 )
@@ -115,7 +115,7 @@ func runAgentServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create encryptor: %w", err)
 	}
 
-	server.AgentBootstrap(context.Background(), srv, logger, encryptor, providersToEnable)
+	boxyruntime.AgentBootstrap(context.Background(), srv, logger, encryptor, providersToEnable)
 
 	errChan := make(chan error, 1)
 	go func() {

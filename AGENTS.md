@@ -540,6 +540,27 @@ chore: update dependencies
 - Don't overuse - keep focused on important items
 - Remove TODOs when completed
 
+### Go docs & Package documentation
+
+- Always prefer `go doc` (or `godoc` for a local web server) to inspect package-level documentation and public APIs before making changes.
+  - Quick examples:
+    - `go doc ./pkg/provider` — view package documentation for `pkg/provider`.
+    - `go doc ./pkg/provider Provider` — view the docs for the exported symbol `Provider`.
+    - `godoc -http=:6060` and open `http://localhost:6060/pkg/` to browse documentation for all packages locally.
+- When updating or adding exported APIs, update the corresponding godoc comments as part of your change. This includes:
+  - Package-level comments at the top of the Go source file (the `package` comment).
+  - Comments for exported types, functions, methods, and constants.
+  - Code examples and usage snippets — keep them accurate.
+- If a package has a `README.md` in its directory, make this a doc.go file instead, and ensure it is kept up to date with any API changes.
+- Checklist for package-level changes (include in PR descriptions where applicable):
+  - [ ] Run `go doc <package>` to review current docs before the change.
+  - [ ] Update godoc comments for any modified or new exported symbols.
+  - [ ] Update package `README.md` or examples if present.
+  - [ ] Run `go test ./...` and `golangci-lint run` and fix any linter issues related to docs/comments.
+  - [ ] Link to the updated `docs/` pages or ADRs if broader API contracts changed.
+
+> 💡 Tip: The `go vet` command and many linters in the `golangci-lint` suite will detect missing or malformed comments for exported identifiers — include these tools in your pre-PR checks.
+
 ### 7. Testing Philosophy
 
 **Test at multiple levels:**
@@ -854,6 +875,10 @@ These tools are standard in the Go ecosystem and are installed via `go install`.
 - **`govulncheck`**: Scans your project's dependencies for known vulnerabilities.
   - **Installation**: `go install golang.org/x/vuln/cmd/govulncheck@latest`
   - **Usage**: Run `govulncheck ./...` in the project root to check for vulnerabilities. This is especially important before proposing a change that adds or updates dependencies.
+
+- **`go doc` / `godoc`**: Use to inspect package-level documentation and public APIs.
+  - **Installation**: `go doc` is included with the Go toolchain; `godoc` can be installed with `go install golang.org/x/tools/cmd/godoc@latest`.
+  - **Usage**: Run `go doc <package>` locally to quickly view package docs, or `godoc -http=:6060` and open `http://localhost:6060/pkg/` for a browsable package site. Use these tools to verify docs before submitting PRs.
 
 ### Linters and Scanners
 

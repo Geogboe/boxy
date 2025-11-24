@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Geogboe/boxy/internal/hooks"
+	"github.com/Geogboe/boxy/internal/core/lifecycle/hooks"
 	"github.com/Geogboe/boxy/pkg/provider/mock"
 )
 
