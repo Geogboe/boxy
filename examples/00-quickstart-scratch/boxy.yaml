@@ -60,7 +60,7 @@ pools:
 # Storage configuration (uses SQLite by default)
 storage:
   type: sqlite
-  path: ~/.config/boxy/quickstart.db
+  path: ./boxy.db
 
 # Logging
 logging:

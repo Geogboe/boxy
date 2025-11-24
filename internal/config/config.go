@@ -80,7 +80,7 @@ func Load(configPath string) (*Config, error) {
 
 	// Set defaults
 	v.SetDefault("storage.type", "sqlite")
-	v.SetDefault("storage.path", filepath.Join(os.Getenv("HOME"), ".config", "boxy", "boxy.db"))
+	v.SetDefault("storage.path", "./boxy.db")
 	v.SetDefault("logging.level", "info")
 	v.SetDefault("logging.format", "text")
 	v.SetDefault("api.enabled", true)
@@ -125,15 +125,16 @@ func LoadFromBytes(data []byte) (*Config, error) {
 
 // GetDefaultConfigPath returns the default config file path
 func GetDefaultConfigPath() string {
-	return filepath.Join(os.Getenv("HOME"), ".config", "boxy", "boxy.yaml")
+	return "./boxy.yaml"
 }
 
 // GetDefaultDBPath returns the default database path
 func GetDefaultDBPath() string {
-	return filepath.Join(os.Getenv("HOME"), ".config", "boxy", "boxy.db")
+	return "./boxy.db"
 }
 
 // EnsureConfigDir ensures the config directory exists
+// Note: This is deprecated - config and data should be local
 func EnsureConfigDir() error {
 	configDir := filepath.Join(os.Getenv("HOME"), ".config", "boxy")
 	return os.MkdirAll(configDir, 0750)
@@ -156,7 +157,7 @@ func GetEncryptionKey() ([]byte, error) {
 
 	// Try to load from file
 	keyPath := GetEncryptionKeyPath()
-	// #nosec G304 - keyPath is constructed from HOME and constant, not user input
+	// #nosec G304 - keyPath is a local constant, not user input
 	if data, err := os.ReadFile(keyPath); err == nil {
 		key, err := base64.StdEncoding.DecodeString(string(data))
 		if err == nil && len(key) == 32 {
@@ -165,10 +166,6 @@ func GetEncryptionKey() ([]byte, error) {
 	}
 
 	// Generate new key and store it
-	if err := EnsureConfigDir(); err != nil {
-		return nil, fmt.Errorf("failed to create config dir: %w", err)
-	}
-
 	key, err := crypto.GenerateKey()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate encryption key: %w", err)
@@ -185,5 +182,5 @@ func GetEncryptionKey() ([]byte, error) {
 
 // GetEncryptionKeyPath returns the path to the encryption key file
 func GetEncryptionKeyPath() string {
-	return filepath.Join(os.Getenv("HOME"), ".config", "boxy", "encryption.key")
+	return "./encryption.key"
 }
