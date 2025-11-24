@@ -238,6 +238,23 @@ tasks:
     cmds:
       - go mod tidy
 
+  tools:install:
+    desc: Install pinned development tools
+    summary: |
+      Installs all pinned development tools via go install -tags tools.
+      Tools list is dynamically parsed from tools.go using ripgrep.
+      This updates binaries in your Go bin directory ($GOPATH/bin or $HOME/go/bin).
+    prompt: Install pinned development tools to Go bin directory?
+    preconditions:
+      - sh: command -v rg
+        msg: "ripgrep (rg) not found. Install with: apt-get install ripgrep (or your package manager)"
+    vars:
+      TOOLS:
+        sh: rg '^\s*_\s+"([^"]+)"' tools.go -o -r '$1' | xargs echo
+    cmds:
+      - for: { var: TOOLS, split: ' ' }
+        cmd: go install -tags tools {{.CLI_ARGS }} {{.ITEM}}
+
   check:
     desc: Run all checks (format, lint, test, race)
     summary: |
