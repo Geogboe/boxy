@@ -18,10 +18,10 @@
 // The Runtime struct holds references to all running managers and provides
 // a Stop() method for coordinated shutdown in the correct order:
 //
-//	1. Stop API server
-//	2. Stop sandbox manager (halts cleanup worker)
-//	3. Stop pool managers (halts replenishment/health check workers)
-//	4. Close storage
+//  1. Stop API server
+//  2. Stop sandbox manager (halts cleanup worker)
+//  3. Stop pool managers (halts replenishment/health check workers)
+//  4. Close storage
 //
 // # Usage
 //

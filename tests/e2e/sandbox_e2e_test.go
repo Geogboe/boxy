@@ -66,7 +66,7 @@ func TestE2E_CompleteSandboxLifecycle(t *testing.T) {
 					Name:   "finalize",
 					Type:   hooks.HookTypeScript,
 					Shell:  hooks.ShellBash,
-			Inline: "echo 'Finalization for ${resource.id}'",
+					Inline: "echo 'Finalization for ${resource.id}'",
 				},
 			},
 			BeforeAllocate: []hooks.Hook{
@@ -158,7 +158,7 @@ func TestE2E_CompleteSandboxLifecycle(t *testing.T) {
 	for i, rwc := range resourcesWithConn {
 		t.Logf("Resource %d: %s", i+1, rwc.Resource.ID)
 		assert.NotNil(t, rwc.Connection)
-	assert.Equal(t, provider.StateAllocated, rwc.Resource.State)
+		assert.Equal(t, provider.StateAllocated, rwc.Resource.State)
 
 		// Check that hooks were executed
 		assert.Contains(t, rwc.Resource.Metadata, "finalization_hooks")

@@ -1,7 +1,7 @@
 // Package workspacefs contains helpers for creating and managing filesystem-backed
 // scratch workspaces used by lightweight providers such as `pkg/provider/scratch`.
 //
-// Overview
+// # Overview
 //
 // Helpers in this package provide deterministic paths for workspace files,
 // helper functions to provision directories and connect artifacts (connect
@@ -14,14 +14,14 @@
 // - `HealthCheck` - validate required files and minimum free space.
 // - `Cleanup` - remove the workspace when the resource is destroyed.
 //
-// API Notes
+// # API Notes
 //
 // The package offers a small surface area: `Layout`, `Provision`, `HealthCheck`,
 // and `Cleanup` primitives. Callers are responsible for writing their own
 // connect scripts and resource metadata files; workspacefs only provides the
 // layout and helper functions.
 //
-// Security
+// # Security
 //
 // This package is a convenience library for filesystem-backed scratch
 // workspaces and does not implement any sandboxing. Do not rely on it for

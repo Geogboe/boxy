@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Geogboe/boxy/pkg/provider"
 	"github.com/Geogboe/boxy/pkg/crypto"
+	"github.com/Geogboe/boxy/pkg/provider"
 	provider_pkg "github.com/Geogboe/boxy/pkg/provider"
 )
 
@@ -116,8 +116,8 @@ func TestUpdatePowerState(t *testing.T) {
 		expectErr bool
 	}{
 		{
-			name:  "unsupported state",
-			state: provider_pkg.PowerState("invalid"),
+			name:      "unsupported state",
+			state:     provider_pkg.PowerState("invalid"),
 			expectErr: true,
 		},
 	}
@@ -225,33 +225,33 @@ func TestExec_SecurityValidation(t *testing.T) {
 			expectErr: false,
 		},
 		{
-			name: "scriptblock breakout attempt with closing brace",
-			cmd:  []string{"dir", "}", ";", "Remove-VM", "-Name", "victim"},
+			name:      "scriptblock breakout attempt with closing brace",
+			cmd:       []string{"dir", "}", ";", "Remove-VM", "-Name", "victim"},
 			expectErr: false, // Command is valid, breakout should be prevented by ArgumentList approach
 		},
 		{
-			name: "injection with semicolon",
-			cmd:  []string{"echo", "test", ";", "Remove-VM"},
+			name:      "injection with semicolon",
+			cmd:       []string{"echo", "test", ";", "Remove-VM"},
 			expectErr: false, // Semicolon is just a string argument, not command separator
 		},
 		{
-			name: "injection with pipe",
-			cmd:  []string{"echo", "test", "|", "Remove-VM"},
+			name:      "injection with pipe",
+			cmd:       []string{"echo", "test", "|", "Remove-VM"},
 			expectErr: false, // Pipe is just a string argument
 		},
 		{
-			name: "injection with dollar sign",
-			cmd:  []string{"echo", "$env:COMPUTERNAME"},
+			name:      "injection with dollar sign",
+			cmd:       []string{"echo", "$env:COMPUTERNAME"},
 			expectErr: false, // Will be treated as literal string in VM
 		},
 		{
-			name: "single quotes in argument",
-			cmd:  []string{"echo", "test'with'quotes"},
+			name:      "single quotes in argument",
+			cmd:       []string{"echo", "test'with'quotes"},
 			expectErr: false, // Should be escaped properly
 		},
 		{
-			name: "command with many arguments",
-			cmd:  []string{"powershell", "-Command", "Get-Process", "|", "Select-Object", "-First", "5"},
+			name:      "command with many arguments",
+			cmd:       []string{"powershell", "-Command", "Get-Process", "|", "Select-Object", "-First", "5"},
 			expectErr: false,
 		},
 	}
@@ -296,12 +296,12 @@ func TestExec_CommandConstruction(t *testing.T) {
 
 	// Test that these dangerous patterns are properly escaped
 	dangerousCommands := [][]string{
-		{"echo", "}"}, // Closing brace
-		{"echo", "{"}, // Opening brace
-		{"echo", ";Remove-VM"}, // Semicolon
+		{"echo", "}"},            // Closing brace
+		{"echo", "{"},            // Opening brace
+		{"echo", ";Remove-VM"},   // Semicolon
 		{"echo", "`; Remove-VM"}, // Backtick
 		{"echo", "$($env:USER)"}, // Variable expansion attempt
-		{"echo", "' OR '1'='1"}, // SQL-style injection attempt
+		{"echo", "' OR '1'='1"},  // SQL-style injection attempt
 		{"cmd", "/c", "echo } ; Remove-VM -Name 'victim' ; { echo x"}, // Full breakout attempt
 	}
 

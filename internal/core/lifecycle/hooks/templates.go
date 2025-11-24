@@ -8,14 +8,15 @@ import (
 
 // ExpandTemplate expands template variables in a string
 // Supported variables:
-//   ${resource.id}    - Resource UUID
-//   ${resource.ip}    - IP address (if available)
-//   ${resource.type}  - Resource type (vm, container, process)
-//   ${provider.id}    - Provider-specific ID
-//   ${pool.name}      - Pool name
-//   ${username}       - Allocated username
-//   ${password}       - Generated password
-//   ${metadata.key}   - Custom metadata value
+//
+//	${resource.id}    - Resource UUID
+//	${resource.ip}    - IP address (if available)
+//	${resource.type}  - Resource type (vm, container, process)
+//	${provider.id}    - Provider-specific ID
+//	${pool.name}      - Pool name
+//	${username}       - Allocated username
+//	${password}       - Generated password
+//	${metadata.key}   - Custom metadata value
 func ExpandTemplate(template string, ctx HookContext) string {
 	result := template
 

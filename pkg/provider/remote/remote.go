@@ -24,16 +24,16 @@ import (
 // - Implements retry logic for transient failures
 // - Tracks connection health
 type RemoteProvider struct {
-	name          string
-	providerName  string // Name of the actual provider on the agent (e.g., "hyperv")
-	resourceType  provider_pkg.ResourceType
-	agentID       string
-	agentAddress  string
-	conn          *grpc.ClientConn
-	client        pb.ProviderServiceClient
-	logger        *logrus.Logger
-	maxRetries    int
-	retryDelay    time.Duration
+	name           string
+	providerName   string // Name of the actual provider on the agent (e.g., "hyperv")
+	resourceType   provider_pkg.ResourceType
+	agentID        string
+	agentAddress   string
+	conn           *grpc.ClientConn
+	client         pb.ProviderServiceClient
+	logger         *logrus.Logger
+	maxRetries     int
+	retryDelay     time.Duration
 	requestTimeout time.Duration
 }
 
@@ -131,10 +131,10 @@ func NewRemoteProvider(cfg *Config, logger *logrus.Logger) (*RemoteProvider, err
 	}
 
 	logger.WithFields(logrus.Fields{
-		"agent":         cfg.AgentAddress,
-		"provider":      cfg.ProviderName,
-		"max_retries":   cfg.MaxRetries,
-		"retry_delay":   cfg.RetryDelay,
+		"agent":           cfg.AgentAddress,
+		"provider":        cfg.ProviderName,
+		"max_retries":     cfg.MaxRetries,
+		"retry_delay":     cfg.RetryDelay,
 		"request_timeout": cfg.RequestTimeout,
 	}).Info("RemoteProvider created successfully")
 

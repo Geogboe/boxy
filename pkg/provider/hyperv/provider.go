@@ -50,16 +50,16 @@ type Config struct {
 
 // vmInfo represents VM information returned by Get-VM
 type vmInfo struct {
-	Name              string    `json:"Name"`
-	State             string    `json:"State"`
-	CPUUsage          int       `json:"CPUUsage"`
-	MemoryAssigned    int64     `json:"MemoryAssigned"`
-	Uptime            string    `json:"Uptime"`
-	Status            string    `json:"Status"`
-	CreationTime      time.Time `json:"CreationTime"`
-	ProcessorCount    int       `json:"ProcessorCount"`
-	MemoryStartup     int64     `json:"MemoryStartup"`
-	Generation        int       `json:"Generation"`
+	Name           string    `json:"Name"`
+	State          string    `json:"State"`
+	CPUUsage       int       `json:"CPUUsage"`
+	MemoryAssigned int64     `json:"MemoryAssigned"`
+	Uptime         string    `json:"Uptime"`
+	Status         string    `json:"Status"`
+	CreationTime   time.Time `json:"CreationTime"`
+	ProcessorCount int       `json:"ProcessorCount"`
+	MemoryStartup  int64     `json:"MemoryStartup"`
+	Generation     int       `json:"Generation"`
 }
 
 // DefaultConfig returns default Hyper-V configuration
@@ -269,17 +269,17 @@ func (p *Provider) Provision(ctx context.Context, spec provider.ResourceSpec) (*
 		ProviderID:   vmName, // Use VM name as provider ID
 		State:        provider.StateReady,
 		Metadata: map[string]interface{}{
-			"vm_name":       vmName,
-			"vm_id":         vmID,
-			"ip_address":    ipAddress,
-			"image":         spec.Image,
-			"cpus":          spec.CPUs,
-			"memory_mb":     spec.MemoryMB,
-			"disk_gb":       spec.DiskGB,
-			"vhd_path":      vhdPath,
-			"username":      username,
-			"password_enc":  encPassword,
-			"generation":    p.config.DefaultGeneration,
+			"vm_name":      vmName,
+			"vm_id":        vmID,
+			"ip_address":   ipAddress,
+			"image":        spec.Image,
+			"cpus":         spec.CPUs,
+			"memory_mb":    spec.MemoryMB,
+			"disk_gb":      spec.DiskGB,
+			"vhd_path":     vhdPath,
+			"username":     username,
+			"password_enc": encPassword,
+			"generation":   p.config.DefaultGeneration,
 		},
 	}
 
@@ -380,12 +380,12 @@ func (p *Provider) GetStatus(ctx context.Context, res *provider.Resource) (*prov
 	}
 
 	return &provider.ResourceStatus{
-		State:      state,
-		Healthy:    healthy,
-		Message:    fmt.Sprintf("VM state: %s, Status: %s", info.State, info.Status),
-		LastCheck:  time.Now(),
-		Uptime:     uptime,
-		CPUUsage:   float64(info.CPUUsage),
+		State:     state,
+		Healthy:   healthy,
+		Message:   fmt.Sprintf("VM state: %s, Status: %s", info.State, info.Status),
+		LastCheck: time.Now(),
+		Uptime:    uptime,
+		CPUUsage:  float64(info.CPUUsage),
 		// #nosec G115 - MemoryAssigned is a valid int64 from Hyper-V, overflow is not a concern
 		MemoryUsed: uint64(info.MemoryAssigned),
 	}, nil

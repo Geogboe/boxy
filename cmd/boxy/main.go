@@ -10,9 +10,9 @@ import (
 // Version information - set via ldflags during build
 // Example: go build -ldflags="-X main.Version=1.0.0"
 var (
-	Version   = "dev"      // Version number
-	GitCommit = "unknown"  // Git commit hash
-	BuildDate = "unknown"  // Build date
+	Version   = "dev"     // Version number
+	GitCommit = "unknown" // Git commit hash
+	BuildDate = "unknown" // Build date
 )
 
 func main() {

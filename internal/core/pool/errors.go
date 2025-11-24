@@ -12,15 +12,15 @@ var (
 	ErrInvalidMaxTotal     = errors.New("max_total must be >= min_ready")
 
 	// Pool operation errors
-	ErrPoolNotFound        = errors.New("pool not found")
-	ErrPoolAlreadyExists   = errors.New("pool already exists")
-	ErrPoolAtCapacity      = errors.New("pool at maximum capacity")
+	ErrPoolNotFound         = errors.New("pool not found")
+	ErrPoolAlreadyExists    = errors.New("pool already exists")
+	ErrPoolAtCapacity       = errors.New("pool at maximum capacity")
 	ErrNoResourcesAvailable = errors.New("no resources available in pool")
-	ErrPoolNotHealthy      = errors.New("pool is not healthy")
+	ErrPoolNotHealthy       = errors.New("pool is not healthy")
 
 	// Resource operation errors
-	ErrResourceNotFound    = errors.New("resource not found")
-	ErrResourceNotReady    = errors.New("resource is not ready")
-	ErrResourceAllocated   = errors.New("resource is already allocated")
-	ErrProvisioningFailed  = errors.New("resource provisioning failed")
+	ErrResourceNotFound   = errors.New("resource not found")
+	ErrResourceNotReady   = errors.New("resource is not ready")
+	ErrResourceAllocated  = errors.New("resource is already allocated")
+	ErrProvisioningFailed = errors.New("resource provisioning failed")
 )

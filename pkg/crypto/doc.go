@@ -3,7 +3,7 @@
 // It is used by storage, core components, and providers to protect
 // credentials and other sensitive data.
 //
-// Overview
+// # Overview
 //
 // The package offers a small surface:
 //
@@ -24,7 +24,7 @@
 //   - Configurable character sets.
 //   - Minimum output length of 8 bytes.
 //
-// API Notes
+// # API Notes
 //
 // NewEncryptor constructs an encryptor given a 32-byte key.
 // Encrypt and Decrypt perform authenticated encryption and decryption using
@@ -40,11 +40,11 @@
 //   - Symmetric encryption only.
 //   - Callers must store and manage keys securely.
 //
-// Dependencies
+// # Dependencies
 //
 // The package uses only standard library primitives (aes, cipher, rand).
 //
-// Security Notes
+// # Security Notes
 //
 // Keys must be handled securely by the caller. The package never logs keys,
 // plaintexts, or derived data, and does not perform password hashing or

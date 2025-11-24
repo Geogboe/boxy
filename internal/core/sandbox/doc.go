@@ -19,13 +19,13 @@
 //
 // The Manager coordinates with pool allocators to provision resources:
 //
-//	1. Create sandbox record (StateCreating)
-//	2. Launch async goroutine for resource allocation
-//	3. For each requested resource:
-//	   - Request allocation from appropriate pool
-//	   - Pool runs before_allocate hooks (personalization)
-//	   - Mark resource as allocated
-//	4. Update sandbox to StateReady
+//  1. Create sandbox record (StateCreating)
+//  2. Launch async goroutine for resource allocation
+//  3. For each requested resource:
+//     - Request allocation from appropriate pool
+//     - Pool runs before_allocate hooks (personalization)
+//     - Mark resource as allocated
+//  4. Update sandbox to StateReady
 //
 // # Cleanup
 //
