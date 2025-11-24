@@ -1,5 +1,19 @@
 # 01: Architecture Refactor - Pool/Sandbox Peer Architecture
 
+## History
+
+```yaml
+Origin: "docs/v1-prerelease/01-architecture-refactor.md"
+SourceType: "planning-proposal"
+Created: "2024-11-22"
+LastMigrated: "2025-11-23"
+MigratedBy: "doc-reconciliation"
+Status: "proposed"
+Notes: "Refactor proposal migrated into planning; see ADR-005 for the accepted decision"
+```
+
+> Status: proposed — See `docs/decisions/adr-005-pool-sandbox-peer-architecture.md` for the finalized ADR.
+
 ---
 
 ## Metadata
@@ -421,7 +435,7 @@ func TestE2E_SandboxWithNewArchitecture(t *testing.T) {
 **Regression Tests:**
 
 - All existing E2E tests must still pass
-- No functionality lost from MVP
+- No functionality lost relative to the previous baseline
 
 ---
 

@@ -262,7 +262,7 @@ go test -v ./tests/e2e/... -timeout 300s
 
 ### Input Validation
 
-**Status**: Documented, not critical for MVP
+**Status**: Documented, not critical for v1-prerelease
 
 - Docker image names not validated before pull
 - Environment variables accepted without whitelist

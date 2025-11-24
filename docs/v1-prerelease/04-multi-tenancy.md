@@ -1,5 +1,19 @@
 # 04: Multi-Tenancy
 
+## History
+
+```yaml
+Origin: "docs/v1-prerelease/04-multi-tenancy.md"
+SourceType: "planning-proposal"
+Created: "2024-11-22"
+LastMigrated: "2025-11-23"
+MigratedBy: "doc-reconciliation"
+Status: "proposed"
+Notes: "Migrated to planning; ADR-010 drafted and linked."
+```
+
+> Status: proposed — See `docs/decisions/adr-010-multi-tenancy.md` for ADR.
+
 ---
 
 ## Metadata

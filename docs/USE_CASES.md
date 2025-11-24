@@ -468,4 +468,4 @@ These principles may not fit all use cases, which is why certain scenarios (prod
 ---
 
 **Last Updated:** 2024-11-22
-**Version:** v1 (MVP)
+**Version:** v1 (v1-prerelease)

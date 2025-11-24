@@ -1,5 +1,19 @@
 # 03: Terminology Updates
 
+> ARCHIVED: Moved to `docs/planning/v1-prerelease/03-terminology-updates.md`. See the planning copy for edits and migration actions.
+
+## History
+
+```yaml
+Origin: "docs/v1-prerelease/03-terminology-updates.md"
+SourceType: "planning-proposal"
+Created: "2024-11-22"
+LastMigrated: "2025-11-23"
+MigratedBy: "doc-reconciliation"
+Status: "archived"
+Notes: "Terminology updates moved into planning; ADR-008 created for hook naming."
+```
+
 ---
 
 ## Metadata

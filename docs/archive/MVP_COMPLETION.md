@@ -1,13 +1,13 @@
-# Boxy MVP Completion Report
+# Boxy v1-prerelease Completion Report
 
 > ⚠️ ARCHIVED: This document is retained for historical reference and is no longer actively maintained.
 
 **Date**: 2025-11-22
-**Status**: ✅ MVP COMPLETE - Production Ready
+**Status**: ✅ v1-prerelease COMPLETE - Production Ready
 
 ## Executive Summary
 
-The Boxy MVP is now **feature-complete** with distributed agent architecture fully implemented. The system supports:
+The Boxy v1-prerelease is now **feature-complete** with distributed agent architecture fully implemented. The system supports:
 
 ✅ **Core Functionality**
 
@@ -32,7 +32,7 @@ The Boxy MVP is now **feature-complete** with distributed agent architecture ful
 
 ### 1. Distributed Agent Architecture (100% Complete)
 
-The key requirement for MVP - enabling cross-platform resource management.
+The key requirement for v1-prerelease - enabling cross-platform resource management.
 
 #### Protocol Buffers Schema
 
@@ -436,7 +436,7 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 1. **Certificate Management** (0% complete)
    - No CLI commands for cert generation
    - No certificate authority setup
-   - **Why**: Not required for MVP (insecure mode works)
+   - **Why**: Not required for v1-prerelease (insecure mode works)
    - **Impact**: Must use `use_tls: false` or manually create certs
 
 ### ❌ Intentionally Not Implemented (Future)
@@ -444,7 +444,7 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 1. **Agent Discovery**
    - User explicitly said "don't think we need auto agent discovery"
    - Agents must be manually configured in YAML
-   - Simple and explicit configuration preferred for MVP
+   - Simple and explicit configuration preferred for v1-prerelease
 
 2. **Agent Health Monitoring**
    - No automatic agent health checks from server
@@ -512,7 +512,7 @@ func (p *Provider) Provision(ctx context.Context, spec resource.ResourceSpec) (*
 
 ## Certificate Requirements
 
-**✅ Verified**: Certificates are **NOT required** for MVP.
+**✅ Verified**: Certificates are **NOT required** for v1-prerelease.
 
 The system supports two modes:
 
@@ -568,7 +568,7 @@ boxy cert create-client # Create client cert
 - Encrypted credential storage (AES-256)
 - Connection keepalive prevents silent failures
 
-**⚠️ Insecure by Default** (By Design for MVP):
+**⚠️ Insecure by Default** (By Design for v1-prerelease):
 
 - `use_tls: false` is default in examples
 - Clear warnings displayed when running insecure
@@ -576,7 +576,7 @@ boxy cert create-client # Create client cert
 
 **Recommendations**:
 
-1. Use insecure mode for MVP testing on trusted networks
+1. Use insecure mode for v1-prerelease testing on trusted networks
 2. Enable TLS for production deployments
 3. Add certificate management in post-MVP phase
 4. Consider adding rate limiting and authentication in future
@@ -594,7 +594,7 @@ boxy cert create-client # Create client cert
 
 **Issue**: Agents must be manually configured
 **Impact**: More manual configuration required
-**Workaround**: This is acceptable for MVP (user confirmed)
+**Workaround**: This is acceptable for v1-prerelease (user confirmed)
 **Fix**: Could add mDNS/DNS-SD discovery in future
 
 ### 3. Limited Error Recovery
@@ -758,7 +758,7 @@ internal/provider/hyperv/hyperv.go         # Added Type() and HealthCheck()
 
 ### Recommended Priority Order
 
-1. ✅ **MVP Complete** (DONE - All features implemented)
+1. ✅ **v1-prerelease Complete** (DONE - All features implemented)
 2. ✅ **Hyper-V Implementation** (DONE - Ready for testing)
 3. 🧪 **Integration Testing on Windows** (DO THIS NEXT - 1-2 days)
 4. 🔒 **Certificate Management** (Production requirement - 2-3 days)
@@ -767,7 +767,7 @@ internal/provider/hyperv/hyperv.go         # Added Type() and HealthCheck()
 
 ## Success Criteria
 
-### MVP Success (✅ FULLY ACHIEVED)
+### v1-prerelease Success (✅ FULLY ACHIEVED)
 
 - [x] Core pool and sandbox functionality
 - [x] Hook system for provisioning
@@ -793,7 +793,7 @@ internal/provider/hyperv/hyperv.go         # Added Type() and HealthCheck()
 
 ## Conclusion
 
-The Boxy MVP is **100% feature-complete** and ready for production testing. All core functionality has been implemented including the full Hyper-V provider.
+The Boxy v1-prerelease is **100% feature-complete** and ready for production testing. All core functionality has been implemented including the full Hyper-V provider.
 
 ### What Works ✅
 

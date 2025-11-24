@@ -21,7 +21,7 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
 
 ---
 
-### Phase 1: MVP - Single Backend (Docker)
+### Phase 1: v1-prerelease - Single Backend (Docker)
 
 **Goal**: Prove the core concept with a single, easy-to-test backend
 
@@ -194,7 +194,7 @@ Create a sandboxing orchestration tool that makes it trivial to spin up mixed en
 2. ⏳ Research technology stack
 3. ⏳ Make key architectural decisions
 4. ⏳ Set up project structure
-5. ⏳ Implement MVP (Phase 1)
+5. ⏳ Implement v1-prerelease (Phase 1)
 
 ### Detailed Phase Plans and Implementation Guides
 
@@ -208,7 +208,7 @@ For more granular details on specific phases or implementation aspects, refer to
 
 ## Success Metrics
 
-### MVP Success (Phase 1)
+### v1-prerelease Success (Phase 1)
 
 - [ ] 90%+ test coverage for core logic
 - [ ] Can provision 10 containers in <30 seconds
@@ -231,7 +231,7 @@ For more granular details on specific phases or implementation aspects, refer to
 ### High Risk
 
 - **Complexity Creep**: Trying to do too much too soon
-  - *Mitigation*: Strict phase discipline, MVP-first approach
+  - *Mitigation*: Strict phase discipline, v1-prerelease-first approach
 
 - **Resource Leaks**: Containers/VMs not cleaned up
   - *Mitigation*: Comprehensive testing, background cleanup jobs, alerts

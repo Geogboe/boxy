@@ -48,7 +48,7 @@ github.com/stretchr/testify     # Testing
 github.com/go-redis/redis       # Redis client
 ```
 
-**Verdict**: Strong choice for MVP and production
+**Verdict**: Strong choice for v1-prerelease and production
 
 ---
 
@@ -70,7 +70,7 @@ github.com/go-redis/redis       # Redis client
 - ⚠️ Compile times can be slow
 - ⚠️ Async ecosystem still maturing (tokio)
 
-**Verdict**: Great for performance-critical components, but overkill for MVP
+**Verdict**: Great for performance-critical components, but overkill for v1-prerelease
 
 ---
 
@@ -173,7 +173,7 @@ For a system tool that manages resources with complex concurrency needs, Go is t
 - ❌ Not suitable for distributed deployments
 - ❌ Limited JSON support compared to PostgreSQL
 
-**Verdict**: Great for MVP and local development, but plan PostgreSQL migration
+**Verdict**: Great for v1-prerelease and local development, but plan PostgreSQL migration
 
 ---
 
@@ -224,7 +224,7 @@ Go has a `plugin` package, but it's **problematic**:
 
 ---
 
-### Option 1: Interface-based Providers ⭐ RECOMMENDED (MVP)
+### Option 1: Interface-based Providers ⭐ RECOMMENDED (v1-prerelease)
 
 Compile all providers into the main binary:
 
@@ -254,7 +254,7 @@ type KVMProvider struct{}
 - ⚠️ All providers must be compiled in (binary size)
 - ⚠️ Can't add providers without recompilation
 
-**Verdict**: Perfect for MVP, revisit for Phase 2+
+**Verdict**: Perfect for v1-prerelease, revisit for Phase 2+
 
 ---
 
@@ -304,7 +304,7 @@ import "github.com/hashicorp/go-plugin"
 
 **Cons**:
 
-- ⚠️ Still complex for MVP
+- ⚠️ Still complex for v1-prerelease
 - ⚠️ External dependency
 
 **Verdict**: Best option if we need external plugins (Phase 2+)
@@ -313,7 +313,7 @@ import "github.com/hashicorp/go-plugin"
 
 ## 🎯 Plugin Recommendation
 
-**Phase 1 (MVP)**: Interface-based (compiled-in)
+**Phase 1 (v1-prerelease)**: Interface-based (compiled-in)
 **Phase 2+**: Consider HashiCorp go-plugin if extensibility needed
 
 ---
@@ -351,7 +351,7 @@ pools:
 
 ## DRY Strategy: Package Research
 
-### Core Dependencies for Go MVP
+### Core Dependencies for Go v1-prerelease
 
 #### 1. CLI Framework
 
@@ -435,7 +435,7 @@ pools:
 
 **Alternative**: `go.uber.org/zap` (faster, more complex)
 
-**Verdict**: Logrus for MVP, Zap if performance critical
+**Verdict**: Logrus for v1-prerelease, Zap if performance critical
 
 ---
 
@@ -502,7 +502,7 @@ pools:
 
 ---
 
-## MVP Technology Stack (Final Recommendation)
+## v1-prerelease Technology Stack (Final Recommendation)
 
 ### Core
 
@@ -549,7 +549,7 @@ github.com/stretchr/testify     v1.8+
 
 ## Open Questions & Skepticism
 
-### 🤔 Question 1: Warm Pools in MVP?
+### 🤔 Question 1: Warm Pools in v1-prerelease?
 
 **Concern**: Maintaining warm pools (pre-provisioned containers) adds significant complexity:
 
@@ -557,13 +557,13 @@ github.com/stretchr/testify     v1.8+
 - Health checking provisioned resources
 - Startup/shutdown edge cases
 
-**Proposal**: For MVP, what if we do **on-demand provisioning only**?
+**Proposal**: For v1-prerelease, what if we do **on-demand provisioning only**?
 
 - Simpler to implement and test
 - Still demonstrates core value
 - Add warm pools in Phase 2
 
-**Your input needed**: Is on-demand okay for MVP, or is warm pool essential to the value prop?
+**Your input needed**: Is on-demand okay for v1-prerelease, or is warm pool essential to the value prop?
 
 ---
 

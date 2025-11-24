@@ -1,5 +1,19 @@
 # 09: CLI/API Schema Documentation
 
+> ARCHIVED: This document has been moved to `docs/planning/v1-prerelease/09-cli-api-schemas.md`. See ADR-012 for decision on CLI & API schema.
+
+## History
+
+```yaml
+Origin: "docs/v1-prerelease/09-cli-api-schemas.md"
+SourceType: "planning-proposal"
+Created: "2024-11-22"
+LastMigrated: "2025-11-23"
+MigratedBy: "doc-reconciliation"
+Status: "archived"
+Notes: "Planning copy created in `docs/planning/v1-prerelease/09-cli-api-schemas.md`; ADR-012 introduced for decisions."
+```
+
 ---
 
 ## Metadata

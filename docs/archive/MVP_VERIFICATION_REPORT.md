@@ -1,9 +1,9 @@
-# Boxy MVP Verification Report
+# Boxy v1-prerelease Verification Report
 
 > ⚠️ ARCHIVED: This document is retained for historical reference and is no longer actively maintained. See `docs/TESTING_STRATEGY.md` and `docs/CONCURRENCY_ANALYSIS.md` for current verification guidance.
 
 **Date**: 2025-11-21
-**Session**: Continuation - Final MVP Verification
+**Session**: Continuation - Final v1-prerelease Verification
 **Branch**: `claude/investigate-host-box-issues-01Um72bqobJXhFEE9bZ9PTmC`
 
 ## Executive Summary
@@ -78,7 +78,7 @@ This report addresses your five critical verification questions:
 
 **Code is SAFE but NOT FAST** - Needs parallelization for production performance.
 
-**Priority**: High (Week 1-2 post-MVP)
+**Priority**: High (Week 1-2 post-v1-prerelease)
 
 ---
 
@@ -192,9 +192,9 @@ boxy pool stats <pool-name>
 5. ❌ Integration tests for gRPC
 6. ❌ E2E distributed tests
 
-### MVP Scope Decision
+### v1-prerelease Scope Decision
 
-**Agent stack is NOT required for MVP** - Single-host deployment is fully functional.
+**Agent stack is NOT required for v1-prerelease** - Single-host deployment is fully functional.
 
 | Feature | Single Host (MVP) | Multi-Host (Phase 2) |
 | --------- | ------------------- | ---------------------- |
@@ -221,7 +221,7 @@ boxy pool stats <pool-name>
 
 ### Agent Stack Verdict
 
-**Distributed agents = Phase 2 feature, not MVP blocker.**
+**Distributed agents = Phase 2 feature, not v1-prerelease blocker.**
 
 ---
 
@@ -389,7 +389,7 @@ dockerd --data-root /home/user/.docker --host unix:///home/user/docker.sock
 
 ---
 
-## Overall MVP Assessment
+## Overall v1-prerelease Assessment
 
 ### ✅ What's Working
 
@@ -428,7 +428,7 @@ dockerd --data-root /home/user/.docker --host unix:///home/user/docker.sock
 
 ## Recommendations
 
-### Immediate Actions (Before MVP Release)
+### Immediate Actions (Before v1-prerelease Release)
 
 1. **✅ Document Environment Requirements**
    - Requires Docker daemon or Hyper-V
@@ -446,7 +446,7 @@ dockerd --data-root /home/user/.docker --host unix:///home/user/docker.sock
    - Configuration examples (already in `examples/`)
    - Troubleshooting common issues
 
-### Post-MVP Priorities
+### Post-v1-prerelease Priorities
 
 **Week 1-2** (High Priority):
 
@@ -501,7 +501,7 @@ go test ./tests/e2e/ -timeout 60s
 
 ## Conclusion
 
-### MVP Status: **FUNCTIONALLY COMPLETE** ✅
+### v1-prerelease Status: **FUNCTIONALLY COMPLETE** ✅
 
 **All requested verification tasks completed**:
 
@@ -515,8 +515,8 @@ go test ./tests/e2e/ -timeout 60s
 
 1. Review these verification documents
 2. Address any concerns or questions
-3. Decide on MVP release timeline
-4. Plan post-MVP improvements (concurrency, debugging tools)
+3. Decide on v1-prerelease release timeline
+4. Plan post-v1-prerelease improvements (concurrency, debugging tools)
 
 ---
 

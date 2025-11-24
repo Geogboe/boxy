@@ -1,4 +1,4 @@
-# Boxy MVP Testing Summary
+# Boxy v1-prerelease Testing Summary
 
 > ⚠️ ARCHIVED: This document is retained for historical reference and is no longer actively maintained. See `docs/testing-strategy.md` for the current testing strategy.
 
@@ -87,7 +87,7 @@ go test ./tests/e2e/ -timeout 60s
 - ✅ GetStatus() - Queries container state
 - ✅ GetConnectionInfo() - Returns docker exec info
 - ✅ Exec() - Uses `docker exec` API (container.ExecCreate/ExecStart/ExecAttach)
-- ✅ Update() - Stub for MVP (restart/stop)
+- ✅ Update() - Stub for v1-prerelease (restart/stop)
 
 **Hyper-V Provider** (`internal/provider/hyperv/hyperv.go`):
 
@@ -321,7 +321,7 @@ go build -o /tmp/boxy ./cmd/boxy
 
 ## ✅ Conclusion
 
-**The MVP is functionally complete and well-tested** given the environment constraints. The core logic (orchestration, hooks, async allocation, state management) is thoroughly verified via comprehensive E2E tests with a realistic mock provider.
+**The v1-prerelease is functionally complete and well-tested** given the environment constraints. The core logic (orchestration, hooks, async allocation, state management) is thoroughly verified via comprehensive E2E tests with a realistic mock provider.
 
 The Docker provider implementation uses correct APIs and will work in production environments with Docker - we just can't test it in this restricted CI environment.
 

@@ -1,6 +1,6 @@
 # Boxy AI Coding Assistant Instructions
 
-> Goal: Enable immediate productive work on Boxy without re-reading the entire docs set. Focus on current MVP + emerging distributed/agent architecture.
+> Goal: Enable immediate productive work on Boxy without re-reading the entire docs set. Focus on current v1-prerelease + emerging distributed/agent architecture.
 
 ## Big Picture
 
@@ -14,7 +14,7 @@ Boxy is a Go 1.24+ service + CLI that maintains warm resource pools (VMs, contai
 - `pkg/provider/` shared provider interfaces + (future) remote proxy + protobuf definitions.
 - `internal/storage/` persistence (SQLite via GORM) – resource, pool, sandbox metadata; avoid leaking provider internals into storage schemas.
 - `internal/config/` YAML + Viper loading; precedence: flags > env > file.
-- `docs/architecture/*` design authorities (MVP, distributed agents, hooks).
+- `docs/architecture/*` design authorities (v1-prerelease, distributed agents, hooks).
 
 ## Resource Lifecycle (Never Reuse)
 
@@ -22,7 +22,7 @@ Provisioning → Ready (in pool) → Allocated (sandbox) → Destroyed (always r
 
 ## Hooks Model
 
-Two phases only in MVP:
+Two phases only in v1-prerelease:
 - `after_provision` (finalization, slow, background) – heavy setup, validation.
 - `before_allocate` (personalization, fast, user waiting) – credentials, hostname, lightweight tweaks.
 Implement via `Provider.Execute`; keep personalization < ~10s; move slow work to base image or finalization.

@@ -284,7 +284,7 @@ pools:
 
 ## Development Status
 
-**Phase**: MVP (Phase 1)
+**Phase**: v1-prerelease (Phase 1)
 **Status**: ✅ Functional
 
 ### Completed

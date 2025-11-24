@@ -1,5 +1,19 @@
 # 02: Preheating & Recycling System
 
+## History
+
+```yaml
+Origin: "docs/v1-prerelease/02-preheating-recycling.md"
+SourceType: "planning-proposal"
+Created: "2024-11-22"
+LastMigrated: "2025-11-23"
+MigratedBy: "doc-reconciliation"
+Status: "proposed"
+Notes: "Migrated to planning; ADR-009 created for canonical semantics."
+```
+
+> Status: proposed — See `docs/decisions/adr-009-preheating-and-recycling.md` for finalized semantics.
+
 ---
 
 ## Metadata
@@ -105,7 +119,7 @@ pools:
 See V1_IMPLEMENTATION_PLAN.md sections 2.1-2.5 for detailed implementation:
 
 - Preheating worker (maintains warm count)
-- Recycling worker (refreshes resources)  
+- Recycling worker (refreshes resources)
 - Updated provisionOne (creates cold resources)
 - warmResource method (cold → warm transition)
 

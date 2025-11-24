@@ -271,14 +271,14 @@ echo "✅ Smoke tests passed"
 **Goal**: Ensure no functionality is lost or broken by new changes, especially for existing features.
 **Strategy**:
 
-- Keep all existing E2E tests from previous milestones (e.g., MVP).
+- Keep all existing E2E tests from previous milestones (e.g., v1-prerelease).
 - Run these tests with new architecture and features.
 - All regression tests must pass without modification.
 
 ```go
-// tests/e2e/mvp_regression_test.go (Example)
+// tests/e2e/v1_prerelease_regression_test.go (Example)
 func TestRegression_SandboxCreate(t *testing.T) {
-    // Original MVP test - must still pass
+    // Original v1-prerelease test - must still pass
 }
 ```
 

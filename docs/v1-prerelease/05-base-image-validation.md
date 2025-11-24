@@ -1,5 +1,19 @@
 # 05: Base Image Validation
 
+> ARCHIVED: Moved to `docs/planning/v1-prerelease/05-base-image-validation.md` for planning and updates.
+
+## History
+
+```yaml
+Origin: "docs/v1-prerelease/05-base-image-validation.md"
+SourceType: "planning-proposal"
+Created: "2024-11-22"
+LastMigrated: "2025-11-23"
+MigratedBy: "doc-reconciliation"
+Status: "archived"
+Notes: "Planning content moved to `docs/planning/v1-prerelease/05-base-image-validation.md`."
+```
+
 ---
 
 ## Metadata
