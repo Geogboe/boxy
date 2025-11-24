@@ -25,14 +25,14 @@ type ResourceRequest struct {
 
 // Sandbox represents a logical collection of allocated resources
 type Sandbox struct {
-	ID          string            `json:"id" gorm:"primaryKey"`
+	ID          string            `json:"id"`
 	Name        string            `json:"name,omitempty"`
-	State       SandboxState      `json:"state" gorm:"index"`
-	ResourceIDs []string          `json:"resource_ids" gorm:"serializer:json"`
-	Metadata    map[string]string `json:"metadata,omitempty" gorm:"serializer:json"`
+	State       SandboxState      `json:"state"`
+	ResourceIDs []string          `json:"resource_ids"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
 	CreatedAt   time.Time         `json:"created_at"`
 	UpdatedAt   time.Time         `json:"updated_at"`
-	ExpiresAt   *time.Time        `json:"expires_at,omitempty" gorm:"index"`
+	ExpiresAt   *time.Time        `json:"expires_at,omitempty"`
 	CreatedBy   string            `json:"created_by,omitempty"` // Future: user/tenant ID
 }
 

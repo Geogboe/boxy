@@ -26,7 +26,7 @@ We will use **Go** as the primary language with the following supporting technol
 
 - `github.com/spf13/cobra` - CLI framework
 - `github.com/spf13/viper` - Configuration management
-- `gorm.io/gorm` - ORM (supports both SQLite and PostgreSQL)
+- `database/sql` with `modernc.org/sqlite` for pure-Go SQLite
 - `github.com/docker/docker` - Docker SDK
 - `github.com/sirupsen/logrus` - Structured logging
 - `github.com/stretchr/testify` - Testing utilities

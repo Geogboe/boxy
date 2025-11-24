@@ -41,7 +41,7 @@ For an overview of the entire system architecture, please refer to the [Boxy v1 
 github.com/spf13/cobra          # CLI framework
 github.com/gin-gonic/gin        # HTTP framework
 github.com/docker/docker        # Docker SDK
-gorm.io/gorm                    # ORM
+database/sql + modernc.org/sqlite  # Storage (embedded SQLite, pure Go)
 github.com/spf13/viper          # Configuration
 github.com/sirupsen/logrus      # Logging
 github.com/stretchr/testify     # Testing
@@ -399,7 +399,7 @@ pools:
 
 #### 4. ORM/Database
 
-**Package**: `gorm.io/gorm` v2
+**Package**: `database/sql` with `modernc.org/sqlite`
 
 - Supports PostgreSQL, SQLite, MySQL
 - Migration support
@@ -521,9 +521,7 @@ github.com/spf13/viper          v1.18+
 github.com/gin-gonic/gin        v1.10+
 
 # Database
-gorm.io/gorm                    v1.25+
-gorm.io/driver/postgres         v1.5+
-gorm.io/driver/sqlite           v1.5+
+modernc.org/sqlite              v1.40+
 
 # Docker
 github.com/docker/docker        v24.0+

@@ -1,7 +1,8 @@
 # ADR-003: Configuration and State Storage
 
 **Date**: 2025-11-17
-**Status**: Accepted
+**Status**: Accepted  
+**Update (2025-11-24)**: Storage layer migrated from GORM to `database/sql` with `modernc.org/sqlite` to avoid CGO dependency and reduce transitive bloat. Schema remains plain SQL for an easy Postgres path later.
 
 ## Context
 
@@ -66,8 +67,8 @@ Migrate pool configuration to database when API server is added, enabling:
 1. **Zero Configuration**: Single file, no server setup
 2. **Perfect for Development**: Easy testing and debugging
 3. **ACID Guarantees**: Reliable state management
-4. **Migration Path**: GORM allows seamless PostgreSQL migration
-5. **Embedded**: No external dependencies
+4. **Migration Path**: Schema is plain SQL; can lift to Postgres later
+5. **Embedded**: Using `modernc.org/sqlite` keeps builds pure-Go (no CGO), avoiding GORM/CGO toolchain friction
 
 ### Why YAML over TOML/JSON?
 

@@ -26,7 +26,6 @@ type SandboxRuntime struct {
 
 // StartSandboxRuntime builds pool managers and sandbox manager for ad-hoc sandbox operations.
 func StartSandboxRuntime(ctx context.Context, cfg *config.Config, registry *provider.Registry, store storage.Store, logger *logrus.Logger) (*SandboxRuntime, error) {
-	resourceRepo := storage.NewResourceRepositoryAdapter(store)
 	poolManagers := make(map[string]*pool.Manager)
 	poolAllocators := make(map[string]allocator.PoolAllocator)
 
@@ -36,7 +35,7 @@ func StartSandboxRuntime(ctx context.Context, cfg *config.Config, registry *prov
 			logger.WithField("backend", poolCfg.Backend).Warn("Provider not found, skipping pool")
 			continue
 		}
-		manager, err := pool.NewManager(&poolCfg, prov, resourceRepo, logger)
+		manager, err := pool.NewManager(&poolCfg, prov, storage.NewResourceRepositoryAdapter(store), logger)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create pool manager for %s: %w", poolCfg.Name, err)
 		}
@@ -54,7 +53,7 @@ func StartSandboxRuntime(ctx context.Context, cfg *config.Config, registry *prov
 	return &SandboxRuntime{
 		Allocators:   poolAllocators,
 		SandboxMgr:   sbMgr,
-		ResourceRepo: resourceRepo,
+		ResourceRepo: store,
 		Store:        store,
 		Pools:        poolManagers,
 	}, nil
@@ -147,7 +146,6 @@ func GetSandboxResources(ctx context.Context, rt *SandboxRuntime, sandboxID stri
 
 func DestroySandbox(ctx context.Context, store storage.Store, sandboxID string) error {
 	// New manager per call to re-use storage; minimal wiring.
-	resourceRepo := storage.NewResourceRepositoryAdapter(store)
 	sbRepo := storage.NewSandboxRepositoryAdapter(store)
 	sbMgr := sandbox.NewManager(nil, sbRepo, store, nil, logrus.New())
 	sbMgr.Start()
