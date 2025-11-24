@@ -7,7 +7,7 @@ DO NOT make any changes to code files, only to markdown documentation files.
 DO NOT make any changes to documents until you have a approval.
 DO NOT touch coding agent files: CLAUDE.md, GEMINI.md, AGENTS.md, .github/* etc.
 
-Summarize in SMALL BATCHES all the proposed changes and ask for approval before making any changes.
+Summarize in SMALL BATCHES all the proposed changes and ask for approval before making any changes. Be concise.
 
 Reconciliation Guidelines:
 
@@ -23,6 +23,8 @@ Reconciliation Guidelines:
 - Ensure ALL diagrams are up to date and accurately reflect the current architecture and workflows.
 - There's an examples directory. Ensure that any examples mentioned in the docs are present in that directory and are up to date. Try to link to those examples rather than duplicating them in the docs unless the inline example is very small and simple.
 - Convert any package based README.md files into doc.go files. Stuff like pkg/foo/README.md should become pkg/foo/doc.go with the same content in godoc format. UNLESS it's a very large or complicated README.md -- possibly with diagrams and may warrant its own doc file in docs/ or docs/pkg/foo.md, or just left alone.
+- When linking to other docs, use real relative links where possible.
+- Archived docs don't need to be reconciled as they are historical only.
 
 Optimizations to consider:
 

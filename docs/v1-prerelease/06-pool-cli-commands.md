@@ -1,5 +1,19 @@
 # 06: Pool CLI Commands
 
+> ARCHIVED: This document was moved to `docs/planning/v1-prerelease/06-pool-cli-commands.md` for planning and migration work.
+
+## History
+
+```yaml
+Origin: "docs/v1-prerelease/06-pool-cli-commands.md"
+SourceType: "planning-proposal"
+Created: "2024-11-22"
+LastMigrated: "2025-11-23"
+MigratedBy: "doc-reconciliation"
+Status: "archived"
+Notes: "Planning copy created in `docs/planning/v1-prerelease/06-pool-cli-commands.md`."
+```
+
 ---
 
 ## Metadata

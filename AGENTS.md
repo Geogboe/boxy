@@ -126,7 +126,7 @@ Pool (manages unallocated) ←─── Allocator (orchestrates) ───→ Sa
 
 Plugins that interface with specific virtualization/containerization platforms:
 
-- **Hyper-V** - Windows VMs (primary for MVP)
+- **Hyper-V** - Windows VMs (primary for v1-prerelease)
 - **VMware** - Cross-platform VMs
 - **Docker** - Containers (for testing/development)
 - **KVM/QEMU** - Linux VMs
@@ -753,7 +753,7 @@ boxy/
 **Phase**: v1 Implementation Planning
 **Completed**:
 
-- ✅ MVP Phase 1: Core functionality (pools, sandboxes, Docker provider)
+- ✅ v1-prerelease Phase 1: Core functionality (pools, sandboxes, Docker provider)
 - ✅ Single-host embedded architecture working
 - ✅ Critical security fix (crypto/rand for password generation)
 - ✅ Architectural review completed

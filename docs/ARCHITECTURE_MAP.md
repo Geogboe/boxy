@@ -554,7 +554,7 @@ Benefits:
    - Pool manages unallocated
    - Sandbox manages allocated
    - Allocator orchestrates between them
-   - See also: [architecture/MVP_DESIGN.md](architecture/MVP_DESIGN.md) for MVP design principles.
+       - See also: [architecture/MVP_DESIGN.md](architecture/MVP_DESIGN.md) for v1-prerelease design principles.
 
 2. **Single Source of Truth**
    - Allocator owns resource ownership tracking

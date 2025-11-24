@@ -1,5 +1,19 @@
 # Migration Guide - v1 Prerelease
 
+> ARCHIVED: This planning document has been moved to `docs/planning/v1-prerelease/migration-guide.md`. Please edit that file for proposals. The original content is preserved here for historical reference.
+
+## History
+
+```yaml
+Origin: "docs/v1-prerelease/migration-guide.md"
+SourceType: "migration-notes"
+Created: "2024-11-22"
+LastMigrated: "2025-11-23"
+MigratedBy: "doc-reconciliation"
+Status: "archived"
+Notes: "Moved to `docs/planning/v1-prerelease/migration-guide.md` for planning centralization."
+```
+
 ---
 
 ## Metadata
@@ -22,7 +36,7 @@ week: "9"
 
 ## Overview
 
-This guide covers migration from MVP to v1 Prerelease. Since v1 is **pre-release** and no production deployments exist, **breaking changes are acceptable**.
+This guide covers migration to v1-prerelease. Since v1 is **pre-release** and no production deployments exist, **breaking changes are acceptable**.
 
 ---
 
@@ -243,7 +257,7 @@ systemctl restart boxy
 
 ### API Tokens Required
 
-**Before:** No authentication (MVP)
+**Before:** No authentication (pre-v1)
 
 **After:** All API/CLI calls require authentication
 
@@ -496,5 +510,5 @@ cp /old/path/boxy.yaml ./boxy.yaml
 ---
 
 **Last Updated**: 2025-11-23
-**Applies To**: MVP → v1 Prerelease
+**Applies To**: pre-v1 → v1-prerelease
 **Breaking Changes**: Yes (acceptable for pre-release)

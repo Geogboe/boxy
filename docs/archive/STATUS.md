@@ -3,12 +3,12 @@
 > ⚠️ ARCHIVED: This document is retained for historical reference and is no longer actively maintained.
 
 **Date**: 2025-11-17
-**Phase**: MVP (Phase 1) - In Progress
+**Phase**: v1-prerelease (Phase 1) - In Progress
 **Status**: ✅ Core functionality complete, testing infrastructure in place
 
 ## 🎉 What We Built Today
 
-### Complete MVP Implementation
+### Complete v1-prerelease Implementation
 
 Starting from scratch, we built a fully functional sandboxing orchestration tool with warm pool management.
 
@@ -70,7 +70,7 @@ docs/              - Documentation (8 files)
   - Health monitoring
 
 - [x] **Storage Layer**
-  - SQLite for MVP (easy migration to PostgreSQL)
+  - SQLite for v1-prerelease (easy migration to PostgreSQL)
   - GORM ORM with auto-migration
   - Resource and Sandbox repositories
   - Adapter pattern for flexibility
@@ -305,12 +305,12 @@ Recent commits:
 
 1. ~~**Integration Test Schema**: SQLite auto-migration not working in tests~~ ✓ **FIXED**
 2. ~~**No CI/CD**: Manual testing only~~ ✓ **FIXED** - GitHub Actions pipeline active
-3. **Single Backend**: Only Docker implemented (by design for MVP)
+3. **Single Backend**: Only Docker implemented (by design for v1-prerelease)
 4. **No API**: CLI only (Phase 3)
 
 ## 🎯 Success Metrics
 
-### MVP Goals (Phase 1)
+### v1-prerelease Goals (Phase 1)
 
 - [x] Warm pools working ✓
 - [x] Docker provider functional ✓
@@ -344,7 +344,7 @@ Recent commits:
 ## 🛠️ Technology Choices (Validated)
 
 - ✅ **Go**: Perfect for concurrency, great libraries, single binary
-- ✅ **SQLite**: Zero-config, perfect for MVP, easy PostgreSQL migration
+- ✅ **SQLite**: Zero-config, perfect for v1-prerelease, easy PostgreSQL migration
 - ✅ **YAML**: Human-readable, version-controllable
 - ✅ **Cobra**: Industry-standard CLI framework
 - ✅ **GORM**: Productive ORM with good abstractions
@@ -392,7 +392,7 @@ Recent commits:
 
 ---
 
-**Status**: Phase 1 MVP is **99% complete**. Core functionality works, documentation is excellent, all tests passing, CI/CD is active. Ready for E2E testing and production validation.
+**Status**: Phase 1 v1-prerelease is **99% complete**. Core functionality works, documentation is excellent, all tests passing, CI/CD is active. Ready for E2E testing and production validation.
 
 **Completed This Session**:
 

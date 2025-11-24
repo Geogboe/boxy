@@ -1,5 +1,19 @@
 # 07: Distributed Agent Architecture
 
+> ARCHIVED: This document was moved to `docs/planning/v1-prerelease/07-distributed-agents.md` for planning and migration.
+
+## History
+
+```yaml
+Origin: "docs/v1-prerelease/07-distributed-agents.md"
+SourceType: "planning-proposal"
+Created: "2024-11-22"
+LastMigrated: "2025-11-23"
+MigratedBy: "doc-reconciliation"
+Status: "archived"
+Notes: "Planning copy created in `docs/planning/v1-prerelease/07-distributed-agents.md`. For ADR and final decisions see `docs/decisions/adr-004-distributed-agent-architecture.md`."
+```
+
 ---
 
 ## Metadata
@@ -25,7 +39,7 @@ related_docs:
 
 ## Overview
 
-**CRITICAL FOR v1**: Hyper-V is the PRIMARY backend (not Docker), and Hyper-V cannot run on Linux. Therefore, distributed agent architecture is ESSENTIAL for MVP.
+**CRITICAL FOR v1**: Hyper-V is the PRIMARY backend (not Docker), and Hyper-V cannot run on Linux. Therefore, distributed agent architecture is ESSENTIAL for v1-prerelease.
 
 ### Why This is v1 (Not v2)
 
@@ -34,7 +48,7 @@ related_docs:
 - Hyper-V is PRIMARY backend for production use
 - Hyper-V only runs on Windows hosts
 - Boxy server typically runs on Linux for flexibility
-- Without agents, Hyper-V cannot be used → MVP is blocked
+- Without agents, Hyper-V cannot be used → v1-prerelease is blocked
 
 **Therefore**: Distributed agents are NOT optional, they are REQUIRED for v1.
 
