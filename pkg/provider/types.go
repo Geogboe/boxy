@@ -98,7 +98,7 @@ type ResourceStatus struct {
 	Healthy    bool          `json:"healthy"`
 	Message    string        `json:"message,omitempty"`
 	LastCheck  time.Time     `json:"last_check"`
-	Uptime     time.Duration `json:"uptime,omitempty" gorm:"-"`
+	Uptime     time.Duration `json:"uptime,omitempty"`
 	CPUUsage   float64       `json:"cpu_usage,omitempty"`
 	MemoryUsed uint64        `json:"memory_used,omitempty"`
 }

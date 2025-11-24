@@ -955,14 +955,11 @@ Add environment variable to enable GORM logging:
 
 ```go
 func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
-    logMode := logger.Silent
-    if os.Getenv("BOXY_DEBUG_SQL") != "" {
-        logMode = logger.Info
+    dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)", dbPath)
+    db, err := sql.Open("sqlite", dsn)
+    if err != nil {
+        return nil, err
     }
-
-    db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
-        Logger: logger.Default.LogMode(logMode),
-    })
     // ...
 }
 ```
