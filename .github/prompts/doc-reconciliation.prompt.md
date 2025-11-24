@@ -11,6 +11,9 @@ Summarize in SMALL BATCHES all the proposed changes and ask for approval before 
 
 Reconciliation Guidelines:
 
+- This project is NOT end user facing. Don't consider that when making decisions. It's a purely small private developer tool (at this stage).
+- Lots of documentation is for internal developer reference and for tracking purposes.
+- Docs should be accurate and reflect the current state of the codebase.
 - Docs should not contradict each other and should align with the code snippets in the codebase.
 - Docs should have limited code snippets and should instead refer to code in the codebase where possible.
 - Docs should not duplicate information that is already captured in code comments or README files in the codebase and should instead refer to those files or sections of those files
@@ -19,6 +22,7 @@ Reconciliation Guidelines:
 - CAUTION: Agent coding files: CLAUDE.md, GEMINI.md will point to AGENTS.md so only AGENTS.md should contain the detailed information about agents. Be very careful about modifying these types of files.
 - Ensure ALL diagrams are up to date and accurately reflect the current architecture and workflows.
 - There's an examples directory. Ensure that any examples mentioned in the docs are present in that directory and are up to date. Try to link to those examples rather than duplicating them in the docs unless the inline example is very small and simple.
+- Convert any package based README.md files into doc.go files. Stuff like pkg/foo/README.md should become pkg/foo/doc.go with the same content in godoc format. UNLESS it's a very large or complicated README.md -- possibly with diagrams and may warrant its own doc file in docs/ or docs/pkg/foo.md, or just left alone.
 
 Optimizations to consider:
 

@@ -11,11 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Geogboe/boxy/internal/config"
-	"github.com/Geogboe/boxy/internal/core/allocator"
-	"github.com/Geogboe/boxy/internal/core/pool"
-	"github.com/Geogboe/boxy/internal/core/sandbox"
 	"github.com/Geogboe/boxy/internal/server"
-	"github.com/Geogboe/boxy/internal/storage"
 	"github.com/Geogboe/boxy/pkg/crypto"
 )
 
@@ -34,60 +30,38 @@ var sandboxCmd = &cobra.Command{
 var sandboxCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new sandbox",
-	Long: `Create a new sandbox by allocating resources from pools.
-
-Example:
-  boxy sandbox create --pool ubuntu-containers:2 --pool nginx-containers:1 --duration 2h --name my-lab`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := context.Background()
 		cfg, err := loadConfig()
 		if err != nil {
 			return err
 		}
 
-		// Parse pool requests
 		poolReqs, err := cmd.Flags().GetStringArray("pool")
 		if err != nil {
 			return err
 		}
-
 		if len(poolReqs) == 0 {
-			return fmt.Errorf("at least one --pool flag required")
+			return fmt.Errorf("at least one --pool flag required (format: pool-name:count)")
 		}
 
-		var resources []sandbox.ResourceRequest
-		for _, req := range poolReqs {
-			var poolName string
-			var count int
-			_, err := fmt.Sscanf(req, "%[^:]:%d", &poolName, &count)
-			if err != nil {
-				return fmt.Errorf("invalid pool format: %s (expected: pool-name:count)", req)
-			}
-
-			resources = append(resources, sandbox.ResourceRequest{
-				PoolName: poolName,
-				Count:    count,
-			})
+		resources, err := parsePoolRequests(poolReqs)
+		if err != nil {
+			return err
 		}
 
-		// Parse duration
 		duration, err := time.ParseDuration(sandboxDuration)
 		if err != nil {
 			return fmt.Errorf("invalid duration: %w", err)
 		}
 
-		// Initialize dependencies
-		store, err := storage.NewSQLiteStore(cfg.Storage.Path)
+		// Storage
+		store, err := server.OpenStorage(cfg)
 		if err != nil {
-			return fmt.Errorf("failed to initialize storage: %w", err)
+			return err
 		}
-		defer func() {
-			if err := store.Close(); err != nil {
-				logger.WithError(err).Error("Failed to close storage")
-			}
-		}()
+		defer store.Close()
 
-		// Initialize encryption
+		// Encryption
 		encryptionKey, err := config.GetEncryptionKey()
 		if err != nil {
 			return fmt.Errorf("failed to get encryption key: %w", err)
@@ -97,56 +71,29 @@ Example:
 			return fmt.Errorf("failed to create encryptor: %w", err)
 		}
 
-		providerRegistry := server.BuildRegistry(ctx, cfg.Pools, logger, encryptor)
-
-		resourceRepo := storage.NewResourceRepositoryAdapter(store)
-
-		// Create pool allocators
-		poolAllocators := make(map[string]allocator.PoolAllocator)
-		for _, poolCfg := range cfg.Pools {
-			prov, ok := providerRegistry.Get(poolCfg.Backend)
-			if !ok {
-				continue
-			}
-
-			manager, err := pool.NewManager(&poolCfg, prov, resourceRepo, logger)
-			if err != nil {
-				return fmt.Errorf("failed to create pool manager for %s: %w", poolCfg.Name, err)
-			}
-
-			poolAllocators[poolCfg.Name] = manager
+		ctx := context.Background()
+		registry := server.BuildRegistry(ctx, cfg.Pools, logger, encryptor)
+		rt, err := server.StartSandboxRuntime(ctx, cfg, registry, store, logger)
+		if err != nil {
+			return err
 		}
+		defer rt.Stop(logger)
 
-		// Create sandbox manager
-		sandboxMgr := sandbox.NewManager(
-			poolAllocators,
-			store,
-			store,
-			providerRegistry,
-			logger,
-		)
-
-		// Create sandbox (async)
 		fmt.Println("Creating sandbox...")
-
-		createReq := &sandbox.CreateRequest{
+		createReq := server.CreateSandboxRequest{
 			Name:      sandboxName,
 			Resources: resources,
 			Duration:  duration,
 		}
 
-		// Use signal-aware context for graceful cancellation
-		ctx = createSignalContext()
-		sb, err := sandboxMgr.Create(ctx, createReq)
+		sb, err := server.CreateSandbox(ctx, rt, createReq)
 		if err != nil {
 			return fmt.Errorf("failed to create sandbox: %w", err)
 		}
 
 		fmt.Printf("✓ Sandbox %s created (allocating resources...)\n", sb.ID[:8])
-
-		// Wait for resources to be allocated
 		fmt.Print("Waiting for resources")
-		sb, err = sandboxMgr.WaitForReady(ctx, sb.ID, 5*time.Minute)
+		sb, err = server.WaitSandboxReady(ctx, rt, sb.ID, 5*time.Minute)
 		if err != nil {
 			fmt.Println(" ✗")
 			return fmt.Errorf("failed to allocate resources: %w", err)
@@ -156,201 +103,74 @@ Example:
 		if sandboxJSON {
 			data, _ := json.MarshalIndent(sb, "", "  ")
 			fmt.Println(string(data))
-		} else {
-			fmt.Printf("\n✓ Sandbox ready\n\n")
-			fmt.Printf("ID:         %s\n", sb.ID)
-			if sb.Name != "" {
-				fmt.Printf("Name:       %s\n", sb.Name)
-			}
-			fmt.Printf("Resources:  %d\n", len(sb.ResourceIDs))
-			fmt.Printf("State:      %s\n", sb.State)
-			fmt.Printf("Expires:    %s (in %s)\n", sb.ExpiresAt.Format(time.RFC3339), sb.TimeRemaining().Round(time.Second))
-			fmt.Println()
-
-			// Show connection info
-			fmt.Println("Resource Connection Info:")
-			fmt.Println("─────────────────────────")
-
-			resourcesWithConn, err := sandboxMgr.GetResourcesForSandbox(ctx, sb.ID)
-			if err != nil {
-				logger.WithError(err).Warn("Failed to get connection info")
-			} else {
-				for i, rwc := range resourcesWithConn {
-					fmt.Printf("\n[%d] Resource %s\n", i+1, rwc.Resource.ID[:8])
-					fmt.Printf("    Type: %s\n", rwc.Connection.Type)
-					if rwc.Connection.Host != "" {
-						fmt.Printf("    Host: %s\n", rwc.Connection.Host)
-					}
-					if rwc.Connection.Username != "" {
-						fmt.Printf("    Username: %s\n", rwc.Connection.Username)
-					}
-					if rwc.Connection.Password != "" {
-						fmt.Printf("    Password: %s\n", rwc.Connection.Password)
-					}
-					if containerID, ok := rwc.Connection.ExtraFields["container_id"].(string); ok {
-						fmt.Printf("    Container: %s\n", containerID)
-						fmt.Printf("    Connect: docker exec -it %s /bin/bash\n", containerID[:12])
-					}
-				}
-			}
-
-			fmt.Println()
-			fmt.Printf("To destroy: boxy sandbox destroy %s\n", sb.ID)
-			fmt.Println()
+			return nil
 		}
 
+		printSandboxSummary(sb)
+		resourcesWithConn, err := server.GetSandboxResources(ctx, rt, sb.ID)
+		if err != nil {
+			logger.WithError(err).Warn("Failed to get connection info")
+			return nil
+		}
+		printConnections(resourcesWithConn)
 		return nil
 	},
 }
 
 var sandboxListCmd = &cobra.Command{
-	Use:     "list",
-	Aliases: []string{"ls"},
-	Short:   "List all sandboxes",
+	Use:   "list",
+	Short: "List sandboxes",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := loadConfig()
 		if err != nil {
 			return err
 		}
-
-		store, err := storage.NewSQLiteStore(cfg.Storage.Path)
+		store, err := server.OpenStorage(cfg)
 		if err != nil {
-			return fmt.Errorf("failed to initialize storage: %w", err)
+			return err
 		}
-		defer func() {
-			if err := store.Close(); err != nil {
-				logger.WithError(err).Error("Failed to close storage")
-			}
-		}()
+		defer store.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		sandboxes, err := store.ListActiveSandboxes(ctx)
+		sbList, err := server.ListSandboxes(context.Background(), store)
 		if err != nil {
-			return fmt.Errorf("failed to list sandboxes: %w", err)
+			return err
 		}
-
-		if len(sandboxes) == 0 {
-			fmt.Println("\nNo active sandboxes")
-			return nil
-		}
-
-		fmt.Println("\nActive Sandboxes:")
-		fmt.Println()
-
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-		fmt.Fprintln(w, "ID\tNAME\tRESOURCES\tCREATED\tEXPIRES\tTIME REMAINING")
-		fmt.Fprintln(w, "--\t----\t---------\t-------\t-------\t--------------")
-
-		for _, sb := range sandboxes {
-			name := sb.Name
-			if name == "" {
-				name = "-"
-			}
-
-			timeRemaining := "-"
-			expiresAt := "-"
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "ID\tName\tState\tExpires")
+		for _, sb := range sbList {
+			exp := ""
 			if sb.ExpiresAt != nil {
-				expiresAt = sb.ExpiresAt.Format("15:04:05")
-				remaining := sb.TimeRemaining()
-				if remaining > 0 {
-					timeRemaining = remaining.Round(time.Second).String()
-				} else {
-					timeRemaining = "EXPIRED"
-				}
+				exp = sb.ExpiresAt.Format(time.RFC3339)
 			}
-
-			fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\n",
-				sb.ID[:8],
-				name,
-				len(sb.ResourceIDs),
-				sb.CreatedAt.Format("15:04:05"),
-				expiresAt,
-				timeRemaining,
-			)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", sb.ID, sb.Name, sb.State, exp)
 		}
-
-		if err := w.Flush(); err != nil {
-			return fmt.Errorf("failed to flush output: %w", err)
-		}
-		fmt.Println()
-
+		w.Flush()
 		return nil
 	},
 }
 
 var sandboxDestroyCmd = &cobra.Command{
-	Use:   "destroy <sandbox-id>",
+	Use:   "destroy [sandboxID]",
 	Short: "Destroy a sandbox",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		sandboxID := args[0]
-
 		cfg, err := loadConfig()
 		if err != nil {
 			return err
 		}
 
-		store, err := storage.NewSQLiteStore(cfg.Storage.Path)
+		store, err := server.OpenStorage(cfg)
 		if err != nil {
-			return fmt.Errorf("failed to initialize storage: %w", err)
+			return err
 		}
-		defer func() {
-			if err := store.Close(); err != nil {
-				logger.WithError(err).Error("Failed to close storage")
-			}
-		}()
+		defer store.Close()
 
-		// Initialize encryption
-		encryptionKey, err := config.GetEncryptionKey()
-		if err != nil {
-			return fmt.Errorf("failed to get encryption key: %w", err)
-		}
-		encryptor, err := crypto.NewEncryptor(encryptionKey)
-		if err != nil {
-			return fmt.Errorf("failed to create encryptor: %w", err)
-		}
-
-		providerRegistry := server.BuildRegistry(context.Background(), cfg.Pools, logger, encryptor)
-
-		resourceRepo := storage.NewResourceRepositoryAdapter(store)
-
-		// Create pool allocators
-		poolAllocators := make(map[string]allocator.PoolAllocator)
-		for _, poolCfg := range cfg.Pools {
-			prov, ok := providerRegistry.Get(poolCfg.Backend)
-			if !ok {
-				continue
-			}
-
-			manager, err := pool.NewManager(&poolCfg, prov, resourceRepo, logger)
-			if err != nil {
-				return fmt.Errorf("failed to create pool manager for %s: %w", poolCfg.Name, err)
-			}
-
-			poolAllocators[poolCfg.Name] = manager
-		}
-
-		sandboxMgr := sandbox.NewManager(
-			poolAllocators,
-			store,
-			store,
-			providerRegistry,
-			logger,
-		)
-
-		fmt.Printf("Destroying sandbox %s...\n", sandboxID)
-
-		// Use signal-aware context with timeout
-		ctx, cancel := context.WithTimeout(createSignalContext(), 2*time.Minute)
-		defer cancel()
-
-		if err := sandboxMgr.Destroy(ctx, sandboxID); err != nil {
+		ctx := createSignalContext()
+		if err := server.DestroySandbox(ctx, store, sandboxID); err != nil {
 			return fmt.Errorf("failed to destroy sandbox: %w", err)
 		}
-
 		fmt.Printf("✓ Sandbox destroyed\n")
-
 		return nil
 	},
 }
@@ -366,4 +186,63 @@ func init() {
 
 	sandboxCmd.AddCommand(sandboxListCmd)
 	sandboxCmd.AddCommand(sandboxDestroyCmd)
+}
+
+func parsePoolRequests(reqs []string) ([]server.ResourceRequest, error) {
+	var out []server.ResourceRequest
+	for _, req := range reqs {
+		var poolName string
+		var count int
+		_, err := fmt.Sscanf(req, "%[^:]:%d", &poolName, &count)
+		if err != nil {
+			return nil, fmt.Errorf("invalid pool format: %s (expected: pool-name:count)", req)
+		}
+		out = append(out, server.ResourceRequest{
+			PoolName: poolName,
+			Count:    count,
+		})
+	}
+	return out, nil
+}
+
+func printSandboxSummary(sb server.SandboxView) {
+	fmt.Printf("\n✓ Sandbox ready\n\n")
+	fmt.Printf("ID:         %s\n", sb.ID)
+	if sb.Name != "" {
+		fmt.Printf("Name:       %s\n", sb.Name)
+	}
+	fmt.Printf("Resources:  %d\n", len(sb.ResourceIDs))
+	fmt.Printf("State:      %s\n", sb.State)
+	if sb.ExpiresAt != nil {
+		fmt.Printf("Expires:    %s (in %s)\n", sb.ExpiresAt.Format(time.RFC3339), sb.TimeRemaining().Round(time.Second))
+	}
+	fmt.Println()
+}
+
+func printConnections(resources []server.ResourceWithConn) {
+	fmt.Println("Resource Connection Info:")
+	fmt.Println("─────────────────────────")
+	for i, rwc := range resources {
+		fmt.Printf("\n[%d] Resource %s\n", i+1, rwc.Resource.ID[:8])
+		fmt.Printf("    Type: %s\n", rwc.Connection.Type)
+		if rwc.Connection.Host != "" {
+			fmt.Printf("    Host: %s\n", rwc.Connection.Host)
+		}
+		if rwc.Connection.Username != "" {
+			fmt.Printf("    Username: %s\n", rwc.Connection.Username)
+		}
+		if rwc.Connection.Password != "" {
+			fmt.Printf("    Password: %s\n", rwc.Connection.Password)
+		}
+		if containerID, ok := rwc.Connection.ExtraFields["container_id"].(string); ok {
+			fmt.Printf("    Container: %s\n", containerID)
+			fmt.Printf("    Connect: docker exec -it %s /bin/bash\n", containerID[:12])
+		}
+		if cs, ok := rwc.Connection.ExtraFields["connect_script"].(string); ok && cs != "" {
+			fmt.Printf("    Connect script: %s\n", cs)
+		}
+		if ws, ok := rwc.Connection.ExtraFields["workspace_dir"].(string); ok && ws != "" {
+			fmt.Printf("    Workspace dir: %s\n", ws)
+		}
+	}
 }
