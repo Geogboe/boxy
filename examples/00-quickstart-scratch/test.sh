@@ -5,6 +5,25 @@ echo "🧪 Testing Quickstart Example"
 echo "=============================="
 echo ""
 
+# Use local ./boxy if present, else fallback to boxy in PATH
+if [ -x "./boxy" ]; then
+    BOXY_CMD="./boxy"
+    echo "✓ Using local ./boxy binary"
+else
+    if command -v boxy &> /dev/null; then
+        BOXY_CMD="boxy"
+        echo "✓ Found boxy in PATH: $(which boxy)"
+    else
+        echo "❌ Error: boxy command not found"
+        echo ""
+        echo "Please build or install boxy first:"
+        echo "  cd /path/to/boxy"
+        echo "  task build"
+        echo "  export PATH=\$PATH:\$(pwd)"
+        exit 1
+    fi
+fi
+echo ""
 # Check if boxy is running
 if ! curl -s http://localhost:8080/health > /dev/null 2>&1; then
     echo "❌ Error: Boxy is not running on localhost:8080"
@@ -13,13 +32,12 @@ if ! curl -s http://localhost:8080/health > /dev/null 2>&1; then
     echo "  ./run.sh"
     exit 1
 fi
-
 echo "✓ Boxy is running"
 echo ""
 
 # Create a sandbox
 echo "📦 Creating sandbox..."
-SANDBOX_OUTPUT=$(boxy sandbox create --pool scratch-pool:1 --duration 5m --name test-workspace 2>&1)
+SANDBOX_OUTPUT=$($BOXY_CMD sandbox create --pool scratch-pool:1 --duration 5m --name test-workspace 2>&1)
 SANDBOX_ID=$(echo "$SANDBOX_OUTPUT" | grep "^ID:" | awk '{print $2}')
 
 if [ -z "$SANDBOX_ID" ]; then
@@ -36,7 +54,7 @@ sleep 2
 
 # Get sandbox details
 echo "📋 Getting sandbox details..."
-SANDBOX_DETAILS=$(boxy sandbox get "$SANDBOX_ID" 2>&1)
+SANDBOX_DETAILS=$($BOXY_CMD sandbox get "$SANDBOX_ID" 2>&1)
 
 if [ $? -ne 0 ]; then
     echo "❌ Failed to get sandbox details"
@@ -106,7 +124,7 @@ echo ""
 
 # Clean up
 echo "🧹 Cleaning up sandbox..."
-boxy sandbox destroy "$SANDBOX_ID" > /dev/null 2>&1
+$BOXY_CMD sandbox destroy "$SANDBOX_ID" > /dev/null 2>&1
 
 if [ $? -eq 0 ]; then
     echo "✓ Sandbox destroyed"

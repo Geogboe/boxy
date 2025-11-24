@@ -5,18 +5,24 @@ echo "🚀 Quickstart: Scratch Provider"
 echo "================================"
 echo ""
 
-# Check if boxy is available
-if ! command -v boxy &> /dev/null; then
-    echo "❌ Error: boxy command not found"
-    echo ""
-    echo "Please build or install boxy first:"
-    echo "  cd /path/to/boxy"
-    echo "  task build"
-    echo "  export PATH=\$PATH:\$(pwd)"
-    exit 1
+# Use local ./boxy if present, else fallback to boxy in PATH
+if [ -x "./boxy" ]; then
+    BOXY_CMD="./boxy"
+    echo "✓ Using local ./boxy binary"
+else
+    if command -v boxy &> /dev/null; then
+        BOXY_CMD="boxy"
+        echo "✓ Found boxy in PATH: $(which boxy)"
+    else
+        echo "❌ Error: boxy command not found"
+        echo ""
+        echo "Please build or install boxy first:"
+        echo "  cd /path/to/boxy"
+        echo "  task build"
+        echo "  export PATH=\$PATH:\$(pwd)"
+        exit 1
+    fi
 fi
-
-echo "✓ Found boxy: $(which boxy)"
 echo ""
 
 # Get the directory of this script
@@ -50,4 +56,5 @@ echo "  boxy sandbox create --pool scratch-pool:1 --duration 30m --name my-test"
 echo ""
 
 # Start boxy
-boxy serve --config "$CONFIG_FILE"
+# Note: BOXY_CMD is either ./boxy or boxy in PATH
+$BOXY_CMD serve --config "$CONFIG_FILE"

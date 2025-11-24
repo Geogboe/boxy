@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -20,6 +22,13 @@ type SQLiteStore struct {
 
 // NewSQLiteStore creates a new SQLite storage instance.
 func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
+	// Ensure directory exists
+	if dir := filepath.Dir(dbPath); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0750); err != nil {
+			return nil, fmt.Errorf("failed to create database directory: %w", err)
+		}
+	}
+
 	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)", dbPath)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {

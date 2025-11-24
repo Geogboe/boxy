@@ -36,9 +36,12 @@ Thumbs.db
 # Boxy specific
 boxy.db
 boxy.yaml
+encryption.key
 *.db
 *.db-shm
 *.db-wal
+boxy
+boxy.exe
 
 # Logs
 *.log
@@ -51,6 +54,3 @@ temp/
 .bin/
 
 .cache/
-
-boxy
-boxy.exe

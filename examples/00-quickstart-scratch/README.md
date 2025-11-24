@@ -27,7 +27,8 @@ boxy serve --config examples/00-quickstart-scratch/boxy.yaml
 ```
 
 You should see:
-```
+
+```txt
 ✓ Boxy service started successfully
   • 1 pools active
   • Database: ~/.config/boxy/quickstart.db
