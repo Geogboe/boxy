@@ -1,6 +1,9 @@
 package provider
 
 import (
+	"database/sql/driver"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,18 +33,18 @@ const (
 // Resource represents a single compute unit (VM, container, or process)
 // This is the core type that providers create and manage
 type Resource struct {
-	ID           string                 `json:"id"`
-	PoolID       string                 `json:"pool_id"`
-	SandboxID    *string                `json:"sandbox_id,omitempty"`
-	Type         ResourceType           `json:"type"`
-	State        ResourceState          `json:"state"`
-	ProviderType string                 `json:"provider_type"` // docker, hyperv, kvm, etc.
-	ProviderID   string                 `json:"provider_id"`   // Provider-specific ID
-	Spec         map[string]interface{} `json:"spec"`
-	Metadata     map[string]interface{} `json:"metadata"`
-	CreatedAt    time.Time              `json:"created_at"`
-	UpdatedAt    time.Time              `json:"updated_at"`
-	ExpiresAt    *time.Time             `json:"expires_at,omitempty"`
+	ID           string        `json:"id"`
+	PoolID       string        `json:"pool_id"`
+	SandboxID    *string       `json:"sandbox_id,omitempty"`
+	Type         ResourceType  `json:"type"`
+	State        ResourceState `json:"state"`
+	ProviderType string        `json:"provider_type"` // docker, hyperv, kvm, etc.
+	ProviderID   string        `json:"provider_id"`   // Provider-specific ID
+	Spec         JSONMap       `json:"spec"`
+	Metadata     JSONMap       `json:"metadata"`
+	CreatedAt    time.Time     `json:"created_at"`
+	UpdatedAt    time.Time     `json:"updated_at"`
+	ExpiresAt    *time.Time    `json:"expires_at,omitempty"`
 }
 
 // NewResource creates a new resource with a generated UUID
@@ -53,8 +56,8 @@ func NewResource(poolID string, resourceType ResourceType, providerType string) 
 		Type:         resourceType,
 		State:        StateProvisioning,
 		ProviderType: providerType,
-		Spec:         make(map[string]interface{}),
-		Metadata:     make(map[string]interface{}),
+		Spec:         JSONMap{},
+		Metadata:     JSONMap{},
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -95,9 +98,36 @@ type ResourceStatus struct {
 	Healthy    bool          `json:"healthy"`
 	Message    string        `json:"message,omitempty"`
 	LastCheck  time.Time     `json:"last_check"`
-	Uptime     time.Duration `json:"uptime,omitempty"`
+	Uptime     time.Duration `json:"uptime,omitempty" gorm:"-"`
 	CPUUsage   float64       `json:"cpu_usage,omitempty"`
 	MemoryUsed uint64        `json:"memory_used,omitempty"`
+}
+
+// JSONMap is a lightweight map with DB serialization for GORM.
+type JSONMap map[string]interface{}
+
+// Value implements driver.Valuer.
+func (m JSONMap) Value() (driver.Value, error) {
+	if m == nil {
+		return []byte("null"), nil
+	}
+	return json.Marshal(m)
+}
+
+// Scan implements sql.Scanner.
+func (m *JSONMap) Scan(value interface{}) error {
+	if value == nil {
+		*m = nil
+		return nil
+	}
+	switch v := value.(type) {
+	case []byte:
+		return json.Unmarshal(v, m)
+	case string:
+		return json.Unmarshal([]byte(v), m)
+	default:
+		return fmt.Errorf("unsupported type for JSONMap: %T", value)
+	}
 }
 
 // ResourceSpec defines the specification for provisioning a resource

@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"context"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
@@ -187,9 +188,16 @@ func registerProviders(srv *agent.Server, logger *logrus.Logger) error {
 		case "docker":
 			prov, err := docker.NewProvider(logger, encryptor)
 			if err != nil {
-				logger.WithError(err).Warn("Failed to create Docker provider, skipping")
+				logger.WithError(err).Info("Docker provider unavailable, skipping")
 				continue
 			}
+			hctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			if err := prov.HealthCheck(hctx); err != nil {
+				cancel()
+				logger.WithError(err).Info("Docker health check failed, skipping docker provider")
+				continue
+			}
+			cancel()
 			if err := srv.RegisterProvider("docker", prov); err != nil {
 				return err
 			}
