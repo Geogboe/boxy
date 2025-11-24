@@ -9,7 +9,10 @@ vars:
   BUILD_DATE:
     sh: date -u +%Y-%m-%dT%H:%M:%SZ
   LDFLAGS: -s -w -X main.Version={{.VERSION}} -X main.GitCommit={{.GIT_COMMIT}} -X main.BuildDate={{.BUILD_DATE}}
+  DIST_DIR: "{{.TASKFILE_DIR}}/dist"
   BINARY_NAME: boxy
+  BUILD_FLAGS: -ldflags="{{.LDFLAGS}}"
+  BUILD_FLAGS_RELEASE: -ldflags="{{.LDFLAGS}}" -trimpath
 
 tasks:
   default:
@@ -20,95 +23,104 @@ tasks:
 
   # Build tasks
   build:
-    desc: Build the boxy binary with version info
+    desc: Build the boxy binary
+    sources:
+      - cmd/boxy/**/*.go
+      - go.mod
+      - go.sum
+    generates:
+      - ./{{.BINARY_NAME}}
     cmds:
-      - echo "Building boxy {{.VERSION}}..."
-      - CGO_ENABLED=0 go build -ldflags="{{.LDFLAGS}}" -o {{.BINARY_NAME}} ./cmd/boxy
-      - echo "Build complete{{":"}} ./{{.BINARY_NAME}}"
-      - ./{{.BINARY_NAME}} version
+      - CGO_ENABLED=0 go build {{.BUILD_FLAGS}} {{.CLI_ARGS}} -o {{.BINARY_NAME}} ./cmd/boxy
 
   build:release:
     desc: Build optimized release binary
+    sources:
+      - cmd/boxy/**/*.go
+      - go.mod
+      - go.sum
+    generates:
+      - ./{{.BINARY_NAME}}
     cmds:
-      - echo "Building release binary {{.VERSION}}..."
-      - CGO_ENABLED=0 go build -ldflags="{{.LDFLAGS}}" -trimpath -o {{.BINARY_NAME}} ./cmd/boxy
-      - echo "Release build complete{{":"}} ./{{.BINARY_NAME}}"
+      - CGO_ENABLED=0 go build {{.BUILD_FLAGS_RELEASE}} {{.CLI_ARGS}} -o {{.BINARY_NAME}} ./cmd/boxy
 
   build:all:
     desc: Build for all platforms
+    summary: |
+      Builds release binaries for all supported platforms.
+      Output: ./dist/boxy-{OS}-{ARCH}[.exe]
+    generates:
+      - "{{.DIST_DIR}}/boxy-*"
+    preconditions:
+      - sh: test -d cmd/boxy
+        msg: "cmd/boxy directory not found"
     cmds:
-      - echo "Building for all platforms..."
-      - mkdir -p dist
-      - cmd: go build -ldflags="{{.LDFLAGS}}" -trimpath -o dist/boxy-linux-amd64 ./cmd/boxy
-        env:
-          GOOS: linux
-          GOARCH: amd64
-          CGO_ENABLED: 0
-      - cmd: go build -ldflags="{{.LDFLAGS}}" -trimpath -o dist/boxy-linux-arm64 ./cmd/boxy
-        env:
-          GOOS: linux
-          GOARCH: arm64
-          CGO_ENABLED: 0
-      - cmd: go build -ldflags="{{.LDFLAGS}}" -trimpath -o dist/boxy-darwin-amd64 ./cmd/boxy
-        env:
-          GOOS: darwin
-          GOARCH: amd64
-          CGO_ENABLED: 0
-      - cmd: go build -ldflags="{{.LDFLAGS}}" -trimpath -o dist/boxy-darwin-arm64 ./cmd/boxy
-        env:
-          GOOS: darwin
-          GOARCH: arm64
-          CGO_ENABLED: 0
-      - cmd: go build -ldflags="{{.LDFLAGS}}" -trimpath -o dist/boxy-windows-amd64.exe ./cmd/boxy
-        env:
-          GOOS: windows
-          GOARCH: amd64
-          CGO_ENABLED: 0
-      - echo "All builds complete in dist/"
-      - ls -lh dist/
+      - mkdir -p {{.DIST_DIR}}
+      - for:
+          matrix:
+            OS: [linux, linux, darwin, darwin, windows]
+            ARCH: [amd64, arm64, amd64, arm64, amd64]
+        cmd: >-
+          GOOS={{.ITEM.OS}} GOARCH={{.ITEM.ARCH}} CGO_ENABLED=0 go build
+          {{.BUILD_FLAGS_RELEASE}} {{.CLI_ARGS}}
+          -o {{.DIST_DIR}}/boxy-{{.ITEM.OS}}-{{.ITEM.ARCH}}{{if eq .ITEM.OS "windows"}}.exe{{end}}
+          ./cmd/boxy
+      - ls -lh {{.DIST_DIR}}/
 
   # Install tasks
   install:
     desc: Install boxy to /usr/local/bin
+    summary: |
+      Builds the binary and installs it to /usr/local/bin.
+      Requires sudo access.
     deps:
       - build
+    preconditions:
+      - sh: test -f {{.BINARY_NAME}}
+        msg: "Binary not found. Run 'task build' first."
+    prompt: "Install {{.BINARY_NAME}} to /usr/local/bin? (requires sudo)"
     cmds:
-      - echo "Installing boxy to /usr/local/bin..."
       - sudo mv {{.BINARY_NAME}} /usr/local/bin/
-      - echo "Installed"
 
   # Test tasks
   test:
-    desc: Run all tests (default test suite)
+    desc: Run all tests
     cmds:
-      - task: test:unit
-      - echo "All tests passed"
+      - task: test:all
 
   test:unit:
     desc: Run unit tests only (fast)
     cmds:
-      - echo "Running unit tests..."
-      - go test -v -short ./...
+      - go test -v -short {{.CLI_ARGS}} ./...
 
   test:integration:
     desc: Run integration tests (requires Docker)
+    preconditions:
+      - sh: command -v docker
+        msg: "Docker is required to run integration tests."
     cmds:
-      - echo "Running integration tests..."
-      - go test -v -run Integration ./tests/integration/...
+      - go test -v -run Integration {{.CLI_ARGS}} ./tests/integration/...
 
   test:e2e:
     desc: Run end-to-end tests
+    summary: |
+      Builds the binary and runs E2E test suite.
+      Requires the binary to be available.
+    sources:
+      - cmd/boxy/**/*.go
+      - tests/e2e/**/*.go
+      - go.mod
+      - go.sum
+    generates:
+      - ./{{.BINARY_NAME}}
     cmds:
-      - echo "Running E2E tests..."
-      - echo "Building binary for E2E tests..."
       - go build -o {{.BINARY_NAME}} ./cmd/boxy
-      - go test -v -timeout 10m ./tests/e2e/...
+      - go test -v -timeout 10m {{.CLI_ARGS}} ./tests/e2e/...
 
   test:stress:
     desc: Run stress tests
     cmds:
-      - echo "Running stress tests..."
-      - go test -v -timeout 30m ./tests/stress/...
+      - go test -v -timeout 30m {{.CLI_ARGS}} ./tests/stress/...
 
   test:all:
     desc: Run all test suites
@@ -116,81 +128,148 @@ tasks:
       - task: test:unit
       - task: test:integration
       - task: test:e2e
-      - echo "All test suites passed!"
 
   test:race:
     desc: Run tests with race detector
     cmds:
-      - echo "Running tests with race detector..."
-      - go test -race -short ./...
+      - go test -race -short {{.CLI_ARGS}} ./...
 
   test:coverage:
     desc: Generate coverage report
+    summary: |
+      Generates test coverage report and outputs coverage.html.
+      Run 'open coverage.html' to view in browser.
+    sources:
+      - "**/*.go"
+      - go.mod
+      - go.sum
+    generates:
+      - coverage.html
     cmds:
-      - echo "Generating coverage report..."
-      - go test -coverprofile=coverage.out ./...
+      - go test -coverprofile=coverage.out {{.CLI_ARGS}} ./...
       - go tool cover -html=coverage.out -o coverage.html
-      - echo "Coverage report{{":"}} coverage.html"
 
   # Benchmark tasks
   bench:
     desc: Run benchmarks
     cmds:
-      - echo "Running benchmarks..."
-      - go test -bench=. -benchmem ./...
+      - go test -bench=. -benchmem {{.CLI_ARGS}} ./...
 
   # Code quality tasks
   fmt:
     desc: Format code
+    sources:
+      - "**/*.go"
     cmds:
-      - echo "Formatting code..."
-      - go fmt ./...
-      - echo "Format complete"
+      - go fmt {{.CLI_ARGS}} ./...
+
+  imports:
+    desc: Format imports and code
+    preconditions:
+      - sh: command -v goimports
+        msg: "goimports not found. Install with: go install golang.org/x/tools/cmd/goimports@latest"
+    sources:
+      - "**/*.go"
+    cmds:
+      - goimports -w {{.CLI_ARGS}} .
 
   lint:
     desc: Lint code
+    preconditions:
+      - sh: command -v golangci-lint
+        msg: "golangci-lint not found. Install with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"
     cmds:
-      - echo "Linting code..."
-      - cmd: |
-          which golangci-lint >/dev/null || {
-            echo "Installing golangci-lint..."
-            go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-          }
-      - golangci-lint run ./...
-      - echo "Lint complete"
+      - golangci-lint run {{.CLI_ARGS}} ./...
+
+  lint:yaml:
+    desc: Lint YAML files
+    summary: Run yamllint using the repository config file.
+    preconditions:
+      - sh: command -v yamllint
+        msg: "yamllint not found. Install with: pip install yamllint or your preferred package manager."
+    cmds:
+      - yamllint -c .yamllint.yaml .
+
+  lint:markdown:
+    desc: Lint Markdown files
+    preconditions:
+      - sh: command -v markdownlint
+        msg: "markdownlint not found. Install with: npm install -g markdownlint-cli@latest"
+    cmds:
+      - markdownlint --config .markdownlint.json "**/*.md"
+
+  lint:dockerfile:
+    desc: Lint the Dockerfile
+    preconditions:
+      - sh: test -x ./.bin/hadolint
+        msg: "hadolint binary missing. Run ./scripts/prepare or check .bin/hadolint"
+    cmds:
+      - ./.bin/hadolint Dockerfile
+
+  lint:secrets:
+    desc: Scan for secrets
+    preconditions:
+      - sh: test -x ./.bin/gitleaks
+        msg: "gitleaks binary missing. Run ./scripts/prepare or check .bin/gitleaks"
+    cmds:
+      - ./.bin/gitleaks detect --source . -v
+
+  lint:govulns:
+    desc: Scan dependencies for known vulnerabilities
+    preconditions:
+      - sh: command -v govulncheck
+        msg: "govulncheck not found. Install with: go install golang.org/x/vuln/cmd/govulncheck@latest"
+    cmds:
+      - govulncheck ./...
+
+  lint:all:
+    desc: Run all linting and scanning tools
+    summary: Aggregates every dedicated lint task so you can check everything with a single command.
+    cmds:
+      - task: lint
+      - task: lint:yaml
+      - task: lint:markdown
+      - task: lint:dockerfile
+      - task: lint:secrets
+      - task: lint:govulns
 
   tidy:
     desc: Tidy dependencies
     cmds:
-      - echo "Tidying dependencies..."
       - go mod tidy
-      - echo "Tidy complete"
 
   check:
     desc: Run all checks (format, lint, test, race)
+    summary: |
+      Runs format, imports, lint, unit tests, and race detector.
+      Recommended before committing code.
     cmds:
       - task: fmt
+      - task: imports
       - task: lint
       - task: test:unit
       - task: test:race
-      - echo "All checks passed!"
 
   # Development tasks
   dev:
     desc: Development mode - build and run
+    summary: |
+      Builds the binary and starts the Boxy service.
+      Use for local development and testing.
     deps:
       - build
+    preconditions:
+      - sh: test -f {{.BINARY_NAME}}
+        msg: "Binary not found. Run 'task build' first."
     cmds:
       - ./{{.BINARY_NAME}} serve
 
-  # Clean tasks
   clean:
     desc: Clean build artifacts
+    prompt: "Remove all build artifacts, coverage reports, and test databases?"
     cmds:
-      - echo "Cleaning..."
       - rm -f {{.BINARY_NAME}}
-      - rm -rf dist/
+      - rm -rf {{.DIST_DIR}}/
       - rm -f coverage.out coverage.html
       - rm -f *.db *.db-shm *.db-wal
       - rm -rf tests/tmp
-      - echo "Clean complete"
