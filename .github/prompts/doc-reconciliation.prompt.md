@@ -6,6 +6,7 @@ Scan through all markdown files in this repository and attempt to reconcile, val
 DO NOT make any changes to code files, only to markdown documentation files.
 DO NOT make any changes to documents until you have a approval.
 DO NOT touch coding agent files: CLAUDE.md, GEMINI.md, AGENTS.md, .github/* etc.
+DO NOT ever mess with the top level README.md unless absolutely necessary. NEVER DELETE IT.
 
 Summarize in SMALL BATCHES all the proposed changes and ask for approval before making any changes. Be concise.
 
