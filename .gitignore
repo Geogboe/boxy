@@ -51,3 +51,6 @@ temp/
 .bin/
 
 .cache/
+
+boxy
+boxy.exe
