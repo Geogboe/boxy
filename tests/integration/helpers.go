@@ -27,24 +27,27 @@ func TestLogger() *logrus.Logger {
 
 // SetupTestStore creates a temporary SQLite store for testing
 func SetupTestStore(t *testing.T) storage.Store {
-	// Use shared memory mode which works better for tests
-	// file::memory:?cache=shared allows multiple connections to share the same in-memory database
-	store, err := storage.NewSQLiteStore("file::memory:?cache=shared")
+	// Use in-memory SQLite for tests
+	// :memory: creates a fresh in-memory database for each test
+	store, err := storage.NewSQLiteStore(":memory:")
 	require.NoError(t, err, "Failed to create test store")
 
-	// Configure connection pool to avoid SQLite locking issues in tests
-	// SQLite doesn't handle concurrent writes well, so we limit to 1 connection
-	sqlDB, err := store.DB().DB()
-	require.NoError(t, err, "Failed to get underlying database")
-	sqlDB.SetMaxOpenConns(1)
-	sqlDB.SetMaxIdleConns(1)
-	sqlDB.SetConnMaxLifetime(0)
+	// Verify store was created and migrated successfully by checking tables exist
+	// We do this by trying to create a test resource which will fail if tables don't exist
+	ctx := context.Background()
+	testRes := &provider.Resource{
+		ID:           "test-verification-resource",
+		PoolID:       "test-pool",
+		State:        provider.StateProvisioning,
+		Type:         provider.ResourceTypeContainer,
+		ProviderType: "mock",
+		ProviderID:   "test-provider-id",
+	}
+	err = store.CreateResource(ctx, testRes)
+	require.NoError(t, err, "Failed to verify store initialization - tables may not exist")
 
-	// Verify tables exist
-	var count int64
-	err = store.DB().Raw("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='resources'").Scan(&count).Error
-	require.NoError(t, err, "Failed to verify resources table")
-	require.Equal(t, int64(1), count, "Resources table should exist")
+	// Clean up verification resource
+	_ = store.DeleteResource(ctx, testRes.ID)
 
 	t.Cleanup(func() {
 		if err := store.Close(); err != nil {
