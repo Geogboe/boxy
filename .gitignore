@@ -54,3 +54,5 @@ temp/
 .bin/
 
 .cache/
+
+.task/
