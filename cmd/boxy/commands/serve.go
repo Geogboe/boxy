@@ -21,6 +21,7 @@ import (
 	"github.com/Geogboe/boxy/pkg/provider"
 	"github.com/Geogboe/boxy/pkg/provider/docker"
 	"github.com/Geogboe/boxy/pkg/provider/remote"
+	"github.com/Geogboe/boxy/pkg/provider/scratch/shell"
 )
 
 var serveCmd = &cobra.Command{
@@ -87,6 +88,14 @@ The service will:
 			logger.WithError(err).Warn("Docker health check failed - Docker functionality may be limited")
 		} else {
 			logger.Info("Docker daemon is healthy")
+		}
+
+		// Register scratch/shell provider if requested in pools
+		if needsScratchShell(cfg.Pools) {
+			shCfg := scratchShellConfigFromPools(cfg.Pools)
+			shProvider := shell.New(logger, shCfg)
+			providerRegistry.Register(shProvider.Name(), shProvider)
+			logger.Info("scratch/shell provider registered")
 		}
 
 		// Register remote providers from agents configuration
@@ -255,4 +264,57 @@ The service will:
 
 func init() {
 	rootCmd.AddCommand(serveCmd)
+}
+
+func needsScratchShell(pools []pool.PoolConfig) bool {
+	for _, p := range pools {
+		if p.Backend == "scratch/shell" {
+			return true
+		}
+	}
+	return false
+}
+
+func scratchShellConfigFromPools(pools []pool.PoolConfig) shell.Config {
+	cfg := shell.Config{}
+	for _, p := range pools {
+		if p.Backend != "scratch/shell" {
+			continue
+		}
+		if base, ok := p.ExtraConfig["base_dir"].(string); ok {
+			cfg.BaseDir = base
+		}
+		if shellsRaw, ok := p.ExtraConfig["allowed_shells"]; ok {
+			if list, ok := shellsRaw.([]interface{}); ok {
+				var shells []string
+				for _, s := range list {
+					if str, ok := s.(string); ok {
+						shells = append(shells, str)
+					}
+				}
+				if len(shells) > 0 {
+					cfg.AllowedShells = shells
+				}
+			}
+		}
+		if minFree, ok := p.ExtraConfig["min_free_bytes"]; ok {
+			switch v := minFree.(type) {
+			case int:
+				if v > 0 {
+					cfg.MinFreeBytes = uint64(v)
+				}
+			case int64:
+				if v > 0 {
+					cfg.MinFreeBytes = uint64(v)
+				}
+			case float64:
+				if v > 0 {
+					cfg.MinFreeBytes = uint64(v)
+				}
+			}
+		}
+		// Use the first matching pool's config
+		break
+	}
+	return cfg
 }

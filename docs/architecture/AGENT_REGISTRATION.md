@@ -1,8 +1,10 @@
+# Agent Registration
+
 For an overview of the entire system architecture, please refer to the [Boxy v1 Complete Architecture Map](../ARCHITECTURE_MAP.md).
 
-# Agent Registration with Tokens
+## Agent Registration with Tokens
 
-## Overview
+### Overview
 
 Agents register with the server using a one-time registration token. This is simpler and more secure than manual certificate distribution.
 

@@ -74,9 +74,9 @@ boxy init
 
 This creates:
 
--   `~/.config/boxy/` directory
--   `~/.config/boxy/boxy.yaml` configuration file
--   On first run, Boxy will also auto-generate an encryption key in `~/.config/boxy/encryption.key` (see Security section).
+- `~/.config/boxy/` directory
+- `~/.config/boxy/boxy.yaml` configuration file
+- On first run, Boxy will also auto-generate an encryption key in `~/.config/boxy/encryption.key` (see Security section).
 
 ### 3. Customize Your Configuration
 
@@ -133,10 +133,11 @@ Press Ctrl+C to stop
 ```
 
 **What's happening:**
--   Boxy connects to your Docker daemon.
--   It initializes its internal storage (SQLite database).
--   It starts the pool managers configured in `boxy.yaml`.
--   It provisions `min_ready` (e.g., 2) Alpine containers, keeping them running and ready for allocation.
+
+- Boxy connects to your Docker daemon.
+- It initializes its internal storage (SQLite database).
+- It starts the pool managers configured in `boxy.yaml`.
+- It provisions `min_ready` (e.g., 2) Alpine containers, keeping them running and ready for allocation.
 
 ### 5. Check Pool Status
 
@@ -251,9 +252,10 @@ boxy sandbox destroy abc123
 #### Automatic Expiration
 
 If you wait for the `duration` you specified (e.g., 10 minutes), Boxy will automatically:
-1.  Mark the sandbox as expired.
-2.  Destroy its allocated resources.
-3.  Replenish the pool.
+
+1. Mark the sandbox as expired.
+2. Destroy its allocated resources.
+3. Replenish the pool.
 
 ## Common Patterns
 
@@ -356,9 +358,9 @@ export BOXY_ENCRYPTION_KEY=$(cat ~/.config/boxy/encryption.key)
 
 Boxy automatically encrypts sensitive credentials (like passwords) stored in its database.
 
--   **First run**: If no encryption key is provided, Boxy will auto-generate a 32-byte key and save it to `~/.config/boxy/encryption.key`.
--   **Permissions**: The key file is created with secure `0600` permissions (owner read/write only).
--   **Environment variable**: You can override the key by setting the `BOXY_ENCRYPTION_KEY` environment variable with a base64-encoded 32-byte key.
+- **First run**: If no encryption key is provided, Boxy will auto-generate a 32-byte key and save it to `~/.config/boxy/encryption.key`.
+- **Permissions**: The key file is created with secure `0600` permissions (owner read/write only).
+- **Environment variable**: You can override the key by setting the `BOXY_ENCRYPTION_KEY` environment variable with a base64-encoded 32-byte key.
 
 **Important**: **Backup your encryption key!** Without it, you will **not** be able to decrypt stored passwords or access sandboxes that rely on those credentials. Treat this key like a password manager master key.
 
@@ -376,19 +378,24 @@ For production deployments, it's recommended to run Boxy as a system service.
 
 ### Linux (systemd)
 
-1.  **Create Boxy User**: For security, run Boxy under its own unprivileged user.
+1. **Create Boxy User**: For security, run Boxy under its own unprivileged user.
+
     ```bash
     sudo useradd -r -s /bin/false boxy
     sudo usermod -aG docker boxy # Add boxy user to docker group
     ```
-2.  **Copy Configuration**: Copy your `boxy.yaml` and `encryption.key` to the system user's config path.
+
+2. **Copy Configuration**: Copy your `boxy.yaml` and `encryption.key` to the system user's config path.
+
     ```bash
     sudo mkdir -p /home/boxy/.config/boxy
     sudo cp ~/.config/boxy/boxy.yaml /home/boxy/.config/boxy/
     sudo cp ~/.config/boxy/encryption.key /home/boxy/.config/boxy/ # IMPORTANT: copy your key!
     sudo chown -R boxy:boxy /home/boxy/.config/boxy
     ```
-3.  **Create systemd Service File**: Create `/etc/systemd/system/boxy.service` with the following content:
+
+3. **Create systemd Service File**: Create `/etc/systemd/system/boxy.service` with the following content:
+
     ```ini
     [Unit]
     Description=Boxy Sandbox Orchestration Service
@@ -416,15 +423,19 @@ For production deployments, it's recommended to run Boxy as a system service.
     [Install]
     WantedBy=multi-user.target
     ```
+
     *Note: Adjust `ReadWritePaths` if your `boxy.db` is stored elsewhere.*
 
-4.  **Enable and Start Service**:
+4. **Enable and Start Service**:
+
     ```bash
     sudo systemctl daemon-reload
     sudo systemctl enable boxy
     sudo systemctl start boxy
     ```
-5.  **Check Status and Logs**:
+
+5. **Check Status and Logs**:
+
     ```bash
     sudo systemctl status boxy
     sudo journalctl -u boxy -f
@@ -432,7 +443,8 @@ For production deployments, it's recommended to run Boxy as a system service.
 
 ### macOS (launchd)
 
-1.  **Create launchd Agent File**: Create `~/Library/LaunchAgents/com.boxy.service.plist` with the following content:
+1. **Create launchd Agent File**: Create `~/Library/LaunchAgents/com.boxy.service.plist` with the following content:
+
     ```xml
     <?xml version="1.0" encoding="UTF-8"?>
     <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -456,7 +468,9 @@ For production deployments, it's recommended to run Boxy as a system service.
     </dict>
     </plist>
     ```
-2.  **Load and Start Agent**:
+
+2. **Load and Start Agent**:
+
     ```bash
     launchctl load ~/Library/LaunchAgents/com.boxy.service.plist
     launchctl start com.boxy.service
@@ -466,7 +480,8 @@ For production deployments, it's recommended to run Boxy as a system service.
 
 ### Docker Connection Issues
 
--   **"Docker daemon not reachable"** or similar errors.
+- **"Docker daemon not reachable"** or similar errors.
+
     ```bash
     # Check if Docker is running
     sudo systemctl start docker # On Linux
@@ -481,6 +496,7 @@ For production deployments, it's recommended to run Boxy as a system service.
 ### Database Locked Errors
 
 SQLite can have locking issues under heavy load or if multiple Boxy instances try to access the same DB file.
+
 ```bash
 # Check if multiple Boxy instances are running
 ps aux | grep boxy
@@ -488,11 +504,13 @@ ps aux | grep boxy
 # Kill duplicate processes
 kill <pid>
 ```
+
 *For production use with high concurrency, consider configuring Boxy to use an external PostgreSQL database (support planned for a future release).*
 
 ### Orphaned Containers
 
 If Boxy crashes unexpectedly, some containers managed by Boxy might be left running.
+
 ```bash
 # List Boxy-managed containers
 docker ps -a --filter "label=boxy.managed=true"
@@ -505,19 +523,20 @@ docker rm -f $(docker ps -aq --filter "label=boxy.managed=true")
 
 If you lose your `encryption.key`, you will **not** be able to decrypt existing passwords for sandboxes.
 **Recovery involves data loss:**
-1.  Stop Boxy service.
-2.  Delete database: `rm ~/.config/boxy/boxy.db`.
-3.  Delete encryption key: `rm ~/.config/boxy/encryption.key`.
-4.  Restart Boxy (it will regenerate the key and recreate the database).
+
+1. Stop Boxy service.
+2. Delete database: `rm ~/.config/boxy/boxy.db`.
+3. Delete encryption key: `rm ~/.config/boxy/encryption.key`.
+4. Restart Boxy (it will regenerate the key and recreate the database).
 
 **This process will destroy all existing sandboxes and resources, as their metadata is lost.**
 
 ### Resource Pools Not Replenishing
 
--   Check pool status: `boxy pool ls`. If pools show errors.
--   Ensure Docker images exist: `docker pull ubuntu:22.04`.
--   Check Docker has sufficient resources (memory, disk).
--   View logs for `boxy serve`: `sudo journalctl -u boxy -f` (if running as systemd service).
+- Check pool status: `boxy pool ls`. If pools show errors.
+- Ensure Docker images exist: `docker pull ubuntu:22.04`.
+- Check Docker has sufficient resources (memory, disk).
+- View logs for `boxy serve`: `sudo journalctl -u boxy -f` (if running as systemd service).
 
 ### "Config file not found"
 
@@ -526,6 +545,7 @@ Run `boxy init` first to create the default config directory and file.
 ### Verbose Logging
 
 Enable debug logging for more detailed output:
+
 ```bash
 # Via environment variable
 BOXY_LOGGING_LEVEL=debug boxy serve
@@ -538,18 +558,18 @@ logging:
 
 ## Next Steps
 
--   Read the [CLI Reference](/README.md#cli-reference) for all commands (Note: This link assumes `README.md` at root has a CLI reference, otherwise adjust.)
--   Explore the [Roadmap](../ROADMAP.md) for upcoming features.
--   Check out [Examples](/examples/) for common use cases.
--   Learn about [Boxy's Architecture](../architecture/overview.md) to understand how it works.
--   **For distributed setups (Linux server + Windows agents), see the [Distributed Quick Start Guide](../QUICK_START_DISTRIBUTED.md).**
+- Read the [CLI Reference](/README.md#cli-reference) for all commands (Note: This link assumes `README.md` at root has a CLI reference, otherwise adjust.)
+- Explore the [Roadmap](../ROADMAP.md) for upcoming features.
+- Check out [Examples](/examples/) for common use cases.
+- Learn about [Boxy's Architecture](../architecture/overview.md) to understand how it works.
+- **For distributed setups (Linux server + Windows agents), see the [Distributed Quick Start Guide](../QUICK_START_DISTRIBUTED.md).**
 
 ## Tips
 
-1.  **Start Small**: Begin with `min_ready: 1` or `2` to avoid overwhelming your system initially.
-2.  **Use Alpine**: For testing, Alpine images are tiny (~5MB) and fast to provision.
-3.  **Monitor Logs**: Keep `boxy serve` running in a visible terminal to observe activity.
-4.  **Short Durations**: Use short durations (e.g., `15m`, `30m`) while testing to avoid resource buildup.
-5.  **Clean Slate**: Delete `~/.config/boxy/boxy.db` to reset all state (losing all sandbox info).
+1. **Start Small**: Begin with `min_ready: 1` or `2` to avoid overwhelming your system initially.
+2. **Use Alpine**: For testing, Alpine images are tiny (~5MB) and fast to provision.
+3. **Monitor Logs**: Keep `boxy serve` running in a visible terminal to observe activity.
+4. **Short Durations**: Use short durations (e.g., `15m`, `30m`) while testing to avoid resource buildup.
+5. **Clean Slate**: Delete `~/.config/boxy/boxy.db` to reset all state (losing all sandbox info).
 
 **You're ready to start using Boxy! 🎉**

@@ -29,22 +29,22 @@ breaking_change: true
 
 **Priority order:**
 
-1.  **Explicit flag** (highest priority)
+1. **Explicit flag** (highest priority)
     `boxy serve --config /path/to/custom.yaml`
 
-2.  **Environment variable**
+2. **Environment variable**
     `export BOXY_CONFIG=/path/to/custom.yaml`
 
-3.  **Current directory** (project-specific)
-    -   `./boxy.yaml`
-    -   `./boxy.yml` (fallback)
+3. **Current directory** (project-specific)
+    - `./boxy.yaml`
+    - `./boxy.yml` (fallback)
 
-4.  **Deprecated user directory** (with warning)
-    -   `~/.config/boxy/boxy.yaml`
-    -   If found, print a clear deprecation warning.
+4. **Deprecated user directory** (with warning)
+    - `~/.config/boxy/boxy.yaml`
+    - If found, print a clear deprecation warning.
 
-5.  **Error if not found**
-    -   If none of the above are found, error out with a helpful message.
+5. **Error if not found**
+    - If none of the above are found, error out with a helpful message.
 
 ---
 

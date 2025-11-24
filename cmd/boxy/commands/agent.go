@@ -16,6 +16,7 @@ import (
 	"github.com/Geogboe/boxy/pkg/provider/docker"
 	"github.com/Geogboe/boxy/pkg/provider/hyperv"
 	"github.com/Geogboe/boxy/pkg/provider/mock"
+	"github.com/Geogboe/boxy/pkg/provider/scratch/shell"
 )
 
 var (
@@ -73,7 +74,7 @@ func init() {
 	agentServeCmd.Flags().StringVar(&agentTLSKey, "tls-key", "", "Path to TLS private key")
 	agentServeCmd.Flags().StringVar(&agentTLSCA, "tls-ca", "", "Path to CA certificate")
 	agentServeCmd.Flags().BoolVar(&agentUseTLS, "use-tls", false, "Enable TLS (requires --tls-cert, --tls-key, --tls-ca)")
-	agentServeCmd.Flags().StringSliceVar(&agentProviders, "providers", []string{}, "Providers to enable (docker,hyperv,mock)")
+	agentServeCmd.Flags().StringSliceVar(&agentProviders, "providers", []string{}, "Providers to enable (docker,hyperv,mock,scratch/shell)")
 }
 
 func runAgentServe(cmd *cobra.Command, args []string) error {
@@ -215,6 +216,13 @@ func registerProviders(srv *agent.Server, logger *logrus.Logger) error {
 				return err
 			}
 			logger.Info("Registered Mock provider")
+
+		case "scratch/shell":
+			prov := shell.New(logger, shell.Config{})
+			if err := srv.RegisterProvider(prov.Name(), prov); err != nil {
+				return err
+			}
+			logger.Info("Registered scratch/shell provider")
 
 		default:
 			logger.WithField("provider", provName).Warn("Unknown provider, skipping")

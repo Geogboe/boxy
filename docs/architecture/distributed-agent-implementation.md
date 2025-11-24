@@ -1,6 +1,6 @@
-For an overview of the entire system architecture, please refer to the [Boxy v1 Complete Architecture Map](../ARCHITECTURE_MAP.md).
-
 # Distributed Agent Implementation Guide
+
+For an overview of the entire system architecture, please refer to the [Boxy v1 Complete Architecture Map](../ARCHITECTURE_MAP.md).
 
 This document provides a detailed implementation guide for Boxy's distributed agent architecture.
 

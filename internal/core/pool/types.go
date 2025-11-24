@@ -9,18 +9,18 @@ import (
 
 // PoolConfig defines the configuration for a resource pool
 type PoolConfig struct {
-	Name         string                 `yaml:"name" json:"name"`
-	Type         provider.ResourceType  `yaml:"type" json:"type"`
-	Backend      string                 `yaml:"backend" json:"backend"` // docker, hyperv, kvm, etc.
-	Image        string                 `yaml:"image" json:"image"`
-	MinReady     int                    `yaml:"min_ready" json:"min_ready"`         // Minimum resources to keep ready
-	MaxTotal     int                    `yaml:"max_total" json:"max_total"`         // Maximum total resources (ready + allocated)
-	CPUs         int                    `yaml:"cpus,omitempty" json:"cpus,omitempty"`
-	MemoryMB     int                    `yaml:"memory_mb,omitempty" json:"memory_mb,omitempty"`
-	DiskGB       int                    `yaml:"disk_gb,omitempty" json:"disk_gb,omitempty"`
-	Labels       map[string]string      `yaml:"labels,omitempty" json:"labels,omitempty"`
-	Environment  map[string]string      `yaml:"environment,omitempty" json:"environment,omitempty"`
-	ExtraConfig  map[string]interface{} `yaml:"extra_config,omitempty" json:"extra_config,omitempty"`
+	Name        string                 `yaml:"name" json:"name"`
+	Type        provider.ResourceType  `yaml:"type" json:"type"`
+	Backend     string                 `yaml:"backend" json:"backend"` // docker, hyperv, kvm, etc.
+	Image       string                 `yaml:"image" json:"image"`
+	MinReady    int                    `yaml:"min_ready" json:"min_ready"` // Minimum resources to keep ready
+	MaxTotal    int                    `yaml:"max_total" json:"max_total"` // Maximum total resources (ready + allocated)
+	CPUs        int                    `yaml:"cpus,omitempty" json:"cpus,omitempty"`
+	MemoryMB    int                    `yaml:"memory_mb,omitempty" json:"memory_mb,omitempty"`
+	DiskGB      int                    `yaml:"disk_gb,omitempty" json:"disk_gb,omitempty"`
+	Labels      map[string]string      `yaml:"labels,omitempty" json:"labels,omitempty"`
+	Environment map[string]string      `yaml:"environment,omitempty" json:"environment,omitempty"`
+	ExtraConfig map[string]interface{} `yaml:"extra_config,omitempty" json:"extra_config,omitempty"`
 
 	// Health check configuration
 	HealthCheckInterval time.Duration `yaml:"health_check_interval,omitempty" json:"health_check_interval,omitempty"`
@@ -41,7 +41,7 @@ func (c *PoolConfig) Validate() error {
 	if c.Backend == "" {
 		return ErrInvalidBackend
 	}
-	if c.Image == "" {
+	if c.Image == "" && c.Type != provider.ResourceTypeProcess {
 		return ErrInvalidImage
 	}
 	if c.MinReady < 0 {
@@ -70,7 +70,7 @@ func (c *PoolConfig) Validate() error {
 func (c *PoolConfig) ApplyDefaults() {
 	// Apply default timeouts if not set
 	if c.Timeouts.Provision == 0 && c.Timeouts.Finalization == 0 &&
-	   c.Timeouts.Personalization == 0 && c.Timeouts.Destroy == 0 {
+		c.Timeouts.Personalization == 0 && c.Timeouts.Destroy == 0 {
 		c.Timeouts = hooks.DefaultTimeouts()
 	} else {
 		// Apply defaults for individual zero values
@@ -107,14 +107,14 @@ func (c *PoolConfig) ToResourceSpec() provider.ResourceSpec {
 
 // PoolStats contains statistics about a pool
 type PoolStats struct {
-	Name          string    `json:"name"`
+	Name              string    `json:"name"`
 	TotalReady        int       `json:"total_ready"`
 	TotalAllocated    int       `json:"total_allocated"`
 	TotalProvisioning int       `json:"total_provisioning"`
 	TotalError        int       `json:"total_error"`
-	Total         int       `json:"total"`
-	MinReady      int       `json:"min_ready"`
-	MaxTotal      int       `json:"max_total"`
-	Healthy       bool      `json:"healthy"` // true if TotalReady >= MinReady
-	LastUpdate    time.Time `json:"last_update"`
+	Total             int       `json:"total"`
+	MinReady          int       `json:"min_ready"`
+	MaxTotal          int       `json:"max_total"`
+	Healthy           bool      `json:"healthy"` // true if TotalReady >= MinReady
+	LastUpdate        time.Time `json:"last_update"`
 }

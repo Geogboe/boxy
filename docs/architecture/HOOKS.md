@@ -1,6 +1,6 @@
-For an overview of the entire system architecture, please refer to the [Boxy v1 Complete Architecture Map](../ARCHITECTURE_MAP.md).
+# Hooks System
 
-# Hook-Based Architecture
+For an overview of the entire system architecture, please refer to the [Boxy v1 Complete Architecture Map](../ARCHITECTURE_MAP.md).
 
 ## Overview
 

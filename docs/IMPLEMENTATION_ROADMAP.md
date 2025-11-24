@@ -20,4 +20,5 @@ This document provides a phased implementation plan for Boxy with hook-based pro
 - [ ] Documentation complete
 
 ## Phase 1: Core Hook System (Days 1-5)
+
 ...
