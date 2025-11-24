@@ -4,24 +4,40 @@ This directory contains example configurations demonstrating various Boxy featur
 
 ## Quick Start
 
+**New to Boxy? Start here!** 👇
+
 ```bash
-# Start Boxy with a configuration
-boxy serve --config simple-docker-pool.yaml
+# Try the scratch provider (no Docker/VMs needed!)
+cd examples/00-quickstart-scratch
+./run.sh
 
-# In another terminal, create a sandbox
-boxy sandbox create --pool ubuntu-pool --duration 2h
-
-# List active sandboxes
-boxy sandbox list
-
-# Get connection info
-boxy sandbox get <sandbox-id>
-
-# Destroy when done
-boxy sandbox destroy <sandbox-id>
+# In another terminal
+boxy sandbox create --pool scratch-pool:1 --duration 30m --name my-workspace
 ```
 
+See [00-quickstart-scratch](./00-quickstart-scratch/) for a complete walkthrough.
+
 ## Examples
+
+### 0. 00-quickstart-scratch/ 🚀 **START HERE**
+
+**Simplest way to try Boxy** - No Docker or VMs required!
+
+The scratch/shell provider creates lightweight filesystem-based workspaces.
+
+- Zero dependencies (no Docker/Hyper-V needed)
+- Instant provisioning (no images to pull)
+- Perfect for learning and local testing
+- Includes interactive tutorial
+
+```bash
+cd examples/00-quickstart-scratch
+./run.sh
+```
+
+⚠️ Note: No isolation - not for production use.
+
+See [00-quickstart-scratch/README.md](./00-quickstart-scratch/README.md)
 
 ### 1. simple-docker-pool.yaml
 
