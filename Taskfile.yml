@@ -267,6 +267,84 @@ tasks:
       - task: test:unit
       - task: test:race
 
+  # Example tasks
+  example:build:
+    internal: true
+    desc: Build binary for examples
+    summary: Builds the binary and places it in the example directory for use.
+    vars:
+      EXAMPLE_DIR: "{{.TASKFILE_DIR}}/examples/{{.EXAMPLE_NAME}}"
+    preconditions:
+      - sh: test -d {{.EXAMPLE_DIR}}
+        msg: "Example directory {{.EXAMPLE_DIR}} not found"
+    deps:
+      - build
+    cmds:
+      - cp {{.TASKFILE_DIR}}/{{.BINARY_NAME}} {{.EXAMPLE_DIR}}/{{.BINARY_NAME}}
+
+  example:list:
+    desc: List available examples
+    dir: examples
+    silent: true
+    cmds:
+      - echo "Available examples"
+      - find . -maxdepth 1 -mindepth 1 -type d | xargs -I {} basename {}
+
+  example:scratch:
+    desc: Run scratch provider quickstart example
+    summary: |
+      Runs the easiest quickstart - no Docker or VMs required!
+      Creates a simple workspace using the scratch/shell provider.
+      Perfect for learning Boxy and local testing.
+    dir: examples/00-quickstart-scratch
+    vars:
+      EXAMPLE_NAME: 00-quickstart-scratch
+    interactive: true
+    cmds:
+      - task: example:build
+        vars:
+          EXAMPLE_NAME: "{{.EXAMPLE_NAME}}"
+      - echo "Starting Boxy scratch example..."
+      - ./{{.BINARY_NAME}} serve --config boxy.yaml
+
+  example:docker:
+    desc: Run Docker pool example
+    summary: |
+      Runs the Docker pool configuration example.
+      Creates Ubuntu containers and manages them via Boxy.
+    dir: examples/01-simple-docker-pool
+    vars:
+      EXAMPLE_NAME: 01-simple-docker-pool
+    preconditions:
+      - sh: command -v docker
+        msg: "Docker is required for this example."
+    interactive: true
+    cmds:
+      - task: example:build
+        vars:
+          EXAMPLE_NAME: "{{.EXAMPLE_NAME}}"
+      - echo "Starting Boxy Docker example..."
+      - ./{{.BINARY_NAME}} serve --config boxy.yaml
+
+  example:hooks:
+    desc: Run hooks demonstration example
+    summary: |
+      Runs the hooks demo showing on_provision and on_allocate hooks.
+      Demonstrates lifecycle customization with Docker containers.
+    dir: examples/02-hooks-demo
+    vars:
+      EXAMPLE_NAME: 02-hooks-demo
+    preconditions:
+      - sh: command -v docker
+        msg: "Docker is required for this example."
+    interactive: true
+    cmds:
+      - task: example:build
+        vars:
+          EXAMPLE_NAME: "{{.EXAMPLE_NAME}}"
+      - echo "Starting Boxy hooks demo..."
+      - ./{{.BINARY_NAME}} serve --config boxy.yaml
+
   # Development tasks
   dev:
     desc: Development mode - build and run
