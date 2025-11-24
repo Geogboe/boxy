@@ -1,5 +1,7 @@
 # Agent Implementation Status
 
+> ⚠️ ARCHIVED: This document is retained for historical reference and is no longer actively maintained. For current agent implementation details, see `docs/architecture/distributed-agent-implementation.md` and `pkg/provider/remote/README.md`.
+
 **Date**: 2025-11-21
 **Status**: 90% Complete - Type conversion fixes needed
 

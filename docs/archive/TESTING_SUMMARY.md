@@ -1,5 +1,7 @@
 # Boxy MVP Testing Summary
 
+> ⚠️ ARCHIVED: This document is retained for historical reference and is no longer actively maintained. See `docs/testing-strategy.md` for the current testing strategy.
+
 ## Test Environment
 
 **Environment**: CI/restricted environment without Docker daemon

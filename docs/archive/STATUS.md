@@ -1,5 +1,7 @@
 # Boxy - Development Status Report
 
+> ⚠️ ARCHIVED: This document is retained for historical reference and is no longer actively maintained.
+
 **Date**: 2025-11-17
 **Phase**: MVP (Phase 1) - In Progress
 **Status**: ✅ Core functionality complete, testing infrastructure in place

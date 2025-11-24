@@ -1,5 +1,7 @@
 # Boxy v2 Implementation Plan
 
+> ⚠️ ARCHIVED: This document is retained for historical reference and is no longer actively maintained. See `docs/` for current plans and migration guidance.
+
 **Version:** v2.0
 **Date:** 2024-11-22
 **Status:** Planning

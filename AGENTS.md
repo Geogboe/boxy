@@ -508,7 +508,7 @@ chore: update dependencies
     - adr-002-state-storage.md
 ```
 
-**CLAUDE.md is for:**
+**AGENTS.md is for:**
 
 - AI assistant guidance
 - Development workflows
@@ -614,6 +614,22 @@ func (s *StubHyperVProvider) Provision(ctx, spec) (*Resource, error) {
     return &Resource{ID: uuid.New().String()}, nil
 }
 ```
+
+### Coding Guidelines
+
+- Follow Go best practices (effective Go, idiomatic patterns)
+- Use context for cancellations/timeouts
+- Handle errors explicitly
+- Use interfaces for abstractions
+- Keep functions small and focused
+- Favor composition over inheritance
+- Separate concerns into packages
+- Modularize code for testability
+- Write clear godoc comments
+- Use logging for observability
+- Follow SOLID principles if applicable
+- Write clean, maintainable code
+- Keep code flat if possible - avoid deep nesting
 
 ### 7. Technology Stack Recommendations
 
