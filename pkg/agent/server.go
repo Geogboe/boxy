@@ -7,9 +7,9 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	provider_pkg "github.com/Geogboe/boxy/pkg/provider"
@@ -28,6 +28,7 @@ type Server struct {
 
 	agentID    string
 	address    string
+	actualAddr string
 	providers  map[string]provider_pkg.Provider // provider name -> provider instance
 	logger     *logrus.Logger
 	grpcServer *grpc.Server
@@ -35,12 +36,12 @@ type Server struct {
 
 // Config holds agent server configuration
 type Config struct {
-	AgentID      string
-	ListenAddr   string // host:port to listen on
-	TLSCertPath  string // Path to server certificate
-	TLSKeyPath   string // Path to server key
-	TLSCAPath    string // Path to CA certificate (for client verification)
-	UseTLS       bool
+	AgentID     string
+	ListenAddr  string // host:port to listen on
+	TLSCertPath string // Path to server certificate
+	TLSKeyPath  string // Path to server key
+	TLSCAPath   string // Path to CA certificate (for client verification)
+	UseTLS      bool
 }
 
 // NewServer creates a new agent server
@@ -105,10 +106,11 @@ func (s *Server) Start() error {
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %w", s.address, err)
 	}
+	s.actualAddr = lis.Addr().String()
 
 	s.logger.WithFields(logrus.Fields{
 		"agent_id":  s.agentID,
-		"address":   s.address,
+		"address":   s.actualAddr,
 		"providers": s.getProviderNames(),
 	}).Info("Agent server starting...")
 
@@ -123,6 +125,11 @@ func (s *Server) Start() error {
 func (s *Server) Stop() {
 	s.logger.Info("Agent server stopping...")
 	s.grpcServer.GracefulStop()
+}
+
+// Addr returns the actual listen address after Start is called.
+func (s *Server) Addr() string {
+	return s.actualAddr
 }
 
 // **Potential Problem #7 Addressed: Provider Lookup**
@@ -248,8 +255,8 @@ func (s *Server) GetConnectionInfo(ctx context.Context, req *pb.GetConnectionInf
 
 	return &pb.GetConnectionInfoResponse{
 		ConnectionInfo: &pb.ConnectionInfo{
-			Type:     connInfo.Type,
-			Host:     connInfo.Host,
+			Type: connInfo.Type,
+			Host: connInfo.Host,
 			// #nosec G115 - Port is a valid port number (0-65535) that fits in int32
 			Port:        int32(connInfo.Port),
 			Username:    connInfo.Username,
@@ -360,4 +367,3 @@ func (s *Server) Update(ctx context.Context, req *pb.UpdateRequest) (*pb.UpdateR
 		Resource: resourceToProto(res),
 	}, nil
 }
-
