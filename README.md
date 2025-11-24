@@ -49,6 +49,16 @@ boxy sandbox create --pool ubuntu-containers:1 --duration 10m --name quick-test
 
 Use `boxy pool ls` and `boxy sandbox ls` to inspect state, and see the guide for more options.
 
+## Pinned Development Tools
+
+Development tooling is pinned via `tools.go` (build tag `tools`). Install the pinned binaries by targeting the tool path with `go install -tags tools`. For example:
+
+```bash
+go install -tags tools golang.org/x/vuln/cmd/govulncheck
+```
+
+Other tools provided by `tools.go` include `golang.org/x/tools/cmd/goimports`, `github.com/golangci/golangci-lint/cmd/golangci-lint`, `google.golang.org/grpc/cmd/protoc-gen-go-grpc`, and `google.golang.org/protobuf/cmd/protoc-gen-go`.
+
 ## Architecture
 
 ```text
