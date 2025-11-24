@@ -379,7 +379,7 @@ gh release delete v1.2.0
 ## Getting Help
 
 - Check the [README](README.md) for basic usage
-- Read [CLAUDE.md](CLAUDE.md) for architectural guidance
+- Read [AGENTS.md](AGENTS.md) for architectural guidance
 - Check [docs/](docs/) for detailed documentation
 - Open an issue for questions or problems
 

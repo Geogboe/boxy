@@ -1,5 +1,7 @@
 # Agent TCP Stack Status Report
 
+> ⚠️ ARCHIVED: This document is retained for historical reference and is no longer actively maintained. See `docs/architecture/distributed-agent-implementation.md` for the current plan and status.
+
 ## Current Status: **DOCUMENTED BUT NOT IMPLEMENTED**
 
 ### What Exists ✅

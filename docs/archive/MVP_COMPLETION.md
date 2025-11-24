@@ -1,5 +1,7 @@
 # Boxy MVP Completion Report
 
+> ⚠️ ARCHIVED: This document is retained for historical reference and is no longer actively maintained.
+
 **Date**: 2025-11-22
 **Status**: ✅ MVP COMPLETE - Production Ready
 

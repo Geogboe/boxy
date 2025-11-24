@@ -27,104 +27,27 @@ Boxy simplifies spinning up VMs, containers, and processes across different plat
 
 ## Quick Start
 
-### 1. Install
+A longer Getting Started guide is available in the docs; the sections below provide a short, practical summary — see [Getting Started with Boxy](docs/guides/getting-started.md) for full details.
 
-**Option A: Download Pre-built Binary (Recommended)**
-
-```bash
-# Linux (amd64)
-wget https://github.com/Geogboe/boxy/releases/latest/download/boxy-linux-amd64.tar.gz
-tar -xzf boxy-linux-amd64.tar.gz
-sudo mv boxy-linux-amd64 /usr/local/bin/boxy
-
-# macOS (Apple Silicon)
-wget https://github.com/Geogboe/boxy/releases/latest/download/boxy-darwin-arm64.tar.gz
-tar -xzf boxy-darwin-arm64.tar.gz
-sudo mv boxy-darwin-arm64 /usr/local/bin/boxy
-
-# Windows
-# Download boxy-windows-amd64.exe.zip from releases page
-```
-
-**Option B: Docker**
-
-```bash
-docker pull ghcr.io/geogboe/boxy:latest
-docker run --rm ghcr.io/geogboe/boxy:latest version
-```
-
-**Option C: Build from Source**
-
-```bash
-git clone https://github.com/Geogboe/boxy
-cd boxy
-task build
-sudo task install
-```
-
-### 2. Initialize Configuration
+1. Initialize Boxy and create a default config:
 
 ```bash
 boxy init
-# Creates ~/.config/boxy/boxy.yaml with example pools
 ```
 
-### 3. Edit Configuration
-
-```yaml
-# ~/.config/boxy/boxy.yaml
-storage:
-  type: sqlite
-  path: ~/.config/boxy/boxy.db
-
-logging:
-  level: info
-  format: text
-
-pools:
-  - name: ubuntu-containers
-    type: container
-    backend: docker
-    image: ubuntu:22.04
-    min_ready: 3      # Always keep 3 containers ready
-    max_total: 10     # Maximum 10 total
-    cpus: 2
-    memory_mb: 512
-    health_check_interval: 30s
-```
-
-### 4. Start the Service
+1. Start the Boxy service (keeps pools warm):
 
 ```bash
-# Terminal 1: Run the service (keeps pools warm)
 boxy serve
-
-# The service will:
-# - Start all configured pools
-# - Provision min_ready containers
-# - Monitor health continuously
-# - Auto-replenish when resources are allocated
-# - Clean up expired sandboxes
 ```
 
-### 5. Use It
+1. Create a quick sandbox for testing (example):
 
 ```bash
-# Terminal 2: Check pool status
-boxy pool ls
-
-# Create a sandbox with 2 containers
-boxy sandbox create \
-  --pool ubuntu-containers:2 \
-  --duration 1h \
-  --name my-dev-env
-
-# List active sandboxes
-boxy sandbox ls
-
-# Destroy sandbox when done
-boxy sandbox destroy <sandbox-id>
+boxy sandbox create --pool ubuntu-containers:1 --duration 10m --name quick-test
 ```
+
+Use `boxy pool ls` and `boxy sandbox ls` to inspect state, and see the guide for more options.
 
 ## Architecture
 
@@ -448,7 +371,7 @@ task --list
 - Run tests before committing (`task check`)
 - Add tests for new features
 - Update documentation as needed
-- See [CLAUDE.md](CLAUDE.md) for AI assistant development guidelines
+- See [AGENTS.md](AGENTS.md) for AI assistant development guidelines
 
 ## Architecture Decisions
 

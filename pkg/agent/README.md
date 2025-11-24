@@ -77,7 +77,7 @@ boxy agent serve --listen :50051 \
   --tls-ca /path/to/ca.crt \
   --use-tls
 
-# Auto-detect providers (default): Windows → hyperv + scratch/shell; Linux → docker + scratch/shell
+# Auto-detect providers (default): Windows → hyperv; Linux → docker
 boxy agent serve --listen :50051
 ```
 

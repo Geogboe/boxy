@@ -1,5 +1,7 @@
 # Security and Connection Strategy Analysis
 
+> ⚠️ ARCHIVED: This document is retained for historical reference and is no longer actively maintained. See `docs/architecture/security-guide.md` for the current guidance.
+
 ## Current Security Issues ⚠️
 
 ### 1. **Insecure by Default** (CRITICAL)

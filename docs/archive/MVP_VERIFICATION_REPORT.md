@@ -1,5 +1,7 @@
 # Boxy MVP Verification Report
 
+> ⚠️ ARCHIVED: This document is retained for historical reference and is no longer actively maintained. See `docs/TESTING_STRATEGY.md` and `docs/CONCURRENCY_ANALYSIS.md` for current verification guidance.
+
 **Date**: 2025-11-21
 **Session**: Continuation - Final MVP Verification
 **Branch**: `claude/investigate-host-box-issues-01Um72bqobJXhFEE9bZ9PTmC`
