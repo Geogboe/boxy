@@ -6,8 +6,7 @@ vars:
     sh: git describe --tags --always --dirty 2>/dev/null || echo "dev"
   GIT_COMMIT:
     sh: git rev-parse --short HEAD 2>/dev/null || echo "unknown"
-  BUILD_DATE:
-    sh: date -u +%Y-%m-%dT%H:%M:%SZ
+  BUILD_DATE: '{{now | date "2006-01-02T15:04:05Z07:00"}}'
   LDFLAGS: -s -w -X main.Version={{.VERSION}} -X main.GitCommit={{.GIT_COMMIT}} -X main.BuildDate={{.BUILD_DATE}}
   DIST_DIR: "{{.TASKFILE_DIR}}/dist"
   BINARY_NAME: boxy
