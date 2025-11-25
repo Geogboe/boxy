@@ -15,16 +15,15 @@ This file tracks work in progress and blockers. Updated continuously during deve
 - [x] Created ROADMAP.md with phased development plan
 - [x] Created ADR-010 for E2E testing strategy
 - [x] Created TODO.md for session-persistent tracking
+- [x] **CLI UX Improvement**: Enhanced sandbox create output to show clear `source` instructions
 
 ### In Progress
 - [ ] Verify all tests pass (some integration/e2e tests may need Docker/time-consuming)
-- [ ] **NEXT:** Improve CLI output to show `source connect.sh` instructions
 
 ### Blockers / Decisions Needed
-- [ ] **CLI UX Question:** Should we show the `source` command in sandbox create output?
-  - Current: Shows "Connect script: /path/to/connect.sh"
-  - Proposed: Show explicit `source /path/to/connect.sh` with instructions
-  - Decision: ?
+- [x] **CLI UX Question:** Should we show the `source` command in sandbox create output?
+  - Previous: Showed "Connect script: /path/to/connect.sh"
+  - Decision: IMPLEMENTED - Now shows prominent "How to Use" section with explicit `source` command
 
 - [ ] **Sandbox naming question:** Keep "sandbox create" or change to "sandbox build"?
   - User mentioned: "I wonder if a sandbox should be built rather than created"

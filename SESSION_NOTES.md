@@ -42,6 +42,16 @@ This session focused on polishing the scratch provider, fixing bugs, implementin
 - Created **TODO.md** for session-persistent task tracking
 - Documented open questions and decisions needed
 
+### 5. CLI UX Improvements (Session Continuation)
+- **Problem**: CLI output didn't clearly show how to use connect script
+- **Solution**: Enhanced `printConnections()` in `cmd/boxy/commands/sandbox.go`
+  - Added prominent "How to Use This Sandbox" section with borders
+  - Shows explicit `source /path/to/connect.sh` command
+  - Lists what activation does (directory change, env vars, prompt modification)
+  - Shows deactivate instructions
+  - Reorganized to show usage instructions first, then resource details
+- **Testing**: Verified new output format works correctly with real sandbox creation
+
 ## Files Modified
 
 ### Core Changes
@@ -64,6 +74,9 @@ This session focused on polishing the scratch provider, fixing bugs, implementin
 - `TODO.md` - New file, session-persistent tracking
 - `docs/adr/010-e2e-testing-strategy.md` - New ADR
 - `SESSION_NOTES.md` - This file
+
+### CLI Changes (Session Continuation)
+- `cmd/boxy/commands/sandbox.go` - Enhanced printConnections() output formatting
 
 ## Testing Status
 
