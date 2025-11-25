@@ -2,7 +2,7 @@
 
 ## Summary
 
-This session focused on polishing the scratch provider, fixing bugs, implementing ADR-008, and planning future work.
+This session (with continuation) focused on polishing the scratch provider, fixing bugs, implementing ADR-008, planning future work, improving CLI UX, and creating Windows/Hyper-V example configuration.
 
 ## Major Accomplishments
 
@@ -77,6 +77,15 @@ This session focused on polishing the scratch provider, fixing bugs, implementin
 
 ### CLI Changes (Session Continuation)
 - `cmd/boxy/commands/sandbox.go` - Enhanced printConnections() output formatting
+- `Taskfile.yml` - Fixed cross-platform date function (Windows compatibility)
+
+### Examples (Session Continuation)
+- `examples/04-hyperv-local/` - New directory with Hyper-V embedded agent example
+  - `boxy.yaml` - Local Hyper-V config with min_ready: 1 preheating
+  - `README.md` - Complete setup guide with base image creation
+  - `QUICKSTART.md` - Quick reference for common commands
+  - `setup-base-image.ps1` - PowerShell setup script
+- `examples/README.md` - Updated to include Hyper-V example
 
 ## Testing Status
 
