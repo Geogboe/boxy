@@ -89,7 +89,28 @@ boxy serve --config examples/multi-pool-config.yaml
 boxy sandbox create --pool build-ubuntu --duration 4h
 ```
 
-### 4. advanced-hooks.yaml
+### 4. 04-hyperv-local/ 🪟 **Windows Users**
+
+**Hyper-V local deployment** - Run Boxy on Windows with local Hyper-V.
+
+Perfect for Windows development environments with Hyper-V enabled.
+
+- Embedded agent mode (no separate agent process)
+- Hyper-V VMs with automatic credential generation
+- Preheating (1 VM kept ready)
+- Fast provisioning with differencing disks
+- RDP access with auto-generated passwords
+
+```powershell
+# Windows only - run as Administrator
+cd examples\04-hyperv-local
+.\setup-base-image.ps1    # First-time setup
+boxy.exe serve --config boxy.yaml
+```
+
+See [04-hyperv-local/QUICKSTART.md](./04-hyperv-local/QUICKSTART.md) for step-by-step guide.
+
+### 5. advanced-hooks.yaml
 
 **Advanced features** - Demonstrates all hook capabilities.
 
