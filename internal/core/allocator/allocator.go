@@ -3,6 +3,7 @@ package allocator
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/sirupsen/logrus"
 
@@ -11,7 +12,7 @@ import (
 
 // PoolAllocator is the minimal interface the allocator needs from a pool manager.
 type PoolAllocator interface {
-	Allocate(ctx context.Context, sandboxID string) (*provider.Resource, error)
+	Allocate(ctx context.Context, sandboxID string, expiresAt *time.Time) (*provider.Resource, error)
 	Release(ctx context.Context, resourceID string) error
 }
 
@@ -44,13 +45,13 @@ func (a *Allocator) HasPool(name string) bool {
 }
 
 // Allocate reserves a resource from the named pool for the sandbox.
-func (a *Allocator) Allocate(ctx context.Context, poolName, sandboxID string) (*provider.Resource, error) {
+func (a *Allocator) Allocate(ctx context.Context, poolName, sandboxID string, expiresAt *time.Time) (*provider.Resource, error) {
 	pool, ok := a.pools[poolName]
 	if !ok {
 		return nil, fmt.Errorf("pool not found: %s", poolName)
 	}
 
-	res, err := pool.Allocate(ctx, sandboxID)
+	res, err := pool.Allocate(ctx, sandboxID, expiresAt)
 	if err != nil {
 		return nil, fmt.Errorf("allocate from pool %s: %w", poolName, err)
 	}

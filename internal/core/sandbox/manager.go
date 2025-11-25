@@ -119,7 +119,7 @@ func (m *Manager) Create(ctx context.Context, req *CreateRequest) (*Sandbox, err
 	}
 
 	// Allocate resources asynchronously
-	go m.allocateResourcesAsync(sb.ID, req.Resources)
+	go m.allocateResourcesAsync(sb.ID, sb.ExpiresAt, req.Resources)
 
 	m.logger.WithField("sandbox_id", sb.ID).Info("Sandbox creation started")
 
@@ -175,7 +175,7 @@ func (m *Manager) WaitForReady(ctx context.Context, sandboxID string, timeout ti
 }
 
 // allocateResourcesAsync allocates resources for a sandbox in background
-func (m *Manager) allocateResourcesAsync(sandboxID string, resourceReqs []ResourceRequest) {
+func (m *Manager) allocateResourcesAsync(sandboxID string, expiresAt *time.Time, resourceReqs []ResourceRequest) {
 	defer func() {
 		if r := recover(); r != nil {
 			m.logger.WithFields(logrus.Fields{
@@ -208,7 +208,7 @@ func (m *Manager) allocateResourcesAsync(sandboxID string, resourceReqs []Resour
 		}
 
 		for i := 0; i < resReq.Count; i++ {
-			res, err := m.allocator.Allocate(ctx, resReq.PoolName, sandboxID)
+			res, err := m.allocator.Allocate(ctx, resReq.PoolName, sandboxID, expiresAt)
 			if err != nil {
 				m.logger.WithError(err).Errorf("Failed to allocate resource %d from pool %s", i+1, resReq.PoolName)
 				m.markSandboxError(sandboxID, fmt.Sprintf("failed to allocate from pool %s: %v", resReq.PoolName, err), allocatedIDs)

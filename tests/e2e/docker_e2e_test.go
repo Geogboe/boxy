@@ -119,7 +119,7 @@ func TestDockerE2E_FullLifecycle(t *testing.T) {
 
 	// Test 1: Allocate a real container
 	t.Log("Test 1: Allocating container from warm pool...")
-	res, err := poolManager.Allocate(ctx, "e2e-sandbox-1")
+	res, err := poolManager.Allocate(ctx, "e2e-sandbox-1", nil)
 	require.NoError(t, err, "Failed to allocate container")
 	assert.NotNil(t, res)
 	assert.NotEmpty(t, res.ID)
@@ -237,7 +237,7 @@ func TestDockerE2E_MultipleContainers(t *testing.T) {
 	containers := make([]*provider_pkg.Resource, 5)
 	for i := 0; i < 5; i++ {
 		sandboxID := fmt.Sprintf("e2e-multi-sandbox-%d", i)
-		res, err := poolManager.Allocate(ctx, sandboxID)
+		res, err := poolManager.Allocate(ctx, sandboxID, nil)
 		require.NoError(t, err, fmt.Sprintf("Failed to allocate container %d", i))
 		containers[i] = res
 		t.Logf("Allocated container %d: %s", i, res.ProviderID[:12])

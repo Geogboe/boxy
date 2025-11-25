@@ -16,13 +16,15 @@ const (
 type HookPoint string
 
 const (
-	// HookPointAfterProvision runs after provider.Provision() during pool warming
+	// HookPointOnProvision runs after provider.Provision() during pool warming
 	// Purpose: Slow, background finalization (network validation, optional setup)
-	HookPointAfterProvision HookPoint = "after_provision"
+	// ADR-008: Use on_provision for lifecycle hooks
+	HookPointOnProvision HookPoint = "on_provision"
 
-	// HookPointBeforeAllocate runs before allocating resource to user
+	// HookPointOnAllocate runs before allocating resource to user
 	// Purpose: Fast personalization (create user account, set hostname)
-	HookPointBeforeAllocate HookPoint = "before_allocate"
+	// ADR-008: Use on_allocate for lifecycle hooks
+	HookPointOnAllocate HookPoint = "on_allocate"
 )
 
 // ShellType represents the shell interpreter to use
@@ -47,10 +49,11 @@ type Hook struct {
 }
 
 // HookConfig contains all hooks for a pool
+// ADR-008: Use on_provision and on_allocate for hook names
 type HookConfig struct {
-	AfterProvision []Hook `yaml:"after_provision,omitempty" json:"after_provision,omitempty"`
-	BeforeAllocate []Hook `yaml:"before_allocate,omitempty" json:"before_allocate,omitempty"`
-	UseSystemHooks bool   `yaml:"use_system_hooks,omitempty" json:"use_system_hooks,omitempty"` // Enable Boxy's default hooks
+	OnProvision    []Hook `yaml:"on_provision,omitempty" json:"on_provision,omitempty" mapstructure:"on_provision"`
+	OnAllocate     []Hook `yaml:"on_allocate,omitempty" json:"on_allocate,omitempty" mapstructure:"on_allocate"`
+	UseSystemHooks bool   `yaml:"use_system_hooks,omitempty" json:"use_system_hooks,omitempty" mapstructure:"use_system_hooks"` // Enable Boxy's default hooks
 }
 
 // TimeoutConfig contains phase-level timeouts

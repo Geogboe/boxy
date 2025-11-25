@@ -61,7 +61,7 @@ func TestPoolManager_Integration_Allocation(t *testing.T) {
 	ctx := context.Background()
 
 	// Allocate a resource
-	res, err := manager.Allocate(ctx, "sandbox-1")
+	res, err := manager.Allocate(ctx, "sandbox-1", nil)
 	require.NoError(t, err)
 	assert.NotNil(t, res)
 	assert.Equal(t, "sandbox-1", *res.SandboxID)
@@ -93,7 +93,7 @@ func TestPoolManager_Integration_Release(t *testing.T) {
 	ctx := context.Background()
 
 	// Allocate
-	res, err := manager.Allocate(ctx, "sandbox-1")
+	res, err := manager.Allocate(ctx, "sandbox-1", nil)
 	require.NoError(t, err)
 
 	// Release
@@ -127,7 +127,7 @@ func TestPoolManager_Integration_MultipleAllocations(t *testing.T) {
 
 	// Allocate 3 resources
 	for i := 0; i < 3; i++ {
-		_, err := manager.Allocate(ctx, "sandbox-1")
+		_, err := manager.Allocate(ctx, "sandbox-1", nil)
 		require.NoError(t, err)
 	}
 
@@ -166,7 +166,7 @@ func TestPoolManager_Integration_ConcurrentAllocations(t *testing.T) {
 	for i := 0; i < numWorkers; i++ {
 		go func(id int) {
 			sandboxID := fmt.Sprintf("sandbox-concurrent-%d", id)
-			_, err := manager.Allocate(ctx, sandboxID)
+			_, err := manager.Allocate(ctx, sandboxID, nil)
 			results <- result{id: id, err: err}
 		}(i)
 	}
@@ -248,7 +248,7 @@ func TestPoolManager_Integration_CapacityLimit(t *testing.T) {
 	ctx := context.Background()
 
 	// Allocate to capacity (2 ready + 1 allocated = 3)
-	_, err = manager.Allocate(ctx, "sb-1")
+	_, err = manager.Allocate(ctx, "sb-1", nil)
 	require.NoError(t, err)
 
 	// Try to allocate beyond capacity
@@ -285,6 +285,6 @@ func BenchmarkPoolManager_Allocate(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = manager.Allocate(ctx, "bench-sandbox")
+		_, _ = manager.Allocate(ctx, "bench-sandbox", nil)
 	}
 }
