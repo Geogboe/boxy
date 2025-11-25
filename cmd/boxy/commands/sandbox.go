@@ -225,11 +225,50 @@ func printSandboxSummary(sb runtime.SandboxView) {
 }
 
 func printConnections(resources []runtime.ResourceWithConn) {
-	fmt.Println("Resource Connection Info:")
-	fmt.Println("─────────────────────────")
+	// Check if any resources have connect scripts
+	hasConnectScript := false
+	for _, rwc := range resources {
+		if cs, ok := rwc.Connection.ExtraFields["connect_script"].(string); ok && cs != "" {
+			hasConnectScript = true
+			break
+		}
+	}
+
+	// If we have shell resources, show activation instructions first
+	if hasConnectScript {
+		fmt.Println("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		fmt.Println("  How to Use This Sandbox")
+		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+		for i, rwc := range resources {
+			if cs, ok := rwc.Connection.ExtraFields["connect_script"].(string); ok && cs != "" {
+				if len(resources) > 1 {
+					fmt.Printf("\n  Resource [%d]:\n", i+1)
+				} else {
+					fmt.Println()
+				}
+				fmt.Printf("    source %s\n", cs)
+			}
+		}
+
+		fmt.Println("\n  This will:")
+		fmt.Println("    • Change to the workspace directory")
+		fmt.Println("    • Set environment variables (BOXY_SANDBOX, BOXY_WORKSPACE)")
+		fmt.Println("    • Modify your prompt to show the sandbox ID")
+		fmt.Println()
+		fmt.Println("  To exit the sandbox:")
+		fmt.Println("    deactivate")
+		fmt.Println()
+		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	}
+
+	// Show detailed connection info
+	fmt.Println("Resource Details:")
+	fmt.Println("─────────────────")
 	for i, rwc := range resources {
 		fmt.Printf("\n[%d] Resource %s\n", i+1, rwc.Resource.ID[:8])
 		fmt.Printf("    Type: %s\n", rwc.Connection.Type)
+
 		if rwc.Connection.Host != "" {
 			fmt.Printf("    Host: %s\n", rwc.Connection.Host)
 		}
@@ -244,10 +283,11 @@ func printConnections(resources []runtime.ResourceWithConn) {
 			fmt.Printf("    Connect: docker exec -it %s /bin/bash\n", containerID[:12])
 		}
 		if cs, ok := rwc.Connection.ExtraFields["connect_script"].(string); ok && cs != "" {
-			fmt.Printf("    Connect script: %s\n", cs)
+			fmt.Printf("    Script: %s\n", cs)
 		}
 		if ws, ok := rwc.Connection.ExtraFields["workspace_dir"].(string); ok && ws != "" {
-			fmt.Printf("    Workspace dir: %s\n", ws)
+			fmt.Printf("    Workspace: %s\n", ws)
 		}
 	}
+	fmt.Println()
 }
