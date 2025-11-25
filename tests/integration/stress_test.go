@@ -121,7 +121,7 @@ func TestPoolManager_ConcurrentAllocations_Stress(t *testing.T) {
 
 			for j := 0; j < allocationsPerWorker; j++ {
 				sandboxID := fmt.Sprintf("stress-sandbox-%d-%d", workerID, j)
-				_, err := manager.Allocate(ctx, sandboxID)
+				_, err := manager.Allocate(ctx, sandboxID, nil)
 				if err != nil {
 					errors++
 					t.Logf("Worker %d allocation %d failed: %v", workerID, j, err)
@@ -203,7 +203,7 @@ func TestPoolManager_ConcurrentAllocateRelease(t *testing.T) {
 			for j := 0; j < cyclesPerWorker; j++ {
 				// Allocate
 				sandboxID := fmt.Sprintf("cycle-sandbox-%d-%d", workerID, j)
-				res, err := manager.Allocate(ctx, sandboxID)
+				res, err := manager.Allocate(ctx, sandboxID, nil)
 				if err != nil {
 					t.Logf("Worker %d cycle %d: allocation failed: %v", workerID, j, err)
 					continue
@@ -321,7 +321,7 @@ func TestPoolManager_StopDuringAllocations(t *testing.T) {
 
 			for j := 0; j < 20; j++ {
 				sandboxID := fmt.Sprintf("shutdown-sandbox-%d-%d", workerID, j)
-				_, err := manager.Allocate(ctx, sandboxID)
+				_, err := manager.Allocate(ctx, sandboxID, nil)
 				if err != nil {
 					// Errors expected after Stop() is called
 					return

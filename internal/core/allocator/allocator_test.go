@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/sirupsen/logrus"
 
@@ -18,7 +19,7 @@ type stubPool struct {
 	resource    *provider.Resource
 }
 
-func (s *stubPool) Allocate(ctx context.Context, sandboxID string) (*provider.Resource, error) {
+func (s *stubPool) Allocate(ctx context.Context, sandboxID string, expiresAt *time.Time) (*provider.Resource, error) {
 	if s.allocateErr != nil {
 		return nil, s.allocateErr
 	}
@@ -63,7 +64,8 @@ func TestAllocatorAllocate(t *testing.T) {
 
 	alloc := New(map[string]PoolAllocator{"pool-a": pool}, repo, logrus.New())
 
-	got, err := alloc.Allocate(context.Background(), "pool-a", "sb-1")
+	expiresAt := time.Now().Add(30 * time.Minute)
+	got, err := alloc.Allocate(context.Background(), "pool-a", "sb-1", &expiresAt)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}

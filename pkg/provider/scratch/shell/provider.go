@@ -71,12 +71,12 @@ func (p *Provider) Provision(ctx context.Context, spec provider.ResourceSpec) (*
 }
 
 func (p *Provider) Destroy(ctx context.Context, res *provider.Resource) error {
-	paths := workspacefs.Layout(p.cfg.BaseDir, res.ID)
+	paths := workspacefs.PathsFromRoot(res.ProviderID)
 	return workspacefs.Cleanup(paths)
 }
 
 func (p *Provider) GetStatus(ctx context.Context, res *provider.Resource) (*provider.ResourceStatus, error) {
-	paths := workspacefs.Layout(p.cfg.BaseDir, res.ID)
+	paths := workspacefs.PathsFromRoot(res.ProviderID)
 	required := []string{}
 	if metaPath, ok := res.Metadata["resource_meta"].(string); ok && metaPath != "" {
 		required = append(required, metaPath)
@@ -101,7 +101,7 @@ func (p *Provider) GetStatus(ctx context.Context, res *provider.Resource) (*prov
 }
 
 func (p *Provider) GetConnectionInfo(ctx context.Context, res *provider.Resource) (*provider.ConnectionInfo, error) {
-	paths := workspacefs.Layout(p.cfg.BaseDir, res.ID)
+	paths := workspacefs.PathsFromRoot(res.ProviderID)
 	return &provider.ConnectionInfo{
 		Type: "shell",
 		ExtraFields: map[string]interface{}{
@@ -138,7 +138,7 @@ func (p *Provider) Type() provider.ResourceType {
 // AllocateArtifacts writes sandbox metadata and connect scripts.
 // Intended to be called by the pool manager when allocating to a sandbox.
 func (p *Provider) AllocateArtifacts(res *provider.Resource, sandboxID string, expiresAt *time.Time) error {
-	paths := workspacefs.Layout(p.cfg.BaseDir, res.ID)
+	paths := workspacefs.PathsFromRoot(res.ProviderID)
 	shell := p.pickShell()
 	if shell == "" {
 		return fmt.Errorf("no allowed shell found")
@@ -178,13 +178,75 @@ func (p *Provider) pickShell() string {
 }
 
 func buildConnectScript(workspaceDir, sandboxID, shell string) string {
+	// Truncate sandbox ID for display (handle short IDs in tests)
+	shortID := sandboxID
+	if len(sandboxID) > 8 {
+		shortID = sandboxID[:8]
+	}
+
 	return fmt.Sprintf(`#!/bin/sh
-cd "%s" || exit 1
+# Boxy Sandbox Activation Script
+# Usage: source this script to activate the sandbox environment
+#
+#   source %s/connect.sh
+#
+# This will:
+#   - Change directory to the workspace
+#   - Set environment variables (BOXY_SANDBOX, BOXY_WORKSPACE, etc.)
+#   - Create a 'deactivate' function to restore your original environment
+
+# Save original state
+_BOXY_OLD_PWD="$PWD"
+_BOXY_OLD_PS1="$PS1"
+_BOXY_OLD_PATH="$PATH"
+
+# Change to workspace
+cd "%s" || return 1
+
+# Set Boxy environment variables
 export BOXY_SANDBOX="%s"
 export BOXY_WORKSPACE="%s"
 export PS1="(boxy:%s) \w $ "
-exec %s --noprofile --norc
-`, workspaceDir, sandboxID, workspaceDir, sandboxID, shell)
+
+# Add workspace bin to PATH if it exists
+if [ -d "%s/bin" ]; then
+    export PATH="%s/bin:$PATH"
+fi
+
+# Define deactivate function
+deactivate() {
+    # Restore original state
+    cd "$_BOXY_OLD_PWD"
+    export PS1="$_BOXY_OLD_PS1"
+    export PATH="$_BOXY_OLD_PATH"
+
+    # Unset Boxy variables
+    unset BOXY_SANDBOX
+    unset BOXY_WORKSPACE
+
+    # Clean up saved state
+    unset _BOXY_OLD_PWD
+    unset _BOXY_OLD_PS1
+    unset _BOXY_OLD_PATH
+
+    # Remove this function
+    unset -f deactivate
+
+    echo "Boxy sandbox deactivated"
+}
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  Boxy Sandbox Activated"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "  Sandbox ID:  %s"
+echo "  Workspace:   %s"
+echo ""
+echo "  To exit this sandbox, run:"
+echo "    deactivate"
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+`, workspaceDir, workspaceDir, sandboxID, workspaceDir, shortID, workspaceDir, workspaceDir, shortID, workspaceDir)
 }
 
 var _ provider.Provider = (*Provider)(nil)

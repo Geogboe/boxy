@@ -26,6 +26,17 @@ func Layout(baseDir, resourceID string) Paths {
 	}
 }
 
+// PathsFromRoot builds Paths from an existing root directory path.
+// Use this when you have resource.ProviderID (the full root path).
+func PathsFromRoot(rootDir string) Paths {
+	return Paths{
+		RootDir:       rootDir,
+		WorkspaceDir:  filepath.Join(rootDir, "workspace"),
+		ConnectScript: filepath.Join(rootDir, "connect.sh"),
+		EnvFile:       filepath.Join(rootDir, ".envrc"),
+	}
+}
+
 // Provision creates directories for the workspace.
 func Provision(baseDir, resourceID string) (Paths, error) {
 	p := Layout(baseDir, resourceID)

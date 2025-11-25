@@ -61,7 +61,7 @@ func TestE2E_CompleteSandboxLifecycle(t *testing.T) {
 		CPUs:     1,
 		MemoryMB: 512,
 		Hooks: hooks.HookConfig{
-			AfterProvision: []hooks.Hook{
+			OnProvision: []hooks.Hook{
 				{
 					Name:   "finalize",
 					Type:   hooks.HookTypeScript,
@@ -69,7 +69,7 @@ func TestE2E_CompleteSandboxLifecycle(t *testing.T) {
 					Inline: "echo 'Finalization for ${resource.id}'",
 				},
 			},
-			BeforeAllocate: []hooks.Hook{
+			OnAllocate: []hooks.Hook{
 				{
 					Name:   "personalize",
 					Type:   hooks.HookTypeScript,

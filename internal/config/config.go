@@ -104,9 +104,13 @@ func Load(configPath string) (*Config, error) {
 	}
 
 	// Validate pools
-	for i, poolCfg := range cfg.Pools {
-		if err := poolCfg.Validate(); err != nil {
-			return nil, fmt.Errorf("pool %d (%s) invalid: %w", i, poolCfg.Name, err)
+	for i := range cfg.Pools {
+		// Apply defaults
+		cfg.Pools[i].ApplyDefaults()
+
+		// Validate
+		if err := cfg.Pools[i].Validate(); err != nil {
+			return nil, fmt.Errorf("pool %d (%s) invalid: %w", i, cfg.Pools[i].Name, err)
 		}
 	}
 

@@ -153,7 +153,7 @@ func (m *Manager) Stop() error {
 }
 
 // Allocate allocates a ready resource from the pool
-func (m *Manager) Allocate(ctx context.Context, sandboxID string) (*provider.Resource, error) {
+func (m *Manager) Allocate(ctx context.Context, sandboxID string, expiresAt *time.Time) (*provider.Resource, error) {
 	m.logger.WithFields(logrus.Fields{
 		"pool":       m.config.Name,
 		"sandbox_id": sandboxID,
@@ -184,8 +184,9 @@ func (m *Manager) Allocate(ctx context.Context, sandboxID string) (*provider.Res
 	// Get the first available resource
 	res := available[0]
 
-	// Run before_allocate hooks (personalization) if any
-	if len(m.config.Hooks.BeforeAllocate) > 0 {
+	// Run on_allocate hooks (personalization) if any
+	// ADR-008: Use OnAllocate instead of BeforeAllocate
+	if len(m.config.Hooks.OnAllocate) > 0 {
 		m.logger.WithFields(logrus.Fields{
 			"pool":        m.config.Name,
 			"resource_id": res.ID,
@@ -210,8 +211,8 @@ func (m *Manager) Allocate(ctx context.Context, sandboxID string) (*provider.Res
 
 		results, err := m.hookExecutor.ExecuteHooks(
 			ctx,
-			m.config.Hooks.BeforeAllocate,
-			hooks.HookPointBeforeAllocate,
+			m.config.Hooks.OnAllocate,
+			hooks.HookPointOnAllocate,
 			m.provider,
 			res,
 			hookCtx,
@@ -238,6 +239,18 @@ func (m *Manager) Allocate(ctx context.Context, sandboxID string) (*provider.Res
 	res.SandboxID = &sandboxID
 	res.State = provider.StateAllocated
 	res.UpdatedAt = time.Now()
+
+	//  Call provider-specific allocation artifacts (e.g., scratch provider's connect scripts)
+	// This is optional - only scratch provider currently implements this
+	type artifactAllocator interface {
+		AllocateArtifacts(res *provider.Resource, sandboxID string, expiresAt *time.Time) error
+	}
+	if aa, ok := m.provider.(artifactAllocator); ok {
+		if err := aa.AllocateArtifacts(res, sandboxID, expiresAt); err != nil {
+			m.logger.WithError(err).Warn("Failed to allocate provider artifacts")
+			// Don't fail allocation, just log warning
+		}
+	}
 
 	if err := m.repository.Update(ctx, res); err != nil {
 		return nil, fmt.Errorf("failed to update resource: %w", err)
@@ -550,8 +563,9 @@ func (m *Manager) provisionOne(ctx context.Context) error {
 		return fmt.Errorf("failed to update resource after provisioning: %w", err)
 	}
 
-	// Run after_provision hooks (finalization)
-	if len(m.config.Hooks.AfterProvision) > 0 {
+	// Run on_provision hooks (finalization)
+	// ADR-008: Use OnProvision instead of AfterProvision
+	if len(m.config.Hooks.OnProvision) > 0 {
 		m.logger.WithFields(logrus.Fields{
 			"pool":        m.config.Name,
 			"resource_id": res.ID,
@@ -568,8 +582,8 @@ func (m *Manager) provisionOne(ctx context.Context) error {
 
 		results, err := m.hookExecutor.ExecuteHooks(
 			ctx,
-			m.config.Hooks.AfterProvision,
-			hooks.HookPointAfterProvision,
+			m.config.Hooks.OnProvision,
+			hooks.HookPointOnProvision,
 			m.provider,
 			res,
 			hookCtx,

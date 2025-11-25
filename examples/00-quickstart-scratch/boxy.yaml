@@ -29,33 +29,6 @@ pools:
       min_free_bytes: 1073741824        # Require 1GB free space
 
     # Optional: Add hooks to customize workspaces
-    hooks:
-      after_provision:
-        # This runs when the workspace is first created
-        - name: create-readme
-          type: script
-          shell: bash
-          inline: |
-            # Create a welcome file in the workspace
-            echo "# Boxy Scratch Workspace" > /tmp/boxy-scratch/${resource.id}/workspace/README.md
-            echo "" >> /tmp/boxy-scratch/${resource.id}/workspace/README.md
-            echo "Resource ID: ${resource.id}" >> /tmp/boxy-scratch/${resource.id}/workspace/README.md
-            echo "Pool: ${pool.name}" >> /tmp/boxy-scratch/${resource.id}/workspace/README.md
-            echo "Created: $(date)" >> /tmp/boxy-scratch/${resource.id}/workspace/README.md
-          timeout: 10s
-
-      before_allocate:
-        # This runs when allocating to a user
-        - name: personalize-workspace
-          type: script
-          shell: bash
-          inline: |
-            # Add user-specific files
-            WORKSPACE=/tmp/boxy-scratch/${resource.id}/workspace
-            echo "export PS1='[boxy:${resource.id:0:8}] \w\$ '" > $WORKSPACE/.bashrc
-            echo "echo 'Welcome to your Boxy workspace!'" >> $WORKSPACE/.bashrc
-            echo "echo 'Workspace: $WORKSPACE'" >> $WORKSPACE/.bashrc
-          timeout: 5s
 
 # Storage configuration (uses SQLite by default)
 storage:

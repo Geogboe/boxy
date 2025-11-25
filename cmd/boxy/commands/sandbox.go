@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -191,11 +193,14 @@ func init() {
 func parsePoolRequests(reqs []string) ([]runtime.ResourceRequest, error) {
 	var out []runtime.ResourceRequest
 	for _, req := range reqs {
-		var poolName string
-		var count int
-		_, err := fmt.Sscanf(req, "%[^:]:%d", &poolName, &count)
-		if err != nil {
+		parts := strings.Split(req, ":")
+		if len(parts) != 2 {
 			return nil, fmt.Errorf("invalid pool format: %s (expected: pool-name:count)", req)
+		}
+		poolName := parts[0]
+		count, err := strconv.Atoi(parts[1])
+		if err != nil {
+			return nil, fmt.Errorf("invalid count in pool format: %s (expected: pool-name:count)", req)
 		}
 		out = append(out, runtime.ResourceRequest{
 			PoolName: poolName,

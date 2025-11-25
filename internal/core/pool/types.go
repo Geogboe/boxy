@@ -9,25 +9,25 @@ import (
 
 // PoolConfig defines the configuration for a resource pool
 type PoolConfig struct {
-	Name        string                 `yaml:"name" json:"name"`
-	Type        provider.ResourceType  `yaml:"type" json:"type"`
-	Backend     string                 `yaml:"backend" json:"backend"` // docker, hyperv, kvm, etc.
-	Image       string                 `yaml:"image" json:"image"`
-	MinReady    int                    `yaml:"min_ready" json:"min_ready"` // Minimum resources to keep ready
-	MaxTotal    int                    `yaml:"max_total" json:"max_total"` // Maximum total resources (ready + allocated)
-	CPUs        int                    `yaml:"cpus,omitempty" json:"cpus,omitempty"`
-	MemoryMB    int                    `yaml:"memory_mb,omitempty" json:"memory_mb,omitempty"`
-	DiskGB      int                    `yaml:"disk_gb,omitempty" json:"disk_gb,omitempty"`
-	Labels      map[string]string      `yaml:"labels,omitempty" json:"labels,omitempty"`
-	Environment map[string]string      `yaml:"environment,omitempty" json:"environment,omitempty"`
-	ExtraConfig map[string]interface{} `yaml:"extra_config,omitempty" json:"extra_config,omitempty"`
+	Name        string                 `yaml:"name" json:"name" mapstructure:"name"`
+	Type        provider.ResourceType  `yaml:"type" json:"type" mapstructure:"type"`
+	Backend     string                 `yaml:"backend" json:"backend" mapstructure:"backend"` // docker, hyperv, kvm, etc.
+	Image       string                 `yaml:"image" json:"image" mapstructure:"image"`
+	MinReady    int                    `yaml:"min_ready" json:"min_ready" mapstructure:"min_ready"` // Minimum resources to keep ready
+	MaxTotal    int                    `yaml:"max_total" json:"max_total" mapstructure:"max_total"` // Maximum total resources (ready + allocated)
+	CPUs        int                    `yaml:"cpus,omitempty" json:"cpus,omitempty" mapstructure:"cpus"`
+	MemoryMB    int                    `yaml:"memory_mb,omitempty" json:"memory_mb,omitempty" mapstructure:"memory_mb"`
+	DiskGB      int                    `yaml:"disk_gb,omitempty" json:"disk_gb,omitempty" mapstructure:"disk_gb"`
+	Labels      map[string]string      `yaml:"labels,omitempty" json:"labels,omitempty" mapstructure:"labels"`
+	Environment map[string]string      `yaml:"environment,omitempty" json:"environment,omitempty" mapstructure:"environment"`
+	ExtraConfig map[string]interface{} `yaml:"extra_config,omitempty" json:"extra_config,omitempty" mapstructure:"extra_config"`
 
 	// Health check configuration
-	HealthCheckInterval time.Duration `yaml:"health_check_interval,omitempty" json:"health_check_interval,omitempty"`
+	HealthCheckInterval time.Duration `yaml:"health_check_interval,omitempty" json:"health_check_interval,omitempty" mapstructure:"health_check_interval"`
 
 	// Hook configuration
-	Hooks    hooks.HookConfig    `yaml:"hooks,omitempty" json:"hooks,omitempty"`
-	Timeouts hooks.TimeoutConfig `yaml:"timeouts,omitempty" json:"timeouts,omitempty"`
+	Hooks    hooks.HookConfig    `yaml:"hooks,omitempty" json:"hooks,omitempty" mapstructure:"hooks"`
+	Timeouts hooks.TimeoutConfig `yaml:"timeouts,omitempty" json:"timeouts,omitempty" mapstructure:"timeouts"`
 }
 
 // Validate checks if the pool configuration is valid
@@ -51,13 +51,14 @@ func (c *PoolConfig) Validate() error {
 		return ErrInvalidMaxTotal
 	}
 
-	// Validate hooks
-	for _, hook := range c.Hooks.AfterProvision {
+	// Validate hooks (using new names after normalization)
+	// ADR-008: Validate on_provision and on_allocate hooks
+	for _, hook := range c.Hooks.OnProvision {
 		if err := hooks.ValidateHook(hook); err != nil {
 			return err
 		}
 	}
-	for _, hook := range c.Hooks.BeforeAllocate {
+	for _, hook := range c.Hooks.OnAllocate {
 		if err := hooks.ValidateHook(hook); err != nil {
 			return err
 		}

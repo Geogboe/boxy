@@ -12,7 +12,7 @@ import (
 	"github.com/Geogboe/boxy/pkg/provider/mock"
 )
 
-func TestPoolManager_Integration_HooksAfterProvision(t *testing.T) {
+func TestPoolManager_Integration_HooksOnProvision(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
@@ -20,7 +20,7 @@ func TestPoolManager_Integration_HooksAfterProvision(t *testing.T) {
 	// Setup pool with after_provision hooks
 	poolCfg := SetupTestPool("test-pool-hooks", 2, 5)
 	poolCfg.Hooks = hooks.HookConfig{
-		AfterProvision: []hooks.Hook{
+		OnProvision: []hooks.Hook{
 			{
 				Name:   "validate-network",
 				Type:   hooks.HookTypeScript,
@@ -57,7 +57,7 @@ func TestPoolManager_Integration_HooksAfterProvision(t *testing.T) {
 	assert.True(t, stats.Healthy)
 }
 
-func TestPoolManager_Integration_HooksBeforeAllocate(t *testing.T) {
+func TestPoolManager_Integration_HooksOnAllocate(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test")
 	}
@@ -65,7 +65,7 @@ func TestPoolManager_Integration_HooksBeforeAllocate(t *testing.T) {
 	// Setup pool with before_allocate hooks
 	poolCfg := SetupTestPool("test-pool-allocate-hooks", 2, 5)
 	poolCfg.Hooks = hooks.HookConfig{
-		BeforeAllocate: []hooks.Hook{
+		OnAllocate: []hooks.Hook{
 			{
 				Name:   "create-user",
 				Type:   hooks.HookTypeScript,
@@ -93,7 +93,7 @@ func TestPoolManager_Integration_HooksBeforeAllocate(t *testing.T) {
 	ctx := context.Background()
 
 	// Allocate a resource (should trigger before_allocate hooks)
-	res, err := manager.Allocate(ctx, "sandbox-1")
+	res, err := manager.Allocate(ctx, "sandbox-1", nil)
 	require.NoError(t, err)
 	assert.NotNil(t, res)
 
@@ -110,7 +110,7 @@ func TestPoolManager_Integration_HooksBoth(t *testing.T) {
 	// Setup pool with both hook types
 	poolCfg := SetupTestPool("test-pool-both-hooks", 2, 5)
 	poolCfg.Hooks = hooks.HookConfig{
-		AfterProvision: []hooks.Hook{
+		OnProvision: []hooks.Hook{
 			{
 				Name:    "finalization",
 				Type:    hooks.HookTypeScript,
@@ -119,7 +119,7 @@ func TestPoolManager_Integration_HooksBoth(t *testing.T) {
 				Timeout: 1 * time.Minute,
 			},
 		},
-		BeforeAllocate: []hooks.Hook{
+		OnAllocate: []hooks.Hook{
 			{
 				Name:    "personalization",
 				Type:    hooks.HookTypeScript,
@@ -143,7 +143,7 @@ func TestPoolManager_Integration_HooksBoth(t *testing.T) {
 	ctx := context.Background()
 
 	// Allocate (before_allocate hooks execute)
-	res, err := manager.Allocate(ctx, "sandbox-1")
+	res, err := manager.Allocate(ctx, "sandbox-1", nil)
 	require.NoError(t, err)
 
 	// Both hook types should have executed
@@ -158,7 +158,7 @@ func TestPoolManager_Integration_HooksWithRetry(t *testing.T) {
 
 	poolCfg := SetupTestPool("test-pool-retry", 1, 3)
 	poolCfg.Hooks = hooks.HookConfig{
-		AfterProvision: []hooks.Hook{
+		OnProvision: []hooks.Hook{
 			{
 				Name:   "flaky-hook",
 				Type:   hooks.HookTypeScript,
@@ -191,7 +191,7 @@ func TestPoolManager_Integration_HooksContinueOnFailure(t *testing.T) {
 
 	poolCfg := SetupTestPool("test-pool-continue", 1, 3)
 	poolCfg.Hooks = hooks.HookConfig{
-		BeforeAllocate: []hooks.Hook{
+		OnAllocate: []hooks.Hook{
 			{
 				Name:              "optional-step",
 				Type:              hooks.HookTypeScript,
@@ -220,7 +220,7 @@ func TestPoolManager_Integration_HooksContinueOnFailure(t *testing.T) {
 	ctx := context.Background()
 
 	// Allocation should succeed even if optional hook fails (mock doesn't fail though)
-	res, err := manager.Allocate(ctx, "sandbox-1")
+	res, err := manager.Allocate(ctx, "sandbox-1", nil)
 	require.NoError(t, err)
 	assert.NotNil(t, res)
 }
@@ -232,7 +232,7 @@ func TestPoolManager_Integration_HooksTemplateExpansion(t *testing.T) {
 
 	poolCfg := SetupTestPool("test-pool-templates", 1, 3)
 	poolCfg.Hooks = hooks.HookConfig{
-		BeforeAllocate: []hooks.Hook{
+		OnAllocate: []hooks.Hook{
 			{
 				Name:   "test-templates",
 				Type:   hooks.HookTypeScript,
@@ -254,7 +254,7 @@ func TestPoolManager_Integration_HooksTemplateExpansion(t *testing.T) {
 	ctx := context.Background()
 
 	// Allocate to trigger template expansion
-	res, err := manager.Allocate(ctx, "sandbox-1")
+	res, err := manager.Allocate(ctx, "sandbox-1", nil)
 	require.NoError(t, err)
 
 	// Verify hook executed (check metadata)
@@ -276,7 +276,7 @@ func TestPoolManager_Integration_HooksTimeout(t *testing.T) {
 
 	poolCfg := SetupTestPool("test-pool-timeout", 1, 3)
 	poolCfg.Hooks = hooks.HookConfig{
-		AfterProvision: []hooks.Hook{
+		OnProvision: []hooks.Hook{
 			{
 				Name:    "quick-hook",
 				Type:    hooks.HookTypeScript,
@@ -311,7 +311,7 @@ func TestPoolManager_Integration_HooksMultipleShellTypes(t *testing.T) {
 
 	poolCfg := SetupTestPool("test-pool-shells", 1, 3)
 	poolCfg.Hooks = hooks.HookConfig{
-		AfterProvision: []hooks.Hook{
+		OnProvision: []hooks.Hook{
 			{
 				Name:   "bash-hook",
 				Type:   hooks.HookTypeScript,
