@@ -1,0 +1,333 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Geogboe/boxy/internal/config/schema.json",
+  "title": "Boxy Configuration",
+  "description": "Configuration file for Boxy sandboxing orchestration tool.",
+  "type": "object",
+  "properties": {
+    "pools": {
+      "description": "Resource pool definitions. Each pool maintains a warm set of pre-provisioned resources.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PoolConfig"
+      }
+    },
+    "agents": {
+      "description": "Remote agent configurations for distributed resource management.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentConfig"
+      }
+    },
+    "storage": {
+      "$ref": "#/$defs/StorageConfig"
+    },
+    "logging": {
+      "$ref": "#/$defs/LoggingConfig"
+    },
+    "api": {
+      "$ref": "#/$defs/APIConfig"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "PoolConfig": {
+      "description": "Configuration for a resource pool.",
+      "type": "object",
+      "required": ["name", "type", "backend", "min_ready", "max_total"],
+      "properties": {
+        "name": {
+          "description": "Unique pool identifier.",
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "description": "Resource type for this pool.",
+          "type": "string",
+          "enum": ["container", "vm", "process"]
+        },
+        "backend": {
+          "description": "Provider backend to use for provisioning resources.",
+          "type": "string",
+          "enum": ["docker", "hyperv", "kvm", "vmware"]
+        },
+        "image": {
+          "description": "Image or template to use when provisioning resources. Required for container and vm types.",
+          "type": "string"
+        },
+        "min_ready": {
+          "description": "Minimum number of resources to keep in the ready state (warm pool size).",
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_total": {
+          "description": "Maximum total resources allowed (ready + allocated + provisioning).",
+          "type": "integer",
+          "minimum": 0
+        },
+        "cpus": {
+          "description": "Number of CPUs to allocate per resource.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "memory_mb": {
+          "description": "Memory allocation per resource in megabytes.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "disk_gb": {
+          "description": "Disk allocation per resource in gigabytes (primarily for VMs).",
+          "type": "integer",
+          "minimum": 1
+        },
+        "labels": {
+          "description": "Key-value labels to apply to resources in this pool.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "environment": {
+          "description": "Environment variables to set on resources in this pool.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "extra_config": {
+          "description": "Backend-specific extra configuration options.",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "health_check_interval": {
+          "description": "Interval between health checks. Uses Go duration format (e.g. '30s', '5m').",
+          "type": "string",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$"
+        },
+        "hooks": {
+          "$ref": "#/$defs/HookConfig"
+        },
+        "timeouts": {
+          "$ref": "#/$defs/TimeoutConfig"
+        }
+      },
+      "additionalProperties": false
+    },
+    "AgentConfig": {
+      "description": "Configuration for a remote Boxy agent.",
+      "type": "object",
+      "required": ["id", "address"],
+      "properties": {
+        "id": {
+          "description": "Unique identifier for this agent.",
+          "type": "string",
+          "minLength": 1
+        },
+        "address": {
+          "description": "Network address of the agent in host:port format.",
+          "type": "string"
+        },
+        "providers": {
+          "description": "List of provider names available on this agent.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tls_cert_path": {
+          "description": "Path to the client TLS certificate file.",
+          "type": "string"
+        },
+        "tls_key_path": {
+          "description": "Path to the client TLS key file.",
+          "type": "string"
+        },
+        "tls_ca_path": {
+          "description": "Path to the CA certificate file for verifying the agent.",
+          "type": "string"
+        },
+        "use_tls": {
+          "description": "Enable TLS for communication with this agent.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "StorageConfig": {
+      "description": "Storage backend configuration for persisting state.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "Storage backend type.",
+          "type": "string",
+          "enum": ["sqlite", "postgres"],
+          "default": "sqlite"
+        },
+        "path": {
+          "description": "File path for the SQLite database.",
+          "type": "string",
+          "default": "./boxy.db"
+        },
+        "dsn": {
+          "description": "Data source name for PostgreSQL connections.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "LoggingConfig": {
+      "description": "Logging configuration.",
+      "type": "object",
+      "properties": {
+        "level": {
+          "description": "Log verbosity level.",
+          "type": "string",
+          "enum": ["debug", "info", "warn", "error"],
+          "default": "info"
+        },
+        "format": {
+          "description": "Log output format.",
+          "type": "string",
+          "enum": ["text", "json"],
+          "default": "text"
+        }
+      },
+      "additionalProperties": false
+    },
+    "APIConfig": {
+      "description": "HTTP API server configuration.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Enable the HTTP API server.",
+          "type": "boolean",
+          "default": true
+        },
+        "listen": {
+          "description": "Address and port to listen on (e.g. ':8080').",
+          "type": "string",
+          "default": ":8080"
+        },
+        "read_timeout_secs": {
+          "description": "HTTP server read timeout in seconds.",
+          "type": "integer",
+          "minimum": 1,
+          "default": 15
+        },
+        "write_timeout_secs": {
+          "description": "HTTP server write timeout in seconds.",
+          "type": "integer",
+          "minimum": 1,
+          "default": 15
+        },
+        "idle_timeout_secs": {
+          "description": "HTTP keep-alive idle timeout in seconds.",
+          "type": "integer",
+          "minimum": 1,
+          "default": 60
+        }
+      },
+      "additionalProperties": false
+    },
+    "HookConfig": {
+      "description": "Lifecycle hook configuration for a pool.",
+      "type": "object",
+      "properties": {
+        "on_provision": {
+          "description": "Hooks that run after a resource is provisioned (background finalization).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Hook"
+          }
+        },
+        "on_allocate": {
+          "description": "Hooks that run before a resource is allocated to a user (fast personalization).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Hook"
+          }
+        },
+        "use_system_hooks": {
+          "description": "Enable Boxy's built-in default hooks.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "Hook": {
+      "description": "A lifecycle hook that runs a script at a specific point in the resource lifecycle.",
+      "type": "object",
+      "required": ["name", "type", "shell"],
+      "properties": {
+        "name": {
+          "description": "Descriptive name for this hook.",
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "description": "Hook execution type.",
+          "type": "string",
+          "enum": ["script"]
+        },
+        "shell": {
+          "description": "Shell interpreter to use for running the script.",
+          "type": "string",
+          "enum": ["bash", "powershell", "python"]
+        },
+        "inline": {
+          "description": "Inline script content to execute. Mutually exclusive with 'path'.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Path to a script file to execute. Mutually exclusive with 'inline'.",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Maximum execution time for this hook. Uses Go duration format (e.g. '30s', '5m').",
+          "type": "string",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$"
+        },
+        "retry": {
+          "description": "Number of retry attempts if the hook fails.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "continue_on_failure": {
+          "description": "If true, hook failure does not prevent the lifecycle operation from completing.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "TimeoutConfig": {
+      "description": "Phase-level timeout configuration for pool lifecycle operations.",
+      "type": "object",
+      "properties": {
+        "provision": {
+          "description": "Maximum time for the provider to provision a resource. Uses Go duration format (e.g. '5m').",
+          "type": "string",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$"
+        },
+        "finalization": {
+          "description": "Maximum combined time for all on_provision hooks. Uses Go duration format (e.g. '10m').",
+          "type": "string",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$"
+        },
+        "personalization": {
+          "description": "Maximum combined time for all on_allocate hooks. Uses Go duration format (e.g. '30s').",
+          "type": "string",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$"
+        },
+        "destroy": {
+          "description": "Maximum time for the provider to destroy a resource. Uses Go duration format (e.g. '1m').",
+          "type": "string",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

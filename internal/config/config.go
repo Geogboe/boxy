@@ -1,6 +1,7 @@
 package config
 
 import (
+	_ "embed"
 	"encoding/base64"
 	"fmt"
 	"os"
@@ -12,6 +13,14 @@ import (
 	"github.com/Geogboe/boxy/internal/core/pool"
 	"github.com/Geogboe/boxy/pkg/crypto"
 )
+
+// SchemaFileName is the name of the JSON Schema file written alongside boxy.yaml.
+const SchemaFileName = ".boxy-schema.json"
+
+// SchemaJSON contains the embedded JSON Schema for boxy.yaml configuration files.
+//
+//go:embed schema.json
+var SchemaJSON []byte
 
 // Config represents the Boxy configuration
 type Config struct {
