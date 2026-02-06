@@ -137,13 +137,6 @@ func GetDefaultDBPath() string {
 	return "./boxy.db"
 }
 
-// EnsureConfigDir ensures the config directory exists
-// Note: This is deprecated - config and data should be local
-func EnsureConfigDir() error {
-	configDir := filepath.Join(os.Getenv("HOME"), ".config", "boxy")
-	return os.MkdirAll(configDir, 0750)
-}
-
 // GetEncryptionKey gets or creates the encryption key
 // Priority: BOXY_ENCRYPTION_KEY env var > stored key file > generate new
 func GetEncryptionKey() ([]byte, error) {

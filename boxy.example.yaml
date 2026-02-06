@@ -4,7 +4,7 @@
 # Storage configuration
 storage:
   type: sqlite
-  path: ~/.config/boxy/boxy.db
+  path: ./boxy.db
 
 # Logging configuration
 logging:

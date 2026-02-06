@@ -15,11 +15,6 @@ var initCmd = &cobra.Command{
 	Short: "Initialize Boxy configuration",
 	Long:  `Creates a sample configuration file and necessary directories.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Ensure config directory exists
-		if err := config.EnsureConfigDir(); err != nil {
-			return fmt.Errorf("failed to create config directory: %w", err)
-		}
-
 		// Check if config already exists
 		configPath := config.GetDefaultConfigPath()
 		if _, err := os.Stat(configPath); err == nil {
@@ -62,7 +57,7 @@ func getDefaultConfig() string {
 
 storage:
   type: sqlite
-  path: ~/.config/boxy/boxy.db
+  path: ./boxy.db
 
 logging:
   level: info
