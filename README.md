@@ -25,6 +25,46 @@ Boxy simplifies spinning up VMs, containers, and processes across different plat
 ✅ **Simple CLI** - Easy-to-use command-line interface
 ✅ **Lifecycle Management** - Full resource lifecycle from provision to destroy
 
+## Installation
+
+### From GitHub Releases (recommended)
+
+Download a prebuilt binary from the [latest release](https://github.com/Geogboe/boxy/releases/latest).
+Binaries are available for Linux, macOS, and Windows on amd64 and arm64.
+
+```bash
+# Example: Linux amd64
+curl -LO https://github.com/Geogboe/boxy/releases/latest/download/boxy-linux-amd64
+chmod +x boxy-linux-amd64
+sudo mv boxy-linux-amd64 /usr/local/bin/boxy
+```
+
+Each release includes a `checksums.txt` file for verification.
+
+### From source via `go install`
+
+> **Note**: This is a private repository. You must configure Go and Git for private access first.
+
+```bash
+# 1. Tell Go to skip the public proxy for this module
+go env -w GOPRIVATE=github.com/Geogboe/boxy
+
+# 2. Tell Go's module fetcher to use SSH for this repo
+#    (Go uses HTTPS by default even if you use SSH for git clone)
+git config --global url."git@github.com:Geogboe/boxy".insteadOf "https://github.com/Geogboe/boxy"
+
+# 3. Install
+go install github.com/Geogboe/boxy/cmd/boxy@latest
+```
+
+### From source (development)
+
+```bash
+git clone git@github.com:Geogboe/boxy.git
+cd boxy
+go build -o boxy ./cmd/boxy
+```
+
 ## Quick Start
 
 A longer Getting Started guide is available in the docs; the sections below provide a short, practical summary — see [Getting Started with Boxy](docs/guides/getting-started.md) for full details.
@@ -346,7 +386,7 @@ boxy/
 
 ## Technology Stack
 
-- **Language**: Go 1.21+
+- **Language**: Go 1.24+
 - **CLI Framework**: Cobra
 - **Configuration**: Viper + YAML
 - **Database**: SQLite (GORM)
