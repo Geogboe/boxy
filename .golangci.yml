@@ -21,3 +21,6 @@ linters:
     presets:
       - std-error-handling
       - common-false-positives
+    rules:
+      - linters: [errcheck]
+        path: _test\.go
