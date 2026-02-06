@@ -53,6 +53,14 @@
 //		fmt.Printf("Pool: %s (backend: %s)\n", pool.Name, pool.Backend)
 //	}
 //
+// # Schema
+//
+// A JSON Schema (draft 2020-12) describing valid boxy.yaml files is embedded
+// in the binary and exposed via [SchemaJSON]. The schema file name used on
+// disk is [SchemaFileName] (.boxy-schema.json). The `boxy init` command writes
+// this file alongside the config and adds a yaml-language-server directive so
+// editors with the YAML extension provide autocompletion and validation.
+//
 // # Encryption
 //
 // The package provides encryption key management:
