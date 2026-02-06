@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"strings"
 	"testing"
 
@@ -165,8 +166,13 @@ func TestEncryptor_DecryptErrors(t *testing.T) {
 		ciphertext, err := enc.Encrypt(plaintext)
 		require.NoError(t, err)
 
-		// Tamper with ciphertext (flip last character)
-		tampered := ciphertext[:len(ciphertext)-1] + "X"
+		// Tamper at the byte level so base64 encoding stays valid.
+		// This tests GCM's authentication tag — it should detect the
+		// corruption and return a decryption error, not a base64 error.
+		raw, err := base64.StdEncoding.DecodeString(ciphertext)
+		require.NoError(t, err)
+		raw[len(raw)-1] ^= 0xff
+		tampered := base64.StdEncoding.EncodeToString(raw)
 
 		_, err = enc.Decrypt(tampered)
 		require.Error(t, err)
