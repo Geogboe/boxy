@@ -448,6 +448,58 @@ After pushing changes that affect GitHub Actions workflows or CI configuration, 
 
 This applies to any push that modifies files under `.github/workflows/`, release-please config, linter config, or test code that CI exercises.
 
+#### Useful `gh` Commands for CI/CD
+
+**Pipeline runs:**
+
+```bash
+# List recent workflow runs (all workflows)
+gh run list --limit 10
+
+# Watch a run until it completes (exits non-zero on failure)
+gh run watch <run-id> --exit-status
+
+# View run details and job statuses
+gh run view <run-id>
+
+# View failed job logs only
+gh run view <run-id> --log-failed
+
+# Filter runs by workflow name
+gh run list --workflow CI
+gh run list --workflow Release
+```
+
+**Releases:**
+
+```bash
+# List recent releases
+gh release list
+
+# View details of a specific release
+gh release view <tag>
+
+# View the latest release
+gh release view --latest
+
+# Check release-please PRs (open or merged)
+gh pr list --label "autorelease: pending"
+gh pr list --label "autorelease: tagged" --state merged
+```
+
+**Pull requests and issues:**
+
+```bash
+# View PR details including checks status
+gh pr view <number>
+
+# List PR check statuses
+gh pr checks <number>
+
+# View PR comments
+gh api repos/{owner}/{repo}/pulls/<number>/comments
+```
+
 ### 4. Commit & Push Practices
 
 **Use Conventional Commits:**
