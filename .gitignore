@@ -40,8 +40,7 @@ encryption.key
 *.db
 *.db-shm
 *.db-wal
-boxy
-boxy.exe
+/boxy.exe
 
 # Logs
 *.log
