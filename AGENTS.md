@@ -436,7 +436,19 @@ If you skip any step, explicitly state which steps remain and why.
     V3_IMPLEMENTATION_PLAN.md    # Future (multi-cloud, GPU workloads)
   ```
 
-### 3. Commit & Push Practices
+### 3. CI/CD and GitHub Workflows
+
+After pushing changes that affect GitHub Actions workflows or CI configuration, you **MUST** validate the pipeline:
+
+1. Run `gh run list` to confirm workflows triggered
+2. Wait for runs to complete and check status with `gh run view <run-id>`
+3. If any job fails, inspect logs with `gh run view <run-id> --log-failed`
+4. Fix failures and push corrections — do not leave CI broken
+5. After fixes, re-validate until all jobs pass
+
+This applies to any push that modifies files under `.github/workflows/`, release-please config, linter config, or test code that CI exercises.
+
+### 4. Commit & Push Practices
 
 **Use Conventional Commits:**
 
@@ -456,7 +468,7 @@ chore: update dependencies
 - Push frequently (don't wait for perfection)
 - No need to ask for permission to commit/push
 
-### 4. DRY & Don't Reinvent the Wheel
+### 5. DRY & Don't Reinvent the Wheel
 
 **Use existing, reputable packages when available:**
 
@@ -486,7 +498,7 @@ chore: update dependencies
 - Resource orchestration
 - Novel workflows specific to this project
 
-### 5. Documentation Structure
+### 6. Documentation Structure
 
 **Keep documentation organized:**
 
@@ -522,7 +534,7 @@ chore: update dependencies
 - Detailed architecture
 - Tutorials and guides
 
-### 6. Code Comments and TODOs
+### 7. Code Comments and TODOs
 
 **Use TODOs for future work**:
 
@@ -561,7 +573,7 @@ chore: update dependencies
 
 > 💡 Tip: The `go vet` command and many linters in the `golangci-lint` suite will detect missing or malformed comments for exported identifiers — include these tools in your pre-PR checks.
 
-### 7. Testing Philosophy
+### 8. Testing Philosophy
 
 **Test at multiple levels:**
 
@@ -652,7 +664,7 @@ func (s *StubHyperVProvider) Provision(ctx, spec) (*Resource, error) {
 - Write clean, maintainable code
 - Keep code flat if possible - avoid deep nesting
 
-### 7. Technology Stack Recommendations
+### 9. Technology Stack Recommendations
 
 **Language Options:**
 
@@ -680,7 +692,7 @@ func (s *StubHyperVProvider) Provision(ctx, spec) (*Resource, error) {
 
 **Recommendation**: Start with **PostgreSQL** for state + **Redis** for events/caching
 
-### 8. Security Considerations
+### 10. Security Considerations
 
 ⚠️ **Critical Security Requirements:**
 
