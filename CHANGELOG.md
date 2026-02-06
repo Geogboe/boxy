@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.3](https://github.com/Geogboe/boxy/compare/v0.1.2...v0.1.3) (2026-02-06)
+
+
+### Features
+
+* add JSON Schema for boxy.yaml with editor support ([8ddb8f0](https://github.com/Geogboe/boxy/commit/8ddb8f094669e6d4b0638c20734c86e38ee3f1e0))
+* add JSON Schema for boxy.yaml with editor support ([247b61d](https://github.com/Geogboe/boxy/commit/247b61d94f418f815087ce03fda74b11766fa7cf))
+
 ## [0.1.2](https://github.com/Geogboe/boxy/compare/v0.1.1...v0.1.2) (2026-02-06)
 
 
