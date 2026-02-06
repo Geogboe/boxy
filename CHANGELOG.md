@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/Geogboe/boxy/compare/v0.1.1...v0.1.2) (2026-02-06)
+
+
+### Bug Fixes
+
+* use local paths in boxy init instead of home directory ([74a8fa2](https://github.com/Geogboe/boxy/commit/74a8fa2076c6569d52e64c2326ca8f03dbec10ba))
+
 ## [0.1.1](https://github.com/Geogboe/boxy/compare/v0.1.0...v0.1.1) (2026-02-06)
 
 
