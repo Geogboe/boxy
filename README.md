@@ -75,6 +75,9 @@ A longer Getting Started guide is available in the docs; the sections below prov
 boxy init
 ```
 
+> `boxy init` also creates `.boxy-schema.json` for editor autocompletion.
+> Install the [YAML extension](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml) in VS Code for config hints.
+
 1. Start the Boxy service (keeps pools warm):
 
 ```bash
@@ -209,6 +212,15 @@ Initialize configuration file
 ```bash
 boxy init                  # Create config at default location
 boxy init --force          # Overwrite existing config
+```
+
+#### `boxy schema`
+
+Print or write the JSON Schema for `boxy.yaml`
+
+```bash
+boxy schema                # Print schema JSON to stdout
+boxy schema -o .           # Write .boxy-schema.json to current directory
 ```
 
 #### `boxy serve`
