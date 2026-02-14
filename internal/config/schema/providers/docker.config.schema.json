@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "boxy://schemas/providers/docker.config.schema.json",
+  "title": "Docker Provider Config",
+  "description": "Schema for Provider.Config when Provider.Type is \"docker\".",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "host": {
+      "description": "Docker daemon address. Examples: unix:///var/run/docker.sock, tcp://docker-host:2376",
+      "type": "string",
+      "minLength": 1
+    },
+    "context": {
+      "description": "Docker context name (optional alternative to host).",
+      "type": "string",
+      "minLength": 1
+    },
+    "namespace": {
+      "description": "Prefix/namespace for names/labels Boxy creates.",
+      "type": "string",
+      "default": "boxy",
+      "minLength": 1
+    },
+    "default_labels": {
+      "description": "Labels applied to all created resources.",
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "tls": {
+      "description": "TLS settings for tcp:// hosts.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "ca_file": { "type": "string" },
+        "cert_file": { "type": "string" },
+        "key_file": { "type": "string" },
+        "insecure_skip_verify": { "type": "boolean", "default": false }
+      }
+    }
+  },
+  "anyOf": [
+    { "required": ["host"] },
+    { "required": ["context"] }
+  ]
+}
