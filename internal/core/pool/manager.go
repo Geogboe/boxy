@@ -9,15 +9,6 @@ import (
 	"github.com/Geogboe/boxy/v2/internal/core/store"
 )
 
-// Provisioner is the seam PoolManager uses to create and destroy resources.
-//
-// The exact meaning of "ready" is provider-specific. PoolManager only enforces
-// the generic policy: keep MinReady resources in ResourceStateReady.
-type Provisioner interface {
-	Provision(ctx context.Context, pool model.Pool) (model.Resource, error)
-	Destroy(ctx context.Context, pool model.Pool, res model.Resource) error
-}
-
 type Clock interface {
 	Now() time.Time
 }
