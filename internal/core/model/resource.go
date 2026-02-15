@@ -38,6 +38,10 @@ type Resource struct {
 	// Type is intrinsic to the resource, independent of which container holds it.
 	Type ResourceType `json:"type,omitempty" yaml:"type,omitempty"`
 
+	// Profile is a Boxy-defined variant identifier for this resource's Type.
+	// Example: vm "win-2022", container "ubuntu-2204".
+	Profile ResourceProfile `json:"profile,omitempty" yaml:"profile,omitempty"`
+
 	// Provider identifies the external system instance this resource belongs to.
 	Provider ProviderRef `json:"provider" yaml:"provider"`
 
