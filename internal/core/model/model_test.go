@@ -43,13 +43,14 @@ func TestPoolInventory_KindInvariant(t *testing.T) {
 		},
 		Inventory: ResourceCollection{
 			ExpectedType: ResourceTypeContainer,
+			ExpectedProfile: ResourceProfileDefault,
 		},
 	}
 
-	if err := p.Inventory.Add(Resource{Type: ResourceTypeContainer}); err != nil {
+	if err := p.Inventory.Add(Resource{Type: ResourceTypeContainer, Profile: ResourceProfileDefault}); err != nil {
 		t.Fatalf("add: %v", err)
 	}
-	if err := p.Inventory.Add(Resource{Type: ResourceTypeVM}); err == nil {
+	if err := p.Inventory.Add(Resource{Type: ResourceTypeVM, Profile: ResourceProfileDefault}); err == nil {
 		t.Fatalf("expected kind mismatch error")
 	}
 	if err := p.Inventory.Validate(); err != nil {

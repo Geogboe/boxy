@@ -15,6 +15,7 @@ func TestManager_CreateFromPool_ConsumesReadyResource(t *testing.T) {
 	r1 := model.Resource{
 		ID:        "res_1",
 		Type:      model.ResourceTypeContainer,
+		Profile:   model.ResourceProfileDefault,
 		Provider:  model.ProviderRef{ID: "prov_1"},
 		State:     model.ResourceStateReady,
 		CreatedAt: time.Unix(1, 0).UTC(),
@@ -22,6 +23,7 @@ func TestManager_CreateFromPool_ConsumesReadyResource(t *testing.T) {
 	r2 := model.Resource{
 		ID:        "res_2",
 		Type:      model.ResourceTypeContainer,
+		Profile:   model.ResourceProfileDefault,
 		Provider:  model.ProviderRef{ID: "prov_1"},
 		State:     model.ResourceStateReady,
 		CreatedAt: time.Unix(2, 0).UTC(),
@@ -36,7 +38,7 @@ func TestManager_CreateFromPool_ConsumesReadyResource(t *testing.T) {
 	pool := model.Pool{
 		Name:      "docker-containers",
 		Policies:  model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 0}},
-		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, Resources: []model.Resource{r1, r2}},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault, Resources: []model.Resource{r1, r2}},
 	}
 	if err := st.PutPool(context.Background(), pool); err != nil {
 		t.Fatalf("put pool: %v", err)
