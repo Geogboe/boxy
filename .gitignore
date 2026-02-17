@@ -35,7 +35,6 @@ Thumbs.db
 
 # Boxy specific
 boxy.db
-boxy.yaml
 encryption.key
 *.db
 *.db-shm
