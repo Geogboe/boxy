@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/Geogboe/boxy/v2/internal/core/model"
+	"github.com/Geogboe/boxy/v2/pkg/boxy/model"
 )
 
 var ErrNotFound = errors.New("not found")

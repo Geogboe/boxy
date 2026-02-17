@@ -24,7 +24,7 @@ const (
 // This is intentionally minimal scaffolding. It exists to prevent "random strings
 // at call sites" from becoming the de facto API.
 type Profile struct {
-	Type ResourceType `json:"type" yaml:"type"`
+	Type ResourceType    `json:"type" yaml:"type"`
 	Name ResourceProfile `json:"name" yaml:"name"`
 }
 
@@ -79,4 +79,3 @@ func (r *ProfileRegistry) Has(t ResourceType, name ResourceProfile) bool {
 	_, ok = m[name]
 	return ok
 }
-

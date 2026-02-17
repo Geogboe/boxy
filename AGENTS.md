@@ -7,6 +7,7 @@ Periodically update this document with guidelines, architectural decisions, less
 ### Pools and Resources
 
 - Pools are homogeneous inventories of resources (see `internal/core/model/pool.go` and `internal/core/model/resource_collection.go`).
+- Pools are homogeneous inventories of resources (see `pkg/boxy/model/pool.go` and `pkg/boxy/model/resource_collection.go`).
 - **Resources are single-use:** when a resource is allocated into a sandbox, it is never returned to a pool. (ADR-0002)
 
 ### Sandboxes

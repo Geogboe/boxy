@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Geogboe/boxy/v2/internal/core/model"
-	"github.com/Geogboe/boxy/v2/internal/core/store"
+	"github.com/Geogboe/boxy/v2/pkg/boxy/model"
+	"github.com/Geogboe/boxy/v2/pkg/boxy/store"
 )
 
 type fakeProvisioner struct {

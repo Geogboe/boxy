@@ -30,4 +30,3 @@ func (r ResourceRequest) Validate() error {
 	}
 	return nil
 }
-

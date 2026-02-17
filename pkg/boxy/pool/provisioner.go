@@ -4,21 +4,24 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/Geogboe/boxy/v2/internal/core/model"
+	"github.com/Geogboe/boxy/v2/pkg/boxy/model"
 )
 
 // Provisioner is the execution seam for the pool subsystem.
 //
 // What:
-//   It creates and destroys individual resources for a specific pool.
+//
+//	It creates and destroys individual resources for a specific pool.
 //
 // Why:
-//   Pool.Manager should only enforce policy ("keep N Ready resources"), not know
-//   how to talk to Docker/Hyper-V/etc. Provider-specific IO belongs behind this
-//   seam (typically via provider drivers and, later, agents).
+//
+//	Pool.Manager should only enforce policy ("keep N Ready resources"), not know
+//	how to talk to Docker/Hyper-V/etc. Provider-specific IO belongs behind this
+//	seam (typically via provider drivers and, later, agents).
 //
 // When:
-//   Implement PoolProvisioner when wiring Boxy to real providers, or in tests.
+//
+//	Implement PoolProvisioner when wiring Boxy to real providers, or in tests.
 //
 // How:
 //   - Provision should return a Resource that matches pool.Inventory.ExpectedType.

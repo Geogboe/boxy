@@ -1,6 +1,21 @@
 package model
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/Geogboe/boxy/v2/pkg/resourcepool"
+)
+
+type resourceKey struct {
+	Type    ResourceType
+	Profile ResourceProfile
+}
+
+type keyedResource struct{ Resource }
+
+func (r keyedResource) PoolKey() resourceKey {
+	return resourceKey{Type: r.Type, Profile: r.Profile}
+}
 
 // ResourceCollection is a homogeneous container of resources.
 type ResourceCollection struct {
@@ -24,19 +39,21 @@ func (c *ResourceCollection) Add(r Resource) error {
 	if r.Type == ResourceTypeUnknown {
 		return fmt.Errorf("resource type is required")
 	}
-	if r.Type != c.ExpectedType {
-		return fmt.Errorf("resource type mismatch: expected=%q got=%q", c.ExpectedType, r.Type)
-	}
 	if c.ExpectedProfile == "" {
 		return fmt.Errorf("resource collection expected profile is required")
 	}
 	if r.Profile == "" {
 		return fmt.Errorf("resource profile is required")
 	}
-	if r.Profile != c.ExpectedProfile {
-		return fmt.Errorf("resource profile mismatch: expected=%q got=%q", c.ExpectedProfile, r.Profile)
+
+	p := resourcepool.Pool[resourceKey, keyedResource, struct{}]{
+		Key:   resourceKey{Type: c.ExpectedType, Profile: c.ExpectedProfile},
+		Items: wrapResources(c.Resources),
 	}
-	c.Resources = append(c.Resources, r)
+	if err := p.Add(keyedResource{r}); err != nil {
+		return err
+	}
+	c.Resources = unwrapResources(p.Items)
 	return nil
 }
 
@@ -48,20 +65,26 @@ func (c ResourceCollection) Validate() error {
 	if c.ExpectedProfile == "" {
 		return fmt.Errorf("resource collection expected profile is required")
 	}
-	for i := range c.Resources {
-		r := c.Resources[i]
-		if r.Type == ResourceTypeUnknown {
-			return fmt.Errorf("resource[%d] type is required", i)
-		}
-		if r.Type != c.ExpectedType {
-			return fmt.Errorf("resource[%d] type mismatch: expected=%q got=%q", i, c.ExpectedType, r.Type)
-		}
-		if r.Profile == "" {
-			return fmt.Errorf("resource[%d] profile is required", i)
-		}
-		if r.Profile != c.ExpectedProfile {
-			return fmt.Errorf("resource[%d] profile mismatch: expected=%q got=%q", i, c.ExpectedProfile, r.Profile)
-		}
+
+	p := resourcepool.Pool[resourceKey, keyedResource, struct{}]{
+		Key:   resourceKey{Type: c.ExpectedType, Profile: c.ExpectedProfile},
+		Items: wrapResources(c.Resources),
 	}
-	return nil
+	return p.Validate()
+}
+
+func wrapResources(rs []Resource) []keyedResource {
+	out := make([]keyedResource, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, keyedResource{r})
+	}
+	return out
+}
+
+func unwrapResources(rs []keyedResource) []Resource {
+	out := make([]Resource, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, r.Resource)
+	}
+	return out
 }
