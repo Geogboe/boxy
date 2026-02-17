@@ -1,4 +1,4 @@
-// Package process implements a provider driver that executes local OS processes.
+// Package process implements a providersdk driver that executes local OS processes.
 //
 // This is intentionally simple scaffolding. "Isolation" here means the work runs
 // in a separate OS process with a controllable environment and working directory.
