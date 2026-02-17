@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: '3'
+
+vars:
+  GREETING: Hello, world!
+
+tasks:
+  default: task --list
+  go:run: go run ./cmd/boxy {{.CLI_ARGS}}
+
+  serve:
+    desc: Run `boxy serve` via `go run`
+    cmds:
+      - go run ./cmd/boxy serve {{.CLI_ARGS}}
+
+  serve:once:
+    desc: Run `boxy serve --once` via `go run`
+    cmds:
+      - go run ./cmd/boxy serve --once {{.CLI_ARGS}}
+
+  build:
+    desc: Build local ./boxy binary
+    cmds:
+      - go build -o ./boxy ./cmd/boxy
+
+  install:
+    desc: Install `boxy` into GOBIN/GOPATH/bin
+    cmds:
+      - go install ./cmd/boxy
