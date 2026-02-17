@@ -28,3 +28,9 @@ When decisions are made, save them as ADR documents in /docs/adr. This is a livi
 - Clean code
 - Good documentation
 - Architectural sounds which doesn't necesasrily mean "simple" but is well thought out and maintainable as project expands.
+
+## AI-First Workflow Notes
+
+- Cost model differs from human dev cycles: refactors are cheap when an agent can apply wide changes quickly, resolve merges/rebases, and keep `go test ./...` green.
+- Bias toward a single source of truth: remove duplication promptly and update all call sites together (avoid parallel “old vs new” models).
+- Treat “no regressions” as “no regressions covered by tests”: add/extend targeted tests whenever behavior changes.
