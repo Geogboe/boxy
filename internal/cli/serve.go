@@ -10,9 +10,10 @@ import (
 
 	boxyconfig "github.com/Geogboe/boxy/v2/internal/config"
 	"github.com/Geogboe/boxy/v2/internal/core/pool"
-	"github.com/Geogboe/boxy/v2/internal/core/providers"
 	"github.com/Geogboe/boxy/v2/internal/core/sandbox"
 	"github.com/Geogboe/boxy/v2/internal/core/store"
+	"github.com/Geogboe/boxy/v2/pkg/providersdk"
+	"github.com/Geogboe/boxy/v2/pkg/providersdk/builtins"
 	"github.com/spf13/cobra"
 )
 
@@ -49,13 +50,22 @@ func runServe(ctx context.Context, opts serveOpts) error {
 		slog.Info("loaded config", "path", cfgPath, "providers", len(cfg.Providers))
 	}
 
-	reg := providers.NewRegistry()
-	if err := providers.RegisterBuiltins(reg); err != nil {
+	reg := providersdk.NewRegistry()
+	if err := builtins.RegisterBuiltins(reg); err != nil {
 		return fmt.Errorf("register builtin providers: %w", err)
 	}
 	slog.Info("builtin provider types", "types", providerTypes(reg))
 
-	if err := reg.ValidateProviders(ctx, cfg.Providers); err != nil {
+	instances := make([]providersdk.Instance, 0, len(cfg.Providers))
+	for _, p := range cfg.Providers {
+		instances = append(instances, providersdk.Instance{
+			Name:   string(p.Name),
+			Type:   providersdk.Type(p.Type),
+			Config: p.Config,
+		})
+	}
+
+	if err := reg.ValidateInstances(ctx, instances); err != nil {
 		return fmt.Errorf("validate providers: %w", err)
 	}
 	slog.Info("providers validated", "count", len(cfg.Providers))
@@ -139,7 +149,7 @@ func serveLoop(ctx context.Context) error {
 	}
 }
 
-func providerTypes(reg *providers.Registry) []string {
+func providerTypes(reg *providersdk.Registry) []string {
 	ts := reg.Types()
 	out := make([]string, 0, len(ts))
 	for _, t := range ts {
@@ -147,4 +157,3 @@ func providerTypes(reg *providers.Registry) []string {
 	}
 	return out
 }
-

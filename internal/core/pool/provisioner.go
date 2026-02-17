@@ -15,7 +15,7 @@ import (
 // Why:
 //   Pool.Manager should only enforce policy ("keep N Ready resources"), not know
 //   how to talk to Docker/Hyper-V/etc. Provider-specific IO belongs behind this
-//   seam (typically via internal/core/providers drivers and, later, agents).
+//   seam (typically via provider drivers and, later, agents).
 //
 // When:
 //   Implement PoolProvisioner when wiring Boxy to real providers, or in tests.

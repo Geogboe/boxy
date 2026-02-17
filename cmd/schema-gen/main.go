@@ -7,7 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Geogboe/boxy/v2/internal/core/providers"
+	"github.com/Geogboe/boxy/v2/pkg/providersdk"
+	"github.com/Geogboe/boxy/v2/pkg/providersdk/builtins"
 )
 
 func main() {
@@ -44,8 +45,8 @@ func main() {
 }
 
 func buildTopLevelSchema() (map[string]any, error) {
-	reg := providers.NewRegistry()
-	if err := providers.RegisterBuiltins(reg); err != nil {
+	reg := providersdk.NewRegistry()
+	if err := builtins.RegisterBuiltins(reg); err != nil {
 		return nil, fmt.Errorf("register builtins: %w", err)
 	}
 	ts := reg.Types()
