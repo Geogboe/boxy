@@ -21,3 +21,10 @@ Periodically update this document with guidelines, architectural decisions, less
 ## ADRs
 
 When decisions are made, save them as ADR documents in /docs/adr. This is a living document, so feel free to update it as needed. When an ADR is updated, add a note at the end of the document describing the change and the date it was made.
+
+## My Values
+
+- DRY
+- Clean code
+- Good documentation
+- Architectural sounds which doesn't necesasrily mean "simple" but is well thought out and maintainable as project expands.
