@@ -1,6 +1,9 @@
 package providersdk
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Target identifies a resource instance within a provider (a VM, container, etc).
 // Ref is an opaque identifier interpreted by the driver implementation.
@@ -14,10 +17,17 @@ type ExecResult struct {
 	Stderr string
 }
 
+type ExecSpec struct {
+	Command []string
+	Env     map[string]string
+	WorkDir string
+	Timeout time.Duration
+}
+
 // ExecCapability is an optional capability for running a command against a target.
 type ExecCapability interface {
 	Driver
-	Exec(ctx context.Context, inst Instance, target Target, command []string) (ExecResult, error)
+	Exec(ctx context.Context, inst Instance, target Target, spec ExecSpec) (ExecResult, error)
 }
 
 // ContainerSpec is a minimal provider-agnostic container creation spec.
