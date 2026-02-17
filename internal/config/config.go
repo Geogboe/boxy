@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Geogboe/boxy/v2/internal/core/model"
+	"github.com/Geogboe/boxy/v2/pkg/providersdk"
 	"gopkg.in/yaml.v3"
 )
 
@@ -17,7 +17,7 @@ import (
 // Keep this intentionally small while the CLI wiring lands. Expand as core
 // managers gain real behavior.
 type Config struct {
-	Providers []model.Provider `json:"providers" yaml:"providers"`
+	Providers []providersdk.Instance `json:"providers" yaml:"providers"`
 }
 
 func LoadFile(path string) (Config, error) {

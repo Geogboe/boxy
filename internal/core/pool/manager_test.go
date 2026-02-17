@@ -20,7 +20,7 @@ func (p *fakeProvisioner) Provision(ctx context.Context, pool model.Pool) (model
 		ID:        model.ResourceID("res_" + string(rune('a'+p.n-1))),
 		Type:      pool.Inventory.ExpectedType,
 		Profile:   pool.Inventory.ExpectedProfile,
-		Provider:  model.ProviderRef{ID: "prov_1"},
+		Provider:  model.ProviderRef{Name: "prov_1"},
 		State:     model.ResourceStateReady,
 		CreatedAt: time.Unix(1000+int64(p.n), 0).UTC(),
 	}, nil
@@ -73,15 +73,15 @@ func TestManager_Reconcile_RecycleStale(t *testing.T) {
 		ID:        "res_old",
 		Type:      model.ResourceTypeContainer,
 		Profile:   model.ResourceProfileDefault,
-		Provider:  model.ProviderRef{ID: "prov_1"},
+		Provider:  model.ProviderRef{Name: "prov_1"},
 		State:     model.ResourceStateReady,
 		CreatedAt: time.Unix(0, 0).UTC(),
 	}
 	pool := model.Pool{
 		Name: "p1",
 		Policies: model.PoolPolicies{
-			Preheat:  model.PreheatPolicy{MinReady: 1, MaxTotal: 5},
-			Recycle:  model.RecyclePolicy{MaxAge: "1h"},
+			Preheat: model.PreheatPolicy{MinReady: 1, MaxTotal: 5},
+			Recycle: model.RecyclePolicy{MaxAge: "1h"},
 		},
 		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault, Resources: []model.Resource{old}},
 	}

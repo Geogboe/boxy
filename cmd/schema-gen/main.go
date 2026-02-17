@@ -63,9 +63,9 @@ func buildTopLevelSchema() (map[string]any, error) {
 		"additionalProperties": false,
 		"required":             []string{"name", "type"},
 		"properties": map[string]any{
-			"id":     map[string]any{"type": "string"},
 			"name":   map[string]any{"type": "string", "minLength": 1},
 			"type":   map[string]any{"type": "string", "enum": types},
+			"labels": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
 			"config": map[string]any{"type": "object"},
 		},
 	}
@@ -96,7 +96,7 @@ func buildTopLevelSchema() (map[string]any, error) {
 		"type":    "object",
 		"properties": map[string]any{
 			"providers": map[string]any{
-				"type": "array",
+				"type":  "array",
 				"items": providerItem,
 			},
 		},
