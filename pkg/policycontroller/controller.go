@@ -12,6 +12,11 @@ type Observer[T any] interface {
 	Observe(ctx context.Context) (T, error)
 }
 
+// ObserverFunc adapts a function into an Observer.
+type ObserverFunc[T any] func(ctx context.Context) (T, error)
+
+func (f ObserverFunc[T]) Observe(ctx context.Context) (T, error) { return f(ctx) }
+
 // Evaluator compares observed state to its policy and returns a decision.
 //
 // Policy is intentionally not modeled as a separate input: callers can embed
@@ -21,10 +26,22 @@ type Evaluator[T any, P any] interface {
 	Evaluate(ctx context.Context, observed T) (Decision[P], error)
 }
 
+// EvaluatorFunc adapts a function into an Evaluator.
+type EvaluatorFunc[T any, P any] func(ctx context.Context, observed T) (Decision[P], error)
+
+func (f EvaluatorFunc[T, P]) Evaluate(ctx context.Context, observed T) (Decision[P], error) {
+	return f(ctx, observed)
+}
+
 // Actuator applies a plan produced by an Evaluator.
 type Actuator[P any] interface {
 	Act(ctx context.Context, plan P) error
 }
+
+// ActuatorFunc adapts a function into an Actuator.
+type ActuatorFunc[P any] func(ctx context.Context, plan P) error
+
+func (f ActuatorFunc[P]) Act(ctx context.Context, plan P) error { return f(ctx, plan) }
 
 // Decision is the output of an evaluation pass.
 //

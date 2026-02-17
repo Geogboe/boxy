@@ -21,14 +21,14 @@ const (
 type ResourceState string
 
 const (
-	ResourceStateUnknown     ResourceState = "unknown"
+	ResourceStateUnknown      ResourceState = "unknown"
 	ResourceStateProvisioning ResourceState = "provisioning"
-	ResourceStateReady       ResourceState = "ready"
-	ResourceStateAllocated   ResourceState = "allocated"
-	ResourceStateReleased    ResourceState = "released"
-	ResourceStateDestroying  ResourceState = "destroying"
-	ResourceStateDestroyed   ResourceState = "destroyed"
-	ResourceStateError       ResourceState = "error"
+	ResourceStateReady        ResourceState = "ready"
+	ResourceStateAllocated    ResourceState = "allocated"
+	ResourceStateReleased     ResourceState = "released"
+	ResourceStateDestroying   ResourceState = "destroying"
+	ResourceStateDestroyed    ResourceState = "destroyed"
+	ResourceStateError        ResourceState = "error"
 )
 
 // Resource is a provisioned instance tracked by Boxy.

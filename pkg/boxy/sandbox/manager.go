@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/Geogboe/boxy/v2/internal/core/model"
-	"github.com/Geogboe/boxy/v2/internal/core/store"
+	"github.com/Geogboe/boxy/v2/pkg/boxy/model"
+	"github.com/Geogboe/boxy/v2/pkg/boxy/store"
+	"github.com/Geogboe/boxy/v2/pkg/resourcepool"
 )
 
 // Manager creates sandboxes and consumes resources from pools.
@@ -17,6 +18,17 @@ type Manager struct {
 
 func New(s store.Store) *Manager {
 	return &Manager{store: s}
+}
+
+type invKey struct {
+	Type    model.ResourceType
+	Profile model.ResourceProfile
+}
+
+type keyedResource struct{ model.Resource }
+
+func (r keyedResource) PoolKey() invKey {
+	return invKey{Type: r.Type, Profile: r.Profile}
 }
 
 // CreateFromPool creates a sandbox and attaches N ready resources from a pool.
@@ -47,12 +59,17 @@ func (m *Manager) CreateFromPool(
 		return model.Sandbox{}, fmt.Errorf("get pool: %w", err)
 	}
 
-	selected, remaining, err := takeReady(pool.Inventory.Resources, count)
+	inv := resourcepool.Pool[invKey, keyedResource, struct{}]{
+		Key:   invKey{Type: pool.Inventory.ExpectedType, Profile: pool.Inventory.ExpectedProfile},
+		Items: wrapResources(pool.Inventory.Resources),
+	}
+	picked, err := inv.Take(count, func(r keyedResource) bool { return r.State == model.ResourceStateReady })
 	if err != nil {
 		return model.Sandbox{}, fmt.Errorf("select from pool %q: %w", poolName, err)
 	}
+	selected := unwrapResources(picked)
+	pool.Inventory.Resources = unwrapResources(inv.Items)
 
-	pool.Inventory.Resources = remaining
 	if err := m.store.PutPool(ctx, pool); err != nil {
 		return model.Sandbox{}, fmt.Errorf("put pool: %w", err)
 	}
@@ -63,9 +80,9 @@ func (m *Manager) CreateFromPool(
 	}
 
 	sb := model.Sandbox{
-		ID:       sbID,
-		Name:     sbName,
-		Policies: policies,
+		ID:        sbID,
+		Name:      sbName,
+		Policies:  policies,
 		Resources: resourceIDs(selected),
 	}
 	if err := m.store.CreateSandbox(ctx, sb); err != nil {
@@ -86,26 +103,6 @@ func (m *Manager) CreateFromPool(
 	return sb, nil
 }
 
-func takeReady(resources []model.Resource, n int) (picked []model.Resource, remaining []model.Resource, err error) {
-	if n <= 0 {
-		return nil, resources, nil
-	}
-	picked = make([]model.Resource, 0, n)
-	remaining = make([]model.Resource, 0, len(resources))
-
-	for _, r := range resources {
-		if len(picked) < n && r.State == model.ResourceStateReady {
-			picked = append(picked, r)
-			continue
-		}
-		remaining = append(remaining, r)
-	}
-	if len(picked) < n {
-		return nil, resources, fmt.Errorf("insufficient ready resources: need=%d got=%d", n, len(picked))
-	}
-	return picked, remaining, nil
-}
-
 func resourceIDs(rs []model.Resource) []model.ResourceID {
 	ids := make([]model.ResourceID, 0, len(rs))
 	for _, r := range rs {
@@ -114,4 +111,20 @@ func resourceIDs(rs []model.Resource) []model.ResourceID {
 		}
 	}
 	return ids
+}
+
+func wrapResources(rs []model.Resource) []keyedResource {
+	out := make([]keyedResource, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, keyedResource{r})
+	}
+	return out
+}
+
+func unwrapResources(rs []keyedResource) []model.Resource {
+	out := make([]model.Resource, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, r.Resource)
+	}
+	return out
 }
