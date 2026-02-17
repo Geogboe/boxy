@@ -16,3 +16,8 @@ Periodically update this document with guidelines, architectural decisions, less
   - "container sandbox" (1 container)
   - "3 VM lab sandbox" (multi-VM lab)
   - "2 container, 3 VM, 1 share sandbox" (heterogeneous composition)
+
+
+## ADRs
+
+When decisions are made, save them as ADR documents in /docs/adr. This is a living document, so feel free to update it as needed. When an ADR is updated, add a note at the end of the document describing the change and the date it was made.
