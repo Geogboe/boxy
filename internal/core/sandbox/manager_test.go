@@ -16,7 +16,7 @@ func TestManager_CreateFromPool_ConsumesReadyResource(t *testing.T) {
 		ID:        "res_1",
 		Type:      model.ResourceTypeContainer,
 		Profile:   model.ResourceProfileDefault,
-		Provider:  model.ProviderRef{ID: "prov_1"},
+		Provider:  model.ProviderRef{Name: "prov_1"},
 		State:     model.ResourceStateReady,
 		CreatedAt: time.Unix(1, 0).UTC(),
 	}
@@ -24,7 +24,7 @@ func TestManager_CreateFromPool_ConsumesReadyResource(t *testing.T) {
 		ID:        "res_2",
 		Type:      model.ResourceTypeContainer,
 		Profile:   model.ResourceProfileDefault,
-		Provider:  model.ProviderRef{ID: "prov_1"},
+		Provider:  model.ProviderRef{Name: "prov_1"},
 		State:     model.ResourceStateReady,
 		CreatedAt: time.Unix(2, 0).UTC(),
 	}

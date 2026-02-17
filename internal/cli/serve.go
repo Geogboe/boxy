@@ -56,16 +56,7 @@ func runServe(ctx context.Context, opts serveOpts) error {
 	}
 	slog.Info("builtin provider types", "types", providerTypes(reg))
 
-	instances := make([]providersdk.Instance, 0, len(cfg.Providers))
-	for _, p := range cfg.Providers {
-		instances = append(instances, providersdk.Instance{
-			Name:   string(p.Name),
-			Type:   providersdk.Type(p.Type),
-			Config: p.Config,
-		})
-	}
-
-	if err := reg.ValidateInstances(ctx, instances); err != nil {
+	if err := reg.ValidateInstances(ctx, cfg.Providers); err != nil {
 		return fmt.Errorf("validate providers: %w", err)
 	}
 	slog.Info("providers validated", "count", len(cfg.Providers))

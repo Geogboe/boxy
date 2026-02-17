@@ -21,14 +21,47 @@
                 }
               }
             }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "hyperv"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "config": {
+                  "$ref": "providers/hyperv.config.schema.json"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "process"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "config": {
+                  "$ref": "providers/process.config.schema.json"
+                }
+              }
+            }
           }
         ],
         "properties": {
           "config": {
             "type": "object"
           },
-          "id": {
-            "type": "string"
+          "labels": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
           },
           "name": {
             "minLength": 1,
@@ -36,7 +69,9 @@
           },
           "type": {
             "enum": [
-              "docker"
+              "docker",
+              "hyperv",
+              "process"
             ],
             "type": "string"
           }
