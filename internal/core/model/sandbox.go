@@ -1,5 +1,8 @@
 package model
 
+// SandboxID is a stable identifier for a sandbox (user-facing handle).
+type SandboxID string
+
 // Sandbox is a user-facing environment that contains 1..N resources.
 //
 // This model is intentionally minimal. Orchestration state and richer composition
