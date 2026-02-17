@@ -3,6 +3,7 @@ package providers
 import (
 	"github.com/Geogboe/boxy/v2/pkg/providers/docker"
 	"github.com/Geogboe/boxy/v2/pkg/providers/hyperv"
+	"github.com/Geogboe/boxy/v2/pkg/providers/process"
 	"github.com/Geogboe/boxy/v2/pkg/providersdk"
 )
 
@@ -15,6 +16,9 @@ func RegisterBuiltins(r *providersdk.Registry) error {
 		return err
 	}
 	if err := r.Register(hyperv.New()); err != nil {
+		return err
+	}
+	if err := r.Register(process.New()); err != nil {
 		return err
 	}
 	return nil
