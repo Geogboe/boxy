@@ -1,0 +1,104 @@
+---
+# Hyper-V pool example (whiteboard / POC shape).
+#
+# Purpose:
+# - Show what "layering" could look like for VMs (where Docker-style layers don't exist).
+# - Keep pools provider-agnostic: pools describe *what* to build and desired inventory,
+#   while a provisioner selects *where* (which provider instance) at runtime.
+config:
+  runtime:
+    log:
+      level: info
+    reconcile:
+      interval: 30s
+
+  defaults:
+    hooks:
+      # Hooks are intentionally omitted from pools below for now, but this shows
+      # the kind of defaults you might want later.
+      timeout: 10m
+    hyperv:
+      switch: "BoxySwitch"
+      generation: 2
+      cpu: 2
+      memory_mb: 4096
+      disk_gb: 64
+      tags:
+        managed-by: boxy
+
+# Provider instances: concrete Hyper-V hosts Boxy is allowed to use.
+providers:
+  - name: win-hyperv-01
+    type: hyperv
+    config:
+      endpoint: "win-hyperv-01"
+      username: "{{ .Env.HYPERV_USERNAME }}"
+      password: "{{ .Env.HYPERV_PASSWORD }}"
+
+# Pools: desired inventory + how to build one unit of that class.
+pools:
+  # Base Windows Server 2022 VM pool.
+  - name: win2022-base
+    resource_type: vm
+    profile: win-2022-base
+
+    policy:
+      preheat:
+        min_ready: 1
+        max_total: 3
+      recycle:
+        max_age: 168h
+
+    placement:
+      provider_type: hyperv
+      # Later: provider_labels, affinity, anti-affinity, etc.
+
+    # A minimal "VM recipe".
+    resource_spec:
+      template:
+        kind: vhdx
+        path: "C:\\Boxy\\images\\win2022-base.vhdx"
+      vm:
+        generation: 2
+        cpu: 2
+        memory_mb: 4096
+        disk_gb: 64
+        switch: "BoxySwitch"
+
+  # Derived pool: conceptually "layer" additional software onto the base.
+  #
+  # Interpretation idea:
+  # - A provisioner can optionally "bake" a new template (golden VHDX) by starting
+  #   from base.template, applying provisioning steps, then snapshotting/exporting.
+  # - The resulting baked template becomes the template for this pool.
+  - name: win2022-devtools
+    resource_type: vm
+    profile: win-2022-devtools
+    extends: win2022-base
+
+    policy:
+      preheat:
+        min_ready: 1
+        max_total: 2
+
+    placement:
+      provider_type: hyperv
+
+    resource_spec:
+      vm:
+        cpu: 4
+        memory_mb: 8192
+
+      bake:
+        # These are "whiteboard" steps, not an implemented schema.
+        # The underlying transport could be: PowerShell Direct, WinRM, or a guest agent.
+        steps:
+          - name: install-chocolatey
+            powershell: |
+              Set-ExecutionPolicy Bypass -Scope Process -Force
+              [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+              iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+          - name: install-devtools
+            powershell: |
+              choco install -y git 7zip
+

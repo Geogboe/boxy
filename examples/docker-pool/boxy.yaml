@@ -1,0 +1,49 @@
+---
+# Global boxy stuff (runtime + defaults). This is a whiteboard POC shape.
+config:
+  runtime:
+    log:
+      level: info
+    reconcile:
+      interval: 10s
+  defaults:
+    hooks:
+      timeout: 2m
+      shell: ["/bin/sh", "-lc"]
+    docker:
+      namespace: boxy
+      labels:
+        managed-by: boxy
+
+# Providers being enabled
+providers:
+  - name: foo-docker-01
+    type: docker
+    config:
+      hostname: foo
+      username: "{{ .Env.DOCKER_USERNAME }}"
+      password: "{{ .Env.DOCKER_PASSWORD }}"
+
+# Pools that will be used to house resources
+pools:
+  # This pool is ubuntu docker containers with curl installed
+  - name: basic-container
+    type: docker
+    policy:
+      preheat: { min_ready: 2, max_total: 5 }
+      recycle: { max_age: 24h }
+    resource_spec:
+      source: ubuntu:latest
+
+  # This pool is ubuntu docker containers with curl installed
+  - name: curl-container
+    type: docker
+    policy:
+      preheat: { min_ready: 2, max_total: 5 }
+      recycle: { max_age: 24h }
+    resource_spec:
+      source: ubuntu:latest
+    hooks:
+      setup:
+        - name: install-curl
+          run: apt-get update && apt-get install -y curl
