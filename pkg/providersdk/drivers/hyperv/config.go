@@ -10,10 +10,17 @@ import (
 //
 // This is intentionally minimal scaffolding.
 type Config struct {
+	// Endpoint is the Hyper-V management endpoint (preferred).
 	Endpoint string `json:"endpoint" yaml:"endpoint"`
+
+	// Host is accepted as an alias for Endpoint to match example configs.
+	Host string `json:"host" yaml:"host"`
 
 	Username string `json:"username" yaml:"username"`
 	Password string `json:"password" yaml:"password"`
+
+	// Credential is an optional reference to an external credential (future).
+	Credential string `json:"credential" yaml:"credential"`
 }
 
 func DecodeConfig(raw map[string]any) (Config, error) {
@@ -32,7 +39,11 @@ func DecodeConfig(raw map[string]any) (Config, error) {
 }
 
 func (c Config) Validate() error {
-	if strings.TrimSpace(c.Endpoint) == "" {
+	endpoint := strings.TrimSpace(c.Endpoint)
+	if endpoint == "" {
+		endpoint = strings.TrimSpace(c.Host)
+	}
+	if endpoint == "" {
 		return fmt.Errorf("endpoint is required")
 	}
 	return nil

@@ -17,6 +17,7 @@ providers:
     type: docker
     config:
       host: unix:///var/run/docker.sock
+pools: []
 `), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
@@ -83,7 +84,8 @@ func TestLoadFile_JSON_HappyPath(t *testing.T) {
         "host": "unix:///var/run/docker.sock"
       }
     }
-  ]
+  ],
+  "pools": []
 }`), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}

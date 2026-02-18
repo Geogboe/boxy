@@ -20,6 +20,97 @@ func New(s store.Store) *Manager {
 	return &Manager{store: s}
 }
 
+// Create creates an empty sandbox.
+func (m *Manager) Create(ctx context.Context, sbName string, policies model.SandboxPolicies) (model.Sandbox, error) {
+	if m == nil {
+		return model.Sandbox{}, fmt.Errorf("sandbox manager is nil")
+	}
+	if m.store == nil {
+		return model.Sandbox{}, fmt.Errorf("store is nil")
+	}
+	sbID, err := newSandboxID()
+	if err != nil {
+		return model.Sandbox{}, fmt.Errorf("new sandbox id: %w", err)
+	}
+	sb := model.Sandbox{
+		ID:       sbID,
+		Name:     sbName,
+		Policies: policies,
+	}
+	if err := m.store.CreateSandbox(ctx, sb); err != nil {
+		return model.Sandbox{}, fmt.Errorf("create sandbox: %w", err)
+	}
+	return sb, nil
+}
+
+// AddFromPool attaches N ready resources from a pool to an existing sandbox.
+//
+// Resources never return to the pool (see ADR-0002).
+func (m *Manager) AddFromPool(
+	ctx context.Context,
+	sbID model.SandboxID,
+	poolName model.PoolName,
+	count int,
+) (model.Sandbox, error) {
+	if m == nil {
+		return model.Sandbox{}, fmt.Errorf("sandbox manager is nil")
+	}
+	if m.store == nil {
+		return model.Sandbox{}, fmt.Errorf("store is nil")
+	}
+	if sbID == "" {
+		return model.Sandbox{}, fmt.Errorf("sandbox id is required")
+	}
+	if poolName == "" {
+		return model.Sandbox{}, fmt.Errorf("pool name is required")
+	}
+	if count <= 0 {
+		return model.Sandbox{}, fmt.Errorf("count must be > 0")
+	}
+
+	sb, err := m.store.GetSandbox(ctx, sbID)
+	if err != nil {
+		return model.Sandbox{}, fmt.Errorf("get sandbox: %w", err)
+	}
+
+	pool, err := m.store.GetPool(ctx, poolName)
+	if err != nil {
+		return model.Sandbox{}, fmt.Errorf("get pool: %w", err)
+	}
+
+	inv := resourcepool.Pool[invKey, keyedResource, struct{}]{
+		Key:   invKey{Type: pool.Inventory.ExpectedType, Profile: pool.Inventory.ExpectedProfile},
+		Items: wrapResources(pool.Inventory.Resources),
+	}
+	picked, err := inv.Take(count, func(r keyedResource) bool { return r.State == model.ResourceStateReady })
+	if err != nil {
+		return model.Sandbox{}, fmt.Errorf("select from pool %q: %w", poolName, err)
+	}
+	selected := unwrapResources(picked)
+	pool.Inventory.Resources = unwrapResources(inv.Items)
+
+	if err := m.store.PutPool(ctx, pool); err != nil {
+		return model.Sandbox{}, fmt.Errorf("put pool: %w", err)
+	}
+
+	sb.Resources = append(sb.Resources, resourceIDs(selected)...)
+	if err := m.store.PutSandbox(ctx, sb); err != nil {
+		return model.Sandbox{}, fmt.Errorf("put sandbox: %w", err)
+	}
+
+	for _, res := range selected {
+		if res.ID == "" {
+			return model.Sandbox{}, fmt.Errorf("selected resource has empty id")
+		}
+		res.State = model.ResourceStateAllocated
+		if err := m.store.PutResource(ctx, res); err != nil {
+			return model.Sandbox{}, fmt.Errorf("put resource %q: %w", res.ID, err)
+		}
+	}
+
+	return sb, nil
+}
+
 type invKey struct {
 	Type    model.ResourceType
 	Profile model.ResourceProfile
