@@ -54,3 +54,5 @@ temp/
 .cache/
 
 .task/
+
+.boxy/

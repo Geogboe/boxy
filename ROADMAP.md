@@ -50,7 +50,7 @@ boxy agent revoke <id>       — revoke a specific agent's token
 - **Single-use registration tokens** — limits the exposure window. A leaked registration token can only be used once; after that it's burned.
 - **Unique per-agent identity** — the server tracks each agent individually. A compromised agent can be revoked without affecting others.
 - **Periodic key rotation** — agent and server rotate tokens over the gRPC stream. Even if an agent token is captured, it becomes invalid after the next rotation.
-- **No pre-declaration required** — the server doesn't need to know about agents in advance. The trust boundary is the registration token, not an allowlist.
+- **Config-declared agents** — remote agents are declared in the `agents:` section of `boxy.yaml`. The server knows what to expect and can alert on missing agents. The registration token authenticates the agent on first connect; the config declaration establishes the expected topology.
 
 ### Token Format
 
