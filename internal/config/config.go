@@ -18,10 +18,21 @@ import (
 // managers gain real behavior.
 type Config struct {
 	Providers []providersdk.Instance `json:"providers" yaml:"providers"`
+	Pools     []PoolSpec             `json:"pools,omitempty" yaml:"pools,omitempty"`
 
-	// Pools is currently accepted as an opaque blob so example configs can be
-	// exercised end-to-end while pool wiring lands.
-	Pools []map[string]any `json:"pools,omitempty" yaml:"pools,omitempty"`
+	Server ServerSpec `json:"server,omitempty" yaml:"server,omitempty"`
+
+	Agents []AgentSpec `json:"agents,omitempty" yaml:"agents,omitempty"`
+}
+
+type ServerSpec struct {
+	Listen    string   `json:"listen,omitempty" yaml:"listen,omitempty"`
+	Providers []string `json:"providers,omitempty" yaml:"providers,omitempty"`
+}
+
+type AgentSpec struct {
+	Name      string   `json:"name" yaml:"name"`
+	Providers []string `json:"providers,omitempty" yaml:"providers,omitempty"`
 }
 
 func LoadFile(path string) (Config, error) {

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"time"
 
 	boxyconfig "github.com/Geogboe/boxy/v2/internal/config"
@@ -105,22 +104,7 @@ func findDefaultConfigPath() (string, error) {
 		return "", fmt.Errorf("get working directory: %w", err)
 	}
 
-	candidates := []string{
-		filepath.Join(cwd, "boxy.yaml"),
-		filepath.Join(cwd, "boxy.yml"),
-	}
-
-	for _, p := range candidates {
-		_, err := os.Stat(p)
-		if err == nil {
-			return p, nil
-		}
-		if os.IsNotExist(err) {
-			continue
-		}
-		return "", fmt.Errorf("stat %q: %w", p, err)
-	}
-	return "", nil
+	return findConfigPathInDir(cwd)
 }
 
 func serveLoop(ctx context.Context) error {
