@@ -3,6 +3,14 @@
 #
 # Container pools for a pentest lab environment. Kali attacker boxes
 # and vulnerable target containers from a local Docker daemon.
+server:
+  listen: ":9090"
+  providers: [docker]
+
+# agents:
+#   - name: build-host
+#     providers: [docker]
+
 pools:
   - name: kali
     type: docker
