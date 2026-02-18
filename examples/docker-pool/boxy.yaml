@@ -1,49 +1,66 @@
 ---
-# Global boxy stuff (runtime + defaults). This is a whiteboard POC shape.
-config:
-  runtime:
-    log:
-      level: info
-    reconcile:
-      interval: 10s
-  defaults:
-    hooks:
-      timeout: 2m
-      shell: ["/bin/sh", "-lc"]
-    docker:
-      namespace: boxy
-      labels:
-        managed-by: boxy
+# Docker pool example.
+#
+# Container pools for a pentest lab environment. Kali attacker boxes
+# and vulnerable target containers from a local Docker daemon.
 
-# Providers being enabled
 providers:
-  - name: foo-docker-01
+  - name: docker
     type: docker
-    config:
-      hostname: foo
-      username: "{{ .Env.DOCKER_USERNAME }}"
-      password: "{{ .Env.DOCKER_PASSWORD }}"
 
-# Pools that will be used to house resources
 pools:
-  # This pool is ubuntu docker containers with curl installed
-  - name: basic-container
-    type: docker
+  - name: kali
+    type: container
+    provider: docker
+    config:
+      image: kalilinux/kali-rolling
+      command: ["/bin/bash"]
+      env:
+        TERM: xterm-256color
+      labels:
+        role: attacker
+      resources:
+        cpu: "2.0"
+        memory: 4096m
     policy:
-      preheat: { min_ready: 2, max_total: 5 }
-      recycle: { max_age: 24h }
-    resource_spec:
-      source: ubuntu:latest
+      preheat:
+        min_ready: 3
+        max_total: 8
+      recycle:
+        max_age: 4h
 
-  # This pool is ubuntu docker containers with curl installed
-  - name: curl-container
-    type: docker
+  # Lightweight Ubuntu targets for basic exercises.
+  - name: ubuntu-targets
+    type: container
+    provider: docker-local
+    config:
+      image: ubuntu:22.04
+      command: ["/usr/sbin/sshd", "-D"]
+      labels:
+        role: target
+      resources:
+        cpu: "1.0"
+        memory: 1024m
     policy:
-      preheat: { min_ready: 2, max_total: 5 }
-      recycle: { max_age: 24h }
-    resource_spec:
-      source: ubuntu:latest
-    hooks:
-      setup:
-        - name: install-curl
-          run: apt-get update && apt-get install -y curl
+      preheat:
+        min_ready: 5
+        max_total: 15
+
+  # Juice Shop vulnerable web app targets (remote Docker host).
+  - name: juiceshop-targets
+    type: container
+    provider: docker-remote
+    config:
+      image: bkimminich/juice-shop
+      ports:
+        - "3000"
+      labels:
+        role: target
+        app: juiceshop
+      resources:
+        cpu: "1.0"
+        memory: 512m
+    policy:
+      preheat:
+        min_ready: 2
+        max_total: 6
