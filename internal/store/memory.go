@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/Geogboe/boxy/v2/pkg/boxy/model"
+	"github.com/Geogboe/boxy/v2/internal/model"
 )
 
 // MemoryStore is an in-memory Store implementation for scaffolding and tests.

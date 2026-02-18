@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/Geogboe/boxy/v2/pkg/boxy/model"
+	"github.com/Geogboe/boxy/v2/internal/model"
 )
 
 // Provisioner is the execution seam for the pool subsystem.
