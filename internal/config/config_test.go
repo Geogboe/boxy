@@ -36,6 +36,39 @@ providers:
 	}
 }
 
+func TestLoadFile_YAML_AcceptsPoolsBlob(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	p := filepath.Join(dir, "boxy.yaml")
+	if err := os.WriteFile(p, []byte(`
+providers: []
+pools:
+  - name: kali-attackers
+    type: container
+    provider: docker-local
+    config:
+      image: kalilinux/kali-rolling
+    policy:
+      preheat:
+        min_ready: 3
+        max_total: 8
+`), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	cfg, err := LoadFile(p)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if len(cfg.Providers) != 0 {
+		t.Fatalf("providers len = %d, want 0", len(cfg.Providers))
+	}
+	if len(cfg.Pools) != 1 {
+		t.Fatalf("pools len = %d, want 1", len(cfg.Pools))
+	}
+}
+
 func TestLoadFile_JSON_HappyPath(t *testing.T) {
 	t.Parallel()
 
@@ -135,4 +168,3 @@ func TestLoadFile_JSON_UnknownProviderFieldFails(t *testing.T) {
 		t.Fatalf("LoadFile: expected error, got nil")
 	}
 }
-

@@ -18,6 +18,10 @@ import (
 // managers gain real behavior.
 type Config struct {
 	Providers []providersdk.Instance `json:"providers" yaml:"providers"`
+
+	// Pools is currently accepted as an opaque blob so example configs can be
+	// exercised end-to-end while pool wiring lands.
+	Pools []map[string]any `json:"pools,omitempty" yaml:"pools,omitempty"`
 }
 
 func LoadFile(path string) (Config, error) {

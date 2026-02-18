@@ -9,9 +9,9 @@ import (
 	"time"
 
 	boxyconfig "github.com/Geogboe/boxy/v2/internal/config"
-	"github.com/Geogboe/boxy/v2/pkg/boxy/pool"
-	"github.com/Geogboe/boxy/v2/pkg/boxy/sandbox"
-	"github.com/Geogboe/boxy/v2/pkg/boxy/store"
+	"github.com/Geogboe/boxy/v2/internal/pool"
+	"github.com/Geogboe/boxy/v2/internal/sandbox"
+	"github.com/Geogboe/boxy/v2/internal/store"
 	"github.com/Geogboe/boxy/v2/pkg/providersdk"
 	"github.com/Geogboe/boxy/v2/pkg/providersdk/builtins"
 	"github.com/spf13/cobra"
