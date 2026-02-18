@@ -33,8 +33,7 @@ pools:
 
   # Lightweight Ubuntu targets for basic exercises.
   - name: ubuntu-targets
-    type: container
-    provider: docker-local
+    type: docker
     config:
       image: ubuntu:22.04
       command: ["/usr/sbin/sshd", "-D"]
@@ -48,10 +47,9 @@ pools:
         min_ready: 5
         max_total: 15
 
-  # Juice Shop vulnerable web app targets (remote Docker host).
+  # Juice Shop vulnerable web app targets.
   - name: juiceshop-targets
-    type: container
-    provider: docker-remote
+    type: docker
     config:
       image: bkimminich/juice-shop
       ports:
