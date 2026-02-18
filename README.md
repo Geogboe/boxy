@@ -37,17 +37,17 @@ Boxy keeps pools of generic, ready-to-use resources warm ahead of time. When a u
 
 **Resource** — A runtime record of a provisioned instance (VM, container, share, network, etc.). Has an ID, type, state, provider handle, and properties. Resources are single-use: once allocated to a sandbox they are never returned to a pool (ADR-0002). A resource does not carry a "spec" or "profile" — it is simply evidence that provisioning succeeded.
 
-**Pool** — A named, homogeneous inventory of pre-provisioned resources. Declared in config. Each pool carries its own provisioning config (type, provider type, driver-interpreted config blob) and policy (preheat, recycle). The pool IS the spec — there is no separate "blueprint", "template", or "spec" entity.
+**Pool** — A named, homogeneous inventory of pre-provisioned resources. Declared in config. Each pool carries its own provisioning config (`type` identifies the provider/driver, `config` is a driver-interpreted opaque blob) and policy (preheat, recycle). The pool IS the spec — there is no separate "blueprint", "template", or "spec" entity.
 
-**Sandbox** — A user-facing environment containing 1..N resources drawn from pools. When resources move from pool to sandbox, post-allocation hooks run to personalize them (set credentials, configure networking, etc.). Boxy returns connection info to the user; it is not a proxy.
+**Sandbox** — A user-facing environment containing 1..N resources drawn from pools. Sandbox classes are defined in separate `.sandbox.yaml` files and instantiated via CLI. When resources move from pool to sandbox, post-allocation hooks run to personalize them (set credentials, configure networking, etc.). Boxy returns connection info to the user; it is not a proxy.
 
-**Provider** — An external system that provides resources (Docker, Hyper-V, etc.). Has a type and zero or more configured instances. Provider connection details (socket, host, certs) are owned by the agent, not the server.
+**Provider** — An external system that provides resources (Docker, Hyper-V, Podman, VMware, etc.). Providers have a type that maps to a driver. Provider connection details (socket, host, certs) are owned by the agent, not the server. Drivers auto-discover their environment where possible.
 
-**Driver** — Code that knows how to talk to a specific provider type. Interprets provider instance config and pool provisioning config. Lives in `pkg/providersdk/drivers/`. Drivers auto-discover their environment where possible (e.g., Docker checks for local socket, Hyper-V discovers via PowerShell).
+**Driver** — Code that knows how to talk to a specific provider type. Interprets pool provisioning config. Lives in `pkg/providersdk/drivers/`. Drivers auto-discover their environment (e.g., Docker checks for local socket, Hyper-V discovers via PowerShell). A pool's `type` field maps directly to a driver (e.g., `type: docker` → Docker driver, `type: hyperv` → Hyper-V driver).
 
 **Agent** — The runtime entity that executes provider operations using drivers. Can be:
-- **Embedded (local):** runs inside `boxy serve`, handles providers declared in the server config.
-- **Remote (distributed):** runs on a separate host, connects to the server via gRPC over TLS, auto-discovers local providers.
+- **Embedded (local):** runs inside `boxy serve`, handles providers declared in `server.providers`.
+- **Remote (distributed):** runs on a separate host, connects to the server via gRPC over TLS, auto-discovers local providers. Declared in the `agents:` config section so the server knows what to expect.
 
 The agent is the execution layer — Boxy core delegates all provider IO through the agent, never directly to drivers. The `Provisioner` interface is the agent seam.
 
@@ -73,6 +73,12 @@ boxy agent                     — distributed agent: connects to server via gRP
 
 **gRPC over TLS** — for agent-to-server communication. Bidirectional streaming: agent dials the server (NAT/firewall friendly), server pushes work down the stream.
 
+### Pool Routing
+
+A pool's `type` field identifies the provider type (e.g., `docker`, `hyperv`, `podman`, `vmware`). The system routes work to any agent — embedded or remote — that has a matching provider. The abstract resource category (container, VM) is derived from the driver's capabilities, not declared on the pool.
+
+If multiple agents support the same provider type, the system picks a capable agent. An optional `agent:` field on the pool can pin it to a specific agent when needed.
+
 ### Reconciliation Flow
 
 ```
@@ -90,7 +96,7 @@ serveLoop ticker
 The provisioner can "steal" surplus resources from other pools when they share compatible config, instead of building from scratch. Compatibility is discovered automatically at runtime — no explicit `base:` references between pools.
 
 **Matching rules:**
-- Same type, same provider type, config is a subset → cache hit
+- Same type, config is a subset → cache hit
 - Surplus only: steal from Pool X only if `X.ready > X.policy.preheat.min_ready`
 - If a match is found, take the resource and apply the delta (install packages, configure, etc.)
 - If no match, build from scratch
@@ -123,17 +129,21 @@ The user connects with their native client. Connection info is generated by post
 
 ### Server Config (`boxy.yaml`)
 
-Two top-level sections: `providers` (what the embedded local agent handles) and `pools` (what should be running).
+Three top-level sections: `server` (embedded agent and server settings), `agents` (remote agents the server expects), and `pools` (what should be running).
 
 ```yaml
-providers:
-  - type: docker
-  - type: hyperv
+server:
+  listen: ":9090"
+  providers: [docker, hyperv]
+
+agents:
+  - name: build-host
+    providers: [docker]
 
 pools:
   - name: win2022-base
-    type: vm
-    config:
+    type: hyperv
+    config: &win2022
       template: "Windows Server 2022 Standard"
       generation: 2
       cpu: 4
@@ -147,8 +157,8 @@ pools:
       recycle:
         max_age: 168h
 
-  - name: kali-attackers
-    type: container
+  - name: kali
+    type: docker
     config:
       image: kalilinux/kali-rolling
       command: ["/bin/bash"]
@@ -159,9 +169,10 @@ pools:
 ```
 
 **Key design decisions:**
-- `providers:` section is purely the embedded local agent's provider list. Drivers auto-discover connection details.
+- `server.providers` declares what the embedded local agent handles. Drivers auto-discover connection details (socket paths, PowerShell, etc.) — no connection config needed.
+- `agents:` declares remote agents the server should expect. If a declared agent is not connected, the server can warn/alert. Remote agents authenticate via the token bootstrap flow (see [ROADMAP.md](ROADMAP.md)).
+- Pool `type` is the provider type (`docker`, `hyperv`, `podman`, `vmware`). It maps directly to a driver and determines routing. The abstract resource category (container, VM) is derived from the driver's capabilities.
 - Pool `config:` is an opaque blob interpreted by the driver. Different providers expose different config options.
-- Remote agents don't appear in server config — they register dynamically.
 - Specs/blueprints are NOT a separate entity. The pool owns its provisioning config inline.
 - Config is stateless and declarative. Runtime state (resources, sandboxes) lives in the state store (bbolt). Config is read on startup.
 
@@ -176,26 +187,56 @@ policy:
     max_age: "168h"    # destroy and replace unused resources older than this
 ```
 
-See [examples/](examples/) for complete Hyper-V and Docker pool configurations.
+### Sandbox Definitions (`.sandbox.yaml`)
+
+Sandbox classes are defined in separate files, not in the server config. A sandbox definition specifies which pools to draw resources from and how many:
+
+```yaml
+# pentest-lab.sandbox.yaml
+name: pentest-lab
+resources:
+  - pool: kali
+    count: 3
+  - pool: ubuntu-targets
+    count: 1
+```
+
+Sandboxes are instantiated via CLI:
+
+```
+# From a file (primary path)
+boxy sandbox create -f pentest-lab.sandbox.yaml
+boxy sandbox create -f pentest-lab.sandbox.yaml -n 10  # 10 instances for a class
+
+# Quick one-off (sugar)
+boxy sandbox create --pool kali
+boxy sandbox create --pool kali:3 --pool ubuntu-targets:1
+```
+
+The file-based path is the primary, repeatable, version-controlled way. The `--pool` shorthand is sugar for quick testing — it constructs the same sandbox object internally.
+
+See [examples/](examples/) for complete configurations.
 
 ---
 
 ## State Store
 
-**bbolt** (pure Go embedded K/V) for runtime state: resources, sandboxes, agent registrations. Config (providers, pools) is NOT stored in the database — it's read from `boxy.yaml` on startup.
+**bbolt** (pure Go embedded K/V) for runtime state: resources, sandboxes, agent registrations. Config (server, agents, pools) is NOT stored in the database — it's read from `boxy.yaml` on startup.
 
 ---
 
 ## CLI Surface
 
 ```
-boxy serve                     — start the daemon
-boxy sandbox create [flags]    — request a sandbox
-boxy sandbox list              — list sandboxes
-boxy sandbox destroy <id>      — destroy a sandbox
-boxy agent list                — list agents
-boxy agent token create        — create registration token
-boxy agent revoke <id>         — revoke an agent
+boxy serve                              — start the daemon
+boxy sandbox create -f <file> [-n N]    — create sandbox(es) from a definition file
+boxy sandbox create --pool <name[:N]>   — quick one-off sandbox from pool(s)
+boxy sandbox list                       — list sandboxes
+boxy sandbox destroy <id>               — destroy a sandbox
+boxy pool list                          — show pool status (read-only, config-driven)
+boxy agent list                         — list agents and connection status
+boxy agent token create                 — create registration token
+boxy agent revoke <id>                  — revoke an agent
 ```
 
 Pools are config-driven — no `boxy pool create` command. Pool state is observable via the API but not mutated via CLI.
@@ -232,11 +273,10 @@ pkg/
 
 ## Open Questions
 
-- **Sandbox composition:** Does a sandbox have a pre-defined "class" (pentest-lab = 1 Kali + 2 Windows targets), or is it always assembled ad-hoc at request time? Possibly both — sandbox classes in config, ad-hoc via API.
-- **Pool routing without explicit provider:** If a pool says `type: container` without naming a specific provider instance, how does the server decide which agent handles it? Labels/placement rules? Round-robin among capable agents?
 - **Config reloads:** Is restart required on config change, or should `boxy serve` watch for changes and reconcile? Restart is simpler; hot reload is nicer.
 - **Subset matching for build cache:** Structural comparison of opaque config blobs to determine if one is a "subset" of another. What are the exact semantics? Is shallow key comparison sufficient, or do we need deep structural comparison?
 - **Auth for CLI users:** Who is allowed to request a sandbox? Token-based? OIDC? Out of scope for now?
+- **Multi-agent routing:** When multiple agents support the same provider type, how does the server choose? Round-robin? Load-based? Labels? For now, `agent:` pinning on the pool is the escape hatch.
 
 ## Status
 
