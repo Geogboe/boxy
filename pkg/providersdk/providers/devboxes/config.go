@@ -15,6 +15,10 @@ import "time"
 // Config is the typed configuration for the devbox driver.
 // It is unmarshaled from the pool's config: YAML block.
 type Config struct {
+	// DataDir is the directory where devboxes.json is stored.
+	// If empty, a temporary directory is created automatically.
+	DataDir string `yaml:"data_dir" json:"data_dir"`
+
 	// Latency simulates provisioning delay. Resources take this long
 	// to transition from creating to running. Zero means instant.
 	Latency time.Duration `yaml:"latency" json:"latency"`

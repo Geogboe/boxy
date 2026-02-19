@@ -49,7 +49,11 @@ tmp/
 temp/
 
 # Local binaries
+bin/
 .bin/
+
+# Devboxes provider data
+.devboxes/
 
 .cache/
 
