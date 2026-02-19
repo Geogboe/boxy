@@ -12,7 +12,11 @@ import (
 func newTestAgent(t *testing.T) *agentsdk.EmbeddedAgent {
 	t.Helper()
 	d := devboxes.New(&devboxes.Config{DataDir: t.TempDir()})
-	return agentsdk.NewEmbeddedAgent("test-agent", "Test Agent", d)
+	agent, err := agentsdk.NewEmbeddedAgent("test-agent", "Test Agent", d)
+	if err != nil {
+		t.Fatalf("NewEmbeddedAgent: %v", err)
+	}
+	return agent
 }
 
 func TestEmbeddedAgent_Info(t *testing.T) {
@@ -85,23 +89,12 @@ func TestEmbeddedAgent_UnknownProvider(t *testing.T) {
 	}
 }
 
-func TestEmbeddedAgent_MultipleProviders(t *testing.T) {
-	d1 := devboxes.New(&devboxes.Config{
-		DataDir: t.TempDir(),
-		Profile: devboxes.ProfileContainer,
-	})
-	d2 := devboxes.New(&devboxes.Config{
-		DataDir: t.TempDir(),
-		Profile: devboxes.ProfileVM,
-	})
+func TestEmbeddedAgent_DuplicateProviderType(t *testing.T) {
+	d1 := devboxes.New(&devboxes.Config{DataDir: t.TempDir()})
+	d2 := devboxes.New(&devboxes.Config{DataDir: t.TempDir()})
 
-	// Both are "devboxes" type — last one wins in the driver map.
-	// This test verifies multi-driver construction works.
-	agent := agentsdk.NewEmbeddedAgent("multi", "Multi", d1, d2)
-	info := agent.Info()
-
-	// We get 2 entries in the providers list (both "devboxes").
-	if len(info.Providers) != 2 {
-		t.Errorf("expected 2 provider entries, got %d", len(info.Providers))
+	_, err := agentsdk.NewEmbeddedAgent("dup", "Dup", d1, d2)
+	if err == nil {
+		t.Fatal("expected error for duplicate provider type")
 	}
 }
