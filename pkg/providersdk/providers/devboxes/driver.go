@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"strconv"
 	"sync"
 	"time"
 
@@ -20,6 +19,8 @@ const ProviderType providersdk.Type = "devboxes"
 // with cat/jq while developing the rest of the system.
 type Driver struct {
 	cfg     Config
+	profile profileSpec
+	latency time.Duration
 	dataDir string
 	mu      sync.Mutex
 }
@@ -36,8 +37,18 @@ func New(cfg *Config) *Driver {
 		dataDir = dir
 	}
 
+	profile := resolveProfile(cfg.Profile)
+
+	// Use explicit latency if set, otherwise fall back to profile default.
+	latency := cfg.Latency
+	if latency == 0 {
+		latency = profile.DefaultLatency
+	}
+
 	return &Driver{
 		cfg:     *cfg,
+		profile: profile,
+		latency: latency,
 		dataDir: dataDir,
 	}
 }
@@ -59,7 +70,7 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 	now := time.Now()
 
 	initialState := "running"
-	if d.cfg.Latency > 0 {
+	if d.latency > 0 {
 		initialState = "creating"
 	}
 
@@ -73,11 +84,7 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 	port := store.NextPort
 	store.NextPort++
 
-	connInfo := map[string]string{
-		"host": "10.0.0." + strconv.Itoa(port%256),
-		"port": strconv.Itoa(port),
-		"type": "devboxes",
-	}
+	connInfo := d.profile.ConnInfo(port)
 
 	store.Resources[id] = &resourceRecord{
 		ID:             id,
@@ -94,8 +101,8 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 	d.mu.Unlock()
 
 	// Transition creating → running in the background.
-	if d.cfg.Latency > 0 {
-		go d.transitionAfter(id, d.cfg.Latency)
+	if d.latency > 0 {
+		go d.transitionAfter(id, d.latency)
 	}
 
 	return &providersdk.Resource{

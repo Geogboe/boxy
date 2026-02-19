@@ -35,13 +35,23 @@ func main() {
 
 	dataDir := envOrDefault("DEVBOXES_DATA_DIR", defaultDataDir)
 	latency := parseDuration(os.Getenv("DEVBOXES_LATENCY"))
+	profile := devboxes.Profile(envOrDefault("DEVBOXES_PROFILE", "container"))
 
-	// Parse global --data-dir flag if present.
+	// Parse global flags.
 	args := os.Args[1:]
-	if len(args) >= 2 && args[0] == "--data-dir" {
-		dataDir = args[1]
-		args = args[2:]
+	for len(args) >= 2 {
+		switch args[0] {
+		case "--data-dir":
+			dataDir = args[1]
+			args = args[2:]
+		case "--profile":
+			profile = devboxes.Profile(args[1])
+			args = args[2:]
+		default:
+			goto done
+		}
 	}
+done:
 
 	if len(args) == 0 {
 		usage()
@@ -55,6 +65,7 @@ func main() {
 
 	d := devboxes.New(&devboxes.Config{
 		DataDir: dataDir,
+		Profile: profile,
 		Latency: latency,
 	})
 
@@ -197,7 +208,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `devboxes — CLI for the devboxes reference provider
 
 Usage:
-  devboxes [--data-dir <path>] <command> [args...]
+  devboxes [--data-dir <path>] [--profile <type>] <command> [args...]
 
 Commands:
   create [--label key=value ...]   Create a new devbox
@@ -207,9 +218,15 @@ Commands:
   set-state <id> <state>           Change resource state
   delete <id>                      Delete a resource
 
+Profiles:
+  container   Simulates containers (host:port, instant provisioning)
+  vm          Simulates VMs (SSH connection info, 2s default latency)
+  share       Simulates network shares (UNC path, mount path, credentials)
+
 Environment:
   DEVBOXES_DATA_DIR   Data directory (default: .devboxes/)
-  DEVBOXES_LATENCY    Provisioning latency, e.g. "500ms" (default: 0)
+  DEVBOXES_LATENCY    Provisioning latency, e.g. "500ms" (default: profile)
+  DEVBOXES_PROFILE    Resource profile (default: container)
 
 State is persisted to devboxes.json in the data directory.
 `)

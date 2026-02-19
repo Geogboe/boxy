@@ -19,8 +19,12 @@ type Config struct {
 	// If empty, a temporary directory is created automatically.
 	DataDir string `yaml:"data_dir" json:"data_dir"`
 
+	// Profile determines what kind of resource this provider simulates.
+	// Valid values: "container", "vm", "share". Default: "container".
+	Profile Profile `yaml:"profile" json:"profile"`
+
 	// Latency simulates provisioning delay. Resources take this long
-	// to transition from creating to running. Zero means instant.
+	// to transition from creating to running. Zero uses the profile default.
 	Latency time.Duration `yaml:"latency" json:"latency"`
 
 	// FailCreate causes Create to return an error when true.
