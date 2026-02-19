@@ -16,11 +16,15 @@ type EmbeddedAgent struct {
 }
 
 // NewEmbeddedAgent creates an agent backed by the given drivers.
-func NewEmbeddedAgent(id, name string, drivers ...providersdk.Driver) *EmbeddedAgent {
+// Each driver must have a unique Type — one driver per provider type per agent.
+func NewEmbeddedAgent(id, name string, drivers ...providersdk.Driver) (*EmbeddedAgent, error) {
 	dm := make(map[providersdk.Type]providersdk.Driver, len(drivers))
 	providers := make([]providersdk.Type, 0, len(drivers))
 
 	for _, d := range drivers {
+		if _, exists := dm[d.Type()]; exists {
+			return nil, fmt.Errorf("agent %q: duplicate provider type %q", id, d.Type())
+		}
 		dm[d.Type()] = d
 		providers = append(providers, d.Type())
 	}
@@ -32,7 +36,7 @@ func NewEmbeddedAgent(id, name string, drivers ...providersdk.Driver) *EmbeddedA
 			Providers: providers,
 		},
 		drivers: dm,
-	}
+	}, nil
 }
 
 func (a *EmbeddedAgent) Info() AgentInfo {
