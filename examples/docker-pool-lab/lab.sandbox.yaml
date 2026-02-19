@@ -1,9 +1,9 @@
 ---
 name: pentest-lab
 resources:
-  - name: kali-cl
-    pool: kali
-    count: 3
-  - name: tg
-    pool: ubuntu-targets
+  - name: attackers
+    pool: attackers
+    count: 2
+  - name: targets
+    pool: targets
     count: 1
