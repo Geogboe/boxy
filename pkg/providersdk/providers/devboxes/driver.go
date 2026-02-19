@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -13,28 +15,30 @@ import (
 
 const ProviderType providersdk.Type = "devboxes"
 
-// resource is an in-memory simulated resource.
-type resource struct {
-	id        string
-	state     string
-	labels    map[string]string
-	createdAt time.Time
-	updates   []string // log of operations applied
-}
-
 // Driver is the devboxes reference implementation of providersdk.Driver.
-// All resources live in memory and cost nothing to create or destroy.
+// State is persisted to a JSON file in DataDir so you can inspect it
+// with cat/jq while developing the rest of the system.
 type Driver struct {
-	cfg       Config
-	mu        sync.Mutex
-	resources map[string]*resource
+	cfg     Config
+	dataDir string
+	mu      sync.Mutex
 }
 
-// New creates a devboxes driver from a parsed Config.
+// New creates a devboxes driver from a parsed Config. If DataDir is
+// empty, a temporary directory is created.
 func New(cfg *Config) *Driver {
+	dataDir := cfg.DataDir
+	if dataDir == "" {
+		dir, err := os.MkdirTemp("", "devboxes-*")
+		if err != nil {
+			panic(fmt.Sprintf("devboxes: failed to create temp dir: %v", err))
+		}
+		dataDir = dir
+	}
+
 	return &Driver{
-		cfg:       *cfg,
-		resources: make(map[string]*resource),
+		cfg:     *cfg,
+		dataDir: dataDir,
 	}
 }
 
@@ -42,91 +46,157 @@ func (d *Driver) Type() providersdk.Type {
 	return ProviderType
 }
 
-// Create provisions a simulated resource. Returns immediately (or after
-// configured latency) with a resource that has fake connection info.
+// Create provisions a simulated resource. The resource starts in
+// "creating" state and transitions to "running" after the configured
+// latency (in a background goroutine). If latency is zero the resource
+// is immediately "running".
 func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, error) {
 	if d.cfg.FailCreate {
 		return nil, fmt.Errorf("devboxes: simulated create failure")
 	}
 
-	// Respect configured latency.
+	id := generateID()
+	now := time.Now()
+
+	initialState := "running"
 	if d.cfg.Latency > 0 {
-		select {
-		case <-time.After(d.cfg.Latency):
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
+		initialState = "creating"
 	}
 
-	id := generateID()
-
 	d.mu.Lock()
-	d.resources[id] = &resource{
-		id:        id,
-		state:     "running",
-		labels:    d.cfg.Labels,
-		createdAt: time.Now(),
+	store, err := loadStore(d.dataDir)
+	if err != nil {
+		d.mu.Unlock()
+		return nil, fmt.Errorf("devboxes: load store: %w", err)
+	}
+
+	port := store.NextPort
+	store.NextPort++
+
+	connInfo := map[string]string{
+		"host": "10.0.0." + strconv.Itoa(port%256),
+		"port": strconv.Itoa(port),
+		"type": "devboxes",
+	}
+
+	store.Resources[id] = &resourceRecord{
+		ID:             id,
+		State:          initialState,
+		Labels:         d.cfg.Labels,
+		ConnectionInfo: connInfo,
+		CreatedAt:      now,
+	}
+
+	if err := saveStore(d.dataDir, store); err != nil {
+		d.mu.Unlock()
+		return nil, fmt.Errorf("devboxes: save store: %w", err)
 	}
 	d.mu.Unlock()
 
+	// Transition creating → running in the background.
+	if d.cfg.Latency > 0 {
+		go d.transitionAfter(id, d.cfg.Latency)
+	}
+
 	return &providersdk.Resource{
-		ID: id,
-		ConnectionInfo: map[string]string{
-			"host": "127.0.0.1",
-			"port": "22",
-			"type": "devboxes",
-		},
-		Metadata: d.cfg.Labels,
+		ID:             id,
+		ConnectionInfo: connInfo,
+		Metadata:       d.cfg.Labels,
 	}, nil
+}
+
+// transitionAfter waits for the given duration then sets the resource
+// state to "running". If the resource has been deleted in the meantime,
+// this is a no-op.
+func (d *Driver) transitionAfter(id string, delay time.Duration) {
+	time.Sleep(delay)
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	store, err := loadStore(d.dataDir)
+	if err != nil {
+		return
+	}
+	r, ok := store.Resources[id]
+	if !ok || r.State != "creating" {
+		return
+	}
+	r.State = "running"
+	_ = saveStore(d.dataDir, store)
 }
 
 // Read returns the current state of a simulated resource.
 func (d *Driver) Read(ctx context.Context, id string) (*providersdk.ResourceStatus, error) {
 	d.mu.Lock()
-	r, ok := d.resources[id]
+	store, err := loadStore(d.dataDir)
 	d.mu.Unlock()
 
+	if err != nil {
+		return nil, fmt.Errorf("devboxes: load store: %w", err)
+	}
+
+	r, ok := store.Resources[id]
 	if !ok {
 		return nil, fmt.Errorf("devboxes: resource %q not found", id)
 	}
 
 	return &providersdk.ResourceStatus{
-		ID:    r.id,
-		State: r.state,
+		ID:    r.ID,
+		State: r.State,
 	}, nil
 }
 
-// Update performs a simulated operation on a resource. It logs the
-// operation and returns a result. The concrete Operation types are
-// defined in operations.go.
+// Update performs a simulated operation on a resource. Supports ExecOp
+// and SetStateOp. All operations are logged in the resource's update
+// history.
 func (d *Driver) Update(ctx context.Context, id string, op providersdk.Operation) (*providersdk.Result, error) {
 	if d.cfg.FailUpdate {
 		return nil, fmt.Errorf("devboxes: simulated update failure")
 	}
 
 	d.mu.Lock()
-	r, ok := d.resources[id]
+	defer d.mu.Unlock()
+
+	store, err := loadStore(d.dataDir)
+	if err != nil {
+		return nil, fmt.Errorf("devboxes: load store: %w", err)
+	}
+
+	r, ok := store.Resources[id]
 	if !ok {
-		d.mu.Unlock()
 		return nil, fmt.Errorf("devboxes: resource %q not found", id)
 	}
 
 	desc := fmt.Sprintf("%T", op)
-	if e, ok := op.(*ExecOp); ok {
-		desc = fmt.Sprintf("exec: %v", e.Command)
-	}
-	r.updates = append(r.updates, desc)
-	d.mu.Unlock()
+	outputs := map[string]string{"status": "ok"}
 
-	return &providersdk.Result{
-		Outputs: map[string]string{
-			"status":    "ok",
-			"operation": desc,
-		},
-	}, nil
+	switch o := op.(type) {
+	case *ExecOp:
+		desc = fmt.Sprintf("exec: %v", o.Command)
+		outputs["operation"] = desc
+		outputs["stdout"] = fmt.Sprintf("[simulated output of: %v]", o.Command)
+	case *SetStateOp:
+		prev := r.State
+		desc = fmt.Sprintf("set_state: %s → %s", prev, o.State)
+		r.State = o.State
+		outputs["operation"] = desc
+		outputs["previous_state"] = prev
+		outputs["new_state"] = o.State
+	default:
+		outputs["operation"] = desc
+	}
+
+	r.Updates = append(r.Updates, desc)
+
+	if err := saveStore(d.dataDir, store); err != nil {
+		return nil, fmt.Errorf("devboxes: save store: %w", err)
+	}
+
+	return &providersdk.Result{Outputs: outputs}, nil
 }
 
-// Delete removes a simulated resource from memory.
+// Delete removes a simulated resource.
 func (d *Driver) Delete(ctx context.Context, id string) error {
 	if d.cfg.FailDelete {
 		return fmt.Errorf("devboxes: simulated delete failure")
@@ -135,30 +205,53 @@ func (d *Driver) Delete(ctx context.Context, id string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if _, ok := d.resources[id]; !ok {
+	store, err := loadStore(d.dataDir)
+	if err != nil {
+		return fmt.Errorf("devboxes: load store: %w", err)
+	}
+
+	if _, ok := store.Resources[id]; !ok {
 		return fmt.Errorf("devboxes: resource %q not found", id)
 	}
-	delete(d.resources, id)
-	return nil
+	delete(store.Resources, id)
+
+	return saveStore(d.dataDir, store)
 }
 
-// ResourceCount returns the number of tracked resources. Useful in tests.
+// --- Test helpers ---
+
+// DataDir returns the directory where the store file lives.
+func (d *Driver) DataDir() string {
+	return d.dataDir
+}
+
+// ResourceCount returns the number of tracked resources.
 func (d *Driver) ResourceCount() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return len(d.resources)
+
+	store, err := loadStore(d.dataDir)
+	if err != nil {
+		return 0
+	}
+	return len(store.Resources)
 }
 
-// ResourceUpdates returns the update log for a resource. Useful in tests.
+// ResourceUpdates returns the update log for a resource.
 func (d *Driver) ResourceUpdates(id string) ([]string, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	r, ok := d.resources[id]
+
+	store, err := loadStore(d.dataDir)
+	if err != nil {
+		return nil, false
+	}
+	r, ok := store.Resources[id]
 	if !ok {
 		return nil, false
 	}
-	out := make([]string, len(r.updates))
-	copy(out, r.updates)
+	out := make([]string, len(r.Updates))
+	copy(out, r.Updates)
 	return out, true
 }
 

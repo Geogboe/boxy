@@ -2,12 +2,21 @@ package devboxes
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
 
+func newTestDriver(t *testing.T, cfg *Config) *Driver {
+	t.Helper()
+	cfg.DataDir = t.TempDir()
+	return New(cfg)
+}
+
 func TestDriver_Create(t *testing.T) {
-	d := New(&Config{})
+	d := newTestDriver(t, &Config{})
 
 	res, err := d.Create(context.Background(), nil)
 	if err != nil {
@@ -24,35 +33,62 @@ func TestDriver_Create(t *testing.T) {
 	}
 }
 
-func TestDriver_Create_WithLatency(t *testing.T) {
-	d := New(&Config{Latency: 50 * time.Millisecond})
+func TestDriver_Create_UniqueConnectionInfo(t *testing.T) {
+	d := newTestDriver(t, &Config{})
 
-	start := time.Now()
-	_, err := d.Create(context.Background(), nil)
-	elapsed := time.Since(start)
+	r1, _ := d.Create(context.Background(), nil)
+	r2, _ := d.Create(context.Background(), nil)
 
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	if elapsed < 50*time.Millisecond {
-		t.Errorf("expected >= 50ms latency, got %v", elapsed)
+	if r1.ConnectionInfo["port"] == r2.ConnectionInfo["port"] {
+		t.Errorf("expected unique ports, both got %q", r1.ConnectionInfo["port"])
 	}
 }
 
-func TestDriver_Create_ContextCancelled(t *testing.T) {
-	d := New(&Config{Latency: 5 * time.Second})
+func TestDriver_Create_StateTransition(t *testing.T) {
+	d := newTestDriver(t, &Config{Latency: 50 * time.Millisecond})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel immediately
+	res, err := d.Create(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 
-	_, err := d.Create(ctx, nil)
-	if err == nil {
-		t.Fatal("expected error from cancelled context")
+	// Should start in "creating" state.
+	status, err := d.Read(context.Background(), res.ID)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if status.State != "creating" {
+		t.Errorf("expected initial state creating, got %q", status.State)
+	}
+
+	// Wait for transition.
+	time.Sleep(100 * time.Millisecond)
+
+	status, err = d.Read(context.Background(), res.ID)
+	if err != nil {
+		t.Fatalf("Read after transition: %v", err)
+	}
+	if status.State != "running" {
+		t.Errorf("expected state running after latency, got %q", status.State)
+	}
+}
+
+func TestDriver_Create_ZeroLatency(t *testing.T) {
+	d := newTestDriver(t, &Config{})
+
+	res, err := d.Create(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	status, _ := d.Read(context.Background(), res.ID)
+	if status.State != "running" {
+		t.Errorf("expected immediate running state, got %q", status.State)
 	}
 }
 
 func TestDriver_Create_Failure(t *testing.T) {
-	d := New(&Config{FailCreate: true})
+	d := newTestDriver(t, &Config{FailCreate: true})
 
 	_, err := d.Create(context.Background(), nil)
 	if err == nil {
@@ -61,7 +97,7 @@ func TestDriver_Create_Failure(t *testing.T) {
 }
 
 func TestDriver_Read(t *testing.T) {
-	d := New(&Config{})
+	d := newTestDriver(t, &Config{})
 
 	res, _ := d.Create(context.Background(), nil)
 	status, err := d.Read(context.Background(), res.ID)
@@ -74,7 +110,7 @@ func TestDriver_Read(t *testing.T) {
 }
 
 func TestDriver_Read_NotFound(t *testing.T) {
-	d := New(&Config{})
+	d := newTestDriver(t, &Config{})
 
 	_, err := d.Read(context.Background(), "nonexistent")
 	if err == nil {
@@ -83,7 +119,7 @@ func TestDriver_Read_NotFound(t *testing.T) {
 }
 
 func TestDriver_Update_Exec(t *testing.T) {
-	d := New(&Config{})
+	d := newTestDriver(t, &Config{})
 
 	res, _ := d.Create(context.Background(), nil)
 	result, err := d.Update(context.Background(), res.ID, &ExecOp{
@@ -95,6 +131,9 @@ func TestDriver_Update_Exec(t *testing.T) {
 	if result.Outputs["status"] != "ok" {
 		t.Errorf("expected status ok, got %q", result.Outputs["status"])
 	}
+	if result.Outputs["stdout"] == "" {
+		t.Error("expected simulated stdout output")
+	}
 
 	updates, ok := d.ResourceUpdates(res.ID)
 	if !ok {
@@ -105,8 +144,24 @@ func TestDriver_Update_Exec(t *testing.T) {
 	}
 }
 
+func TestDriver_Update_SetState(t *testing.T) {
+	d := newTestDriver(t, &Config{})
+
+	res, _ := d.Create(context.Background(), nil)
+
+	_, err := d.Update(context.Background(), res.ID, &SetStateOp{State: "stopped"})
+	if err != nil {
+		t.Fatalf("Update SetState: %v", err)
+	}
+
+	status, _ := d.Read(context.Background(), res.ID)
+	if status.State != "stopped" {
+		t.Errorf("expected state stopped, got %q", status.State)
+	}
+}
+
 func TestDriver_Update_Failure(t *testing.T) {
-	d := New(&Config{FailUpdate: true})
+	d := newTestDriver(t, &Config{FailUpdate: true})
 
 	res, _ := d.Create(context.Background(), nil)
 	_, err := d.Update(context.Background(), res.ID, &ExecOp{
@@ -118,7 +173,7 @@ func TestDriver_Update_Failure(t *testing.T) {
 }
 
 func TestDriver_Delete(t *testing.T) {
-	d := New(&Config{})
+	d := newTestDriver(t, &Config{})
 
 	res, _ := d.Create(context.Background(), nil)
 	if err := d.Delete(context.Background(), res.ID); err != nil {
@@ -130,7 +185,7 @@ func TestDriver_Delete(t *testing.T) {
 }
 
 func TestDriver_Delete_NotFound(t *testing.T) {
-	d := New(&Config{})
+	d := newTestDriver(t, &Config{})
 
 	err := d.Delete(context.Background(), "nonexistent")
 	if err == nil {
@@ -139,7 +194,7 @@ func TestDriver_Delete_NotFound(t *testing.T) {
 }
 
 func TestDriver_Delete_Failure(t *testing.T) {
-	d := New(&Config{FailDelete: true})
+	d := newTestDriver(t, &Config{FailDelete: true})
 
 	res, _ := d.Create(context.Background(), nil)
 	err := d.Delete(context.Background(), res.ID)
@@ -149,7 +204,7 @@ func TestDriver_Delete_Failure(t *testing.T) {
 }
 
 func TestDriver_Labels(t *testing.T) {
-	d := New(&Config{
+	d := newTestDriver(t, &Config{
 		Labels: map[string]string{"env": "test", "role": "attacker"},
 	})
 
@@ -159,6 +214,66 @@ func TestDriver_Labels(t *testing.T) {
 	}
 	if res.Metadata["role"] != "attacker" {
 		t.Errorf("expected role=attacker in metadata, got %q", res.Metadata["role"])
+	}
+}
+
+func TestDriver_Persistence(t *testing.T) {
+	dataDir := t.TempDir()
+
+	// Create a resource with driver 1.
+	d1 := New(&Config{DataDir: dataDir})
+	res, err := d1.Create(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Create a new driver pointing at the same directory.
+	d2 := New(&Config{DataDir: dataDir})
+	if d2.ResourceCount() != 1 {
+		t.Fatalf("expected 1 resource from persisted store, got %d", d2.ResourceCount())
+	}
+
+	status, err := d2.Read(context.Background(), res.ID)
+	if err != nil {
+		t.Fatalf("Read from new driver: %v", err)
+	}
+	if status.State != "running" {
+		t.Errorf("expected state running, got %q", status.State)
+	}
+}
+
+func TestDriver_JSONFileReadable(t *testing.T) {
+	d := newTestDriver(t, &Config{
+		Labels: map[string]string{"env": "test"},
+	})
+
+	res, _ := d.Create(context.Background(), nil)
+	d.Update(context.Background(), res.ID, &ExecOp{Command: []string{"whoami"}})
+
+	// Read and parse the JSON file directly.
+	data, err := os.ReadFile(filepath.Join(d.DataDir(), storeFilename))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	var store storeData
+	if err := json.Unmarshal(data, &store); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	if len(store.Resources) != 1 {
+		t.Fatalf("expected 1 resource in JSON, got %d", len(store.Resources))
+	}
+
+	r := store.Resources[res.ID]
+	if r.State != "running" {
+		t.Errorf("expected state running in JSON, got %q", r.State)
+	}
+	if len(r.Updates) != 1 {
+		t.Errorf("expected 1 update in JSON, got %d", len(r.Updates))
+	}
+	if r.ConnectionInfo["type"] != "devboxes" {
+		t.Errorf("expected connection type devboxes in JSON, got %q", r.ConnectionInfo["type"])
 	}
 }
 
