@@ -1,4 +1,4 @@
-package devbox
+package devboxes
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"github.com/Geogboe/boxy/v2/pkg/providersdk"
 )
 
-const ProviderType providersdk.Type = "devbox"
+const ProviderType providersdk.Type = "devboxes"
 
 // resource is an in-memory simulated resource.
 type resource struct {
@@ -22,7 +22,7 @@ type resource struct {
 	updates   []string // log of operations applied
 }
 
-// Driver is the devbox reference implementation of providersdk.Driver.
+// Driver is the devboxes reference implementation of providersdk.Driver.
 // All resources live in memory and cost nothing to create or destroy.
 type Driver struct {
 	cfg       Config
@@ -30,7 +30,7 @@ type Driver struct {
 	resources map[string]*resource
 }
 
-// New creates a devbox driver from a parsed Config.
+// New creates a devboxes driver from a parsed Config.
 func New(cfg *Config) *Driver {
 	return &Driver{
 		cfg:       *cfg,
@@ -46,7 +46,7 @@ func (d *Driver) Type() providersdk.Type {
 // configured latency) with a resource that has fake connection info.
 func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, error) {
 	if d.cfg.FailCreate {
-		return nil, fmt.Errorf("devbox: simulated create failure")
+		return nil, fmt.Errorf("devboxes: simulated create failure")
 	}
 
 	// Respect configured latency.
@@ -74,7 +74,7 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 		ConnectionInfo: map[string]string{
 			"host": "127.0.0.1",
 			"port": "22",
-			"type": "devbox",
+			"type": "devboxes",
 		},
 		Metadata: d.cfg.Labels,
 	}, nil
@@ -87,7 +87,7 @@ func (d *Driver) Read(ctx context.Context, id string) (*providersdk.ResourceStat
 	d.mu.Unlock()
 
 	if !ok {
-		return nil, fmt.Errorf("devbox: resource %q not found", id)
+		return nil, fmt.Errorf("devboxes: resource %q not found", id)
 	}
 
 	return &providersdk.ResourceStatus{
@@ -101,14 +101,14 @@ func (d *Driver) Read(ctx context.Context, id string) (*providersdk.ResourceStat
 // defined in operations.go.
 func (d *Driver) Update(ctx context.Context, id string, op providersdk.Operation) (*providersdk.Result, error) {
 	if d.cfg.FailUpdate {
-		return nil, fmt.Errorf("devbox: simulated update failure")
+		return nil, fmt.Errorf("devboxes: simulated update failure")
 	}
 
 	d.mu.Lock()
 	r, ok := d.resources[id]
 	if !ok {
 		d.mu.Unlock()
-		return nil, fmt.Errorf("devbox: resource %q not found", id)
+		return nil, fmt.Errorf("devboxes: resource %q not found", id)
 	}
 
 	desc := fmt.Sprintf("%T", op)
@@ -129,14 +129,14 @@ func (d *Driver) Update(ctx context.Context, id string, op providersdk.Operation
 // Delete removes a simulated resource from memory.
 func (d *Driver) Delete(ctx context.Context, id string) error {
 	if d.cfg.FailDelete {
-		return fmt.Errorf("devbox: simulated delete failure")
+		return fmt.Errorf("devboxes: simulated delete failure")
 	}
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	if _, ok := d.resources[id]; !ok {
-		return fmt.Errorf("devbox: resource %q not found", id)
+		return fmt.Errorf("devboxes: resource %q not found", id)
 	}
 	delete(d.resources, id)
 	return nil

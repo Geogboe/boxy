@@ -1,4 +1,4 @@
-package devbox
+package devboxes
 
 // ExecOp simulates executing a command on a resource.
 // This is the devbox equivalent of docker exec, PowerShell Direct, etc.

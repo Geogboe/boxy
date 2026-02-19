@@ -1,4 +1,4 @@
-package devbox
+package devboxes
 
 import (
 	"context"
@@ -16,8 +16,8 @@ func TestDriver_Create(t *testing.T) {
 	if res.ID == "" {
 		t.Fatal("expected non-empty resource ID")
 	}
-	if res.ConnectionInfo["type"] != "devbox" {
-		t.Errorf("expected connection type devbox, got %q", res.ConnectionInfo["type"])
+	if res.ConnectionInfo["type"] != "devboxes" {
+		t.Errorf("expected connection type devboxes, got %q", res.ConnectionInfo["type"])
 	}
 	if d.ResourceCount() != 1 {
 		t.Errorf("expected 1 resource, got %d", d.ResourceCount())

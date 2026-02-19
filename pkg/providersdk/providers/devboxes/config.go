@@ -1,4 +1,4 @@
-// Package devbox provides an in-memory reference implementation of the
+// Package devboxes provides an in-memory reference implementation of the
 // providersdk.Driver interface. It simulates resource lifecycle without
 // requiring any real infrastructure, making it suitable for:
 //
@@ -6,8 +6,9 @@
 //   - Reference implementation for provider authors
 //   - Local development without Docker/Hyper-V/etc.
 //
-// Use type: devbox in pool configuration to use this provider.
-package devbox
+// Use type: devboxes in pool configuration to use this provider.
+// Each resource created by this provider is called a "devbox".
+package devboxes
 
 import "time"
 
