@@ -1,73 +1,76 @@
 package providersdk
 
 import (
-	"context"
 	"fmt"
 	"sort"
 )
 
-// Registry maps provider Type -> Driver.
+// Registration bundles everything a provider type contributes to the system:
+// a config prototype for unmarshaling pool config blocks, and a factory
+// that produces a Driver from parsed config.
+type Registration struct {
+	// Type is the provider type identifier (e.g. "docker", "hyperv").
+	Type Type
+
+	// ConfigProto returns a zero-value config struct for this driver type.
+	// The system unmarshals the pool's config: YAML block into this struct.
+	ConfigProto func() any
+
+	// NewDriver creates a Driver instance from a parsed config struct.
+	// The cfg argument is the same type returned by ConfigProto, populated
+	// by the YAML unmarshaler.
+	NewDriver func(cfg any) (Driver, error)
+}
+
+// Registry maps provider Type -> Registration.
 type Registry struct {
-	drivers map[Type]Driver
+	registrations map[Type]Registration
 }
 
 func NewRegistry() *Registry {
-	return &Registry{drivers: make(map[Type]Driver)}
+	return &Registry{registrations: make(map[Type]Registration)}
 }
 
-func (r *Registry) Register(d Driver) error {
+// Register adds a provider registration. Returns an error if the type is
+// already registered or the registration is invalid.
+func (r *Registry) Register(reg Registration) error {
 	if r == nil {
 		return fmt.Errorf("registry is nil")
 	}
-	if d == nil {
-		return fmt.Errorf("driver is nil")
+	if reg.Type == "" {
+		return fmt.Errorf("registration type is empty")
 	}
-	t := d.Type()
-	if t == "" {
-		return fmt.Errorf("driver type is empty")
+	if reg.ConfigProto == nil {
+		return fmt.Errorf("registration %q: ConfigProto is nil", reg.Type)
 	}
-	if _, exists := r.drivers[t]; exists {
-		return fmt.Errorf("driver already registered for type %q", t)
+	if reg.NewDriver == nil {
+		return fmt.Errorf("registration %q: NewDriver is nil", reg.Type)
 	}
-	r.drivers[t] = d
+	if _, exists := r.registrations[reg.Type]; exists {
+		return fmt.Errorf("driver already registered for type %q", reg.Type)
+	}
+	r.registrations[reg.Type] = reg
 	return nil
 }
 
-func (r *Registry) Get(t Type) (Driver, bool) {
+// Get returns the registration for a provider type.
+func (r *Registry) Get(t Type) (Registration, bool) {
 	if r == nil {
-		return nil, false
+		return Registration{}, false
 	}
-	d, ok := r.drivers[t]
-	return d, ok
+	reg, ok := r.registrations[t]
+	return reg, ok
 }
 
+// Types returns all registered provider types in sorted order.
 func (r *Registry) Types() []Type {
 	if r == nil {
 		return nil
 	}
-	types := make([]Type, 0, len(r.drivers))
-	for k := range r.drivers {
+	types := make([]Type, 0, len(r.registrations))
+	for k := range r.registrations {
 		types = append(types, k)
 	}
 	sort.Slice(types, func(i, j int) bool { return types[i] < types[j] })
 	return types
-}
-
-// ValidateInstances enforces that every Instance.Type is supported and that each
-// instance's config validates against its Driver.
-func (r *Registry) ValidateInstances(ctx context.Context, instances []Instance) error {
-	if r == nil {
-		return fmt.Errorf("registry is nil")
-	}
-	for i := range instances {
-		inst := instances[i]
-		d, ok := r.Get(inst.Type)
-		if !ok {
-			return fmt.Errorf("provider[%d] has unsupported type %q", i, inst.Type)
-		}
-		if err := d.ValidateConfig(ctx, inst); err != nil {
-			return fmt.Errorf("provider[%d] config invalid: %w", i, err)
-		}
-	}
-	return nil
 }
