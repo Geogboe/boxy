@@ -25,8 +25,8 @@ func TestDriver_Create(t *testing.T) {
 	if res.ID == "" {
 		t.Fatal("expected non-empty resource ID")
 	}
-	if res.ConnectionInfo["type"] != "devboxes" {
-		t.Errorf("expected connection type devboxes, got %q", res.ConnectionInfo["type"])
+	if res.ConnectionInfo["type"] != "container" {
+		t.Errorf("expected connection type container (default profile), got %q", res.ConnectionInfo["type"])
 	}
 	if d.ResourceCount() != 1 {
 		t.Errorf("expected 1 resource, got %d", d.ResourceCount())
@@ -272,8 +272,78 @@ func TestDriver_JSONFileReadable(t *testing.T) {
 	if len(r.Updates) != 1 {
 		t.Errorf("expected 1 update in JSON, got %d", len(r.Updates))
 	}
-	if r.ConnectionInfo["type"] != "devboxes" {
-		t.Errorf("expected connection type devboxes in JSON, got %q", r.ConnectionInfo["type"])
+	if r.ConnectionInfo["type"] != "container" {
+		t.Errorf("expected connection type container in JSON, got %q", r.ConnectionInfo["type"])
+	}
+}
+
+func TestDriver_Profile_Container(t *testing.T) {
+	d := newTestDriver(t, &Config{Profile: ProfileContainer})
+
+	res, err := d.Create(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if res.ConnectionInfo["type"] != "container" {
+		t.Errorf("expected type container, got %q", res.ConnectionInfo["type"])
+	}
+	if res.ConnectionInfo["host"] == "" || res.ConnectionInfo["port"] == "" {
+		t.Error("expected host and port in container connection info")
+	}
+}
+
+func TestDriver_Profile_VM(t *testing.T) {
+	// Override default latency to 0 so test is fast.
+	d := newTestDriver(t, &Config{Profile: ProfileVM, Latency: 1 * time.Millisecond})
+
+	res, err := d.Create(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if res.ConnectionInfo["type"] != "vm" {
+		t.Errorf("expected type vm, got %q", res.ConnectionInfo["type"])
+	}
+	if res.ConnectionInfo["ssh_port"] != "22" {
+		t.Errorf("expected ssh_port 22, got %q", res.ConnectionInfo["ssh_port"])
+	}
+	if res.ConnectionInfo["ssh_user"] != "admin" {
+		t.Errorf("expected ssh_user admin, got %q", res.ConnectionInfo["ssh_user"])
+	}
+	if res.ConnectionInfo["ssh_key"] == "" {
+		t.Error("expected ssh_key in VM connection info")
+	}
+}
+
+func TestDriver_Profile_Share(t *testing.T) {
+	d := newTestDriver(t, &Config{Profile: ProfileShare})
+
+	res, err := d.Create(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if res.ConnectionInfo["type"] != "share" {
+		t.Errorf("expected type share, got %q", res.ConnectionInfo["type"])
+	}
+	if res.ConnectionInfo["unc_path"] == "" {
+		t.Error("expected unc_path in share connection info")
+	}
+	if res.ConnectionInfo["mount_path"] == "" {
+		t.Error("expected mount_path in share connection info")
+	}
+}
+
+func TestDriver_Profile_VMDefaultLatency(t *testing.T) {
+	// VM profile has a 2s default latency. Resource should start as "creating".
+	d := newTestDriver(t, &Config{Profile: ProfileVM})
+
+	res, err := d.Create(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	status, _ := d.Read(context.Background(), res.ID)
+	if status.State != "creating" {
+		t.Errorf("expected VM to start in creating state (default latency), got %q", status.State)
 	}
 }
 
