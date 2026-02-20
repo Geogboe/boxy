@@ -1,4 +1,4 @@
-// Package devboxes provides an in-memory reference implementation of the
+// Package devfactory provides a reference implementation of the
 // providersdk.Driver interface. It simulates resource lifecycle without
 // requiring any real infrastructure, making it suitable for:
 //
@@ -6,16 +6,15 @@
 //   - Reference implementation for provider authors
 //   - Local development without Docker/Hyper-V/etc.
 //
-// Use type: devboxes in pool configuration to use this provider.
-// Each resource created by this provider is called a "devbox".
-package devboxes
+// Use type: devfactory in pool configuration to use this provider.
+package devfactory
 
 import "time"
 
-// Config is the typed configuration for the devbox driver.
+// Config is the typed configuration for the devfactory driver.
 // It is unmarshaled from the pool's config: YAML block.
 type Config struct {
-	// DataDir is the directory where devboxes.json is stored.
+	// DataDir is the directory where devfactory.json is stored.
 	// If empty, a temporary directory is created automatically.
 	DataDir string `yaml:"data_dir" json:"data_dir"`
 

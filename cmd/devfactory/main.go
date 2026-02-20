@@ -1,17 +1,17 @@
-// Command devboxes is a CLI for the devboxes reference provider.
+// Command devfactory is a CLI for the devfactory reference provider.
 // It lets you exercise the full CRUD lifecycle against the JSON-backed
 // driver without running a boxy server or agent.
 //
 // Usage:
 //
-//	devboxes create [--label key=value ...]
-//	devboxes list
-//	devboxes read <id>
-//	devboxes exec <id> -- <command> [args...]
-//	devboxes set-state <id> <state>
-//	devboxes delete <id>
+//	devfactory create [--label key=value ...]
+//	devfactory list
+//	devfactory read <id>
+//	devfactory exec <id> -- <command> [args...]
+//	devfactory set-state <id> <state>
+//	devfactory delete <id>
 //
-// State is persisted to devboxes.json in the data directory (default: .devboxes/).
+// State is persisted to devfactory.json in the data directory (default: .devfactory/).
 package main
 
 import (
@@ -22,10 +22,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Geogboe/boxy/v2/pkg/providersdk/providers/devboxes"
+	"github.com/Geogboe/boxy/v2/pkg/providersdk/providers/devfactory"
 )
 
-const defaultDataDir = ".devboxes"
+const defaultDataDir = ".devfactory"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -33,9 +33,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	dataDir := envOrDefault("DEVBOXES_DATA_DIR", defaultDataDir)
-	latency := parseDuration(os.Getenv("DEVBOXES_LATENCY"))
-	profile := devboxes.Profile(envOrDefault("DEVBOXES_PROFILE", "container"))
+	dataDir := envOrDefault("DEVFACTORY_DATA_DIR", defaultDataDir)
+	latency := parseDuration(os.Getenv("DEVFACTORY_LATENCY"))
+	profile := devfactory.Profile(envOrDefault("DEVFACTORY_PROFILE", "container"))
 
 	// Parse global flags.
 	args := os.Args[1:]
@@ -45,7 +45,7 @@ func main() {
 			dataDir = args[1]
 			args = args[2:]
 		case "--profile":
-			profile = devboxes.Profile(args[1])
+			profile = devfactory.Profile(args[1])
 			args = args[2:]
 		default:
 			goto done
@@ -63,7 +63,7 @@ done:
 		fatal("creating data dir: %v", err)
 	}
 
-	d := devboxes.New(&devboxes.Config{
+	d := devfactory.New(&devfactory.Config{
 		DataDir: dataDir,
 		Profile: profile,
 		Latency: latency,
@@ -95,10 +95,10 @@ done:
 	}
 }
 
-func doCreate(ctx context.Context, d *devboxes.Driver, args []string) {
+func doCreate(ctx context.Context, d *devfactory.Driver, args []string) {
 	labels := parseLabels(args)
 
-	cfg := &devboxes.Config{Labels: labels}
+	cfg := &devfactory.Config{Labels: labels}
 	_ = cfg // labels are set on the driver config, not per-create
 
 	// For per-resource labels, we pass them as the create config.
@@ -114,9 +114,9 @@ func doCreate(ctx context.Context, d *devboxes.Driver, args []string) {
 	})
 }
 
-func doList(ctx context.Context, d *devboxes.Driver) {
+func doList(ctx context.Context, d *devfactory.Driver) {
 	// Read the store file directly for a full listing.
-	data, err := os.ReadFile(d.DataDir() + "/devboxes.json")
+	data, err := os.ReadFile(d.DataDir() + "/devfactory.json")
 	if err != nil {
 		if os.IsNotExist(err) {
 			fmt.Println("[]")
@@ -140,9 +140,9 @@ func doList(ctx context.Context, d *devboxes.Driver) {
 	printJSON(resources)
 }
 
-func doRead(ctx context.Context, d *devboxes.Driver, args []string) {
+func doRead(ctx context.Context, d *devfactory.Driver, args []string) {
 	if len(args) != 1 {
-		fatal("usage: devboxes read <id>")
+		fatal("usage: devfactory read <id>")
 	}
 
 	status, err := d.Read(ctx, args[0])
@@ -153,10 +153,10 @@ func doRead(ctx context.Context, d *devboxes.Driver, args []string) {
 	printJSON(status)
 }
 
-func doExec(ctx context.Context, d *devboxes.Driver, args []string) {
+func doExec(ctx context.Context, d *devfactory.Driver, args []string) {
 	// Parse: exec <id> -- <command...>
 	if len(args) < 1 {
-		fatal("usage: devboxes exec <id> -- <command> [args...]")
+		fatal("usage: devfactory exec <id> -- <command> [args...]")
 	}
 
 	id := args[0]
@@ -167,10 +167,10 @@ func doExec(ctx context.Context, d *devboxes.Driver, args []string) {
 		cmdArgs = cmdArgs[1:]
 	}
 	if len(cmdArgs) == 0 {
-		fatal("usage: devboxes exec <id> -- <command> [args...]")
+		fatal("usage: devfactory exec <id> -- <command> [args...]")
 	}
 
-	result, err := d.Update(ctx, id, &devboxes.ExecOp{Command: cmdArgs})
+	result, err := d.Update(ctx, id, &devfactory.ExecOp{Command: cmdArgs})
 	if err != nil {
 		fatal("exec: %v", err)
 	}
@@ -178,12 +178,12 @@ func doExec(ctx context.Context, d *devboxes.Driver, args []string) {
 	printJSON(result)
 }
 
-func doSetState(ctx context.Context, d *devboxes.Driver, args []string) {
+func doSetState(ctx context.Context, d *devfactory.Driver, args []string) {
 	if len(args) != 2 {
-		fatal("usage: devboxes set-state <id> <state>")
+		fatal("usage: devfactory set-state <id> <state>")
 	}
 
-	result, err := d.Update(ctx, args[0], &devboxes.SetStateOp{State: args[1]})
+	result, err := d.Update(ctx, args[0], &devfactory.SetStateOp{State: args[1]})
 	if err != nil {
 		fatal("set-state: %v", err)
 	}
@@ -191,9 +191,9 @@ func doSetState(ctx context.Context, d *devboxes.Driver, args []string) {
 	printJSON(result)
 }
 
-func doDelete(ctx context.Context, d *devboxes.Driver, args []string) {
+func doDelete(ctx context.Context, d *devfactory.Driver, args []string) {
 	if len(args) != 1 {
-		fatal("usage: devboxes delete <id>")
+		fatal("usage: devfactory delete <id>")
 	}
 
 	if err := d.Delete(ctx, args[0]); err != nil {
@@ -205,14 +205,14 @@ func doDelete(ctx context.Context, d *devboxes.Driver, args []string) {
 // --- helpers ---
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `devboxes — CLI for the devboxes reference provider
+	fmt.Fprintf(os.Stderr, `devfactory — CLI for the devfactory reference provider
 
 Usage:
-  devboxes [--data-dir <path>] [--profile <type>] <command> [args...]
+  devfactory [--data-dir <path>] [--profile <type>] <command> [args...]
 
 Commands:
-  create [--label key=value ...]   Create a new devbox
-  list                             List all devboxes
+  create [--label key=value ...]   Create a new resource
+  list                             List all resources
   read <id>                        Read resource state
   exec <id> -- <cmd> [args...]     Simulate command execution
   set-state <id> <state>           Change resource state
@@ -224,11 +224,11 @@ Profiles:
   share       Simulates network shares (UNC path, mount path, credentials)
 
 Environment:
-  DEVBOXES_DATA_DIR   Data directory (default: .devboxes/)
-  DEVBOXES_LATENCY    Provisioning latency, e.g. "500ms" (default: profile)
-  DEVBOXES_PROFILE    Resource profile (default: container)
+  DEVFACTORY_DATA_DIR   Data directory (default: .devfactory/)
+  DEVFACTORY_LATENCY    Provisioning latency, e.g. "500ms" (default: profile)
+  DEVFACTORY_PROFILE    Resource profile (default: container)
 
-State is persisted to devboxes.json in the data directory.
+State is persisted to devfactory.json in the data directory.
 `)
 }
 

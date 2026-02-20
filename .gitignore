@@ -52,8 +52,8 @@ temp/
 bin/
 .bin/
 
-# Devboxes provider data
-.devboxes/
+# DevFactory provider data
+.devfactory/
 
 .cache/
 

@@ -1,9 +1,9 @@
-package devboxes
+package devfactory
 
 import "github.com/Geogboe/boxy/v2/pkg/providersdk"
 
-// Registration returns the providersdk.Registration for the devboxes provider.
-// Use this to register devboxes with a providersdk.Registry.
+// Registration returns the providersdk.Registration for the devfactory provider.
+// Use this to register devfactory with a providersdk.Registry.
 func Registration() providersdk.Registration {
 	return providersdk.Registration{
 		Type:        ProviderType,

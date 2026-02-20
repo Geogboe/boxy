@@ -1,7 +1,7 @@
-package devboxes
+package devfactory
 
 // ExecOp simulates executing a command on a resource.
-// This is the devbox equivalent of docker exec, PowerShell Direct, etc.
+// This is the devfactory equivalent of docker exec, PowerShell Direct, etc.
 type ExecOp struct {
 	Command []string
 	Env     map[string]string

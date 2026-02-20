@@ -1,11 +1,11 @@
-package devboxes
+package devfactory
 
 import (
 	"strconv"
 	"time"
 )
 
-// Profile determines what kind of resource a devbox simulates.
+// Profile determines what kind of resource a devfactory resource simulates.
 // Each profile produces different connection info and default latency
 // to mimic the behavior of a real provider type.
 type Profile string
@@ -43,7 +43,7 @@ var profiles = map[Profile]profileSpec{
 				"host":     "10.1.0." + strconv.Itoa(port%256),
 				"ssh_port": "22",
 				"ssh_user": "admin",
-				"ssh_key":  "/tmp/devboxes/id_ed25519_" + strconv.Itoa(port),
+				"ssh_key":  "/tmp/devfactory/id_ed25519_" + strconv.Itoa(port),
 			}
 		},
 	},
