@@ -1,4 +1,4 @@
-package devboxes
+package devfactory
 
 import (
 	"encoding/json"
@@ -7,9 +7,9 @@ import (
 	"time"
 )
 
-const storeFilename = "devboxes.json"
+const storeFilename = "devfactory.json"
 
-// resourceRecord is the JSON-serializable form of a devbox resource.
+// resourceRecord is the JSON-serializable form of a devfactory resource.
 type resourceRecord struct {
 	ID             string            `json:"id"`
 	State          string            `json:"state"`
@@ -19,7 +19,7 @@ type resourceRecord struct {
 	Updates        []string          `json:"updates,omitempty"`
 }
 
-// storeData is the top-level structure persisted to devboxes.json.
+// storeData is the top-level structure persisted to devfactory.json.
 type storeData struct {
 	Resources map[string]*resourceRecord `json:"resources"`
 	NextPort  int                        `json:"next_port"`

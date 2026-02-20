@@ -1,4 +1,4 @@
-package devboxes
+package devfactory
 
 import (
 	"context"
@@ -12,9 +12,9 @@ import (
 	"github.com/Geogboe/boxy/v2/pkg/providersdk"
 )
 
-const ProviderType providersdk.Type = "devboxes"
+const ProviderType providersdk.Type = "devfactory"
 
-// Driver is the devboxes reference implementation of providersdk.Driver.
+// Driver is the devfactory reference implementation of providersdk.Driver.
 // State is persisted to a JSON file in DataDir so you can inspect it
 // with cat/jq while developing the rest of the system.
 type Driver struct {
@@ -25,14 +25,14 @@ type Driver struct {
 	mu      sync.Mutex
 }
 
-// New creates a devboxes driver from a parsed Config. If DataDir is
+// New creates a devfactory driver from a parsed Config. If DataDir is
 // empty, a temporary directory is created.
 func New(cfg *Config) *Driver {
 	dataDir := cfg.DataDir
 	if dataDir == "" {
-		dir, err := os.MkdirTemp("", "devboxes-*")
+		dir, err := os.MkdirTemp("", "devfactory-*")
 		if err != nil {
-			panic(fmt.Sprintf("devboxes: failed to create temp dir: %v", err))
+			panic(fmt.Sprintf("devfactory: failed to create temp dir: %v", err))
 		}
 		dataDir = dir
 	}
@@ -63,7 +63,7 @@ func (d *Driver) Type() providersdk.Type {
 // is immediately "running".
 func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, error) {
 	if d.cfg.FailCreate {
-		return nil, fmt.Errorf("devboxes: simulated create failure")
+		return nil, fmt.Errorf("devfactory: simulated create failure")
 	}
 
 	id := generateID()
@@ -78,7 +78,7 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 	store, err := loadStore(d.dataDir)
 	if err != nil {
 		d.mu.Unlock()
-		return nil, fmt.Errorf("devboxes: load store: %w", err)
+		return nil, fmt.Errorf("devfactory: load store: %w", err)
 	}
 
 	port := store.NextPort
@@ -96,7 +96,7 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 
 	if err := saveStore(d.dataDir, store); err != nil {
 		d.mu.Unlock()
-		return nil, fmt.Errorf("devboxes: save store: %w", err)
+		return nil, fmt.Errorf("devfactory: save store: %w", err)
 	}
 	d.mu.Unlock()
 
@@ -140,12 +140,12 @@ func (d *Driver) Read(ctx context.Context, id string) (*providersdk.ResourceStat
 	d.mu.Unlock()
 
 	if err != nil {
-		return nil, fmt.Errorf("devboxes: load store: %w", err)
+		return nil, fmt.Errorf("devfactory: load store: %w", err)
 	}
 
 	r, ok := store.Resources[id]
 	if !ok {
-		return nil, fmt.Errorf("devboxes: resource %q not found", id)
+		return nil, fmt.Errorf("devfactory: resource %q not found", id)
 	}
 
 	return &providersdk.ResourceStatus{
@@ -159,7 +159,7 @@ func (d *Driver) Read(ctx context.Context, id string) (*providersdk.ResourceStat
 // history.
 func (d *Driver) Update(ctx context.Context, id string, op providersdk.Operation) (*providersdk.Result, error) {
 	if d.cfg.FailUpdate {
-		return nil, fmt.Errorf("devboxes: simulated update failure")
+		return nil, fmt.Errorf("devfactory: simulated update failure")
 	}
 
 	d.mu.Lock()
@@ -167,12 +167,12 @@ func (d *Driver) Update(ctx context.Context, id string, op providersdk.Operation
 
 	store, err := loadStore(d.dataDir)
 	if err != nil {
-		return nil, fmt.Errorf("devboxes: load store: %w", err)
+		return nil, fmt.Errorf("devfactory: load store: %w", err)
 	}
 
 	r, ok := store.Resources[id]
 	if !ok {
-		return nil, fmt.Errorf("devboxes: resource %q not found", id)
+		return nil, fmt.Errorf("devfactory: resource %q not found", id)
 	}
 
 	desc := fmt.Sprintf("%T", op)
@@ -197,7 +197,7 @@ func (d *Driver) Update(ctx context.Context, id string, op providersdk.Operation
 	r.Updates = append(r.Updates, desc)
 
 	if err := saveStore(d.dataDir, store); err != nil {
-		return nil, fmt.Errorf("devboxes: save store: %w", err)
+		return nil, fmt.Errorf("devfactory: save store: %w", err)
 	}
 
 	return &providersdk.Result{Outputs: outputs}, nil
@@ -206,7 +206,7 @@ func (d *Driver) Update(ctx context.Context, id string, op providersdk.Operation
 // Delete removes a simulated resource.
 func (d *Driver) Delete(ctx context.Context, id string) error {
 	if d.cfg.FailDelete {
-		return fmt.Errorf("devboxes: simulated delete failure")
+		return fmt.Errorf("devfactory: simulated delete failure")
 	}
 
 	d.mu.Lock()
@@ -214,11 +214,11 @@ func (d *Driver) Delete(ctx context.Context, id string) error {
 
 	store, err := loadStore(d.dataDir)
 	if err != nil {
-		return fmt.Errorf("devboxes: load store: %w", err)
+		return fmt.Errorf("devfactory: load store: %w", err)
 	}
 
 	if _, ok := store.Resources[id]; !ok {
-		return fmt.Errorf("devboxes: resource %q not found", id)
+		return fmt.Errorf("devfactory: resource %q not found", id)
 	}
 	delete(store.Resources, id)
 
@@ -265,5 +265,5 @@ func (d *Driver) ResourceUpdates(id string) ([]string, bool) {
 func generateID() string {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
-	return "devbox-" + hex.EncodeToString(b)
+	return "dev-" + hex.EncodeToString(b)
 }
