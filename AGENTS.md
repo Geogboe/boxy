@@ -45,3 +45,7 @@ Don't think about "simple for v1" I like to to think about the entire architectu
 ## Taskfile
 
 Wrap repeated commands in Taskfile.yaml for ease of use. For example, if there are common commands for running tests, building the project, or deploying, they can be added to the Taskfile for quick execution. This also helps maintain consistency across the team and reduces the likelihood of errors when running complex commands.
+
+## Tools
+
+gopls is available locally for code navigation, refactoring, and linting.
