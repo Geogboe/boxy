@@ -1,6 +1,7 @@
 package providersdk
 
 import (
+	"context"
 	"fmt"
 	"sort"
 )
@@ -20,6 +21,14 @@ type Registration struct {
 	// The cfg argument is the same type returned by ConfigProto, populated
 	// by the YAML unmarshaler.
 	NewDriver func(cfg any) (Driver, error)
+}
+
+// Instance is a configured provider — a named, typed instance with its raw config.
+// These are declared in the boxy.yaml providers: list and passed to ValidateInstances.
+type Instance struct {
+	Name   string         `json:"name" yaml:"name"`
+	Type   Type           `json:"type" yaml:"type"`
+	Config map[string]any `json:"config,omitempty" yaml:"config,omitempty"`
 }
 
 // Registry maps provider Type -> Registration.
@@ -73,4 +82,14 @@ func (r *Registry) Types() []Type {
 	}
 	sort.Slice(types, func(i, j int) bool { return types[i] < types[j] })
 	return types
+}
+
+// ValidateInstances checks that every instance references a registered provider type.
+func (r *Registry) ValidateInstances(_ context.Context, instances []Instance) error {
+	for _, inst := range instances {
+		if _, ok := r.Get(inst.Type); !ok {
+			return fmt.Errorf("provider %q: unknown type %q", inst.Name, inst.Type)
+		}
+	}
+	return nil
 }
