@@ -60,3 +60,6 @@ bin/
 .task/
 
 .boxy/
+
+.env
+.envrc
