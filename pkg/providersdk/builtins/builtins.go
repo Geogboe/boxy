@@ -2,9 +2,9 @@
 package builtins
 
 import (
-	"github.com/Geogboe/boxy/v2/pkg/providersdk"
-	"github.com/Geogboe/boxy/v2/pkg/providersdk/providers/devfactory"
-	"github.com/Geogboe/boxy/v2/pkg/providersdk/providers/docker"
+	"github.com/Geogboe/boxy/pkg/providersdk"
+	"github.com/Geogboe/boxy/pkg/providersdk/providers/devfactory"
+	"github.com/Geogboe/boxy/pkg/providersdk/providers/docker"
 )
 
 // RegisterBuiltins registers all built-in provider types with reg.

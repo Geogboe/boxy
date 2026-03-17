@@ -1,4 +1,4 @@
-module github.com/Geogboe/boxy/v2
+module github.com/Geogboe/boxy
 
 go 1.25.0
 

@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Geogboe/boxy/v2/pkg/model"
-	"github.com/Geogboe/boxy/v2/pkg/store"
+	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/store"
 )
 
 // setupSandboxStore creates a DiskStore in a temp dir with optional seed sandboxes.

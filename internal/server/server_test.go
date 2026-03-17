@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/Geogboe/boxy/v2/internal/server"
-	"github.com/Geogboe/boxy/v2/pkg/store"
+	"github.com/Geogboe/boxy/internal/server"
+	"github.com/Geogboe/boxy/pkg/store"
 )
 
 func TestServer_healthz(t *testing.T) {

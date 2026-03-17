@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Geogboe/boxy/v2/pkg/model"
-	"github.com/Geogboe/boxy/v2/pkg/store"
+	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/store"
 )
 
 func TestManager_CreateFromPool_ConsumesReadyResource(t *testing.T) {

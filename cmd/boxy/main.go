@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/Geogboe/boxy/v2/internal/cli"
+	"github.com/Geogboe/boxy/internal/cli"
 )
 
 func main() {

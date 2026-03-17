@@ -1,6 +1,6 @@
 package docker
 
-import "github.com/Geogboe/boxy/v2/pkg/providersdk"
+import "github.com/Geogboe/boxy/pkg/providersdk"
 
 // Registration returns the providersdk.Registration for the Docker provider.
 func Registration() providersdk.Registration {

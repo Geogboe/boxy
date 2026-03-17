@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/Geogboe/boxy/v2/pkg/model"
+	"github.com/Geogboe/boxy/pkg/model"
 )
 
 //go:embed templates/*.html

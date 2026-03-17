@@ -16,7 +16,7 @@ package agentsdk
 import (
 	"context"
 
-	"github.com/Geogboe/boxy/v2/pkg/providersdk"
+	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
 // Agent is the interface the server uses to communicate with any agent,

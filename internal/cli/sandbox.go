@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/Geogboe/boxy/v2/pkg/store"
+	"github.com/Geogboe/boxy/pkg/store"
 	"github.com/spf13/cobra"
 )
 

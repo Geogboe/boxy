@@ -3,7 +3,7 @@ package cli
 import (
 	"fmt"
 
-	"github.com/Geogboe/boxy/v2/pkg/providersdk/providers/devfactory"
+	"github.com/Geogboe/boxy/pkg/providersdk/providers/devfactory"
 	"github.com/spf13/cobra"
 )
 

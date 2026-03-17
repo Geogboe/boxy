@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Geogboe/boxy/v2/pkg/providersdk"
+	"github.com/Geogboe/boxy/pkg/providersdk"
 	"gopkg.in/yaml.v3"
 )
 

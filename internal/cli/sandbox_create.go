@@ -8,13 +8,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	boxyconfig "github.com/Geogboe/boxy/v2/internal/config"
-	"github.com/Geogboe/boxy/v2/pkg/model"
-	"github.com/Geogboe/boxy/v2/internal/pool"
-	"github.com/Geogboe/boxy/v2/internal/sandbox"
-	"github.com/Geogboe/boxy/v2/pkg/store"
-	"github.com/Geogboe/boxy/v2/pkg/providersdk"
-	"github.com/Geogboe/boxy/v2/pkg/providersdk/builtins"
+	boxyconfig "github.com/Geogboe/boxy/internal/config"
+	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/internal/pool"
+	"github.com/Geogboe/boxy/internal/sandbox"
+	"github.com/Geogboe/boxy/pkg/store"
+	"github.com/Geogboe/boxy/pkg/providersdk"
+	"github.com/Geogboe/boxy/pkg/providersdk/builtins"
 )
 
 func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
