@@ -13,7 +13,7 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/Geogboe/boxy/v2/pkg/store"
+	"github.com/Geogboe/boxy/pkg/store"
 )
 
 // Server is the HTTP server for the Boxy REST API and optional web UI.

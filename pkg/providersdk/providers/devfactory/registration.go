@@ -1,6 +1,6 @@
 package devfactory
 
-import "github.com/Geogboe/boxy/v2/pkg/providersdk"
+import "github.com/Geogboe/boxy/pkg/providersdk"
 
 // Registration returns the providersdk.Registration for the devfactory provider.
 // Use this to register devfactory with a providersdk.Registry.

@@ -3,7 +3,7 @@ package server
 import (
 	"net/http"
 
-	"github.com/Geogboe/boxy/v2/pkg/httpjson"
+	"github.com/Geogboe/boxy/pkg/httpjson"
 )
 
 // handleListSandboxes returns all sandboxes as JSON.

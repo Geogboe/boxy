@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	boxyconfig "github.com/Geogboe/boxy/v2/internal/config"
-	"github.com/Geogboe/boxy/v2/pkg/model"
-	"github.com/Geogboe/boxy/v2/pkg/providersdk"
+	boxyconfig "github.com/Geogboe/boxy/internal/config"
+	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
 // DriverProvisioner adapts providersdk.Driver instances into the pool.Provisioner

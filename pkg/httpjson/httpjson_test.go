@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/Geogboe/boxy/v2/pkg/httpjson"
+	"github.com/Geogboe/boxy/pkg/httpjson"
 )
 
 func TestWrite(t *testing.T) {

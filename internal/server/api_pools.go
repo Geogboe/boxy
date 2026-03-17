@@ -3,7 +3,7 @@ package server
 import (
 	"net/http"
 
-	"github.com/Geogboe/boxy/v2/pkg/httpjson"
+	"github.com/Geogboe/boxy/pkg/httpjson"
 )
 
 // registerAPIRoutes wires the JSON REST API endpoints into the mux.

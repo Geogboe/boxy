@@ -4,7 +4,7 @@ Periodically update this document with guidelines, architectural decisions, less
 
 ## Project
 
-- **Module:** `github.com/Geogboe/boxy/v2`
+- **Module:** `github.com/Geogboe/boxy`
 - **Go version:** 1.22
 - **Dependencies:** cobra (CLI), yaml.v3 (config parsing)
 

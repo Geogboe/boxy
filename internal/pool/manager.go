@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Geogboe/boxy/v2/pkg/model"
-	"github.com/Geogboe/boxy/v2/pkg/store"
-	"github.com/Geogboe/boxy/v2/pkg/policycontroller"
+	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/store"
+	"github.com/Geogboe/boxy/pkg/policycontroller"
 )
 
 type Clock interface {

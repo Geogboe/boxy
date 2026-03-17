@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/Geogboe/boxy/v2/pkg/model"
+	"github.com/Geogboe/boxy/pkg/model"
 )
 
 // newSandboxID generates a random sandbox ID.

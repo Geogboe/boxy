@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Geogboe/boxy/v2/pkg/providersdk"
+	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
 const ProviderType providersdk.Type = "devfactory"

@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Geogboe/boxy/v2/pkg/agentsdk"
-	"github.com/Geogboe/boxy/v2/pkg/providersdk"
-	"github.com/Geogboe/boxy/v2/pkg/providersdk/providers/devfactory"
+	"github.com/Geogboe/boxy/pkg/agentsdk"
+	"github.com/Geogboe/boxy/pkg/providersdk"
+	"github.com/Geogboe/boxy/pkg/providersdk/providers/devfactory"
 )
 
 func newTestAgent(t *testing.T) *agentsdk.EmbeddedAgent {

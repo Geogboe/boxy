@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Geogboe/boxy/v2/internal/server"
-	"github.com/Geogboe/boxy/v2/pkg/model"
-	"github.com/Geogboe/boxy/v2/pkg/store"
+	"github.com/Geogboe/boxy/internal/server"
+	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/store"
 )
 
 func TestUI_home_renders(t *testing.T) {

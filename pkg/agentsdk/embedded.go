@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/Geogboe/boxy/v2/pkg/providersdk"
+	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
 // EmbeddedAgent is an in-process agent that dispatches directly to

@@ -3,7 +3,7 @@ package model
 import (
 	"fmt"
 
-	"github.com/Geogboe/boxy/v2/pkg/resourcepool"
+	"github.com/Geogboe/boxy/pkg/resourcepool"
 )
 
 type resourceKey struct {

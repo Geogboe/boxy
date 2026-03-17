@@ -3,7 +3,7 @@ package server
 import (
 	"net/http"
 
-	"github.com/Geogboe/boxy/v2/pkg/store"
+	"github.com/Geogboe/boxy/pkg/store"
 )
 
 // NewTestMux creates a configured http.ServeMux for testing without starting a listener.
