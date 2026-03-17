@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "devDependencies": {
+    "@playwright/test": "^1.52.0"
+  },
+  "scripts": {
+    "test": "npx playwright test",
+    "install-browsers": "npx playwright install firefox"
+  }
+}

@@ -1,0 +1,6 @@
+---
+name: small-workspace
+resources:
+  - name: worker
+    pool: alpine-pool
+    count: 1

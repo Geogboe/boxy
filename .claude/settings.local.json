@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs sed -i:*)",
+      "Bash(xargs -0 sed -i:*)",
+      "Bash(go build:*)",
+      "Bash(go test:*)",
+      "Bash(task:*)",
+      "Bash(git -C /mnt/d/projects/code/boxy-v2 status)",
+      "Bash(git -C /mnt/d/projects/code/boxy-v2 log --oneline -5)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(DEVBOXES_DATA_DIR=/tmp/devboxes-test go run:*)",
+      "Bash(DEVBOXES_DATA_DIR=/tmp/devboxes-profile-test go run:*)",
+      "Bash(grep:*)",
+      "Bash(go list:*)",
+      "Bash(/mnt/d/projects/code/boxy-v2/bin/boxy:*)",
+      "Bash(python3:*)",
+      "Bash(xargs:*)",
+      "Bash(docker ps:*)",
+      "Bash(git log:*)",
+      "Bash(go vet:*)",
+      "Bash(wc -l ./cmd/boxy/main.go ./internal/cli/*.go)",
+      "Bash(find /d/projects/code/boxy-v2 -type f \\\\\\(-name *.md -o -name *.txt \\\\\\) -path */server/*)"
+    ]
+  }
+}

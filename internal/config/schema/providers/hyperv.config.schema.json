@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "boxy://schemas/providers/hyperv.config.schema.json",
+  "title": "Hyper-V Provider Config",
+  "description": "Schema for provider.config when provider.type is \"hyperv\".",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "endpoint": {
+      "description": "Hyper-V endpoint/host identifier (POC).",
+      "type": "string",
+      "minLength": 1
+    },
+    "username": {
+      "description": "Optional username for remote auth.",
+      "type": "string"
+    },
+    "password": {
+      "description": "Optional password for remote auth.",
+      "type": "string"
+    }
+  },
+  "required": ["endpoint"]
+}
+

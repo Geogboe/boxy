@@ -1,0 +1,6 @@
+---
+name: vm-sandbox
+resources:
+  - name: build-vm
+    pool: dev
+    count: 1
