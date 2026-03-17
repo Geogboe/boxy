@@ -1,0 +1,41 @@
+// Package devfactory provides a reference implementation of the
+// providersdk.Driver interface. It simulates resource lifecycle without
+// requiring any real infrastructure, making it suitable for:
+//
+//   - End-to-end testing of the Boxy pipeline
+//   - Reference implementation for provider authors
+//   - Local development without Docker/Hyper-V/etc.
+//
+// Use type: devfactory in pool configuration to use this provider.
+package devfactory
+
+import "time"
+
+// Config is the typed configuration for the devfactory driver.
+// It is unmarshaled from the pool's config: YAML block.
+type Config struct {
+	// DataDir is the directory where devfactory.json is stored.
+	// If empty, a temporary directory is created automatically.
+	DataDir string `yaml:"data_dir" json:"data_dir"`
+
+	// Profile determines what kind of resource this provider simulates.
+	// Valid values: "container", "vm", "share". Default: "container".
+	Profile Profile `yaml:"profile" json:"profile"`
+
+	// Latency simulates provisioning delay. Resources take this long
+	// to transition from creating to running. Zero uses the profile default.
+	Latency time.Duration `yaml:"latency" json:"latency"`
+
+	// FailCreate causes Create to return an error when true.
+	// Useful for testing error handling paths.
+	FailCreate bool `yaml:"fail_create" json:"fail_create"`
+
+	// FailUpdate causes Update to return an error when true.
+	FailUpdate bool `yaml:"fail_update" json:"fail_update"`
+
+	// FailDelete causes Delete to return an error when true.
+	FailDelete bool `yaml:"fail_delete" json:"fail_delete"`
+
+	// Labels are passed through to resource metadata.
+	Labels map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
+}

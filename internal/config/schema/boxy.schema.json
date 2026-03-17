@@ -1,0 +1,90 @@
+{
+  "$id": "boxy://schemas/boxy.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "providers": {
+      "items": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "docker"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "config": {
+                  "$ref": "providers/docker.config.schema.json"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "hyperv"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "config": {
+                  "$ref": "providers/hyperv.config.schema.json"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "process"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "config": {
+                  "$ref": "providers/process.config.schema.json"
+                }
+              }
+            }
+          }
+        ],
+        "properties": {
+          "config": {
+            "type": "object"
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          },
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "docker",
+              "hyperv",
+              "process"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    }
+  },
+  "title": "Boxy Configuration",
+  "type": "object"
+}

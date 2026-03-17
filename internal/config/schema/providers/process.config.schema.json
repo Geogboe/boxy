@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "boxy://schemas/providers/process.config.schema.json",
+  "title": "Process Provider Config",
+  "description": "Schema for provider.config when provider.type is \"process\".",
+  "type": "object",
+  "additionalProperties": false
+}
+

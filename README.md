@@ -1,468 +1,287 @@
-# Boxy 🎁
+# Boxy
 
-[![CI](https://github.com/Geogboe/boxy/actions/workflows/ci.yml/badge.svg)](https://github.com/Geogboe/boxy/actions/workflows/ci.yml)
-[![Release](https://github.com/Geogboe/boxy/actions/workflows/release.yml/badge.svg)](https://github.com/Geogboe/boxy/actions/workflows/release.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/Geogboe/boxy)](https://goreportcard.com/report/github.com/Geogboe/boxy)
-[![License](https://img.shields.io/github/license/Geogboe/boxy)](LICENSE)
+Boxy is a resource pooling and sandbox orchestration tool. It pre-provisions pools of VMs, containers, and other resources, then assembles them into on-demand sandboxes for labs, training, pentesting, and development environments.
 
-**Sandboxing orchestration tool for mixed virtual environments with automatic lifecycle management.**
+## How It Works
 
-Boxy simplifies spinning up VMs, containers, and processes across different platforms with warm pools for instant allocation. Define your resource pools once, and Boxy keeps them ready - allocate resources on-demand, use them, and let them auto-expire.
+Boxy keeps pools of generic, ready-to-use resources warm ahead of time. When a user requests a sandbox, resources are pulled from pools and personalized via hooks — credentials are set, networking is configured, and connection info is returned. The user connects with their native client (SSH, RDP, SMB, etc.). Boxy is not a proxy.
 
-## Core Concept
-
-**Problem**: Creating mixed environments (VMs + containers) is manual and slow.
-**Solution**: Boxy maintains **warm pools** of pre-provisioned resources that auto-replenish.
-**Result**: Request → Instant allocation → Use → Auto-cleanup.
-
-## Features
-
-✅ **Warm Pools** - Resources always ready (configurable min_ready count)
-✅ **Auto-Replenishment** - Background workers maintain pool levels
-✅ **Multi-Backend** - Docker, Hyper-V, KVM, VMware (compiled-in providers)
-✅ **Automatic Cleanup** - Sandboxes auto-expire after duration
-✅ **Health Monitoring** - Continuous health checks on pooled resources
-✅ **Simple CLI** - Easy-to-use command-line interface
-✅ **Lifecycle Management** - Full resource lifecycle from provision to destroy
-
-## Installation
-
-### From GitHub Releases (recommended)
-
-Download a prebuilt binary from the [latest release](https://github.com/Geogboe/boxy/releases/latest).
-Binaries are available for Linux, macOS, and Windows on amd64 and arm64.
-
-```bash
-# Example: Linux amd64
-curl -LO https://github.com/Geogboe/boxy/releases/latest/download/boxy-linux-amd64
-chmod +x boxy-linux-amd64
-sudo mv boxy-linux-amd64 /usr/local/bin/boxy
 ```
+┌──────────────────────────────────────────┐
+│               boxy serve                 │
+│                                          │
+│  REST API (CLI)    gRPC server (agents)  │
+│       │                   │              │
+│  ┌────▼───────────────────▼────────────┐ │
+│  │  Core: Pool Manager, Sandbox Mgr    │ │
+│  │  PolicyController (reconciler)      │ │
+│  └─────────────────┬───────────────────┘ │
+│                    │                     │
+│  ┌─────────────────▼───────────────────┐ │
+│  │       Embedded local agent          │ │
+│  │    (Docker, Hyper-V drivers)        │ │
+│  └─────────────────────────────────────┘ │
+└──────────────────────────────────────────┘
 
-Each release includes a `checksums.txt` file for verification.
-
-### From source via `go install`
-
-> **Note**: This is a private repository. You must configure Go and Git for private access first.
-
-```bash
-# 1. Tell Go to skip the public proxy for this module
-go env -w GOPRIVATE=github.com/Geogboe/boxy
-
-# 2. Tell Go's module fetcher to use SSH for this repo
-#    (Go uses HTTPS by default even if you use SSH for git clone)
-git config --global url."git@github.com:Geogboe/boxy".insteadOf "https://github.com/Geogboe/boxy"
-
-# 3. Install
-go install github.com/Geogboe/boxy/cmd/boxy@latest
+         Remote host:
+┌──────────────────────────────────────────┐
+│              boxy agent                  │
+│  gRPC → server  |  auto-discovered      │
+│                  |  provider drivers     │
+└──────────────────────────────────────────┘
 ```
-
-### From source (development)
-
-```bash
-git clone git@github.com:Geogboe/boxy.git
-cd boxy
-go build -o boxy ./cmd/boxy
-```
-
-## Quick Start
-
-A longer Getting Started guide is available in the docs; the sections below provide a short, practical summary — see [Getting Started with Boxy](docs/guides/getting-started.md) for full details.
-
-1. Initialize Boxy and create a default config:
-
-```bash
-boxy init
-```
-
-> `boxy init` also creates `.boxy-schema.json` for editor autocompletion.
-> Install the [YAML extension](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml) in VS Code for config hints.
-
-1. Start the Boxy service (keeps pools warm):
-
-```bash
-boxy serve
-```
-
-1. Create a quick sandbox for testing (example):
-
-```bash
-boxy sandbox create --pool ubuntu-containers:1 --duration 10m --name quick-test
-```
-
-Use `boxy pool ls` and `boxy sandbox ls` to inspect state, and see the guide for more options.
-
-## Pinned Development Tools
-
-Development tooling is pinned via `tools.go` (build tag `tools`). Install the pinned binaries by targeting the tool path with `go install -tags tools`. For example:
-
-```bash
-go install -tags tools golang.org/x/vuln/cmd/govulncheck
-```
-
-Other tools provided by `tools.go` include `golang.org/x/tools/cmd/goimports`, `github.com/golangci/golangci-lint/cmd/golangci-lint`, `google.golang.org/grpc/cmd/protoc-gen-go-grpc`, and `google.golang.org/protobuf/cmd/protoc-gen-go`.
-
-## Architecture
-
-```text
-┌─────────────────────────────────────────┐
-│           CLI / User Interface           │
-└─────────────────────────────────────────┘
-                    ↓
-┌─────────────────────────────────────────┐
-│          Boxy Service Core               │
-│  ┌───────────────────────────────────┐  │
-│  │ Pool Managers (warm pools)        │  │
-│  │  • Background replenishment       │  │
-│  │  • Health checking                │  │
-│  │  • Resource allocation            │  │
-│  └───────────────────────────────────┘  │
-│  ┌───────────────────────────────────┐  │
-│  │ Sandbox Manager                   │  │
-│  │  • Resource orchestration         │  │
-│  │  • Automatic cleanup              │  │
-│  └───────────────────────────────────┘  │
-└─────────────────────────────────────────┘
-                    ↓
-┌─────────────────────────────────────────┐
-│       Backend Providers (compiled-in)    │
-│   Docker │ Hyper-V │ KVM │ VMware        │
-└─────────────────────────────────────────┘
-```
-
-## Use Cases
-
-### Primary: Quick Testing Environment
-
-Think **Windows Sandbox** for any platform. Get a clean, isolated VM or container instantly to test software, scripts, or configurations.
-
-```bash
-# Need to test an installer? Get a clean Windows 11 VM instantly
-boxy sandbox create --pool win11-test:1 --duration 1h
-
-# If preheated → instant allocation (< 5 seconds)
-# If cold → starts VM → allocates (30-60 seconds)
-# Auto-destroys after 1 hour
-```
-
-**Why Boxy?**
-
-- ✅ **Instant**: Preheated resources ready immediately
-- ✅ **Clean**: Always fresh, never reused
-- ✅ **Simple**: One command, no cleanup needed
-- ✅ **Secure**: Complete isolation, auto-expiration
-
-### Secondary Use Cases
-
-**CI/CD Runners**
-
-```bash
-# Ephemeral build agents - always fresh, no contamination
-boxy sandbox create --pool ci-runner:1 --duration 30m
-```
-
-**Security Red Teaming**
-
-```bash
-# Isolated malware analysis or attack simulation
-boxy sandbox create \
-  --pool malware-analysis:1 \
-  --duration 4h \
-  --name red-team-session
-```
-
-**Development Environments**
-
-```bash
-# Full dev stack (DB + web + cache)
-boxy sandbox create \
-  --pool postgres-db:1 \
-  --pool nginx-web:1 \
-  --pool redis-cache:1 \
-  --duration 8h
-```
-
-**Training & Education**
-
-```bash
-# Provision lab environments for students
-for i in {1..30}; do
-  boxy sandbox create --pool docker-training:1 --duration 4h --name student-$i
-done
-```
-
-📖 **See [docs/USE_CASES.md](docs/USE_CASES.md) for detailed use case documentation.**
-
-## CLI Reference
-
-### Global Flags
-
-```text
---config string      Config file path (default: ~/.config/boxy/boxy.yaml)
---db string          Database path (default: ~/.config/boxy/boxy.db)
---log-level string   Log level: debug, info, warn, error (default: info)
-```
-
-### Commands
-
-#### `boxy init`
-
-Initialize configuration file
-
-```bash
-boxy init                  # Create config at default location
-boxy init --force          # Overwrite existing config
-```
-
-#### `boxy schema`
-
-Print or write the JSON Schema for `boxy.yaml`
-
-```bash
-boxy schema                # Print schema JSON to stdout
-boxy schema -o .           # Write .boxy-schema.json to current directory
-```
-
-#### `boxy serve`
-
-Start the Boxy service with warm pool maintenance
-
-```bash
-boxy serve                 # Start with default config
-boxy serve --log-level=debug  # Start with debug logging
-```
-
-**What it does:**
-
-- Starts all configured pools
-- Provisions min_ready resources for each pool
-- Runs background workers:
-  - Replenishment worker (maintains min_ready)
-  - Health check worker (monitors resources)
-  - Cleanup worker (destroys expired sandboxes)
-- Graceful shutdown on Ctrl+C
-
-#### `boxy pool`
-
-Manage resource pools
-
-```bash
-boxy pool ls               # List all pools
-boxy pool stats <name>     # Detailed stats for a pool
-```
-
-**Output example:**
-
-```text
-NAME                TYPE       BACKEND  IMAGE          READY  ALLOCATED  MIN  MAX  HEALTHY
-ubuntu-containers   container  docker   ubuntu:22.04   3      0          3    10   ✓
-alpine-containers   container  docker   alpine:latest  5      0          5    20   ✓
-```
-
-#### `boxy sandbox`
-
-Manage sandboxes
-
-```bash
-# Create sandbox
-boxy sandbox create \
-  --pool <pool-name>:<count> \    # Can specify multiple times
-  [--name <name>] \
-  [--duration <duration>] \        # Default: 2h
-  [--json]                          # Output JSON
-
-# List sandboxes
-boxy sandbox ls
-
-# Destroy sandbox
-boxy sandbox destroy <sandbox-id>
-```
-
-**Examples:**
-
-```bash
-# Single pool
-boxy sandbox create -p ubuntu-containers:1 -d 30m
-
-# Multiple pools
-boxy sandbox create \
-  -p ubuntu-containers:2 \
-  -p nginx-containers:1 \
-  -d 2h \
-  -n web-test-env
-
-# Get JSON output for automation
-boxy sandbox create -p ubuntu-containers:1 --json
-```
-
-## Configuration Reference
-
-### Storage Options
-
-```yaml
-storage:
-  type: sqlite                    # sqlite or postgres
-  path: ~/.config/boxy/boxy.db    # for sqlite
-  # dsn: "postgres://..."         # for postgres (future)
-```
-
-### Pool Configuration
-
-```yaml
-pools:
-  - name: pool-name               # Unique pool identifier
-    type: container               # container, vm, or process
-    backend: docker               # docker, hyperv, kvm, vmware
-    image: ubuntu:22.04           # Image/template to use
-    min_ready: 3                  # Minimum ready resources (warm pool)
-    max_total: 10                 # Maximum total resources
-
-    # Optional resource limits
-    cpus: 2                       # CPU allocation
-    memory_mb: 512                # Memory in MB
-    disk_gb: 20                   # Disk in GB (for VMs)
-
-    # Optional metadata
-    labels:
-      environment: dev
-      team: backend
-
-    # Optional environment variables
-    environment:
-      MY_VAR: value
-
-    # Health check interval
-    health_check_interval: 30s    # How often to health check
-```
-
-## How Warm Pools Work
-
-1. **Initialization**: When `boxy serve` starts, each pool provisions `min_ready` resources
-2. **Monitoring**: Background worker checks every 10 seconds if `ready_count < min_ready`
-3. **Replenishment**: If below threshold, provisions new resources automatically
-4. **Health Checks**: Unhealthy resources are destroyed and replaced
-5. **Allocation**: When sandbox is created, ready resources are instantly allocated
-6. **Cleanup**: When sandbox expires or is destroyed, resources are destroyed (not reused for security)
-
-## Development Status
-
-**Phase**: v1-prerelease (Phase 1)
-**Status**: ✅ Functional
-
-### Completed
-
-- ✅ Core domain models (Resource, Pool, Sandbox)
-- ✅ Docker backend provider
-- ✅ Pool manager with warm pool maintenance
-- ✅ Sandbox orchestration
-- ✅ SQLite storage layer
-- ✅ Full CLI (serve, pool, sandbox commands)
-- ✅ Background workers (replenishment, health, cleanup)
-- ✅ Automatic expiration and cleanup
-
-### Roadmap
-
-- [ ] **Phase 2**: Additional providers (Hyper-V, KVM)
-- [ ] **Phase 3**: REST API & service daemon mode
-- [ ] **Phase 4**: Web UI
-- [ ] **Phase 5**: Multi-tenancy, advanced features
-
-See [docs/ROADMAP.md](docs/ROADMAP.md) for detailed roadmap.
-
-## Project Structure
-
-```text
-boxy/
-├── cmd/
-│   └── boxy/              # CLI entry point
-│       ├── main.go
-│       └── commands/      # Cobra commands
-├── internal/
-│   ├── core/              # Core domain logic
-│   │   ├── pool/          # Pool management
-│   │   ├── sandbox/       # Sandbox orchestration
-│   │   └── resource/      # Resource abstractions
-│   ├── provider/          # Provider implementations
-│   │   └── docker/        # Docker provider
-│   ├── storage/           # State persistence (SQLite)
-│   └── config/            # Configuration management
-├── pkg/
-│   └── provider/          # Provider interface
-├── docs/                  # Documentation
-│   ├── ROADMAP.md
-│   ├── architecture/
-│   ├── decisions/         # ADRs
-│   └── guides/
-└── boxy.example.yaml      # Example configuration
-```
-
-## Technology Stack
-
-- **Language**: Go 1.24+
-- **CLI Framework**: Cobra
-- **Configuration**: Viper + YAML
-- **Database**: SQLite (GORM)
-- **Docker SDK**: Official Docker client
-- **Logging**: Logrus
-
-## Contributing
-
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed development guidelines.
-
-**Quick Start**:
-
-```bash
-# Clone and setup
-git clone https://github.com/Geogboe/boxy
-cd boxy
-go mod download
-
-# Run tests
-task test
-
-# Build
-task build
-
-# See all available commands
-task --list
-```
-
-**Key Points**:
-
-- Use conventional commits (`feat:`, `fix:`, `docs:`, etc.)
-- Run tests before committing (`task check`)
-- Add tests for new features
-- Update documentation as needed
-- See [AGENTS.md](AGENTS.md) for AI assistant development guidelines
-
-## Architecture Decisions
-
-See [docs/decisions/](docs/decisions/) for Architecture Decision Records (ADRs):
-
-- [ADR-001: Technology Stack](docs/decisions/adr-001-technology-stack.md)
-- [ADR-002: Provider Architecture](docs/decisions/adr-002-provider-architecture.md)
-- [ADR-003: Configuration & State Storage](docs/decisions/adr-003-configuration-state-storage.md)
-
-## License
-
-[License TBD]
-
-## Authors
-
-- **geogboe** - Initial creator
-
-## Acknowledgments
-
-- Inspired by the complexity of managing heterogeneous virtualization environments
-- Built with Go's excellent concurrency primitives for warm pool management
-- Uses industry-standard libraries (Cobra, Viper, GORM, Docker SDK)
 
 ---
 
-**Ready to simplify your sandboxing workflow?**
+## Core Domain Model
 
-```bash
-boxy init && boxy serve
+**Resource** — A runtime record of a provisioned instance (VM, container, share, network, etc.). Has an ID, type, state, provider handle, and properties. Resources are single-use: once allocated to a sandbox they are never returned to a pool (ADR-0002). A resource does not carry a "spec" or "profile" — it is simply evidence that provisioning succeeded.
+
+**Pool** — A named, homogeneous inventory of pre-provisioned resources. Declared in config. Each pool carries its own provisioning config (`type` identifies the provider/driver, `config` is a driver-interpreted opaque blob) and policy (preheat, recycle). The pool IS the spec — there is no separate "blueprint", "template", or "spec" entity.
+
+**Sandbox** — A user-facing environment containing 1..N resources drawn from pools. Sandbox classes are defined in separate `.sandbox.yaml` files and instantiated via CLI. When resources move from pool to sandbox, post-allocation hooks run to personalize them (set credentials, configure networking, etc.). Boxy returns connection info to the user; it is not a proxy.
+
+**Provider** — An external system that provides resources (Docker, Hyper-V, Podman, VMware, etc.). Providers have a type that maps to a driver. Provider connection details (socket, host, certs) are owned by the agent, not the server. Drivers auto-discover their environment where possible.
+
+**Driver** — Code that knows how to talk to a specific provider type. Interprets pool provisioning config. Lives in `pkg/providersdk/drivers/`. Drivers auto-discover their environment (e.g., Docker checks for local socket, Hyper-V discovers via PowerShell). A pool's `type` field maps directly to a driver (e.g., `type: docker` → Docker driver, `type: hyperv` → Hyper-V driver).
+
+**Agent** — The runtime entity that executes provider operations using drivers. Can be:
+- **Embedded (local):** runs inside `boxy serve`, handles providers declared in `server.providers`.
+- **Remote (distributed):** runs on a separate host, connects to the server via gRPC over TLS, auto-discovers local providers. Declared in the `agents:` config section so the server knows what to expect.
+
+The agent is the execution layer — Boxy core delegates all provider IO through the agent, never directly to drivers. The `Provisioner` interface is the agent seam.
+
+**PolicyController** — The reconciler. Runs on a tick inside `boxy serve`. Compares desired pool state (from policy) to actual state and triggers provisioning/destruction via the agent. Stateless and idempotent — every tick re-derives what's needed from scratch. One controller reconciles all pools.
+
+**Hooks** — Side-effect notifications that run after events occur (resource provisioned, sandbox created, etc.). Not the control flow — hooks are for "resource provisioned -> send webhook" or "sandbox allocated -> set credentials", not for triggering provisioning itself. Lives in `pkg/hooks/`.
+
+---
+
+## Architecture
+
+### Server, CLI, and Agent (Vault-like model)
+
+Single binary (`boxy`), three modes:
+
+```
+boxy serve                     — daemon: pool reconciler, REST API, gRPC agent server
+boxy <command>                 — CLI client: talks to daemon via REST
+boxy agent                     — distributed agent: connects to server via gRPC
 ```
 
-Let Boxy handle the orchestration. You focus on building. 🚀
+**REST API** — for CLI-to-server communication. Standard HTTP REST.
+
+**gRPC over TLS** — for agent-to-server communication. Bidirectional streaming: agent dials the server (NAT/firewall friendly), server pushes work down the stream.
+
+### Pool Routing
+
+A pool's `type` field identifies the provider type (e.g., `docker`, `hyperv`, `podman`, `vmware`). The system routes work to any agent — embedded or remote — that has a matching provider. The abstract resource category (container, VM) is derived from the driver's capabilities, not declared on the pool.
+
+If multiple agents support the same provider type, the system picks a capable agent. An optional `agent:` field on the pool can pin it to a specific agent when needed.
+
+### Reconciliation Flow
+
+```
+serveLoop ticker
+    └─ PolicyController.Reconcile(pool)
+           observes: pool has 1 ready, policy says min_ready=3
+           gap: need 2 more
+           └─ pool.Manager.EnsureReady(pool, count=2)
+                  └─ Provisioner.Provision(pool)  ← agent impl
+                         └─ driver.CreateVM / CreateContainer
+```
+
+### Pool Build Cache (Cross-Pool Resource Reuse)
+
+The provisioner can "steal" surplus resources from other pools when they share compatible config, instead of building from scratch. Compatibility is discovered automatically at runtime — no explicit `base:` references between pools.
+
+**Matching rules:**
+- Same type, config is a subset → cache hit
+- Surplus only: steal from Pool X only if `X.ready > X.policy.preheat.min_ready`
+- If a match is found, take the resource and apply the delta (install packages, configure, etc.)
+- If no match, build from scratch
+
+The config comparison is structural — Boxy core compares the opaque config blobs without understanding their contents. YAML anchors (`&`/`*`) can be used for DRY in the config file without creating Boxy-level coupling.
+
+### Post-Allocation Hooks
+
+When a resource moves from a pool into a sandbox, hooks run to personalize it:
+- Set user credentials
+- Configure hostname/networking
+- Apply sandbox-specific policies
+
+Resources in pools are intentionally generic (no specific user, no credentials). Hooks make them specific at allocation time. This means credentials don't exist until allocation — they are generated/set by the hook and returned as connection info.
+
+### Sandbox Access Model
+
+Boxy is not a proxy. When a sandbox is created, Boxy returns connection info for each resource:
+- SSH host/port/key for Linux VMs
+- RDP address for Windows VMs
+- SMB path for file shares
+- Container exec/attach details
+- etc.
+
+The user connects with their native client. Connection info is generated by post-allocation hooks.
+
+---
+
+## Configuration
+
+### Server Config (`boxy.yaml`)
+
+Three top-level sections: `server` (embedded agent and server settings), `agents` (remote agents the server expects), and `pools` (what should be running).
+
+```yaml
+server:
+  listen: ":9090"
+  providers: [docker, hyperv]
+
+agents:
+  - name: build-host
+    providers: [docker]
+
+pools:
+  - name: win2022-base
+    type: hyperv
+    config: &win2022
+      template: "Windows Server 2022 Standard"
+      generation: 2
+      cpu: 4
+      memory_mb: 8192
+      disk_gb: 80
+      network_switch: "LabSwitch"
+    policy:
+      preheat:
+        min_ready: 5
+        max_total: 10
+      recycle:
+        max_age: 168h
+
+  - name: kali
+    type: docker
+    config:
+      image: kalilinux/kali-rolling
+      command: ["/bin/bash"]
+    policy:
+      preheat:
+        min_ready: 3
+        max_total: 8
+```
+
+**Key design decisions:**
+- `server.providers` declares what the embedded local agent handles. Drivers auto-discover connection details (socket paths, PowerShell, etc.) — no connection config needed.
+- `agents:` declares remote agents the server should expect. If a declared agent is not connected, the server can warn/alert. Remote agents authenticate via the token bootstrap flow (see [ROADMAP.md](ROADMAP.md)).
+- Pool `type` is the provider type (`docker`, `hyperv`, `podman`, `vmware`). It maps directly to a driver and determines routing. The abstract resource category (container, VM) is derived from the driver's capabilities.
+- Pool `config:` is an opaque blob interpreted by the driver. Different providers expose different config options.
+- Specs/blueprints are NOT a separate entity. The pool owns its provisioning config inline.
+- Config is stateless and declarative. Runtime state (resources, sandboxes) lives in the state store (bbolt). Config is read on startup.
+
+### Pool Policy Structure
+
+```yaml
+policy:
+  preheat:
+    min_ready: N       # target number of ready resources
+    max_total: N       # hard cap
+  recycle:
+    max_age: "168h"    # destroy and replace unused resources older than this
+```
+
+### Sandbox Definitions (`.sandbox.yaml`)
+
+Sandbox classes are defined in separate files, not in the server config. A sandbox definition specifies which pools to draw resources from and how many:
+
+```yaml
+# pentest-lab.sandbox.yaml
+name: pentest-lab
+resources:
+  - pool: kali
+    count: 3
+  - pool: ubuntu-targets
+    count: 1
+```
+
+Sandboxes are instantiated via CLI:
+
+```
+# From a file (primary path)
+boxy sandbox create -f pentest-lab.sandbox.yaml
+boxy sandbox create -f pentest-lab.sandbox.yaml -n 10  # 10 instances for a class
+
+# Quick one-off (sugar)
+boxy sandbox create --pool kali
+boxy sandbox create --pool kali:3 --pool ubuntu-targets:1
+```
+
+The file-based path is the primary, repeatable, version-controlled way. The `--pool` shorthand is sugar for quick testing — it constructs the same sandbox object internally.
+
+See [examples/](examples/) for complete configurations.
+
+---
+
+## State Store
+
+**bbolt** (pure Go embedded K/V) for runtime state: resources, sandboxes, agent registrations. Config (server, agents, pools) is NOT stored in the database — it's read from `boxy.yaml` on startup.
+
+---
+
+## CLI Surface
+
+```
+boxy serve                              — start the daemon
+boxy sandbox create -f <file> [-n N]    — create sandbox(es) from a definition file
+boxy sandbox create --pool <name[:N]>   — quick one-off sandbox from pool(s)
+boxy sandbox list                       — list sandboxes
+boxy sandbox destroy <id>               — destroy a sandbox
+boxy pool list                          — show pool status (read-only, config-driven)
+boxy agent list                         — list agents and connection status
+boxy agent token create                 — create registration token
+boxy agent revoke <id>                  — revoke an agent
+```
+
+Pools are config-driven — no `boxy pool create` command. Pool state is observable via the API but not mutated via CLI.
+
+---
+
+## Project Layout
+
+```
+cmd/boxy/                      — entry point
+internal/
+  cli/                         — CLI command wiring (cobra)
+  config/                      — config loading
+  model/                       — core domain types
+  pool/                        — pool manager + Provisioner interface
+  sandbox/                     — sandbox manager
+  store/                       — store interface + bbolt impl
+  agent/                       — agent types and runner
+pkg/
+  hooks/                       — hook runner (public, self-contained)
+  policycontroller/            — reconciler (public, self-contained)
+  providersdk/                 — driver interface + capabilities (public API for driver authors)
+    drivers/
+      docker/
+      hyperv/
+      process/
+  resourcepool/                — generic pool data structure (public utility)
+```
+
+`internal/` = Boxy's private business logic.
+`pkg/` = self-contained, no `internal/` dependencies. The compiler enforces this boundary.
+
+---
+
+## Open Questions
+
+- **Config reloads:** Is restart required on config change, or should `boxy serve` watch for changes and reconcile? Restart is simpler; hot reload is nicer.
+- **Subset matching for build cache:** Structural comparison of opaque config blobs to determine if one is a "subset" of another. What are the exact semantics? Is shallow key comparison sufficient, or do we need deep structural comparison?
+- **Auth for CLI users:** Who is allowed to request a sandbox? Token-based? OIDC? Out of scope for now?
+- **Multi-agent routing:** When multiple agents support the same provider type, how does the server choose? Round-robin? Load-based? Labels? For now, `agent:` pinning on the pool is the escape hatch.
+
+## Status
+
+Early development. See [ROADMAP.md](ROADMAP.md) for design details on upcoming work.
+
+## License
+
+TODO

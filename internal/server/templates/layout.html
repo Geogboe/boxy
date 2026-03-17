@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{block "title" .}}Boxy{{end}}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js"></script>
+</head>
+<body>
+  <div class="layout">
+    <nav class="sidebar">
+      <div class="sidebar-brand">Boxy</div>
+      <ul class="sidebar-nav">
+        <li><a href="/" {{if eq .Nav "home"}}class="active"{{end}}>Home</a></li>
+        <li><a href="/ui/pools" {{if eq .Nav "pools"}}class="active"{{end}}>Pools</a></li>
+        <li><a href="/ui/sandboxes" {{if eq .Nav "sandboxes"}}class="active"{{end}}>Sandboxes</a></li>
+      </ul>
+    </nav>
+    <main class="main">
+      {{block "content" .}}{{end}}
+    </main>
+  </div>
+</body>
+</html>

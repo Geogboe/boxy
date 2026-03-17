@@ -1,0 +1,24 @@
+---
+# Docker pool example.
+#
+# Lightweight container pools for a pentest lab environment.
+# Uses alpine images for minimal resource usage during testing.
+server:
+  listen: ":9090"
+
+# agents:
+#   - name: build-host
+#     providers: [docker]
+
+pools:
+  - name: basic
+    type: docker
+    config:
+      image: alpine:latest
+      command: ["/bin/sh", "-c", "while true; do sleep 3600; done"]
+    policy:
+      preheat:
+        min_ready: 1
+        max_total: 2
+      recycle:
+        max_age: 4h
