@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/Geogboe/boxy/v2/internal/model"
+	"github.com/Geogboe/boxy/v2/pkg/model"
 )
 
 var ErrNotFound = errors.New("not found")
@@ -25,4 +25,11 @@ type Store interface {
 	GetSandbox(ctx context.Context, id model.SandboxID) (model.Sandbox, error)
 	CreateSandbox(ctx context.Context, sb model.Sandbox) error
 	PutSandbox(ctx context.Context, sb model.Sandbox) error
+	DeleteSandbox(ctx context.Context, id model.SandboxID) error
+
+	// List operations return all entities of a given type.
+	// An empty store returns a non-nil, zero-length slice.
+	ListPools(ctx context.Context) ([]model.Pool, error)
+	ListResources(ctx context.Context) ([]model.Resource, error)
+	ListSandboxes(ctx context.Context) ([]model.Sandbox, error)
 }

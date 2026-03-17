@@ -60,6 +60,9 @@ func loadStore(dataDir string) (*storeData, error) {
 
 // saveStore writes the store to disk as indented JSON.
 func saveStore(dataDir string, s *storeData) error {
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return err
+	}
 	path := filepath.Join(dataDir, storeFilename)
 
 	data, err := json.MarshalIndent(s, "", "  ")

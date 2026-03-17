@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/Geogboe/boxy/v2/internal/model"
+	"github.com/Geogboe/boxy/v2/pkg/model"
 )
 
 // DiskStore is a simple JSON-backed Store implementation.
@@ -176,4 +176,44 @@ func (s *DiskStore) PutSandbox(ctx context.Context, sb model.Sandbox) error {
 	}
 	s.data.Sandboxes[sb.ID] = sb
 	return s.persistLocked()
+}
+
+func (s *DiskStore) DeleteSandbox(_ context.Context, id model.SandboxID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.data.Sandboxes[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.data.Sandboxes, id)
+	return s.persistLocked()
+}
+
+func (s *DiskStore) ListPools(_ context.Context) ([]model.Pool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]model.Pool, 0, len(s.data.Pools))
+	for _, p := range s.data.Pools {
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+func (s *DiskStore) ListResources(_ context.Context) ([]model.Resource, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]model.Resource, 0, len(s.data.Resources))
+	for _, r := range s.data.Resources {
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+func (s *DiskStore) ListSandboxes(_ context.Context) ([]model.Sandbox, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]model.Sandbox, 0, len(s.data.Sandboxes))
+	for _, sb := range s.data.Sandboxes {
+		out = append(out, sb)
+	}
+	return out, nil
 }

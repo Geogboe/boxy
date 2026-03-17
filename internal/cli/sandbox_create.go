@@ -9,10 +9,10 @@ import (
 	"strings"
 
 	boxyconfig "github.com/Geogboe/boxy/v2/internal/config"
-	"github.com/Geogboe/boxy/v2/internal/model"
+	"github.com/Geogboe/boxy/v2/pkg/model"
 	"github.com/Geogboe/boxy/v2/internal/pool"
 	"github.com/Geogboe/boxy/v2/internal/sandbox"
-	"github.com/Geogboe/boxy/v2/internal/store"
+	"github.com/Geogboe/boxy/v2/pkg/store"
 	"github.com/Geogboe/boxy/v2/pkg/providersdk"
 	"github.com/Geogboe/boxy/v2/pkg/providersdk/builtins"
 )
@@ -96,7 +96,8 @@ func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 		needByPool[model.PoolName(r.Pool)] += r.Count
 	}
 
-	prov := &pool.DockerCLIProvisioner{
+	prov := &pool.DriverProvisioner{
+		Registry:  reg,
 		Specs:     specByName,
 		Providers: providerByName,
 	}
@@ -106,13 +107,6 @@ func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 		p, err := st.GetPool(ctx, poolName)
 		if err != nil {
 			return fmt.Errorf("get pool %q: %w", poolName, err)
-		}
-		p, err = prov.PruneMissing(ctx, p)
-		if err != nil {
-			return fmt.Errorf("prune pool %q: %w", poolName, err)
-		}
-		if err := st.PutPool(ctx, p); err != nil {
-			return fmt.Errorf("put pool %q: %w", poolName, err)
 		}
 		if p.Policies.Preheat.MinReady < need {
 			p.Policies.Preheat.MinReady = need
@@ -140,17 +134,6 @@ func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 
 	// Replenish pools after allocation so preheat targets stay satisfied.
 	for poolName := range needByPool {
-		p, err := st.GetPool(ctx, poolName)
-		if err != nil {
-			return fmt.Errorf("get pool %q: %w", poolName, err)
-		}
-		p, err = prov.PruneMissing(ctx, p)
-		if err != nil {
-			return fmt.Errorf("prune pool %q: %w", poolName, err)
-		}
-		if err := st.PutPool(ctx, p); err != nil {
-			return fmt.Errorf("put pool %q: %w", poolName, err)
-		}
 		if err := pm.Reconcile(ctx, poolName); err != nil {
 			return fmt.Errorf("reconcile pool %q after allocation: %w", poolName, err)
 		}

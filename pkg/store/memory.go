@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/Geogboe/boxy/v2/internal/model"
+	"github.com/Geogboe/boxy/v2/pkg/model"
 )
 
 // MemoryStore is an in-memory Store implementation for scaffolding and tests.
@@ -103,4 +103,44 @@ func (s *MemoryStore) PutSandbox(ctx context.Context, sb model.Sandbox) error {
 	}
 	s.sandboxes[sb.ID] = sb
 	return nil
+}
+
+func (s *MemoryStore) DeleteSandbox(_ context.Context, id model.SandboxID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.sandboxes[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.sandboxes, id)
+	return nil
+}
+
+func (s *MemoryStore) ListPools(_ context.Context) ([]model.Pool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]model.Pool, 0, len(s.pools))
+	for _, p := range s.pools {
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) ListResources(_ context.Context) ([]model.Resource, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]model.Resource, 0, len(s.resources))
+	for _, r := range s.resources {
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) ListSandboxes(_ context.Context) ([]model.Sandbox, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]model.Sandbox, 0, len(s.sandboxes))
+	for _, sb := range s.sandboxes {
+		out = append(out, sb)
+	}
+	return out, nil
 }

@@ -1,0 +1,42 @@
+{{define "title"}}Boxy — Pools{{end}}
+
+{{define "content"}}
+<h1 class="page-title">Pools</h1>
+<div class="table-card">
+  <div class="table-card-header">All Pools</div>
+  <div hx-get="/ui/fragments/pools-table"
+       hx-trigger="every 5s"
+       hx-swap="innerHTML">
+    {{template "pools_table_fragment" .}}
+  </div>
+</div>
+{{end}}
+
+{{define "pools_table_fragment"}}
+{{if .Pools}}
+<table>
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Type</th>
+      <th>Min Ready</th>
+      <th>Max Total</th>
+      <th>Resources</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Pools}}
+    <tr>
+      <td>{{.Name}}</td>
+      <td>{{.Inventory.ExpectedType}}</td>
+      <td>{{.Policies.Preheat.MinReady}}</td>
+      <td>{{.Policies.Preheat.MaxTotal}}</td>
+      <td>{{len .Inventory.Resources}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<div class="empty">No pools configured</div>
+{{end}}
+{{end}}

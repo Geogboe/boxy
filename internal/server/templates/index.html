@@ -1,0 +1,26 @@
+{{define "title"}}Boxy — Overview{{end}}
+
+{{define "content"}}
+<h1 class="page-title">Overview</h1>
+<div class="stats"
+     hx-get="/ui/fragments/stats"
+     hx-trigger="every 5s"
+     hx-swap="innerHTML">
+  {{template "stats_fragment" .}}
+</div>
+{{end}}
+
+{{define "stats_fragment"}}
+<div class="stat-card">
+  <div class="stat-label">Pools</div>
+  <div class="stat-value">{{.PoolCount}}</div>
+</div>
+<div class="stat-card">
+  <div class="stat-label">Sandboxes</div>
+  <div class="stat-value">{{.SandboxCount}}</div>
+</div>
+<div class="stat-card">
+  <div class="stat-label">Resources</div>
+  <div class="stat-value">{{.ResourceCount}}</div>
+</div>
+{{end}}

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Geogboe/boxy/v2/internal/model"
-	"github.com/Geogboe/boxy/v2/internal/store"
+	"github.com/Geogboe/boxy/v2/pkg/model"
+	"github.com/Geogboe/boxy/v2/pkg/store"
 	"github.com/Geogboe/boxy/v2/pkg/policycontroller"
 )
 
