@@ -149,6 +149,33 @@ providers:
 	}
 }
 
+func TestServerSpec_UIEnabled(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil_defaults_true", func(t *testing.T) {
+		s := ServerSpec{}
+		if !s.UIEnabled() {
+			t.Fatal("UIEnabled() = false, want true (nil default)")
+		}
+	})
+
+	t.Run("explicit_true", func(t *testing.T) {
+		v := true
+		s := ServerSpec{UI: &v}
+		if !s.UIEnabled() {
+			t.Fatal("UIEnabled() = false, want true")
+		}
+	})
+
+	t.Run("explicit_false", func(t *testing.T) {
+		v := false
+		s := ServerSpec{UI: &v}
+		if s.UIEnabled() {
+			t.Fatal("UIEnabled() = true, want false")
+		}
+	})
+}
+
 func TestLoadFile_JSON_UnknownProviderFieldFails(t *testing.T) {
 	t.Parallel()
 

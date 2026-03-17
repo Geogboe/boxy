@@ -1,0 +1,22 @@
+---
+# Devfactory VMs — simulated VM pool, no real infrastructure.
+server:
+  listen: ":9090"
+
+providers:
+  - name: devfactory-local
+    type: devfactory
+    config:
+      profile: vm
+      data_dir: .boxy/devfactory
+
+pools:
+  - name: dev
+    type: vm
+    provider: devfactory-local
+    policy:
+      preheat:
+        min_ready: 1
+        max_total: 2
+      recycle:
+        max_age: 2h

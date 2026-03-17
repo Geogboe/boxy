@@ -1,6 +1,6 @@
 package config
 
-// PoolSpec is the user-facing YAML/JSON representation of a pool.
+// PoolSpec is the user-facing YAML/JSON representation of a poolmanager.
 //
 // This is intentionally decoupled from internal/model.Pool so we can evolve the
 // runtime model while keeping the config interface stable.

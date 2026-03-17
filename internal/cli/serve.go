@@ -10,15 +10,20 @@ import (
 	boxyconfig "github.com/Geogboe/boxy/v2/internal/config"
 	"github.com/Geogboe/boxy/v2/internal/pool"
 	"github.com/Geogboe/boxy/v2/internal/sandbox"
-	"github.com/Geogboe/boxy/v2/internal/store"
+	"github.com/Geogboe/boxy/v2/internal/server"
 	"github.com/Geogboe/boxy/v2/pkg/providersdk"
 	"github.com/Geogboe/boxy/v2/pkg/providersdk/builtins"
+	"github.com/Geogboe/boxy/v2/pkg/store"
 	"github.com/spf13/cobra"
+	"golang.org/x/sync/errgroup"
 )
+
+const defaultListenAddr = ":9090"
 
 type serveOpts struct {
 	configPath string
-	once       bool
+	listen     string
+	ui         bool
 }
 
 func newServeCommand() *cobra.Command {
@@ -26,19 +31,20 @@ func newServeCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Start the Boxy core (placeholder)",
+		Short: "Start the Boxy daemon (API server + reconcile loop)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runServe(cmd.Context(), opts)
+			return runServe(cmd.Context(), opts, cmd)
 		},
 	}
 
 	cmd.Flags().StringVar(&opts.configPath, "config", "", "config file path (.yaml/.yml/.json); default: ./boxy.yaml or ./boxy.yml if present")
-	cmd.Flags().BoolVar(&opts.once, "once", false, "initialize and validate then exit")
+	cmd.Flags().StringVar(&opts.listen, "listen", "", "HTTP listen address (default :9090)")
+	cmd.Flags().BoolVar(&opts.ui, "ui", true, "enable web dashboard UI")
 
 	return cmd
 }
 
-func runServe(ctx context.Context, opts serveOpts) error {
+func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	cfg, cfgPath, err := loadConfig(opts.configPath)
 	if err != nil {
 		return err
@@ -65,13 +71,45 @@ func runServe(ctx context.Context, opts serveOpts) error {
 	_ = pool.New(st, pool.UnimplementedProvisioner{})
 	slog.Info("core initialized", "store", "memory")
 
-	if opts.once {
-		slog.Info("serve init complete (--once); exiting")
-		return nil
-	}
+	// Resolve listen address: flag > config > default
+	listenAddr := resolveListenAddr(opts, cmd, cfg)
 
-	slog.Info("serve started")
-	return serveLoop(ctx)
+	// Resolve UI enabled: flag > config > default (true)
+	uiEnabled := resolveUIEnabled(opts, cmd, cfg)
+
+	srv := server.New(st, listenAddr, uiEnabled)
+	slog.Info("starting server", "listen", listenAddr, "ui", uiEnabled)
+
+	g, ctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		return srv.Start(ctx)
+	})
+	g.Go(func() error {
+		return serveLoop(ctx)
+	})
+
+	return g.Wait()
+}
+
+// resolveListenAddr picks the listen address with precedence:
+// explicit --listen flag > config server.listen > default :9090
+func resolveListenAddr(opts serveOpts, cmd *cobra.Command, cfg boxyconfig.Config) string {
+	if cmd.Flags().Changed("listen") {
+		return opts.listen
+	}
+	if cfg.Server.Listen != "" {
+		return cfg.Server.Listen
+	}
+	return defaultListenAddr
+}
+
+// resolveUIEnabled picks the UI toggle with precedence:
+// explicit --ui flag > config server.ui > default true
+func resolveUIEnabled(opts serveOpts, cmd *cobra.Command, cfg boxyconfig.Config) bool {
+	if cmd.Flags().Changed("ui") {
+		return opts.ui
+	}
+	return cfg.Server.UIEnabled()
 }
 
 func loadConfig(explicitPath string) (cfg boxyconfig.Config, usedPath string, _ error) {

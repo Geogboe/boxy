@@ -14,6 +14,8 @@ func NewRootCommand() *cobra.Command {
 	}
 
 	root.AddCommand(newServeCommand())
+	root.AddCommand(newConfigCommand())
 	root.AddCommand(newSandboxCommand())
+	root.AddCommand(newDebugCommand())
 	return root
 }

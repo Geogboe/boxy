@@ -1,0 +1,38 @@
+{{define "title"}}Boxy — Sandboxes{{end}}
+
+{{define "content"}}
+<h1 class="page-title">Sandboxes</h1>
+<div class="table-card">
+  <div class="table-card-header">All Sandboxes</div>
+  <div hx-get="/ui/fragments/sandboxes-table"
+       hx-trigger="every 5s"
+       hx-swap="innerHTML">
+    {{template "sandboxes_table_fragment" .}}
+  </div>
+</div>
+{{end}}
+
+{{define "sandboxes_table_fragment"}}
+{{if .Sandboxes}}
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Name</th>
+      <th>Resources</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Sandboxes}}
+    <tr>
+      <td><code>{{.ID}}</code></td>
+      <td>{{.Name}}</td>
+      <td>{{len .Resources}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<div class="empty">No sandboxes created</div>
+{{end}}
+{{end}}

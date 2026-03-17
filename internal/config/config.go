@@ -28,6 +28,16 @@ type Config struct {
 type ServerSpec struct {
 	Listen    string   `json:"listen,omitempty" yaml:"listen,omitempty"`
 	Providers []string `json:"providers,omitempty" yaml:"providers,omitempty"`
+
+	// UI controls whether the web dashboard is served alongside the API.
+	// Pointer so nil = default (enabled). Set to false to disable.
+	UI *bool `json:"ui,omitempty" yaml:"ui,omitempty"`
+}
+
+// UIEnabled reports whether the web UI should be served.
+// Returns true when UI is nil (unset) or explicitly true.
+func (s ServerSpec) UIEnabled() bool {
+	return s.UI == nil || *s.UI
 }
 
 type AgentSpec struct {
