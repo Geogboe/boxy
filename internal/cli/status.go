@@ -116,7 +116,7 @@ func fetchJSON[T any](ctx context.Context, client *http.Client, url string) (T, 
 	if err != nil {
 		return zero, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var v T
 	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {

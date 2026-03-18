@@ -18,11 +18,11 @@ func TestRunStatus_Healthy(t *testing.T) {
 	})
 	mux.HandleFunc("GET /api/v1/pools", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `[{"name":"test-pool","inventory":{"expected_type":"container","expected_profile":"alpine","resources":[{"id":"r1","type":"container","profile":"alpine"}]}}]`)
+		_, _ = fmt.Fprint(w, `[{"name":"test-pool","inventory":{"expected_type":"container","expected_profile":"alpine","resources":[{"id":"r1","type":"container","profile":"alpine"}]}}]`)
 	})
 	mux.HandleFunc("GET /api/v1/sandboxes", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `[{"id":"sb-1","name":"test"}]`)
+		_, _ = fmt.Fprint(w, `[{"id":"sb-1","name":"test"}]`)
 	})
 
 	srv := httptest.NewServer(mux)
