@@ -3,9 +3,11 @@ package cli
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -16,11 +18,11 @@ func TestRunStatus_Healthy(t *testing.T) {
 	})
 	mux.HandleFunc("GET /api/v1/pools", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`[{"name":"test-pool","inventory":{"expected_type":"container","expected_profile":"alpine","resources":[{"id":"r1","type":"container","profile":"alpine"}]}}]`))
+		fmt.Fprint(w, `[{"name":"test-pool","inventory":{"expected_type":"container","expected_profile":"alpine","resources":[{"id":"r1","type":"container","profile":"alpine"}]}}]`)
 	})
 	mux.HandleFunc("GET /api/v1/sandboxes", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`[{"id":"sb-1","name":"test"}]`))
+		fmt.Fprint(w, `[{"id":"sb-1","name":"test"}]`)
 	})
 
 	srv := httptest.NewServer(mux)
@@ -28,36 +30,34 @@ func TestRunStatus_Healthy(t *testing.T) {
 
 	// Capture stderr
 	old := os.Stderr
-	r, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
 	os.Stderr = w
 
 	addr := srv.Listener.Addr().String()
 	cmd := newStatusCommand()
 	cmd.SetArgs([]string{"--server", addr})
-	err := cmd.ExecuteContext(context.Background())
+	execErr := cmd.ExecuteContext(context.Background())
 
-	w.Close()
+	_ = w.Close()
 	os.Stderr = old
 
-	if err != nil {
-		t.Fatalf("status error: %v", err)
+	if execErr != nil {
+		t.Fatalf("status error: %v", execErr)
 	}
 
 	var buf bytes.Buffer
-	buf.ReadFrom(r)
+	if _, err := buf.ReadFrom(r); err != nil {
+		t.Fatalf("read pipe: %v", err)
+	}
 	output := buf.String()
 
-	if !bytes.Contains([]byte(output), []byte("healthy")) {
-		t.Errorf("expected 'healthy' in output, got: %s", output)
-	}
-	if !bytes.Contains([]byte(output), []byte("1 configured")) {
-		t.Errorf("expected '1 configured' in output, got: %s", output)
-	}
-	if !bytes.Contains([]byte(output), []byte("1 resources ready")) {
-		t.Errorf("expected '1 resources ready' in output, got: %s", output)
-	}
-	if !bytes.Contains([]byte(output), []byte("1 active")) {
-		t.Errorf("expected '1 active' in output, got: %s", output)
+	for _, want := range []string{"healthy", "1 configured", "1 resources ready", "1 active"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("expected %q in output, got: %s", want, output)
+		}
 	}
 }
 

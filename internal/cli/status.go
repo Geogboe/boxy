@@ -102,7 +102,7 @@ func checkHealth(ctx context.Context, client *http.Client, base string) (bool, e
 	if err != nil {
 		return false, err
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	return resp.StatusCode == http.StatusOK, nil
 }
 

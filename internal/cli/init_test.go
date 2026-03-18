@@ -6,11 +6,25 @@ import (
 	"testing"
 )
 
+func chdir(t *testing.T, dir string) {
+	t.Helper()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(orig); err != nil {
+			t.Logf("chdir restore: %v", err)
+		}
+	})
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir %s: %v", dir, err)
+	}
+}
+
 func TestRunInit_CreatesFile(t *testing.T) {
 	dir := t.TempDir()
-	orig, _ := os.Getwd()
-	defer os.Chdir(orig)
-	os.Chdir(dir)
+	chdir(t, dir)
 
 	if err := runInit(false); err != nil {
 		t.Fatalf("runInit() error: %v", err)
@@ -27,11 +41,11 @@ func TestRunInit_CreatesFile(t *testing.T) {
 
 func TestRunInit_ErrorIfExists(t *testing.T) {
 	dir := t.TempDir()
-	orig, _ := os.Getwd()
-	defer os.Chdir(orig)
-	os.Chdir(dir)
+	chdir(t, dir)
 
-	os.WriteFile(filepath.Join(dir, "boxy.yaml"), []byte("existing"), 0644)
+	if err := os.WriteFile(filepath.Join(dir, "boxy.yaml"), []byte("existing"), 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
 
 	err := runInit(false)
 	if err == nil {
@@ -41,11 +55,11 @@ func TestRunInit_ErrorIfExists(t *testing.T) {
 
 func TestRunInit_ForceOverwrites(t *testing.T) {
 	dir := t.TempDir()
-	orig, _ := os.Getwd()
-	defer os.Chdir(orig)
-	os.Chdir(dir)
+	chdir(t, dir)
 
-	os.WriteFile(filepath.Join(dir, "boxy.yaml"), []byte("old"), 0644)
+	if err := os.WriteFile(filepath.Join(dir, "boxy.yaml"), []byte("old"), 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
 
 	if err := runInit(true); err != nil {
 		t.Fatalf("runInit(force=true) error: %v", err)
