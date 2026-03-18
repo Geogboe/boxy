@@ -248,7 +248,7 @@ func TestDriver_JSONFileReadable(t *testing.T) {
 	})
 
 	res, _ := d.Create(context.Background(), nil)
-	d.Update(context.Background(), res.ID, &ExecOp{Command: []string{"whoami"}})
+	_, _ = d.Update(context.Background(), res.ID, &ExecOp{Command: []string{"whoami"}})
 
 	// Read and parse the JSON file directly.
 	data, err := os.ReadFile(filepath.Join(d.DataDir(), storeFilename))
