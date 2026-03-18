@@ -88,6 +88,8 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		return serveLoop(ctx)
 	})
 
+	printServeBanner(listenAddr, uiEnabled, len(cfg.Pools))
+
 	return g.Wait()
 }
 
@@ -157,9 +159,35 @@ func serveLoop(ctx context.Context) error {
 			slog.Info("shutting down", "reason", ctx.Err())
 			return nil
 		case <-ticker.C:
-			slog.Info("reconcile tick (stub)")
+			slog.Debug("reconcile tick")
 		}
 	}
+}
+
+// printServeBanner writes a human-friendly startup message to stderr.
+func printServeBanner(listenAddr string, uiEnabled bool, poolCount int) {
+	host := displayAddr(listenAddr)
+
+	fmt.Fprintf(os.Stderr, "\n  Boxy server running\n\n")
+	if uiEnabled {
+		fmt.Fprintf(os.Stderr, "    Dashboard:  http://%s/\n", host)
+	}
+	fmt.Fprintf(os.Stderr, "    API:        http://%s/api/v1/\n", host)
+	fmt.Fprintf(os.Stderr, "    Health:     http://%s/healthz\n", host)
+	fmt.Fprintf(os.Stderr, "\n  Pools: %d configured\n", poolCount)
+	fmt.Fprintf(os.Stderr, "  Press Ctrl+C to stop\n\n")
+}
+
+// displayAddr resolves a listen address for display.
+// ":9090" becomes "127.0.0.1:9090"; "0.0.0.0:9090" becomes "127.0.0.1:9090".
+func displayAddr(addr string) string {
+	if len(addr) > 0 && addr[0] == ':' {
+		return "127.0.0.1" + addr
+	}
+	if len(addr) > 7 && addr[:7] == "0.0.0.0" {
+		return "127.0.0.1" + addr[7:]
+	}
+	return addr
 }
 
 func providerTypes(reg *providersdk.Registry) []string {
