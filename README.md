@@ -227,19 +227,28 @@ See [examples/](examples/) for complete configurations.
 
 ## CLI Surface
 
+See [`docs/cli-wireframe.md`](docs/cli-wireframe.md) for the canonical CLI reference with flags and example output.
+
 ```
-boxy serve                              — start the daemon
-boxy sandbox create -f <file> [-n N]    — create sandbox(es) from a definition file
-boxy sandbox create --pool <name[:N]>   — quick one-off sandbox from pool(s)
+boxy init                               — create starter boxy.yaml in current directory
+boxy serve                              — start the daemon (API server + reconcile loop)
+boxy status                             — check server health and summary
+boxy config validate                    — validate config file and exit
+boxy sandbox create -f <file>           — create sandbox from a spec file
 boxy sandbox list                       — list sandboxes
-boxy sandbox destroy <id>               — destroy a sandbox
-boxy pool list                          — show pool status (read-only, config-driven)
+boxy sandbox get <id>                   — get sandbox details
+boxy sandbox delete <id>                — delete a sandbox
+```
+
+**Planned (not yet implemented):**
+
+```
 boxy agent list                         — list agents and connection status
 boxy agent token create                 — create registration token
 boxy agent revoke <id>                  — revoke an agent
 ```
 
-Pools are config-driven — no `boxy pool create` command. Pool state is observable via the API but not mutated via CLI.
+Pools are config-driven — no `boxy pool create` command. Pool state is observable via the API and web dashboard.
 
 ---
 

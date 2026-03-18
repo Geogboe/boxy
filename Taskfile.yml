@@ -41,9 +41,9 @@ tasks:
       - go test ./...
 
   lint:
-    desc: Run go vet
+    desc: Run golangci-lint (same as CI)
     cmds:
-      - go vet ./...
+      - golangci-lint run ./...
 
   e2e:serve:
     desc: E2E validation of boxy serve (API + UI)
