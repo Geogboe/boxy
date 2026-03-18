@@ -22,7 +22,8 @@ jobs:
         id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          prerelease: true
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
 
   build-release:
     name: Build Release Assets
