@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5](https://github.com/Geogboe/boxy/compare/v0.1.4...v0.1.5) (2026-03-18)
+
+
+### Features
+
+* CLI UX overhaul — wireframe, init, status, serve banner ([#41](https://github.com/Geogboe/boxy/issues/41)) ([9df6b7e](https://github.com/Geogboe/boxy/commit/9df6b7e999b73d8df519e51d46ded793073fbe46))
+
 ## [0.1.4](https://github.com/Geogboe/boxy/compare/v0.1.3...v0.1.4) (2026-03-18)
 
 
