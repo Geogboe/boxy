@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/Geogboe/boxy/pkg/store"
@@ -16,7 +17,7 @@ type sandboxCreateOpts struct {
 }
 
 func newSandboxCommand() *cobra.Command {
-	var configPath, statePath string
+	var configPath, statePath, file string
 
 	cmd := &cobra.Command{
 		Use:   "sandbox",
@@ -26,11 +27,10 @@ func newSandboxCommand() *cobra.Command {
 		},
 	}
 
-	cmd.PersistentFlags().StringVar(&configPath, "config", "", "config file path (.yaml/.yml/.json); default: boxy.yaml next to --file, else cwd")
+	cmd.PersistentFlags().StringVar(&configPath, "config", "", "config file path; default: boxy.yaml next to --file or in cwd")
 	cmd.PersistentFlags().StringVar(&statePath, "state", "", "state file path; default: .boxy/state.json next to config")
+	cmd.PersistentFlags().StringVarP(&file, "file", "f", "", "sandbox spec file (default: sandbox.yaml in cwd)")
 
-	// create subcommand
-	var file string
 	create := &cobra.Command{
 		Use:   "create",
 		Short: "Create a sandbox from a spec file",
@@ -42,11 +42,9 @@ func newSandboxCommand() *cobra.Command {
 			})
 		},
 	}
-	create.Flags().StringVarP(&file, "file", "f", "", "sandbox spec file path (.yaml/.yml)")
-	_ = create.MarkFlagRequired("file")
 	cmd.AddCommand(create)
 
-	cmd.AddCommand(newSandboxListCommand(&configPath, &statePath))
+	cmd.AddCommand(newSandboxListCommand(&configPath, &statePath, &file))
 	cmd.AddCommand(newSandboxGetCommand(&configPath, &statePath))
 	cmd.AddCommand(newSandboxDeleteCommand(&configPath, &statePath))
 
@@ -55,21 +53,36 @@ func newSandboxCommand() *cobra.Command {
 
 func runSandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 	if opts.file == "" {
-		return fmt.Errorf("--file is required")
+		opts.file = findDefaultSandboxFile()
+	}
+	if opts.file == "" {
+		return fmt.Errorf("no sandbox spec found: pass -f or create sandbox.yaml in cwd")
 	}
 	return sandboxCreate(ctx, opts)
 }
 
-// resolveSandboxStore opens a DiskStore using the provided config and state paths.
+// findDefaultSandboxFile returns "sandbox.yaml" if it exists in the current directory.
+func findDefaultSandboxFile() string {
+	const defaultName = "sandbox.yaml"
+	if _, err := os.Stat(defaultName); err == nil {
+		return defaultName
+	}
+	return ""
+}
+
+// resolveSandboxStore opens a DiskStore using the provided config, state, and optional spec paths.
 // If statePath is empty, it defaults to .boxy/state.json next to the config file.
-func resolveSandboxStore(configPath, statePath string) (*store.DiskStore, error) {
+func resolveSandboxStore(configPath, statePath, sandboxFile string) (*store.DiskStore, error) {
 	if statePath == "" {
-		cfgPath, err := resolveConfigPath(configPath, "")
+		if sandboxFile == "" {
+			sandboxFile = findDefaultSandboxFile()
+		}
+		cfgPath, err := resolveConfigPath(configPath, sandboxFile)
 		if err != nil {
 			return nil, err
 		}
 		if cfgPath == "" {
-			return nil, fmt.Errorf("no config file found (specify --config or --state)")
+			return nil, fmt.Errorf("no config file found (specify --config, --state, or add sandbox.yaml to cwd)")
 		}
 		statePath = filepath.Join(filepath.Dir(cfgPath), ".boxy", "state.json")
 	}
