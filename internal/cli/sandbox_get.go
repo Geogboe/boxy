@@ -15,7 +15,7 @@ func newSandboxGetCommand(configPath, statePath *string) *cobra.Command {
 		Short: "Get a sandbox by ID",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			st, err := resolveSandboxStore(*configPath, *statePath)
+			st, err := resolveSandboxStore(*configPath, *statePath, "")
 			if err != nil {
 				return err
 			}

@@ -3,21 +3,27 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	boxyconfig "github.com/Geogboe/boxy/internal/config"
-	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/internal/sandbox"
-	"github.com/Geogboe/boxy/pkg/store"
+	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/providersdk/builtins"
+	"github.com/Geogboe/boxy/pkg/store"
+	"github.com/pterm/pterm"
 )
 
 func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
+	// Silence internal slog output; progress is reported via pterm spinners.
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+
 	spec, err := boxyconfig.LoadSandboxFile(opts.file)
 	if err != nil {
 		return err
@@ -96,6 +102,10 @@ func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 		needByPool[model.PoolName(r.Pool)] += r.Count
 	}
 
+	pterm.Println()
+	pterm.Bold.Printfln("  Creating sandbox %q", spec.Name)
+	pterm.Println()
+
 	prov := &pool.DriverProvisioner{
 		Registry:  reg,
 		Specs:     specByName,
@@ -114,9 +124,14 @@ func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 				return fmt.Errorf("put pool %q: %w", poolName, err)
 			}
 		}
+		label := fmt.Sprintf("%s  ensuring %d resource(s) ready", poolName, need)
+		spin, _ := pterm.DefaultSpinner.Start(label)
+		t0 := time.Now()
 		if err := pm.Reconcile(ctx, poolName); err != nil {
+			spin.Fail(err.Error())
 			return fmt.Errorf("reconcile pool %q: %w", poolName, err)
 		}
+		spin.Success(fmt.Sprintf("%s  done  (%s)", poolName, time.Since(t0).Round(time.Millisecond)))
 	}
 
 	sm := sandbox.New(st)
@@ -132,14 +147,19 @@ func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 		}
 	}
 
+	printSandboxCreated(sb)
+
 	// Replenish pools after allocation so preheat targets stay satisfied.
 	for poolName := range needByPool {
+		spin, _ := pterm.DefaultSpinner.Start(fmt.Sprintf("%s  replenishing pool", poolName))
+		t0 := time.Now()
 		if err := pm.Reconcile(ctx, poolName); err != nil {
+			spin.Fail(err.Error())
 			return fmt.Errorf("reconcile pool %q after allocation: %w", poolName, err)
 		}
+		spin.Success(fmt.Sprintf("%s  done  (%s)", poolName, time.Since(t0).Round(time.Millisecond)))
 	}
 
-	slog.Info("sandbox created", "id", sb.ID, "name", sb.Name, "resources", len(sb.Resources), "state", statePath)
 	return nil
 }
 
