@@ -109,8 +109,24 @@ try {
 
     Copy-Item -Path $downloadedAsset -Destination $destination -Force
 
-    $versionOutput = & $destination --version
-    Write-Host "Installed $versionOutput to $destination"
+    $versionOutput = $null
+    try {
+        $versionOutput = & $destination --version 2>$null
+    }
+    catch {
+        $versionOutput = $null
+    }
+
+    if ($versionOutput) {
+        Write-Host "Installed $versionOutput to $destination"
+    }
+    else {
+        & $destination --help *> $null
+        if ($LASTEXITCODE -ne 0) {
+            Fail "Installed binary did not execute successfully."
+        }
+        Write-Host "Installed boxy to $destination"
+    }
 
     if ($InstallDir -eq $defaultInstallDir) {
         if (Ensure-UserPathContains -PathEntry $InstallDir) {

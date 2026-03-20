@@ -99,7 +99,11 @@ resolve_latest_tag() {
   response="$(curl -fsSL "${api}")" || fail "failed to query GitHub releases API"
 
   local tag
-  tag="$(printf '%s' "${response}" | sed -n 's/.*"tag_name":"\([^"]*\)".*/\1/p' | head -n1)"
+  tag="$(
+    printf '%s\n' "${response}" \
+      | grep -m1 '"tag_name"' \
+      | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/'
+  )"
   [[ -n "${tag}" ]] || fail "could not resolve latest release tag"
   printf '%s\n' "${tag}"
 }
@@ -139,8 +143,12 @@ fi
 
 install -m 0755 "${TMP_DIR}/${ASSET}" "${DEST}"
 
-VERSION_OUTPUT="$("${DEST}" --version)"
-log "Installed ${VERSION_OUTPUT} to ${DEST}"
+if VERSION_OUTPUT="$("${DEST}" --version 2>/dev/null)"; then
+  log "Installed ${VERSION_OUTPUT} to ${DEST}"
+else
+  "${DEST}" --help >/dev/null 2>&1 || fail "installed binary did not execute successfully"
+  log "Installed boxy to ${DEST}"
+fi
 
 case ":${PATH}:" in
   *":${INSTALL_DIR}:"*)
