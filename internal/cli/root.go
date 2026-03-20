@@ -20,6 +20,7 @@ func NewRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "boxy",
 		Short:         "Boxy is a resource pooling and sandbox orchestration tool",
+		Version:       Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
@@ -29,6 +30,7 @@ func NewRootCommand() *cobra.Command {
 			return cmd.Help()
 		},
 	}
+	root.SetVersionTemplate("boxy {{.Version}}\n")
 
 	root.PersistentFlags().StringVar(&opts.logLevel, "log-level", "info", "log verbosity (debug, info, warn, error)")
 	root.PersistentFlags().StringVar(&opts.logFile, "log-file", "", "write structured logs to file instead of stderr")
@@ -39,6 +41,7 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newDebugCommand())
 	root.AddCommand(newInitCommand())
 	root.AddCommand(newStatusCommand())
+	root.AddCommand(newVersionCommand())
 	return root
 }
 
