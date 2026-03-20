@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -203,12 +202,11 @@ func loadConfig(explicitPath string) (cfg boxyconfig.Config, usedPath string, _ 
 }
 
 func findDefaultConfigPath() (string, error) {
-	cwd, err := os.Getwd()
+	wd, err := effectiveWD()
 	if err != nil {
 		return "", fmt.Errorf("get working directory: %w", err)
 	}
-
-	return findConfigPathInDir(cwd)
+	return findConfigPathInDir(wd)
 }
 
 func serveLoop(ctx context.Context, poolMgr *pool.Manager, poolNames []model.PoolName, ui *serveUI) error {

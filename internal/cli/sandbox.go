@@ -58,14 +58,44 @@ func runSandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 	if opts.file == "" {
 		return fmt.Errorf("no sandbox spec found: pass -f or create sandbox.yaml in cwd")
 	}
+	opts.file = resolveRelative(opts.file)
+	opts.configPath = resolveRelative(opts.configPath)
 	return sandboxCreate(ctx, opts)
 }
 
-// findDefaultSandboxFile returns "sandbox.yaml" if it exists in the current directory.
+// resolveRelative resolves a relative path against the effective working directory.
+// Absolute paths and empty strings are returned unchanged.
+func resolveRelative(p string) string {
+	if p == "" || filepath.IsAbs(p) {
+		return p
+	}
+	wd, err := effectiveWD()
+	if err != nil {
+		return p
+	}
+	return filepath.Join(wd, p)
+}
+
+// effectiveWD returns the working directory to use for config/state lookup.
+// It checks BOXY_WORKING_DIR first (set by the Taskfile go:run task so that
+// `task run` preserves the caller's directory even when go runs from ROOT_DIR),
+// then falls back to os.Getwd().
+func effectiveWD() (string, error) {
+	if d := os.Getenv("BOXY_WORKING_DIR"); d != "" {
+		return d, nil
+	}
+	return os.Getwd()
+}
+
+// findDefaultSandboxFile returns "sandbox.yaml" if it exists in the effective working directory.
 func findDefaultSandboxFile() string {
-	const defaultName = "sandbox.yaml"
-	if _, err := os.Stat(defaultName); err == nil {
-		return defaultName
+	wd, err := effectiveWD()
+	if err != nil {
+		return ""
+	}
+	p := filepath.Join(wd, "sandbox.yaml")
+	if _, err := os.Stat(p); err == nil {
+		return p
 	}
 	return ""
 }

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -194,11 +193,11 @@ func resolveConfigPath(explicitPath, sandboxFile string) (string, error) {
 			return p, nil
 		}
 	}
-	cwd, err := os.Getwd()
+	wd, err := effectiveWD()
 	if err != nil {
 		return "", fmt.Errorf("get working directory: %w", err)
 	}
-	return findConfigPathInDir(cwd)
+	return findConfigPathInDir(wd)
 }
 
 func poolModelFromSpec(ps boxyconfig.PoolSpec) (model.Pool, error) {
