@@ -116,6 +116,10 @@ func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 		needByPool[model.PoolName(r.Pool)] += r.Count
 	}
 
+	pterm.Println()
+	pterm.Bold.Printfln("  Creating sandbox %q", spec.Name)
+	pterm.Println()
+
 	prov := &pool.DriverProvisioner{
 		Registry:  reg,
 		Specs:     specByName,
@@ -192,6 +196,7 @@ func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 	pterm.FgDarkGray.Printfln("  boxy sandbox get %s", sb.ID)
 	pterm.FgDarkGray.Printfln("  boxy sandbox delete %s", sb.ID)
 	pterm.Println()
+
 
 	return nil
 }
