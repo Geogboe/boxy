@@ -75,6 +75,14 @@ func (a *EmbeddedAgent) Delete(ctx context.Context, provider providersdk.Type, i
 	return d.Delete(ctx, id)
 }
 
+func (a *EmbeddedAgent) Allocate(ctx context.Context, provider providersdk.Type, id string) (map[string]any, error) {
+	d, err := a.driver(provider)
+	if err != nil {
+		return nil, err
+	}
+	return d.Allocate(ctx, id)
+}
+
 func (a *EmbeddedAgent) driver(provider providersdk.Type) (providersdk.Driver, error) {
 	d, ok := a.drivers[provider]
 	if !ok {

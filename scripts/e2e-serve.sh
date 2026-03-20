@@ -130,6 +130,8 @@ assert_html_contains "fragment: sandboxes-table" "$BASE/ui/fragments/sandboxes-t
 assert_status   "GET /static/style.css"   "$BASE/static/style.css"   200
 assert_status   "GET /static/htmx.min.js" "$BASE/static/htmx.min.js" 200
 
+hurl --test --variable base_url="$BASE" tests/e2e/serve-api.hurl
+
 stop_server
 
 # ── test 2: UI disabled (--ui=false) ────────────────────────────────────

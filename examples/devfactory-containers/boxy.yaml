@@ -1,5 +1,11 @@
 ---
-# Devfactory containers — simulated container pool, no real infrastructure.
+# devfactory-containers — simulated container pool, no real infrastructure needed.
+#
+# The devfactory provider simulates container provisioning locally, making it
+# ideal for trying out Boxy without a Docker daemon or cloud account.
+#
+# Run: ./serve.sh   (Linux/macOS)
+#      ./serve.ps1  (Windows)
 server:
   listen: ":9090"
 
@@ -9,6 +15,7 @@ providers:
     config:
       profile: container
       data_dir: .boxy/devfactory
+      latency: 800ms   # simulate realistic container startup time
 
 pools:
   - name: web

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -151,6 +152,21 @@ func (d *Driver) Update(ctx context.Context, id string, op providersdk.Operation
 	}
 }
 
+func (d *Driver) Allocate(ctx context.Context, id string) (map[string]any, error) {
+	out, err := d.dockerCmd(ctx, "inspect", "-f", "{{.Name}}", id)
+	if err != nil {
+		return nil, fmt.Errorf("docker inspect %s: %w", id, err)
+	}
+	name := strings.TrimPrefix(strings.TrimSpace(out), "/")
+	if name == "" {
+		name = id
+	}
+	return map[string]any{
+		"access": "docker-exec",
+		"exec":   fmt.Sprintf("docker exec -it %s /bin/sh", name),
+	}, nil
+}
+
 func (d *Driver) Delete(ctx context.Context, id string) error {
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -187,9 +203,25 @@ func (d *Driver) dockerCmd(ctx context.Context, args ...string) (string, error) 
 		if msg == "" {
 			msg = err.Error()
 		}
-		return "", fmt.Errorf("%s (args=%q)", msg, strings.Join(args, " "))
+		return "", fmt.Errorf("%s (args=%q)", friendlyDockerErr(err, msg), strings.Join(args, " "))
 	}
 	return stdout.String(), nil
+}
+
+// friendlyDockerErr translates low-level Docker exec errors into actionable messages.
+func friendlyDockerErr(err error, stderr string) string {
+	// Binary not on PATH — Docker Desktop isn't running or was never installed.
+	if errors.Is(err, exec.ErrNotFound) {
+		return "docker CLI not found in PATH — is Docker Desktop running? On Windows/WSL, Docker Desktop must be started before use"
+	}
+	// Daemon unreachable — CLI exists but the daemon socket/pipe isn't open.
+	lower := strings.ToLower(stderr)
+	if strings.Contains(lower, "cannot connect to the docker daemon") ||
+		strings.Contains(lower, "error during connect") ||
+		strings.Contains(lower, "the system cannot find the file specified") && strings.Contains(lower, "//./pipe/docker") {
+		return "cannot connect to Docker daemon — start Docker Desktop (or 'sudo systemctl start docker' on Linux): " + stderr
+	}
+	return stderr
 }
 
 func decodeCreateConfig(cfg any) (CreateConfig, error) {

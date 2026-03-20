@@ -9,7 +9,35 @@
 // Use type: devfactory in pool configuration to use this provider.
 package devfactory
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
+
+// Duration is a time.Duration that can be unmarshaled from a JSON string
+// ("800ms", "1.5s") as well as from a JSON number (nanoseconds).
+// This lets boxy.yaml authors write human-readable durations.
+type Duration time.Duration
+
+func (d *Duration) UnmarshalJSON(b []byte) error {
+	// Try as a number (nanoseconds, the json encoding of time.Duration).
+	var ns int64
+	if err := json.Unmarshal(b, &ns); err == nil {
+		*d = Duration(ns)
+		return nil
+	}
+	// Try as a quoted string like "800ms" or "1.5s".
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	dur, err := time.ParseDuration(s)
+	if err != nil {
+		return err
+	}
+	*d = Duration(dur)
+	return nil
+}
 
 // Config is the typed configuration for the devfactory driver.
 // It is unmarshaled from the pool's config: YAML block.
@@ -24,7 +52,8 @@ type Config struct {
 
 	// Latency simulates provisioning delay. Resources take this long
 	// to transition from creating to running. Zero uses the profile default.
-	Latency time.Duration `yaml:"latency" json:"latency"`
+	// Accepts human-readable strings: "800ms", "1.5s", "2s".
+	Latency Duration `yaml:"latency" json:"latency"`
 
 	// FailCreate causes Create to return an error when true.
 	// Useful for testing error handling paths.

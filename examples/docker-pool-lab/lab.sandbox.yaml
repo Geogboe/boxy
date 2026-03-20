@@ -1,9 +1,0 @@
----
-name: pentest-lab
-resources:
-  - name: attackers
-    pool: attackers
-    count: 2
-  - name: targets
-    pool: targets
-    count: 1

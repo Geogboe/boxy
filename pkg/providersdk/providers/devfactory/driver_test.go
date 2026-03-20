@@ -45,31 +45,21 @@ func TestDriver_Create_UniqueConnectionInfo(t *testing.T) {
 }
 
 func TestDriver_Create_StateTransition(t *testing.T) {
-	d := newTestDriver(t, &Config{Latency: 50 * time.Millisecond})
+	// Create now blocks for the configured latency and returns with the
+	// resource already in "running" state — no intermediate polling needed.
+	d := newTestDriver(t, &Config{Latency: Duration(50 * time.Millisecond)})
 
 	res, err := d.Create(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	// Should start in "creating" state.
 	status, err := d.Read(context.Background(), res.ID)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
-	if status.State != "creating" {
-		t.Errorf("expected initial state creating, got %q", status.State)
-	}
-
-	// Wait for transition.
-	time.Sleep(100 * time.Millisecond)
-
-	status, err = d.Read(context.Background(), res.ID)
-	if err != nil {
-		t.Fatalf("Read after transition: %v", err)
-	}
 	if status.State != "running" {
-		t.Errorf("expected state running after latency, got %q", status.State)
+		t.Errorf("expected running after Create returned, got %q", status.State)
 	}
 }
 
@@ -294,7 +284,7 @@ func TestDriver_Profile_Container(t *testing.T) {
 
 func TestDriver_Profile_VM(t *testing.T) {
 	// Override default latency to 0 so test is fast.
-	d := newTestDriver(t, &Config{Profile: ProfileVM, Latency: 1 * time.Millisecond})
+	d := newTestDriver(t, &Config{Profile: ProfileVM, Latency: Duration(1 * time.Millisecond)})
 
 	res, err := d.Create(context.Background(), nil)
 	if err != nil {
@@ -333,8 +323,10 @@ func TestDriver_Profile_Share(t *testing.T) {
 }
 
 func TestDriver_Profile_VMDefaultLatency(t *testing.T) {
-	// VM profile has a 2s default latency. Resource should start as "creating".
-	d := newTestDriver(t, &Config{Profile: ProfileVM})
+	// VM profile has a 2s default latency. Use a short explicit latency
+	// to keep tests fast; the blocking behaviour is already covered by
+	// TestDriver_Create_StateTransition.
+	d := newTestDriver(t, &Config{Profile: ProfileVM, Latency: Duration(1 * time.Millisecond)})
 
 	res, err := d.Create(context.Background(), nil)
 	if err != nil {
@@ -342,8 +334,8 @@ func TestDriver_Profile_VMDefaultLatency(t *testing.T) {
 	}
 
 	status, _ := d.Read(context.Background(), res.ID)
-	if status.State != "creating" {
-		t.Errorf("expected VM to start in creating state (default latency), got %q", status.State)
+	if status.State != "running" {
+		t.Errorf("expected running after Create returned, got %q", status.State)
 	}
 }
 
