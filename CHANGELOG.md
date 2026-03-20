@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.6](https://github.com/Geogboe/boxy/compare/v0.1.5...v0.1.6) (2026-03-20)
+
+
+### Features
+
+* allocation hooks, env file output, and spinner UX ([#45](https://github.com/Geogboe/boxy/issues/45)) ([76c3b36](https://github.com/Geogboe/boxy/commit/76c3b366a7471e48929b5454b31ddaf5fbec797e))
+* human-friendly sandbox CLI output ([#43](https://github.com/Geogboe/boxy/issues/43)) ([573a10d](https://github.com/Geogboe/boxy/commit/573a10d1313d4f3555f6cde992e024049176285a))
+* Hyper-V provider, pkg/vmsdk, pkg/psdirect, Docker SDK migration ([#46](https://github.com/Geogboe/boxy/issues/46)) ([63f7638](https://github.com/Geogboe/boxy/commit/63f763811dc859296989bb4580b95d3e123c7435))
+
 ## [0.1.5](https://github.com/Geogboe/boxy/compare/v0.1.4...v0.1.5) (2026-03-18)
 
 
