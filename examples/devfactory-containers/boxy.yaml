@@ -1,0 +1,28 @@
+---
+# devfactory-containers — simulated container pool, no real infrastructure needed.
+#
+# The devfactory provider simulates container provisioning locally, making it
+# ideal for trying out Boxy without a Docker daemon or cloud account.
+#
+# Run: ./serve.sh   (Linux/macOS)
+#      ./serve.ps1  (Windows)
+server:
+  listen: ":9090"
+
+providers:
+  - name: devfactory-local
+    type: devfactory
+    config:
+      profile: container
+      data_dir: .boxy/devfactory
+
+pools:
+  - name: web
+    type: container
+    provider: devfactory-local
+    policy:
+      preheat:
+        min_ready: 2
+        max_total: 4
+      recycle:
+        max_age: 1h
