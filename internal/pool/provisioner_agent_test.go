@@ -65,6 +65,10 @@ func (m *mockAgent) Delete(ctx context.Context, provider providersdk.Type, id st
 	return m.deleteErr
 }
 
+func (m *mockAgent) Allocate(ctx context.Context, provider providersdk.Type, id string) (map[string]any, error) {
+	return nil, nil
+}
+
 func TestAgentProvisioner_Provision(t *testing.T) {
 	mockAgent := newMockAgent(providersdk.Type("docker"))
 	now := time.Now().UTC()

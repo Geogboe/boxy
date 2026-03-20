@@ -15,6 +15,7 @@ providers:
     config:
       profile: container
       data_dir: .boxy/devfactory
+      latency: 800ms   # simulate realistic container startup time
 
 pools:
   - name: web

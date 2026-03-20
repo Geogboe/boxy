@@ -33,6 +33,14 @@ type Driver interface {
 
 	// Delete destroys a resource and cleans up associated state.
 	Delete(ctx context.Context, id string) error
+
+	// Allocate is called when a resource transitions from ready to allocated
+	// (i.e., when it is assigned to a sandbox). It performs allocation-time
+	// work such as generating credentials or injecting SSH keys.
+	//
+	// Returns additional Properties to merge into the resource.
+	// Returns nil, nil if no allocation work is needed.
+	Allocate(ctx context.Context, id string) (map[string]any, error)
 }
 
 // Resource is returned by Driver.Create — the driver's output after

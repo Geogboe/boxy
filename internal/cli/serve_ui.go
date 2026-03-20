@@ -19,17 +19,10 @@ func newServeUI(pretty bool) *serveUI {
 	return &serveUI{pretty: pretty}
 }
 
-// step starts a pterm spinner for a startup step.
+// step starts a spinner for a startup step using the shared boxySpinner style.
 // The returned function marks the step successful and appends a detail string.
 func (u *serveUI) step(label string) func(detail string) {
-	spin, _ := pterm.DefaultSpinner.Start(label)
-	return func(detail string) {
-		if detail != "" {
-			spin.Success(label + "  " + detail)
-		} else {
-			spin.Success(label)
-		}
-	}
+	return step(label)
 }
 
 // reconcileError reports a pool reconciliation error.

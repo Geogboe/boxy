@@ -60,6 +60,15 @@ func (ap *AgentProvisioner) Provision(ctx context.Context, pool model.Pool) (mod
 	}, nil
 }
 
+func (ap *AgentProvisioner) Allocate(ctx context.Context, pool model.Pool, res model.Resource) (map[string]any, error) {
+	spec, ok := ap.Specs[pool.Name]
+	if !ok {
+		return nil, fmt.Errorf("unknown pool %q", pool.Name)
+	}
+	driverType := ap.driverTypeForPool(spec)
+	return ap.Agent.Allocate(ctx, driverType, string(res.ID))
+}
+
 func (ap *AgentProvisioner) Destroy(ctx context.Context, pool model.Pool, res model.Resource) error {
 	spec, ok := ap.Specs[pool.Name]
 	if !ok {

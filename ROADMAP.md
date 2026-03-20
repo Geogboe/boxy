@@ -4,6 +4,12 @@ Upcoming design work and implementation plans.
 
 ---
 
+## Web UI — Screenshots, Wireframes, and Improvements
+
+Take screenshots of the current dashboard UI (it looks great), then plan improvements with wireframes and mockups before implementing any changes.
+
+---
+
 ## Agent Registration and Auth
 
 ### Token Bootstrap Flow (GitLab Runner model)

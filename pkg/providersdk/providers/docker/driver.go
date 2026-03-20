@@ -152,6 +152,21 @@ func (d *Driver) Update(ctx context.Context, id string, op providersdk.Operation
 	}
 }
 
+func (d *Driver) Allocate(ctx context.Context, id string) (map[string]any, error) {
+	out, err := d.dockerCmd(ctx, "inspect", "-f", "{{.Name}}", id)
+	if err != nil {
+		return nil, fmt.Errorf("docker inspect %s: %w", id, err)
+	}
+	name := strings.TrimPrefix(strings.TrimSpace(out), "/")
+	if name == "" {
+		name = id
+	}
+	return map[string]any{
+		"access": "docker-exec",
+		"exec":   fmt.Sprintf("docker exec -it %s /bin/sh", name),
+	}, nil
+}
+
 func (d *Driver) Delete(ctx context.Context, id string) error {
 	id = strings.TrimSpace(id)
 	if id == "" {

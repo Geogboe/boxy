@@ -118,7 +118,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		Providers: providersMap,
 	}
 	poolMgr := pool.New(st, provisioner)
-	sandboxMgr := sandbox.New(st)
+	sandboxMgr := sandbox.New(st, provisioner)
 
 	// Pools
 	donePools := ui.step("Initializing pools")

@@ -16,7 +16,7 @@ import (
 
 func TestAPI_ListPools_empty(t *testing.T) {
 	t.Parallel()
-	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore()), false)
+	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), false)
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/pools", nil)
@@ -42,7 +42,7 @@ func TestAPI_ListPools_withData(t *testing.T) {
 	_ = st.PutPool(ctx, model.Pool{Name: "web"})
 	_ = st.PutPool(ctx, model.Pool{Name: "db"})
 
-	mux := server.NewTestMux(st, sandbox.New(st), false)
+	mux := server.NewTestMux(st, sandbox.New(st, nil), false)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/pools", nil)
 	mux.ServeHTTP(w, r)
@@ -62,7 +62,7 @@ func TestAPI_ListPools_withData(t *testing.T) {
 
 func TestAPI_ListResources_empty(t *testing.T) {
 	t.Parallel()
-	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore()), false)
+	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), false)
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/resources", nil)
@@ -83,7 +83,7 @@ func TestAPI_ListResources_empty(t *testing.T) {
 
 func TestAPI_ListSandboxes_empty(t *testing.T) {
 	t.Parallel()
-	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore()), false)
+	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), false)
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/sandboxes", nil)
@@ -108,7 +108,7 @@ func TestAPI_ListSandboxes_withData(t *testing.T) {
 	ctx := context.Background()
 	_ = st.CreateSandbox(ctx, model.Sandbox{ID: "sb-1", Name: "test"})
 
-	mux := server.NewTestMux(st, sandbox.New(st), false)
+	mux := server.NewTestMux(st, sandbox.New(st, nil), false)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/sandboxes", nil)
 	mux.ServeHTTP(w, r)
@@ -133,7 +133,7 @@ func TestAPI_Integration(t *testing.T) {
 	ctx := context.Background()
 	_ = st.PutPool(ctx, model.Pool{Name: "integ-pool"})
 
-	mux := server.NewTestMux(st, sandbox.New(st), false)
+	mux := server.NewTestMux(st, sandbox.New(st, nil), false)
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
@@ -161,7 +161,7 @@ func TestAPI_Integration(t *testing.T) {
 
 func TestAPI_ContentType(t *testing.T) {
 	t.Parallel()
-	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore()), false)
+	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), false)
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/pools", nil)
@@ -178,7 +178,7 @@ func TestAPI_GetPool_found(t *testing.T) {
 	ctx := context.Background()
 	_ = st.PutPool(ctx, model.Pool{Name: "mypool"})
 
-	mux := server.NewTestMux(st, sandbox.New(st), false)
+	mux := server.NewTestMux(st, sandbox.New(st, nil), false)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/pools/mypool", nil)
 	mux.ServeHTTP(w, r)
@@ -197,7 +197,7 @@ func TestAPI_GetPool_found(t *testing.T) {
 
 func TestAPI_GetPool_notfound(t *testing.T) {
 	t.Parallel()
-	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore()), false)
+	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), false)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/pools/nonexistent", nil)
 	mux.ServeHTTP(w, r)
@@ -213,7 +213,7 @@ func TestAPI_GetResource_found(t *testing.T) {
 	ctx := context.Background()
 	_ = st.PutResource(ctx, model.Resource{ID: "res-1"})
 
-	mux := server.NewTestMux(st, sandbox.New(st), false)
+	mux := server.NewTestMux(st, sandbox.New(st, nil), false)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/resources/res-1", nil)
 	mux.ServeHTTP(w, r)
@@ -232,7 +232,7 @@ func TestAPI_GetResource_found(t *testing.T) {
 
 func TestAPI_GetResource_notfound(t *testing.T) {
 	t.Parallel()
-	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore()), false)
+	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), false)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/resources/nonexistent", nil)
 	mux.ServeHTTP(w, r)
@@ -248,7 +248,7 @@ func TestAPI_GetSandbox_found(t *testing.T) {
 	ctx := context.Background()
 	_ = st.CreateSandbox(ctx, model.Sandbox{ID: "sb-42", Name: "found"})
 
-	mux := server.NewTestMux(st, sandbox.New(st), false)
+	mux := server.NewTestMux(st, sandbox.New(st, nil), false)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/sandboxes/sb-42", nil)
 	mux.ServeHTTP(w, r)
@@ -267,7 +267,7 @@ func TestAPI_GetSandbox_found(t *testing.T) {
 
 func TestAPI_GetSandbox_notfound(t *testing.T) {
 	t.Parallel()
-	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore()), false)
+	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), false)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/sandboxes/nonexistent", nil)
 	mux.ServeHTTP(w, r)
@@ -280,7 +280,7 @@ func TestAPI_GetSandbox_notfound(t *testing.T) {
 func TestAPI_CreateSandbox(t *testing.T) {
 	t.Parallel()
 	st := store.NewMemoryStore()
-	mux := server.NewTestMux(st, sandbox.New(st), false)
+	mux := server.NewTestMux(st, sandbox.New(st, nil), false)
 
 	body := bytes.NewBufferString(`{"name":"new-box"}`)
 	w := httptest.NewRecorder()
@@ -309,7 +309,7 @@ func TestAPI_DeleteSandbox_found(t *testing.T) {
 	ctx := context.Background()
 	_ = st.CreateSandbox(ctx, model.Sandbox{ID: "sb-del", Name: "to-delete"})
 
-	mux := server.NewTestMux(st, sandbox.New(st), false)
+	mux := server.NewTestMux(st, sandbox.New(st, nil), false)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodDelete, "/api/v1/sandboxes/sb-del", nil)
 	mux.ServeHTTP(w, r)
@@ -321,7 +321,7 @@ func TestAPI_DeleteSandbox_found(t *testing.T) {
 
 func TestAPI_DeleteSandbox_notfound(t *testing.T) {
 	t.Parallel()
-	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore()), false)
+	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), false)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodDelete, "/api/v1/sandboxes/nonexistent", nil)
 	mux.ServeHTTP(w, r)

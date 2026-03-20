@@ -15,11 +15,11 @@ func TestServer_healthz(t *testing.T) {
 	t.Parallel()
 
 	st := store.NewMemoryStore()
-	srv := server.New(st, sandbox.New(st), ":0", false)
+	srv := server.New(st, sandbox.New(st, nil), ":0", false)
 	_ = srv // we test via httptest below
 
 	// Use httptest to avoid binding a real port.
-	mux := server.NewTestMux(st, sandbox.New(st), false)
+	mux := server.NewTestMux(st, sandbox.New(st, nil), false)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	mux.ServeHTTP(w, r)
@@ -36,7 +36,7 @@ func TestServer_start_shutdown(t *testing.T) {
 	t.Parallel()
 
 	st := store.NewMemoryStore()
-	srv := server.New(st, sandbox.New(st), "127.0.0.1:0", false)
+	srv := server.New(st, sandbox.New(st, nil), "127.0.0.1:0", false)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)

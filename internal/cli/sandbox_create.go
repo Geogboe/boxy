@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -17,12 +19,17 @@ import (
 	"github.com/Geogboe/boxy/pkg/providersdk/builtins"
 	"github.com/Geogboe/boxy/pkg/store"
 	"github.com/pterm/pterm"
+	"golang.org/x/term"
 )
 
 func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 	// Silence internal slog output; progress is reported via pterm spinners.
 	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
+	pterm.Println()
+
+	// --- Load sandbox spec ---
+	doneSpec := step("Loading sandbox spec")
 	spec, err := boxyconfig.LoadSandboxFile(opts.file)
 	if err != nil {
 		return err
@@ -33,7 +40,10 @@ func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 	if len(spec.Resources) == 0 {
 		return fmt.Errorf("sandbox spec resources is required")
 	}
+	doneSpec(fmt.Sprintf("%s  (%d resource group(s))", spec.Name, len(spec.Resources)))
 
+	// --- Load config ---
+	doneConfig := step("Loading config")
 	cfgPath, err := resolveConfigPath(opts.configPath, opts.file)
 	if err != nil {
 		return err
@@ -41,22 +51,26 @@ func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 	if cfgPath == "" {
 		return fmt.Errorf("no config file found (expected boxy.yaml next to %q or in cwd)", opts.file)
 	}
-
 	cfg, err := boxyconfig.LoadFile(cfgPath)
 	if err != nil {
 		return err
 	}
+	doneConfig(fmt.Sprintf("%s  (%d provider(s), %d pool(s))", filepath.Base(cfgPath), len(cfg.Providers), len(cfg.Pools)))
 
+	// --- Register + validate providers ---
+	doneProviders := step("Registering providers")
 	reg := providersdk.NewRegistry()
 	if err := builtins.RegisterBuiltins(reg); err != nil {
 		return fmt.Errorf("register builtin providers: %w", err)
 	}
-
 	providers := ensureImplicitProviders(cfg.Providers, cfg.Pools)
 	if err := reg.ValidateInstances(ctx, providers); err != nil {
 		return fmt.Errorf("validate providers: %w", err)
 	}
+	doneProviders(strings.Join(providerTypes(reg), ", "))
 
+	// --- Open state store ---
+	doneState := step("Opening state")
 	statePath := opts.statePath
 	if statePath == "" {
 		statePath = filepath.Join(filepath.Dir(cfgPath), ".boxy", "state.json")
@@ -65,6 +79,7 @@ func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 	if err != nil {
 		return err
 	}
+	doneState(statePath)
 
 	specByName := make(map[model.PoolName]boxyconfig.PoolSpec, len(cfg.Pools))
 	for i := range cfg.Pools {
@@ -101,17 +116,15 @@ func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 		needByPool[model.PoolName(r.Pool)] += r.Count
 	}
 
-	pterm.Println()
-	pterm.Bold.Printfln("  Creating sandbox %q", spec.Name)
-	pterm.Println()
-
 	prov := &pool.DriverProvisioner{
 		Registry:  reg,
 		Specs:     specByName,
 		Providers: providerByName,
 	}
 	pm := pool.New(st, prov)
+	sm := sandbox.New(st, prov)
 
+	// --- Ensure pools have enough ready resources ---
 	for poolName, need := range needByPool {
 		p, err := st.GetPool(ctx, poolName)
 		if err != nil {
@@ -123,43 +136,213 @@ func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 				return fmt.Errorf("put pool %q: %w", poolName, err)
 			}
 		}
-		label := fmt.Sprintf("%s  ensuring %d resource(s) ready", poolName, need)
-		spin, _ := pterm.DefaultSpinner.Start(label)
+		label := fmt.Sprintf("Pool %s  provisioning %d resource(s)", poolName, need)
+		spin, _ := boxySpinner.Start(label)
 		t0 := time.Now()
 		if err := pm.Reconcile(ctx, poolName); err != nil {
 			spin.Fail(err.Error())
 			return fmt.Errorf("reconcile pool %q: %w", poolName, err)
 		}
-		spin.Success(fmt.Sprintf("%s  done  (%s)", poolName, time.Since(t0).Round(time.Millisecond)))
+		spin.Success(label + "  " + pterm.FgDarkGray.Sprintf("done  (%s)", time.Since(t0).Round(time.Millisecond)))
 	}
 
-	sm := sandbox.New(st)
+	// --- Allocate resources into sandbox ---
+	doneAllocate := step(fmt.Sprintf("Allocating sandbox %q", spec.Name))
 	sb, err := sm.Create(ctx, spec.Name, model.SandboxPolicies{})
 	if err != nil {
 		return err
 	}
-
 	for _, req := range spec.Resources {
 		sb, err = sm.AddFromPool(ctx, sb.ID, model.PoolName(req.Pool), req.Count)
 		if err != nil {
 			return err
 		}
 	}
+	doneAllocate(fmt.Sprintf("%s  ·  %d resource(s)", sb.ID, len(sb.Resources)))
 
-	printSandboxCreated(sb)
+	// Collect full resource details (includes Allocate-time properties).
+	resources := make([]model.Resource, 0, len(sb.Resources))
+	for _, rid := range sb.Resources {
+		res, err := st.GetResource(ctx, rid)
+		if err == nil {
+			resources = append(resources, res)
+		}
+	}
 
-	// Replenish pools after allocation so preheat targets stay satisfied.
+	// --- Replenish pools so preheat targets stay satisfied ---
 	for poolName := range needByPool {
-		spin, _ := pterm.DefaultSpinner.Start(fmt.Sprintf("%s  replenishing pool", poolName))
+		label := fmt.Sprintf("Pool %s  replenishing", poolName)
+		spin, _ := boxySpinner.Start(label)
 		t0 := time.Now()
 		if err := pm.Reconcile(ctx, poolName); err != nil {
 			spin.Fail(err.Error())
 			return fmt.Errorf("reconcile pool %q after allocation: %w", poolName, err)
 		}
-		spin.Success(fmt.Sprintf("%s  done  (%s)", poolName, time.Since(t0).Round(time.Millisecond)))
+		spin.Success(label + "  " + pterm.FgDarkGray.Sprintf("done  (%s)", time.Since(t0).Round(time.Millisecond)))
 	}
 
+	printConnectionInfo(sb, resources)
+
+	if !opts.noEnvFile && term.IsTerminal(int(os.Stdin.Fd())) {
+		if err := promptEnvFile(sb, resources); err != nil {
+			return err
+		}
+	}
+
+	pterm.FgDarkGray.Printfln("  boxy sandbox get %s", sb.ID)
+	pterm.FgDarkGray.Printfln("  boxy sandbox delete %s", sb.ID)
+	pterm.Println()
+
 	return nil
+}
+
+// printConnectionInfo displays sandbox connection info once to the terminal.
+func printConnectionInfo(sb model.Sandbox, resources []model.Resource) {
+	if len(resources) == 0 {
+		return
+	}
+	lines := buildEnvLines(sb, resources)
+
+	pterm.Println()
+	pterm.Bold.Println("  Connection info  (save this — you won't see it again)")
+	pterm.Println()
+	for _, l := range lines {
+		pterm.Printfln("    %s", l)
+	}
+	pterm.Println()
+}
+
+// promptEnvFile asks the user whether to save connection info as an env file.
+func promptEnvFile(sb model.Sandbox, resources []model.Resource) error {
+	envFileName := fmt.Sprintf(".sandbox-%s.env", sb.Name)
+	pterm.Printfln("  [e] Save as %s   [enter] Skip", envFileName)
+	pterm.Println()
+
+	key, err := readSingleKey()
+	if err != nil {
+		return nil // non-fatal if we can't read the key
+	}
+
+	if key == 'e' || key == 'E' {
+		return writeEnvFile(sb, resources, envFileName)
+	}
+	return nil
+}
+
+// writeEnvFile writes sandbox connection info to .sandbox-<name>.env in cwd.
+func writeEnvFile(sb model.Sandbox, resources []model.Resource, filename string) error {
+	wd, err := effectiveWD()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+	path := filepath.Join(wd, filename)
+
+	lines := buildEnvLines(sb, resources)
+	var buf strings.Builder
+	buf.WriteString(fmt.Sprintf("# Boxy sandbox: %s (%s)\n", sb.Name, sb.ID))
+	buf.WriteString("# Add this file to .gitignore — it may contain credentials.\n")
+	for _, l := range lines {
+		buf.WriteString(l)
+		buf.WriteString("\n")
+	}
+
+	if err := os.WriteFile(path, []byte(buf.String()), 0600); err != nil {
+		return fmt.Errorf("write env file: %w", err)
+	}
+
+	pterm.Println()
+	pterm.Printfln("  Wrote %s", path)
+	pterm.Warning.Println("  Add this file to .gitignore — it may contain credentials.")
+	pterm.Println()
+	return nil
+}
+
+// buildEnvLines builds the list of KEY=VALUE lines for the env file / display.
+func buildEnvLines(sb model.Sandbox, resources []model.Resource) []string {
+	var lines []string
+	lines = append(lines, fmt.Sprintf("SANDBOX_ID=%s", sb.ID))
+	lines = append(lines, "")
+
+	// Group resources by profile (which equals pool name).
+	type poolGroup struct {
+		name      string
+		resources []model.Resource
+	}
+	seenPools := make(map[string]int) // pool -> count so far
+	groups := make([]poolGroup, 0)
+	poolOrder := make([]string, 0)
+
+	for _, res := range resources {
+		poolName := string(res.Profile)
+		if _, seen := seenPools[poolName]; !seen {
+			seenPools[poolName] = 0
+			poolOrder = append(poolOrder, poolName)
+			groups = append(groups, poolGroup{name: poolName})
+		}
+	}
+	// Maintain order: rebuild groups indexed by pool name.
+	poolIdx := make(map[string]int, len(poolOrder))
+	for i, name := range poolOrder {
+		poolIdx[name] = i
+	}
+	groupSlice := make([][]model.Resource, len(poolOrder))
+	for _, res := range resources {
+		poolName := string(res.Profile)
+		i := poolIdx[poolName]
+		groupSlice[i] = append(groupSlice[i], res)
+	}
+
+	for pi, poolName := range poolOrder {
+		prefix := "SANDBOX_" + envVarSegment(poolName)
+		for n, res := range groupSlice[pi] {
+			varPrefix := fmt.Sprintf("%s_%d", prefix, n+1)
+
+			// Collect all property keys and sort for deterministic output.
+			keys := make([]string, 0, len(res.Properties))
+			for k := range res.Properties {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+
+			for _, k := range keys {
+				v := res.Properties[k]
+				envKey := varPrefix + "_" + envVarSegment(k)
+				lines = append(lines, fmt.Sprintf("%s=%v", envKey, v))
+			}
+			if pi < len(poolOrder)-1 || n < len(groupSlice[pi])-1 {
+				lines = append(lines, "")
+			}
+		}
+	}
+	return lines
+}
+
+// envVarSegment converts a string to an uppercase env var segment
+// (hyphens and dots become underscores).
+func envVarSegment(s string) string {
+	s = strings.ToUpper(s)
+	s = strings.ReplaceAll(s, "-", "_")
+	s = strings.ReplaceAll(s, ".", "_")
+	return s
+}
+
+// readSingleKey reads a single keypress without requiring Enter.
+// Returns 0 and nil on non-interactive stdin.
+func readSingleKey() (byte, error) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return 0, nil
+	}
+	old, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return 0, nil
+	}
+	defer term.Restore(int(os.Stdin.Fd()), old) //nolint:errcheck
+
+	buf := make([]byte, 1)
+	if _, err := os.Stdin.Read(buf); err != nil {
+		return 0, nil
+	}
+	return buf[0], nil
 }
 
 func upsertPool(ctx context.Context, st store.Store, desired model.Pool) error {

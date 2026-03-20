@@ -63,6 +63,14 @@ func (dp *DriverProvisioner) Provision(ctx context.Context, pool model.Pool) (mo
 	}, nil
 }
 
+func (dp *DriverProvisioner) Allocate(ctx context.Context, pool model.Pool, res model.Resource) (map[string]any, error) {
+	driver, _, err := dp.driverForPool(pool.Name)
+	if err != nil {
+		return nil, fmt.Errorf("allocate pool %q: %w", pool.Name, err)
+	}
+	return driver.Allocate(ctx, string(res.ID))
+}
+
 func (dp *DriverProvisioner) Destroy(ctx context.Context, pool model.Pool, res model.Resource) error {
 	driver, _, err := dp.driverForPool(pool.Name)
 	if err != nil {

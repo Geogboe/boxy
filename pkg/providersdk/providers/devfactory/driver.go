@@ -3,9 +3,13 @@ package devfactory
 import (
 	"context"
 	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/pem"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -40,7 +44,7 @@ func New(cfg *Config) *Driver {
 	profile := resolveProfile(cfg.Profile)
 
 	// Use explicit latency if set, otherwise fall back to profile default.
-	latency := cfg.Latency
+	latency := time.Duration(cfg.Latency)
 	if latency == 0 {
 		latency = profile.DefaultLatency
 	}
@@ -57,10 +61,11 @@ func (d *Driver) Type() providersdk.Type {
 	return ProviderType
 }
 
-// Create provisions a simulated resource. The resource starts in
-// "creating" state and transitions to "running" after the configured
-// latency (in a background goroutine). If latency is zero the resource
-// is immediately "running".
+// Create provisions a simulated resource. If latency is configured,
+// Create blocks for that duration before returning so that the caller
+// (e.g. a pool reconciler) experiences realistic provisioning delay.
+// This is intentionally synchronous: the pool manager has no async
+// polling loop, so the latency must be observed inside Create.
 func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, error) {
 	if d.cfg.FailCreate {
 		return nil, fmt.Errorf("devfactory: simulated create failure")
@@ -68,11 +73,6 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 
 	id := generateID()
 	now := time.Now()
-
-	initialState := "running"
-	if d.latency > 0 {
-		initialState = "creating"
-	}
 
 	d.mu.Lock()
 	store, err := loadStore(d.dataDir)
@@ -88,7 +88,7 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 
 	store.Resources[id] = &resourceRecord{
 		ID:             id,
-		State:          initialState,
+		State:          "creating",
 		Labels:         d.cfg.Labels,
 		ConnectionInfo: connInfo,
 		CreatedAt:      now,
@@ -100,37 +100,35 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 	}
 	d.mu.Unlock()
 
-	// Transition creating → running in the background.
+	// Block for the configured latency, then mark running.
 	if d.latency > 0 {
-		go d.transitionAfter(id, d.latency)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(d.latency):
+		}
 	}
+
+	d.mu.Lock()
+	store2, err := loadStore(d.dataDir)
+	if err != nil {
+		d.mu.Unlock()
+		return nil, fmt.Errorf("devfactory: load store: %w", err)
+	}
+	if r, ok := store2.Resources[id]; ok {
+		r.State = "running"
+	}
+	if err := saveStore(d.dataDir, store2); err != nil {
+		d.mu.Unlock()
+		return nil, fmt.Errorf("devfactory: save store: %w", err)
+	}
+	d.mu.Unlock()
 
 	return &providersdk.Resource{
 		ID:             id,
 		ConnectionInfo: connInfo,
 		Metadata:       d.cfg.Labels,
 	}, nil
-}
-
-// transitionAfter waits for the given duration then sets the resource
-// state to "running". If the resource has been deleted in the meantime,
-// this is a no-op.
-func (d *Driver) transitionAfter(id string, delay time.Duration) {
-	time.Sleep(delay)
-
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	store, err := loadStore(d.dataDir)
-	if err != nil {
-		return
-	}
-	r, ok := store.Resources[id]
-	if !ok || r.State != "creating" {
-		return
-	}
-	r.State = "running"
-	_ = saveStore(d.dataDir, store)
 }
 
 // Read returns the current state of a simulated resource.
@@ -223,6 +221,81 @@ func (d *Driver) Delete(ctx context.Context, id string) error {
 	delete(store.Resources, id)
 
 	return saveStore(d.dataDir, store)
+}
+
+// Allocate performs allocation-time work based on the driver's profile.
+// Container: returns a docker exec command using the resource ID.
+// VM: generates an RSA SSH keypair to /tmp/boxy/key_<id> and returns SSH info.
+// Share: generates random credentials and returns SMB connection info.
+func (d *Driver) Allocate(ctx context.Context, id string) (map[string]any, error) {
+	d.mu.Lock()
+	store, err := loadStore(d.dataDir)
+	d.mu.Unlock()
+	if err != nil {
+		return nil, fmt.Errorf("devfactory: load store: %w", err)
+	}
+
+	r, ok := store.Resources[id]
+	if !ok {
+		return nil, fmt.Errorf("devfactory: resource %q not found", id)
+	}
+
+	switch d.cfg.Profile {
+	case ProfileVM:
+		host := r.ConnectionInfo["host"]
+		keyPath := filepath.Join("/tmp/boxy", "key_"+id)
+		if err := generateSSHKey(keyPath); err != nil {
+			return nil, fmt.Errorf("devfactory: generate ssh key: %w", err)
+		}
+		return map[string]any{
+			"access":   "ssh",
+			"ssh_user": "admin",
+			"ssh_key":  keyPath,
+			"ssh_cmd":  fmt.Sprintf("ssh -i %s admin@%s", keyPath, host),
+		}, nil
+
+	case ProfileShare:
+		pass, err := generatePassword()
+		if err != nil {
+			return nil, fmt.Errorf("devfactory: generate password: %w", err)
+		}
+		return map[string]any{
+			"access":     "smb",
+			"username":   "svc_boxy",
+			"password":   pass,
+			"unc_path":   r.ConnectionInfo["unc_path"],
+			"mount_path": r.ConnectionInfo["mount_path"],
+		}, nil
+
+	default: // ProfileContainer
+		return map[string]any{
+			"access": "docker-exec",
+			"exec":   fmt.Sprintf("docker exec -it %s /bin/sh", id),
+		}, nil
+	}
+}
+
+func generateSSHKey(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return err
+	}
+	block := &pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	}
+	return os.WriteFile(path, pem.EncodeToMemory(block), 0600)
+}
+
+func generatePassword() (string, error) {
+	b := make([]byte, 12)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // --- Test helpers ---

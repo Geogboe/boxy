@@ -14,6 +14,7 @@ type sandboxCreateOpts struct {
 	file       string
 	configPath string
 	statePath  string
+	noEnvFile  bool
 }
 
 func newSandboxCommand() *cobra.Command {
@@ -31,6 +32,7 @@ func newSandboxCommand() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&statePath, "state", "", "state file path; default: .boxy/state.json next to config")
 	cmd.PersistentFlags().StringVarP(&file, "file", "f", "", "sandbox spec file (default: sandbox.yaml in cwd)")
 
+	var noEnvFile bool
 	create := &cobra.Command{
 		Use:   "create",
 		Short: "Create a sandbox from a spec file",
@@ -39,9 +41,11 @@ func newSandboxCommand() *cobra.Command {
 				file:       file,
 				configPath: configPath,
 				statePath:  statePath,
+				noEnvFile:  noEnvFile,
 			})
 		},
 	}
+	create.Flags().BoolVar(&noEnvFile, "no-env-file", false, "skip writing connection info to a .sandbox-<name>.env file")
 	cmd.AddCommand(create)
 
 	cmd.AddCommand(newSandboxListCommand(&configPath, &statePath, &file))
