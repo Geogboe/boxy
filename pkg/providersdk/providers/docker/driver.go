@@ -1,3 +1,4 @@
+// Package docker provides a providersdk.Driver backed by the Docker Engine API.
 package docker
 
 import (
@@ -6,29 +7,55 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"os"
-	"os/exec"
+	"io"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/docker/go-connections/nat"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
-// Driver implements providersdk.Driver using the local docker CLI.
-type Driver struct {
-	host string
+// dockerClient is the minimal Docker API surface used by this driver.
+// *client.Client satisfies this interface; tests inject a mock.
+type dockerClient interface {
+	ContainerCreate(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, platform *ocispec.Platform, containerName string) (container.CreateResponse, error)
+	ContainerStart(ctx context.Context, containerID string, options container.StartOptions) error
+	ContainerInspect(ctx context.Context, containerID string) (container.InspectResponse, error)
+	ContainerLogs(ctx context.Context, containerID string, options container.LogsOptions) (io.ReadCloser, error)
+	ContainerExecCreate(ctx context.Context, containerID string, options container.ExecOptions) (container.ExecCreateResponse, error)
+	ContainerExecAttach(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error)
+	ContainerExecInspect(ctx context.Context, execID string) (container.ExecInspect, error)
+	ContainerRemove(ctx context.Context, containerID string, options container.RemoveOptions) error
 }
 
-// New creates a Docker driver with the given config.
-func New(cfg *Config) *Driver {
+// Driver implements providersdk.Driver using the Docker Engine API.
+type Driver struct {
+	cli dockerClient
+}
+
+// New creates a Docker driver using the given config.
+func New(cfg *Config) (*Driver, error) {
 	host := cfg.Host
 	if host == "" {
 		host = "unix:///var/run/docker.sock"
 	}
-	return &Driver{host: host}
+	cli, err := client.NewClientWithOpts(
+		client.WithHost(host),
+		client.WithAPIVersionNegotiation(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("docker client: %w", err)
+	}
+	return &Driver{cli: cli}, nil
 }
 
 func (d *Driver) Type() providersdk.Type { return ProviderType }
@@ -43,11 +70,7 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 	}
 
 	command := toStringSlice(cc.Command)
-
-	// Make shell-based containers stay alive when detached.
 	needsInteractive := len(command) > 0 && isShell(command[0])
-
-	// Special-case ubuntu sshd.
 	command = maybeBootstrapUbuntuSSHD(cc.Image, command)
 
 	suffix, err := randHex(6)
@@ -56,63 +79,73 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 	}
 	containerName := fmt.Sprintf("boxy-%s", suffix)
 
-	runArgs := []string{"run", "--detach", "--name", containerName}
-	if needsInteractive {
-		runArgs = append(runArgs, "--interactive", "--tty")
-	}
-
-	// Labels.
-	labelKeys := sortedKeys(cc.Labels)
-	for _, k := range labelKeys {
-		runArgs = append(runArgs, "--label", k+"="+cc.Labels[k])
-	}
-
-	// Env.
+	// Env list.
 	envKeys := sortedKeys(cc.Env)
+	envList := make([]string, 0, len(cc.Env))
 	for _, k := range envKeys {
-		runArgs = append(runArgs, "--env", k+"="+cc.Env[k])
+		envList = append(envList, k+"="+cc.Env[k])
 	}
 
-	// Ports.
-	for _, p := range cc.Ports {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			runArgs = append(runArgs, "-p", p)
-		}
+	// Port bindings.
+	exposedPorts, portBindings, err := parsePortSpecs(cc.Ports)
+	if err != nil {
+		return nil, fmt.Errorf("parse ports: %w", err)
 	}
 
 	// Resource limits.
+	var nanoCPUs int64
 	if strings.TrimSpace(cc.CPU) != "" {
-		if _, err := strconv.ParseFloat(cc.CPU, 64); err == nil {
-			runArgs = append(runArgs, "--cpus", cc.CPU)
+		if f, parseErr := strconv.ParseFloat(cc.CPU, 64); parseErr == nil {
+			nanoCPUs = int64(f * 1e9)
 		}
 	}
+	var memBytes int64
 	if strings.TrimSpace(cc.Memory) != "" {
-		runArgs = append(runArgs, "--memory", cc.Memory)
+		if n, parseErr := parseMemoryBytes(cc.Memory); parseErr == nil {
+			memBytes = n
+		}
 	}
 
-	runArgs = append(runArgs, cc.Image)
-	runArgs = append(runArgs, command...)
+	containerCfg := &container.Config{
+		Image:        cc.Image,
+		Cmd:          command,
+		Env:          envList,
+		Labels:       cc.Labels,
+		ExposedPorts: exposedPorts,
+		AttachStdin:  needsInteractive,
+		OpenStdin:    needsInteractive,
+		Tty:          needsInteractive,
+	}
 
-	out, err := d.dockerCmd(ctx, runArgs...)
+	hostCfg := &container.HostConfig{
+		PortBindings: portBindings,
+		Resources: container.Resources{
+			NanoCPUs: nanoCPUs,
+			Memory:   memBytes,
+		},
+	}
+
+	resp, err := d.cli.ContainerCreate(ctx, containerCfg, hostCfg, &network.NetworkingConfig{}, nil, containerName)
 	if err != nil {
-		return nil, fmt.Errorf("docker run: %w", err)
+		return nil, fmt.Errorf("docker ContainerCreate: %w", err)
 	}
-	containerID := strings.TrimSpace(out)
-	if containerID == "" {
-		return nil, fmt.Errorf("docker run returned empty container id")
+	containerID := resp.ID
+
+	if err := d.cli.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+		_ = d.deleteBestEffort(ctx, containerID)
+		return nil, fmt.Errorf("docker ContainerStart: %w", err)
 	}
 
 	// Verify running.
-	runningOut, err := d.dockerCmd(ctx, "inspect", "-f", "{{.State.Running}}", containerID)
+	info, err := d.cli.ContainerInspect(ctx, containerID)
 	if err != nil {
 		_ = d.deleteBestEffort(ctx, containerID)
-		return nil, fmt.Errorf("docker inspect: %w", err)
+		return nil, fmt.Errorf("docker ContainerInspect: %w", err)
 	}
-	if strings.TrimSpace(runningOut) != "true" {
-		logs, _ := d.dockerCmd(ctx, "logs", "--tail", "80", containerID)
+	if !info.State.Running {
+		logs := d.containerLogs(ctx, containerID, "80")
 		_ = d.deleteBestEffort(ctx, containerID)
-		return nil, fmt.Errorf("container %s is not running; logs:\n%s", containerID, strings.TrimSpace(logs))
+		return nil, fmt.Errorf("container %s is not running; logs:\n%s", containerID[:12], strings.TrimSpace(logs))
 	}
 
 	return &providersdk.Resource{
@@ -126,38 +159,66 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 }
 
 func (d *Driver) Read(ctx context.Context, id string) (*providersdk.ResourceStatus, error) {
-	out, err := d.dockerCmd(ctx, "inspect", "-f", "{{.State.Status}}", id)
+	info, err := d.cli.ContainerInspect(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("docker inspect %s: %w", id, err)
+		return nil, fmt.Errorf("docker ContainerInspect %s: %w", id, err)
 	}
 	return &providersdk.ResourceStatus{
 		ID:    id,
-		State: strings.TrimSpace(out),
+		State: info.State.Status,
 	}, nil
 }
 
 func (d *Driver) Update(ctx context.Context, id string, op providersdk.Operation) (*providersdk.Result, error) {
 	switch o := op.(type) {
 	case *ExecOp:
-		args := append([]string{"exec", id}, o.Command...)
-		out, err := d.dockerCmd(ctx, args...)
-		if err != nil {
-			return nil, fmt.Errorf("docker exec %s: %w", id, err)
-		}
-		return &providersdk.Result{
-			Outputs: map[string]string{"stdout": out},
-		}, nil
+		return d.execInContainer(ctx, id, o)
 	default:
 		return nil, fmt.Errorf("unsupported operation type %T", op)
 	}
 }
 
-func (d *Driver) Allocate(ctx context.Context, id string) (map[string]any, error) {
-	out, err := d.dockerCmd(ctx, "inspect", "-f", "{{.Name}}", id)
+func (d *Driver) execInContainer(ctx context.Context, id string, op *ExecOp) (*providersdk.Result, error) {
+	execResp, err := d.cli.ContainerExecCreate(ctx, id, container.ExecOptions{
+		Cmd:          op.Command,
+		AttachStdout: true,
+		AttachStderr: true,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("docker inspect %s: %w", id, err)
+		return nil, fmt.Errorf("docker ContainerExecCreate %s: %w", id, err)
 	}
-	name := strings.TrimPrefix(strings.TrimSpace(out), "/")
+
+	attach, err := d.cli.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("docker ContainerExecAttach %s: %w", execResp.ID, err)
+	}
+	defer attach.Close()
+
+	var stdout, stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(&stdout, &stderr, attach.Reader); err != nil {
+		return nil, fmt.Errorf("docker exec read output: %w", err)
+	}
+
+	inspect, err := d.cli.ContainerExecInspect(ctx, execResp.ID)
+	if err != nil {
+		return nil, fmt.Errorf("docker ContainerExecInspect %s: %w", execResp.ID, err)
+	}
+
+	return &providersdk.Result{
+		Outputs: map[string]string{
+			"stdout":    stdout.String(),
+			"stderr":    stderr.String(),
+			"exit_code": strconv.Itoa(inspect.ExitCode),
+		},
+	}, nil
+}
+
+func (d *Driver) Allocate(ctx context.Context, id string) (map[string]any, error) {
+	info, err := d.cli.ContainerInspect(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("docker ContainerInspect %s: %w", id, err)
+	}
+	name := strings.TrimPrefix(info.Name, "/")
 	if name == "" {
 		name = id
 	}
@@ -172,9 +233,8 @@ func (d *Driver) Delete(ctx context.Context, id string) error {
 	if id == "" {
 		return fmt.Errorf("resource id is required")
 	}
-	_, err := d.dockerCmd(ctx, "rm", "-f", id)
-	if err != nil {
-		return fmt.Errorf("docker rm -f %s: %w", id, err)
+	if err := d.cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true}); err != nil {
+		return fmt.Errorf("docker ContainerRemove %s: %w", id, err)
 	}
 	return nil
 }
@@ -185,43 +245,22 @@ type ExecOp struct {
 }
 
 func (d *Driver) deleteBestEffort(ctx context.Context, id string) error {
-	_, err := d.dockerCmd(ctx, "rm", "-f", id)
-	return err
+	return d.cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true})
 }
 
-func (d *Driver) dockerCmd(ctx context.Context, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	cmd.Env = os.Environ()
-	if strings.HasPrefix(d.host, "tcp://") {
-		cmd.Env = append(cmd.Env, "DOCKER_HOST="+d.host)
+func (d *Driver) containerLogs(ctx context.Context, id, tail string) string {
+	rc, err := d.cli.ContainerLogs(ctx, id, container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Tail:       tail,
+	})
+	if err != nil {
+		return ""
 	}
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		return "", fmt.Errorf("%s (args=%q)", friendlyDockerErr(err, msg), strings.Join(args, " "))
-	}
-	return stdout.String(), nil
-}
-
-// friendlyDockerErr translates low-level Docker exec errors into actionable messages.
-func friendlyDockerErr(err error, stderr string) string {
-	// Binary not on PATH — Docker Desktop isn't running or was never installed.
-	if errors.Is(err, exec.ErrNotFound) {
-		return "docker CLI not found in PATH — is Docker Desktop running? On Windows/WSL, Docker Desktop must be started before use"
-	}
-	// Daemon unreachable — CLI exists but the daemon socket/pipe isn't open.
-	lower := strings.ToLower(stderr)
-	if strings.Contains(lower, "cannot connect to the docker daemon") ||
-		strings.Contains(lower, "error during connect") ||
-		strings.Contains(lower, "the system cannot find the file specified") && strings.Contains(lower, "//./pipe/docker") {
-		return "cannot connect to Docker daemon — start Docker Desktop (or 'sudo systemctl start docker' on Linux): " + stderr
-	}
-	return stderr
+	defer rc.Close() //nolint:errcheck
+	var buf bytes.Buffer
+	stdcopy.StdCopy(&buf, &buf, rc) //nolint:errcheck
+	return buf.String()
 }
 
 func decodeCreateConfig(cfg any) (CreateConfig, error) {
@@ -245,13 +284,64 @@ func decodeCreateConfig(cfg any) (CreateConfig, error) {
 	}
 }
 
+func parsePortSpecs(ports []string) (nat.PortSet, nat.PortMap, error) {
+	var specs []string
+	for _, p := range ports {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			specs = append(specs, p)
+		}
+	}
+	if len(specs) == 0 {
+		return nat.PortSet{}, nat.PortMap{}, nil
+	}
+	exposed, bindings, err := nat.ParsePortSpecs(specs)
+	if err != nil {
+		return nil, nil, err
+	}
+	return exposed, bindings, nil
+}
+
+// parseMemoryBytes converts a human-readable memory string (e.g. "512m", "2g")
+// to bytes. Accepts b, k, m, g suffixes (case-insensitive).
+func parseMemoryBytes(s string) (int64, error) {
+	s = strings.TrimSpace(strings.ToLower(s))
+	if s == "" {
+		return 0, nil
+	}
+	multipliers := []struct {
+		suffix string
+		mult   int64
+	}{
+		{"gb", 1024 * 1024 * 1024},
+		{"mb", 1024 * 1024},
+		{"kb", 1024},
+		{"g", 1024 * 1024 * 1024},
+		{"m", 1024 * 1024},
+		{"k", 1024},
+		{"b", 1},
+	}
+	for _, m := range multipliers {
+		if strings.HasSuffix(s, m.suffix) {
+			num := strings.TrimSuffix(s, m.suffix)
+			f, err := strconv.ParseFloat(num, 64)
+			if err != nil {
+				return 0, fmt.Errorf("parse memory %q: %w", s, err)
+			}
+			return int64(f * float64(m.mult)), nil
+		}
+	}
+	return strconv.ParseInt(s, 10, 64)
+}
+
 func toStringSlice(items []any) []string {
 	out := make([]string, 0, len(items))
 	for _, item := range items {
-		if s, ok := item.(string); ok {
-			out = append(out, s)
-		} else if s, ok := item.(fmt.Stringer); ok {
-			out = append(out, s.String())
+		switch v := item.(type) {
+		case string:
+			out = append(out, v)
+		case fmt.Stringer:
+			out = append(out, v.String())
 		}
 	}
 	return out

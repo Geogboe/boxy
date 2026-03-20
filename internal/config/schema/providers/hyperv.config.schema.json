@@ -2,24 +2,51 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "boxy://schemas/providers/hyperv.config.schema.json",
   "title": "Hyper-V Provider Config",
-  "description": "Schema for provider.config when provider.type is \"hyperv\".",
+  "description": "Schema for provider.config when provider.type is \"hyperv\". The boxy agent must run on the Hyper-V host as Administrator.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "endpoint": {
-      "description": "Hyper-V endpoint/host identifier (POC).",
+    "template_vhd": {
+      "description": "Path to the parent VHD/VHDX used as a base for differencing disks (required).",
       "type": "string",
       "minLength": 1
     },
-    "username": {
-      "description": "Optional username for remote auth.",
+    "vhd_dir": {
+      "description": "Directory where differencing VHDs are created. Defaults to the directory containing template_vhd.",
       "type": "string"
     },
-    "password": {
-      "description": "Optional password for remote auth.",
+    "generation": {
+      "description": "Hyper-V VM generation (1 or 2). Default: 2.",
+      "type": "integer",
+      "enum": [1, 2]
+    },
+    "cpu_count": {
+      "description": "Number of virtual processors. Default: 2.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "memory_mb": {
+      "description": "Startup memory in megabytes. Default: 2048.",
+      "type": "integer",
+      "minimum": 256
+    },
+    "switch": {
+      "description": "Name of the Hyper-V virtual switch to connect to. Optional.",
+      "type": "string"
+    },
+    "guest_os": {
+      "description": "Guest operating system. Windows guests use PowerShell Direct; Linux guests use SSH. Default: \"windows\".",
+      "type": "string",
+      "enum": ["windows", "linux"]
+    },
+    "guest_user": {
+      "description": "Guest OS username for exec operations (PSRP auth for Windows; SSH user for Linux). Default: \"Administrator\" for Windows, \"admin\" for Linux.",
+      "type": "string"
+    },
+    "guest_password": {
+      "description": "Guest OS password (PSRP password for Windows; SSH password for Linux).",
       "type": "string"
     }
   },
-  "required": ["endpoint"]
+  "required": ["template_vhd"]
 }
-

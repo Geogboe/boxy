@@ -1,14 +1,14 @@
-package docker
+package hyperv
 
 import "github.com/Geogboe/boxy/pkg/providersdk"
 
-// Registration returns the providersdk.Registration for the Docker provider.
+// Registration returns the providersdk.Registration for the Hyper-V provider.
 func Registration() providersdk.Registration {
 	return providersdk.Registration{
 		Type:        ProviderType,
 		ConfigProto: func() any { return &Config{} },
 		NewDriver: func(cfg any) (providersdk.Driver, error) {
-			return New(cfg.(*Config))
+			return New(cfg.(*Config)), nil
 		},
 	}
 }

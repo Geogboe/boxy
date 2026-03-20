@@ -5,6 +5,7 @@ import (
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/providersdk/providers/devfactory"
 	"github.com/Geogboe/boxy/pkg/providersdk/providers/docker"
+	"github.com/Geogboe/boxy/pkg/providersdk/providers/hyperv"
 )
 
 // RegisterBuiltins registers all built-in provider types with reg.
@@ -13,6 +14,9 @@ func RegisterBuiltins(reg *providersdk.Registry) error {
 		return err
 	}
 	if err := reg.Register(docker.Registration()); err != nil {
+		return err
+	}
+	if err := reg.Register(hyperv.Registration()); err != nil {
 		return err
 	}
 	return nil
