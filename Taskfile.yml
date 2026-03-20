@@ -46,6 +46,12 @@ tasks:
     cmds:
       - golangci-lint run ./...
 
+  kill:boxy:
+    desc: Kill any running boxy processes (Windows only, requires pwsh)
+    platforms: [windows]
+    cmds:
+      - pwsh -Command "Get-Process -Name boxy -ErrorAction SilentlyContinue | Stop-Process -Force; Write-Host 'Done'"
+
   e2e:serve:
     desc: E2E validation of boxy serve (API + UI)
     cmds:
