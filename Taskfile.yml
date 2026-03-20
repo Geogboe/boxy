@@ -10,6 +10,9 @@ tasks:
     desc: Run `boxy` via `go run`
     aliases:
       - run
+    dir: '{{.ROOT_DIR}}'
+    env:
+      BOXY_WORKING_DIR: '{{.USER_WORKING_DIR}}'
     cmds:
       - go run ./cmd/boxy {{.CLI_ARGS}}
 
@@ -44,6 +47,12 @@ tasks:
     desc: Run golangci-lint (same as CI)
     cmds:
       - golangci-lint run ./...
+
+  kill:boxy:
+    desc: Kill any running boxy processes (Windows only, requires pwsh)
+    platforms: [windows]
+    cmds:
+      - pwsh -Command "Get-Process -Name boxy -ErrorAction SilentlyContinue | Stop-Process -Force; Write-Host 'Done'"
 
   e2e:serve:
     desc: E2E validation of boxy serve (API + UI)

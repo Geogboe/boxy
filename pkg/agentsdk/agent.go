@@ -37,6 +37,11 @@ type Agent interface {
 
 	// Delete destroys a resource.
 	Delete(ctx context.Context, provider providersdk.Type, id string) error
+
+	// Allocate runs allocation-time hooks on an existing resource and returns
+	// additional Properties to merge. Returns nil, nil if the provider has no
+	// allocation work to perform.
+	Allocate(ctx context.Context, provider providersdk.Type, id string) (map[string]any, error)
 }
 
 // AgentInfo describes an agent and the providers it hosts.

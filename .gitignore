@@ -211,3 +211,5 @@ vite.config.ts.timestamp-*
 .vite/
 
 .claude/
+
+*.env

@@ -1,6 +1,8 @@
 ---
+# Allocate one container from the web pool into a sandbox.
+#
+# Run: boxy sandbox create demo.sandbox.yaml
 name: web-sandbox
 resources:
-  - name: app-server
-    pool: web
+  - pool: web
     count: 1

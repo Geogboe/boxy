@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Geogboe/boxy/internal/sandbox"
 	"github.com/Geogboe/boxy/internal/server"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/store"
@@ -14,7 +15,7 @@ import (
 
 func TestUI_home_renders(t *testing.T) {
 	t.Parallel()
-	mux := server.NewTestMux(store.NewMemoryStore(), true)
+	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), true)
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -37,7 +38,7 @@ func TestUI_pools_renders(t *testing.T) {
 	st := store.NewMemoryStore()
 	_ = st.PutPool(context.Background(), model.Pool{Name: "test-pool"})
 
-	mux := server.NewTestMux(st, true)
+	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/ui/pools", nil)
 	mux.ServeHTTP(w, r)
@@ -56,7 +57,7 @@ func TestUI_sandboxes_renders(t *testing.T) {
 	st := store.NewMemoryStore()
 	_ = st.CreateSandbox(context.Background(), model.Sandbox{ID: "sb-test", Name: "my-sandbox"})
 
-	mux := server.NewTestMux(st, true)
+	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/ui/sandboxes", nil)
 	mux.ServeHTTP(w, r)
@@ -75,7 +76,7 @@ func TestUI_fragment_stats(t *testing.T) {
 	st := store.NewMemoryStore()
 	_ = st.PutPool(context.Background(), model.Pool{Name: "p1"})
 
-	mux := server.NewTestMux(st, true)
+	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/ui/fragments/stats", nil)
 	mux.ServeHTTP(w, r)
@@ -91,7 +92,7 @@ func TestUI_fragment_stats(t *testing.T) {
 
 func TestUI_fragment_pools_table(t *testing.T) {
 	t.Parallel()
-	mux := server.NewTestMux(store.NewMemoryStore(), true)
+	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), true)
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/ui/fragments/pools-table", nil)
@@ -108,7 +109,7 @@ func TestUI_fragment_pools_table(t *testing.T) {
 
 func TestUI_disabled_returns_404(t *testing.T) {
 	t.Parallel()
-	mux := server.NewTestMux(store.NewMemoryStore(), false)
+	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), false)
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -122,7 +123,7 @@ func TestUI_disabled_returns_404(t *testing.T) {
 
 func TestUI_static_css(t *testing.T) {
 	t.Parallel()
-	mux := server.NewTestMux(store.NewMemoryStore(), true)
+	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), true)
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/static/style.css", nil)
@@ -138,7 +139,7 @@ func TestUI_static_css(t *testing.T) {
 
 func TestUI_static_htmx(t *testing.T) {
 	t.Parallel()
-	mux := server.NewTestMux(store.NewMemoryStore(), true)
+	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), true)
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/static/htmx.min.js", nil)

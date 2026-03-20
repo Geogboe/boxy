@@ -13,11 +13,14 @@ import (
 //
 // This is the "demand side" counterpart to PoolManager.
 type Manager struct {
-	store store.Store
+	store     store.Store
+	allocator SandboxAllocator
 }
 
-func New(s store.Store) *Manager {
-	return &Manager{store: s}
+// New creates a Manager. allocator may be nil — if so, allocation-time hooks
+// are skipped and resource Properties are not updated at allocation time.
+func New(s store.Store, allocator SandboxAllocator) *Manager {
+	return &Manager{store: s, allocator: allocator}
 }
 
 // Create creates an empty sandbox.
@@ -102,6 +105,20 @@ func (m *Manager) AddFromPool(
 		if res.ID == "" {
 			return model.Sandbox{}, fmt.Errorf("selected resource has empty id")
 		}
+		if m.allocator != nil {
+			extra, err := m.allocator.Allocate(ctx, pool, res)
+			if err != nil {
+				return model.Sandbox{}, fmt.Errorf("allocate resource %q: %w", res.ID, err)
+			}
+			if extra != nil {
+				if res.Properties == nil {
+					res.Properties = make(map[string]any)
+				}
+				for k, v := range extra {
+					res.Properties[k] = v
+				}
+			}
+		}
 		res.State = model.ResourceStateAllocated
 		if err := m.store.PutResource(ctx, res); err != nil {
 			return model.Sandbox{}, fmt.Errorf("put resource %q: %w", res.ID, err)
@@ -184,6 +201,20 @@ func (m *Manager) CreateFromPool(
 	for _, res := range selected {
 		if res.ID == "" {
 			return model.Sandbox{}, fmt.Errorf("selected resource has empty id")
+		}
+		if m.allocator != nil {
+			extra, err := m.allocator.Allocate(ctx, pool, res)
+			if err != nil {
+				return model.Sandbox{}, fmt.Errorf("allocate resource %q: %w", res.ID, err)
+			}
+			if extra != nil {
+				if res.Properties == nil {
+					res.Properties = make(map[string]any)
+				}
+				for k, v := range extra {
+					res.Properties[k] = v
+				}
+			}
 		}
 		res.State = model.ResourceStateAllocated
 		if err := m.store.PutResource(ctx, res); err != nil {

@@ -44,7 +44,7 @@ func TestManager_CreateFromPool_ConsumesReadyResource(t *testing.T) {
 		t.Fatalf("put pool: %v", err)
 	}
 
-	mgr := New(st)
+	mgr := New(st, nil)
 	sb, err := mgr.CreateFromPool(context.Background(), "docker-containers", 1, "demo", model.SandboxPolicies{})
 	if err != nil {
 		t.Fatalf("create: %v", err)

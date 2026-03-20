@@ -96,6 +96,7 @@ When decisions are made, save them as ADR documents in /docs/adr. This is a livi
 ## Taskfile
 
 Wrap repeated commands in `Taskfile.yml`. If a command is run more than once, add it as a task.
+- Use `dir: '{{.USER_WORKING_DIR}}'` for tasks that should execute from the caller's directory, while still referencing repo-root paths with `{{.ROOT_DIR}}` when needed.
 
 ## Tools
 
