@@ -10,8 +10,9 @@ tasks:
     desc: Run `boxy` via `go run`
     aliases:
       - run
+    dir: '{{.USER_WORKING_DIR}}'
     cmds:
-      - go run ./cmd/boxy {{.CLI_ARGS}}
+      - go run {{.ROOT_DIR}}/cmd/boxy {{.CLI_ARGS}}
 
   serve:
     desc: Run `boxy serve` via `go run`

@@ -1,6 +1,0 @@
----
-name: basic
-resources:
-  - name: example
-    pool: basic
-    count: 1

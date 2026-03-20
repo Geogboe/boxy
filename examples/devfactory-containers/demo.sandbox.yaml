@@ -1,6 +1,0 @@
----
-name: web-sandbox
-resources:
-  - name: app-server
-    pool: web
-    count: 1

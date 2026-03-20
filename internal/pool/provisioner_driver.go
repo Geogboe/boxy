@@ -12,6 +12,10 @@ import (
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
+// Deprecated: use AgentProvisioner. DriverProvisioner is kept for reference and
+// backward compatibility, but all new code should use AgentProvisioner which
+// routes through agentsdk.Agent instead of directly through the registry.
+//
 // DriverProvisioner adapts providersdk.Driver instances into the pool.Provisioner
 // interface. It dispatches to the correct driver based on each pool's provider
 // configuration.

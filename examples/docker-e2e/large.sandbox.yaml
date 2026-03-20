@@ -1,6 +1,0 @@
----
-name: large-workspace
-resources:
-  - name: workers
-    pool: alpine-pool
-    count: 5

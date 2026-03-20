@@ -2,18 +2,25 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	boxyconfig "github.com/Geogboe/boxy/internal/config"
 	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/internal/sandbox"
 	"github.com/Geogboe/boxy/internal/server"
+	"github.com/Geogboe/boxy/pkg/agentsdk"
+	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/providersdk/builtins"
 	"github.com/Geogboe/boxy/pkg/store"
+	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
 )
@@ -45,31 +52,89 @@ func newServeCommand() *cobra.Command {
 }
 
 func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
+	logFile, _ := cmd.Root().PersistentFlags().GetString("log-file")
+	ui := newServeUI(logFile == "")
+	if logFile == "" {
+		// Silence slog — pterm handles all user-facing output in this mode.
+		slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}
+
+	// Config
+	doneConfig := ui.step("Loading config")
 	cfg, cfgPath, err := loadConfig(opts.configPath)
 	if err != nil {
 		return err
 	}
+	var configMsg string
 	if cfgPath == "" {
-		slog.Warn("no config file found; starting with empty config (providers=0)")
+		configMsg = "no config file (defaults)"
 	} else {
-		slog.Info("loaded config", "path", cfgPath, "providers", len(cfg.Providers))
+		configMsg = fmt.Sprintf("%s (%d providers, %d pools)", filepath.Base(cfgPath), len(cfg.Providers), len(cfg.Pools))
 	}
+	doneConfig(configMsg)
 
+	// Providers
+	doneProviders := ui.step("Registering providers")
 	reg := providersdk.NewRegistry()
 	if err := builtins.RegisterBuiltins(reg); err != nil {
 		return fmt.Errorf("register builtin providers: %w", err)
 	}
-	slog.Info("builtin provider types", "types", providerTypes(reg))
+	doneProviders(strings.Join(providerTypes(reg), ", "))
 
+	// Validate
+	doneValidate := ui.step("Validating provider config")
 	if err := reg.ValidateInstances(ctx, cfg.Providers); err != nil {
 		return fmt.Errorf("validate providers: %w", err)
 	}
-	slog.Info("providers validated", "count", len(cfg.Providers))
+	doneValidate(fmt.Sprintf("%d configured", len(cfg.Providers)))
+
+	// Build lookup maps for the DriverProvisioner.
+	specsMap := make(map[model.PoolName]boxyconfig.PoolSpec, len(cfg.Pools))
+	for _, spec := range cfg.Pools {
+		specsMap[model.PoolName(spec.Name)] = spec
+	}
+	providersMap := make(map[string]providersdk.Instance, len(cfg.Providers))
+	for _, p := range cfg.Providers {
+		providersMap[p.Name] = p
+	}
 
 	st := store.NewMemoryStore()
-	_ = sandbox.New(st)
-	_ = pool.New(st, pool.UnimplementedProvisioner{})
-	slog.Info("core initialized", "store", "memory")
+
+	// Drivers + embedded agent
+	doneAgent := ui.step("Starting embedded agent")
+	drivers, err := buildDrivers(reg, cfg.Providers)
+	if err != nil {
+		return fmt.Errorf("build drivers: %w", err)
+	}
+	embeddedAgent, err := agentsdk.NewEmbeddedAgent("embedded", "Embedded Agent", drivers...)
+	if err != nil {
+		return fmt.Errorf("create embedded agent: %w", err)
+	}
+	doneAgent(fmt.Sprintf("%d drivers", len(drivers)))
+
+	// Use AgentProvisioner to route pool operations through the agent.
+	provisioner := &pool.AgentProvisioner{
+		Agent:     embeddedAgent,
+		Specs:     specsMap,
+		Providers: providersMap,
+	}
+	poolMgr := pool.New(st, provisioner)
+	sandboxMgr := sandbox.New(st)
+
+	// Pools
+	donePools := ui.step("Initializing pools")
+	poolNames := make([]model.PoolName, 0, len(cfg.Pools))
+	for _, spec := range cfg.Pools {
+		p, err := poolSpecToModel(spec)
+		if err != nil {
+			return fmt.Errorf("create pool model for %q: %w", spec.Name, err)
+		}
+		if err := st.PutPool(ctx, p); err != nil {
+			return fmt.Errorf("seed pool %q: %w", spec.Name, err)
+		}
+		poolNames = append(poolNames, p.Name)
+	}
+	donePools(fmt.Sprintf("%d pool(s)", len(poolNames)))
 
 	// Resolve listen address: flag > config > default
 	listenAddr := resolveListenAddr(opts, cmd, cfg)
@@ -77,15 +142,14 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	// Resolve UI enabled: flag > config > default (true)
 	uiEnabled := resolveUIEnabled(opts, cmd, cfg)
 
-	srv := server.New(st, listenAddr, uiEnabled)
-	slog.Info("starting server", "listen", listenAddr, "ui", uiEnabled)
+	srv := server.New(st, sandboxMgr, listenAddr, uiEnabled)
 
 	g, ctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		return srv.Start(ctx)
 	})
 	g.Go(func() error {
-		return serveLoop(ctx)
+		return serveLoop(ctx, poolMgr, poolNames, ui)
 	})
 
 	printServeBanner(listenAddr, uiEnabled, len(cfg.Pools))
@@ -147,7 +211,7 @@ func findDefaultConfigPath() (string, error) {
 	return findConfigPathInDir(cwd)
 }
 
-func serveLoop(ctx context.Context) error {
+func serveLoop(ctx context.Context, poolMgr *pool.Manager, poolNames []model.PoolName, ui *serveUI) error {
 	const tickEvery = 10 * time.Second
 
 	ticker := time.NewTicker(tickEvery)
@@ -156,26 +220,59 @@ func serveLoop(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Info("shutting down", "reason", ctx.Err())
+			ui.shutdown()
 			return nil
 		case <-ticker.C:
-			slog.Debug("reconcile tick")
+			for _, name := range poolNames {
+				if err := poolMgr.Reconcile(ctx, name); err != nil {
+					ui.reconcileError(name, err)
+				}
+			}
 		}
 	}
 }
 
-// printServeBanner writes a human-friendly startup message to stderr.
+// poolSpecToModel converts a config PoolSpec into a runtime model.Pool.
+// Initializes the pool's inventory with the expected type and profile.
+func poolSpecToModel(spec boxyconfig.PoolSpec) (model.Pool, error) {
+	expectedType, err := poolExpectedType(spec.Type)
+	if err != nil {
+		return model.Pool{}, fmt.Errorf("pool %q type invalid: %w", spec.Name, err)
+	}
+	policy := spec.EffectivePolicy()
+	return model.Pool{
+		Name: model.PoolName(spec.Name),
+		Policies: model.PoolPolicies{
+			Preheat: model.PreheatPolicy{
+				MinReady: policy.Preheat.MinReady,
+				MaxTotal: policy.Preheat.MaxTotal,
+			},
+			Recycle: model.RecyclePolicy{
+				MaxAge: policy.Recycle.MaxAge,
+			},
+		},
+		Inventory: model.ResourceCollection{
+			ExpectedType:    expectedType,
+			ExpectedProfile: model.ResourceProfile(spec.Name),
+		},
+	}, nil
+}
+
+// printServeBanner writes the startup banner to the terminal via pterm.
 func printServeBanner(listenAddr string, uiEnabled bool, poolCount int) {
 	host := displayAddr(listenAddr)
 
-	fmt.Fprintf(os.Stderr, "\n  Boxy server running\n\n")
+	pterm.Println()
+	pterm.Bold.Printfln("  Boxy is running")
+	pterm.Println()
 	if uiEnabled {
-		fmt.Fprintf(os.Stderr, "    Dashboard:  http://%s/\n", host)
+		pterm.Printfln("    Dashboard   http://%s/", host)
 	}
-	fmt.Fprintf(os.Stderr, "    API:        http://%s/api/v1/\n", host)
-	fmt.Fprintf(os.Stderr, "    Health:     http://%s/healthz\n", host)
-	fmt.Fprintf(os.Stderr, "\n  Pools: %d configured\n", poolCount)
-	fmt.Fprintf(os.Stderr, "  Press Ctrl+C to stop\n\n")
+	pterm.Printfln("    API         http://%s/api/v1/", host)
+	pterm.Printfln("    Health      http://%s/healthz", host)
+	pterm.Println()
+	pterm.Printfln("  Pools: %d configured  ·  Press Ctrl+C to stop", poolCount)
+	pterm.Println()
 }
 
 // displayAddr resolves a listen address for display.
@@ -197,4 +294,61 @@ func providerTypes(reg *providersdk.Registry) []string {
 		out = append(out, string(t))
 	}
 	return out
+}
+
+// buildDrivers instantiates drivers for all registered provider types.
+// For each type in the registry:
+// - If a provider instance with matching Type exists, use its Config
+// - Otherwise, use the zero-value config (defaults)
+func buildDrivers(reg *providersdk.Registry, instances []providersdk.Instance) ([]providersdk.Driver, error) {
+	types := reg.Types()
+	drivers := make([]providersdk.Driver, 0, len(types))
+
+	// Build a map of type -> instance config for easy lookup.
+	configByType := make(map[providersdk.Type]map[string]any)
+	for _, inst := range instances {
+		configByType[inst.Type] = inst.Config
+	}
+
+	// For each registered type, instantiate a driver.
+	for _, t := range types {
+		reg, ok := reg.Get(t)
+		if !ok {
+			return nil, fmt.Errorf("provider type %q not found in registry", t)
+		}
+
+		// Get config for this type, or use zero-value proto if not configured.
+		cfg := reg.ConfigProto()
+		if rawConfig, ok := configByType[t]; ok {
+			if err := decodeConfig(rawConfig, cfg); err != nil {
+				return nil, fmt.Errorf("decode config for provider type %q: %w", t, err)
+			}
+		}
+
+		// Instantiate the driver.
+		driver, err := reg.NewDriver(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("create driver for provider type %q: %w", t, err)
+		}
+
+		drivers = append(drivers, driver)
+	}
+
+	return drivers, nil
+}
+
+// decodeConfig does a basic map[string]any → struct decode using JSON round-trip.
+func decodeConfig(raw map[string]any, target any) error {
+	if len(raw) == 0 {
+		return nil
+	}
+
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	if err := json.Unmarshal(b, target); err != nil {
+		return fmt.Errorf("unmarshal config: %w", err)
+	}
+	return nil
 }

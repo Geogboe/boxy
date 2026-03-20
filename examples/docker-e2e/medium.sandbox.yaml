@@ -1,6 +1,0 @@
----
-name: medium-workspace
-resources:
-  - name: workers
-    pool: alpine-pool
-    count: 3
