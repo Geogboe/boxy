@@ -103,6 +103,17 @@ Wrap repeated commands in `Taskfile.yml`. If a command is run more than once, ad
 - `gopls` is available locally for code navigation, refactoring, and linting.
 - `task` (go-task) for running project commands.
 
+## Installer Notes
+
+- Release installers live in `scripts/install.ps1` and `scripts/install.sh`.
+- Installers target published GitHub release assets, not local source builds.
+- `latest` in installer scripts means the newest published GitHub release, including prereleases.
+- Installers verify the downloaded binary against the published `checksums.txt`.
+- Default install locations are user-local:
+  - Windows: `%LOCALAPPDATA%\Programs\boxy\bin`
+  - Linux: `$HOME/.local/bin`
+- Linux installer prints PATH update instructions instead of editing shell startup files automatically.
+
 # Deletions
 
 Don't delete files or directories, when you'd do a delete instead move to .archive/

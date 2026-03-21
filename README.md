@@ -2,6 +2,24 @@
 
 Boxy is a resource pooling and sandbox orchestration tool. It pre-provisions pools of VMs, containers, and other resources, then assembles them into on-demand sandboxes for labs, training, pentesting, and development environments.
 
+## Install
+
+Release installers are available for Windows PowerShell and Linux. They download the newest published GitHub release, verify it against the published `checksums.txt`, and install it into a user-local bin directory.
+
+Windows PowerShell:
+
+```powershell
+& ([scriptblock]::Create((Invoke-RestMethod 'https://raw.githubusercontent.com/Geogboe/boxy/main/scripts/install.ps1')))
+```
+
+Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Geogboe/boxy/main/scripts/install.sh | bash
+```
+
+See [docs/install.md](docs/install.md) for supported platforms, version pinning, PATH behavior, and verification details.
+
 ## How It Works
 
 Boxy keeps pools of generic, ready-to-use resources warm ahead of time. When a user requests a sandbox, resources are pulled from pools and personalized via hooks — credentials are set, networking is configured, and connection info is returned. The user connects with their native client (SSH, RDP, SMB, etc.). Boxy is not a proxy.
