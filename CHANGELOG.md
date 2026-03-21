@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.7](https://github.com/Geogboe/boxy/compare/v0.1.6...v0.1.7) (2026-03-21)
+
+
+### Features
+
+* add release installer scripts ([#48](https://github.com/Geogboe/boxy/issues/48)) ([35c257c](https://github.com/Geogboe/boxy/commit/35c257cb484eef55f8ed2db3651116ee32822324))
+
 ## [0.1.6](https://github.com/Geogboe/boxy/compare/v0.1.5...v0.1.6) (2026-03-20)
 
 
