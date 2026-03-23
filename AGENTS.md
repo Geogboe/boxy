@@ -114,6 +114,37 @@ Wrap repeated commands in `Taskfile.yml`. If a command is run more than once, ad
   - Linux: `$HOME/.local/bin`
 - Linux installer prints PATH update instructions instead of editing shell startup files automatically.
 
+## CI / CD Workflow Notes
+
+### GitHub Actions Node 20 → 24 Migration Status
+
+All actions in `ci.yml` and `release.yml` are Node 24-compatible **except** for
+`googleapis/release-please-action`:
+
+| Workflow | Action | Node Runtime |
+|---|---|---|
+| ci.yml | `actions/checkout@v5` | Node 24 ✅ |
+| ci.yml | `actions/setup-go@v6` | Node 24 ✅ |
+| ci.yml | `golangci/golangci-lint-action@v9.2.0` | Node 24 ✅ |
+| release.yml | `actions/checkout@v5` | Node 24 ✅ |
+| release.yml | `actions/setup-go@v6` | Node 24 ✅ |
+| release.yml | `googleapis/release-please-action@v4.4.0` | Node 20 ⚠️ (see below) |
+
+**Blocker — `googleapis/release-please-action@v4.4.0` (Node 20):**
+
+- Latest upstream release as of March 2026 is v4.4.0; it still declares
+  `runs.using: node20` in its `action.yml`.
+- Upstream tracking issue: `googleapis/release-please-action#1162`.
+- `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"` is set in `release.yml` as a
+  mitigation — this makes the runner execute the action with Node 24, but GitHub
+  still emits a `##[warning]` annotation because the action's metadata declares
+  `node20`.  The action runs correctly under Node 24.
+- **No action needed until June 2, 2026**, when GitHub will enforce Node 24 as
+  the default and may break Node 20 actions.
+- **Next step:** When `googleapis/release-please-action` publishes a Node 24
+  release (v4.x patch or v5), update the pin in `release.yml` and remove the
+  `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` env var.
+
 # Deletions
 
 Don't delete files or directories, when you'd do a delete instead move to .archive/
