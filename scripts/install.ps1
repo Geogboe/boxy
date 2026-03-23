@@ -8,6 +8,7 @@ param(
 $ErrorActionPreference = "Stop"
 $repo = "Geogboe/boxy"
 $defaultInstallDir = Join-Path $env:LOCALAPPDATA "Programs\boxy\bin"
+$assetArch = "amd64"
 
 function Write-DebugLog {
     param([string]$Message)
@@ -63,15 +64,18 @@ function Ensure-UserPathContains {
 }
 
 $arch = Get-ProcessorArchitecture
-if ($arch -notin @("AMD64", "x86_64")) {
+if ($arch -notin @("AMD64", "x86_64", "ARM64")) {
     Fail "Unsupported architecture: $arch. Windows release assets are currently available for amd64 only."
+}
+if ($arch -eq "ARM64") {
+    Write-DebugLog "ARM64 host detected; using the amd64 Windows release asset."
 }
 
 if ($Version -eq "latest") {
     $Version = Resolve-LatestTag -Repo $repo
 }
 
-$asset = "boxy-windows-amd64.exe"
+$asset = "boxy-windows-$assetArch.exe"
 $baseUrl = "https://github.com/$repo/releases/download/$Version"
 $downloadUrl = "$baseUrl/$asset"
 $checksumsUrl = "$baseUrl/checksums.txt"
