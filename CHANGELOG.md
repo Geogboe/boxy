@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.8](https://github.com/Geogboe/boxy/compare/v0.1.7...v0.1.8) (2026-03-23)
+
+
+### Bug Fixes
+
+* harden installer release compatibility ([d1b7179](https://github.com/Geogboe/boxy/commit/d1b7179c6a6c974089d5538273b1ddb0ce17d747))
+
 ## [0.1.7](https://github.com/Geogboe/boxy/compare/v0.1.6...v0.1.7) (2026-03-21)
 
 
