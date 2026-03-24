@@ -1,5 +1,6 @@
-# Release pipeline — uses release-please to manage versions and changelogs,
-# then builds multi-platform binaries when a release is created.
+# Release pipeline — Release Please manages version bumps and changelogs;
+# GoReleaser builds and attaches multi-platform archives when a release is created.
+# Both jobs live in the same file so GITHUB_TOKEN can wire them together.
 name: Release
 
 on:
@@ -30,62 +31,26 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  build-release:
-    name: Build Release Assets
+  goreleaser:
+    name: GoReleaser
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
+          fetch-depth: 0
           ref: ${{ needs.release-please.outputs.tag_name }}
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version-file: go.mod
 
-      - name: Set build variables
-        id: vars
-        run: |
-          echo "version=${{ needs.release-please.outputs.tag_name }}" >> "$GITHUB_OUTPUT"
-          echo "commit=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
-          echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+      - name: Install syft (for SBOM generation)
+        uses: anchore/sbom-action/download-syft@v0
 
-      - name: Build binaries
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          args: release --clean
         env:
-          LDFLAGS: >-
-            -s -w
-            -X main.Version=${{ steps.vars.outputs.version }}
-            -X main.GitCommit=${{ steps.vars.outputs.commit }}
-            -X main.BuildDate=${{ steps.vars.outputs.date }}
-        run: |
-          mkdir -p dist
-          platforms=(
-            "linux/amd64"
-            "linux/arm64"
-            "darwin/amd64"
-            "darwin/arm64"
-            "windows/amd64"
-          )
-          for platform in "${platforms[@]}"; do
-            os="${platform%/*}"
-            arch="${platform#*/}"
-            output="dist/boxy-${os}-${arch}"
-            if [ "$os" = "windows" ]; then
-              output="${output}.exe"
-            fi
-            echo "Building ${os}/${arch}..."
-            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build \
-              -ldflags="${LDFLAGS}" -trimpath \
-              -o "$output" ./cmd/boxy
-          done
-          ls -lh dist/
-
-      - name: Generate checksums
-        working-directory: dist
-        run: sha256sum boxy-* > checksums.txt
-
-      - name: Upload release assets
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ needs.release-please.outputs.tag_name }}" dist/*
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

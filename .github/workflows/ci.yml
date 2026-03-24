@@ -18,12 +18,15 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version-file: go.mod
 
-      - uses: golangci/golangci-lint-action@v9.2.0
-        with:
-          version: latest
-          only-new-issues: true
+      # Build from source so golangci-lint and Go versions always match.
+      # The golangci-lint-action pre-built binary lags behind Go releases.
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+
+      - name: Run golangci-lint
+        run: golangci-lint run ./...
 
   test:
     name: Test
@@ -33,7 +36,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version-file: go.mod
 
       - name: Run tests
         run: go test -race -short ./...
@@ -46,7 +49,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version-file: go.mod
 
       - name: Build
         run: go build ./cmd/boxy
