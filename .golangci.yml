@@ -1,0 +1,28 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - gosec
+    - unused
+    - gocritic
+    - misspell
+
+  settings:
+    gosec:
+      excludes:
+        - G204  # subprocess via variable (intentional in CLI tools)
+        - G304  # file inclusion via variable (intentional in loaders)
+
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+
+formatters:
+  enable:
+    - gofmt
