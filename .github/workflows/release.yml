@@ -21,6 +21,8 @@ jobs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
+      # v4.4.0 still declares node20; FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 above runs it on Node 24.
+      # Blocked on upstream: https://github.com/googleapis/release-please-action/pull/1188
       - uses: googleapis/release-please-action@v4.4.0
         id: release
         with:
