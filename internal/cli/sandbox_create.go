@@ -14,6 +14,7 @@ import (
 	boxyconfig "github.com/Geogboe/boxy/internal/config"
 	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/internal/sandbox"
+	"github.com/Geogboe/boxy/pkg/agentsdk"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/providersdk/builtins"
@@ -120,8 +121,17 @@ func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 	pterm.Bold.Printfln("  Creating sandbox %q", spec.Name)
 	pterm.Println()
 
-	prov := &pool.DriverProvisioner{
-		Registry:  reg,
+	drivers, err := buildDrivers(reg, providers)
+	if err != nil {
+		return fmt.Errorf("build drivers: %w", err)
+	}
+	embeddedAgent, err := agentsdk.NewEmbeddedAgent("embedded", "Embedded Agent", drivers...)
+	if err != nil {
+		return fmt.Errorf("create embedded agent: %w", err)
+	}
+
+	prov := &pool.AgentProvisioner{
+		Agent:     embeddedAgent,
 		Specs:     specByName,
 		Providers: providerByName,
 	}
@@ -197,7 +207,6 @@ func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 	pterm.FgDarkGray.Printfln("  boxy sandbox delete %s", sb.ID)
 	pterm.Println()
 
-
 	return nil
 }
 
@@ -244,7 +253,7 @@ func writeEnvFile(sb model.Sandbox, resources []model.Resource, filename string)
 
 	lines := buildEnvLines(sb, resources)
 	var buf strings.Builder
-	buf.WriteString(fmt.Sprintf("# Boxy sandbox: %s (%s)\n", sb.Name, sb.ID))
+	fmt.Fprintf(&buf, "# Boxy sandbox: %s (%s)\n", sb.Name, sb.ID)
 	buf.WriteString("# Add this file to .gitignore — it may contain credentials.\n")
 	for _, l := range lines {
 		buf.WriteString(l)
@@ -268,13 +277,7 @@ func buildEnvLines(sb model.Sandbox, resources []model.Resource) []string {
 	lines = append(lines, fmt.Sprintf("SANDBOX_ID=%s", sb.ID))
 	lines = append(lines, "")
 
-	// Group resources by profile (which equals pool name).
-	type poolGroup struct {
-		name      string
-		resources []model.Resource
-	}
 	seenPools := make(map[string]int) // pool -> count so far
-	groups := make([]poolGroup, 0)
 	poolOrder := make([]string, 0)
 
 	for _, res := range resources {
@@ -282,7 +285,6 @@ func buildEnvLines(sb model.Sandbox, resources []model.Resource) []string {
 		if _, seen := seenPools[poolName]; !seen {
 			seenPools[poolName] = 0
 			poolOrder = append(poolOrder, poolName)
-			groups = append(groups, poolGroup{name: poolName})
 		}
 	}
 	// Maintain order: rebuild groups indexed by pool name.
