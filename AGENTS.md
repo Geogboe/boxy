@@ -5,7 +5,7 @@ Periodically update this document with guidelines, architectural decisions, less
 ## Project
 
 - **Module:** `github.com/Geogboe/boxy`
-- **Go version:** 1.22
+- **Go version:** 1.25
 - **Dependencies:** cobra (CLI), yaml.v3 (config parsing)
 
 ## Commands
@@ -16,6 +16,7 @@ task serve            # Run boxy serve (daemon mode)
 task serve:once       # Run boxy serve --once (single reconciliation pass)
 task go:run -- <args> # Run boxy via go run with arbitrary args
 go test ./...         # Run all tests
+task release:check    # Validate GoReleaser config via the pinned tools module
 ```
 
 ## Project Structure
@@ -102,13 +103,16 @@ Wrap repeated commands in `Taskfile.yml`. If a command is run more than once, ad
 
 - `gopls` is available locally for code navigation, refactoring, and linting.
 - `task` (go-task) for running project commands.
+- GoReleaser is pinned in the isolated `tools/` module; use `task release:check` and `task release:snapshot` instead of assuming a global `goreleaser` binary is installed.
 
 ## Installer Notes
 
 - Release installers live in `scripts/install.ps1` and `scripts/install.sh`.
 - Installers target published GitHub release assets, not local source builds.
+- Release assets are GoReleaser archives (`boxy_<version>_<os>_<arch>.tar.gz` or `.zip`) plus `checksums.txt`.
 - `latest` in installer scripts means the newest published GitHub release, including prereleases.
 - Installers verify the downloaded binary against the published `checksums.txt`.
+- Release automation also publishes a signed `checksums.txt.sig`.
 - Default install locations are user-local:
   - Windows: `%LOCALAPPDATA%\Programs\boxy\bin`
   - Linux: `$HOME/.local/bin`
@@ -144,6 +148,14 @@ All actions in `ci.yml` and `release.yml` are Node 24-compatible **except** for
 - **Next step:** When `googleapis/release-please-action` publishes a Node 24
   release (v4.x patch or v5), update the pin in `release.yml` and remove the
   `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` env var.
+
+### GoReleaser Signing Notes
+
+- GoReleaser signs the published `checksums.txt` file in CI.
+- `release.yml` imports the CI signing key with `crazy-max/ghaction-import-gpg@v6`.
+- Required repository secrets:
+  - `GPG_PRIVATE_KEY`
+  - `GPG_PASSPHRASE`
 
 # Deletions
 

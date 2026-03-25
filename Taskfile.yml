@@ -43,10 +43,43 @@ tasks:
     cmds:
       - go test ./...
 
+  test:cli:
+    desc: Run CLI package tests
+    cmds:
+      - go test ./internal/cli
+
+  test:installers:
+    desc: Run installer smoke tests
+    aliases:
+      - test:scripts
+    cmds:
+      - go test ./scripts
+
+  test:installers:wsl:
+    desc: Run the opt-in WSL installer smoke test
+    platforms: [windows]
+    env:
+      BOXY_TEST_WSL: "1"
+    cmds:
+      - go test ./scripts -run TestInstallShWSL -count=1
+
   lint:
     desc: Run golangci-lint (same as CI)
+    aliases:
+      - lint:go
+      - golangci-lint
     cmds:
       - golangci-lint run ./...
+
+  release:check:
+    desc: Validate GoReleaser config using the pinned tools module
+    cmds:
+      - go run -modfile=tools/go.mod github.com/goreleaser/goreleaser/v2 check --config .goreleaser.yml
+
+  release:snapshot:
+    desc: Run a local GoReleaser snapshot build using the pinned tools module
+    cmds:
+      - go run -modfile=tools/go.mod github.com/goreleaser/goreleaser/v2 release --snapshot --clean --config .goreleaser.yml
 
   kill:boxy:
     desc: Kill any running boxy processes (Windows only, requires pwsh)

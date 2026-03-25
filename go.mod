@@ -47,7 +47,6 @@ require (
 	github.com/morikuni/aec v1.1.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/smnsjas/go-ntlm-cbt v0.0.0-20260107203125-46149984fac0 // indirect
 	github.com/smnsjas/go-psrpcore v0.0.0-20260211164949-dace42c5b6a8 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
