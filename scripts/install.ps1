@@ -18,13 +18,15 @@ param(
         else { Join-Path $env:USERPROFILE ".local\bin" }
     ),
     [switch]$Force = [bool]($env:BOXY_FORCE -eq "1" -or $env:INSTALLER_FORCE -eq "1"),
-    [switch]$Debug = [bool]($env:BOXY_DEBUG -eq "1" -or $env:INSTALLER_DEBUG -eq "1")
+    [switch]$InstallerDebug = [bool]($env:BOXY_DEBUG -eq "1" -or $env:INSTALLER_DEBUG -eq "1")
 )
 
 $ErrorActionPreference = "Stop"
 $repo = "Geogboe/boxy"
-$defaultInstallDir = Join-Path $env:USERPROFILE ".local\bin"
+$defaultInstallDir = Join-Path $env:LOCALAPPDATA "Programs\boxy\bin"
 $assetArch = "amd64"
+$apiBaseUrl = if ($env:BOXY_INSTALL_API_BASE_URL) { $env:BOXY_INSTALL_API_BASE_URL } else { "https://api.github.com" }
+$releaseBaseUrl = if ($env:BOXY_INSTALL_RELEASE_BASE_URL) { $env:BOXY_INSTALL_RELEASE_BASE_URL } else { $null }
 
 function Write-Step {
     param([string]$Message)
@@ -56,7 +58,7 @@ function Write-Warn {
 
 function Write-DebugLog {
     param([string]$Message)
-    if ($Debug) { Write-Host "  debug: $Message" -ForegroundColor DarkGray }
+    if ($InstallerDebug) { Write-Host "  debug: $Message" -ForegroundColor DarkGray }
     Write-Verbose $Message
 }
 
@@ -79,7 +81,7 @@ function Resolve-LatestTag {
     param([string]$Repo)
 
     Write-DebugLog "Resolving latest release tag"
-    $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases?per_page=1"
+    $releases = Invoke-RestMethod -Uri "$($apiBaseUrl.TrimEnd('/'))/repos/$Repo/releases?per_page=1"
     if (-not $releases) {
         Fail "Could not resolve latest release tag."
     }
@@ -88,6 +90,53 @@ function Resolve-LatestTag {
         return $releases[0].tag_name
     }
     return $releases.tag_name
+}
+
+function Get-ReleaseAssetSource {
+    param(
+        [string]$ReleaseRoot,
+        [string]$Tag,
+        [string]$AssetName
+    )
+
+    if (Test-Path -LiteralPath $ReleaseRoot -PathType Container) {
+        return Join-Path (Join-Path $ReleaseRoot $Tag) $AssetName
+    }
+
+    return "{0}/{1}/{2}" -f $ReleaseRoot.TrimEnd('/'), $Tag, $AssetName
+}
+
+function Copy-ReleaseAsset {
+    param(
+        [string]$ReleaseRoot,
+        [string]$Tag,
+        [string]$AssetName,
+        [string]$Destination
+    )
+
+    $source = Get-ReleaseAssetSource -ReleaseRoot $ReleaseRoot -Tag $Tag -AssetName $AssetName
+    if (Test-Path -LiteralPath $source -PathType Leaf) {
+        Copy-Item -LiteralPath $source -Destination $Destination -Force
+        return
+    }
+
+    Invoke-WebRequest -Uri $source -OutFile $Destination -UseBasicParsing
+}
+
+function Get-ExpectedChecksum {
+    param(
+        [string]$ChecksumsPath,
+        [string]$AssetName
+    )
+
+    foreach ($line in Get-Content -LiteralPath $ChecksumsPath) {
+        $parts = $line -split '\s+', 2
+        if ($parts.Count -ge 2 -and $parts[1].Trim() -eq $AssetName) {
+            return $parts[0].Trim()
+        }
+    }
+
+    return $null
 }
 
 function Ensure-UserPathContains {
@@ -135,13 +184,14 @@ if ($Version -eq "latest") {
 }
 Write-Info "version: $Version"
 
+if (-not $releaseBaseUrl) {
+    $releaseBaseUrl = "https://github.com/$repo/releases/download"
+}
+
 # GoReleaser archive naming: boxy_0.1.9_windows_amd64.zip
 # Strip leading 'v' from the tag to get the version number
 $versionNum = $Version.TrimStart('v')
 $asset = "boxy_${versionNum}_windows_${assetArch}.zip"
-$baseUrl = "https://github.com/$repo/releases/download/$Version"
-$downloadUrl = "$baseUrl/$asset"
-$checksumsUrl = "$baseUrl/checksums.txt"
 
 $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("boxy-install-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $tempDir | Out-Null
@@ -155,18 +205,16 @@ try {
     $checksumsPath = Join-Path $tempDir "checksums.txt"
 
     Write-Step "Downloading..."
-    Write-Info $downloadUrl
-    Invoke-WebRequest -Uri $downloadUrl -OutFile $downloadedArchive -UseBasicParsing
+    Write-Info (Get-ReleaseAssetSource -ReleaseRoot $releaseBaseUrl -Tag $Version -AssetName $asset)
+    Copy-ReleaseAsset -ReleaseRoot $releaseBaseUrl -Tag $Version -AssetName $asset -Destination $downloadedArchive
     Write-Info "checksums.txt"
-    Invoke-WebRequest -Uri $checksumsUrl -OutFile $checksumsPath -UseBasicParsing
+    Copy-ReleaseAsset -ReleaseRoot $releaseBaseUrl -Tag $Version -AssetName "checksums.txt" -Destination $checksumsPath
 
     Write-Step "Verifying checksum..."
-    $checksumLine = Select-String -Path $checksumsPath -Pattern ([regex]::Escape($asset)) | Select-Object -First 1
-    if (-not $checksumLine) {
+    $expectedChecksum = Get-ExpectedChecksum -ChecksumsPath $checksumsPath -AssetName $asset
+    if (-not $expectedChecksum) {
         Fail "Checksum for $asset not found."
     }
-
-    $expectedChecksum = ($checksumLine.Line -split '\s+')[0].Trim()
     $actualChecksum = (Get-FileHash -Path $downloadedArchive -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($expectedChecksum.ToLowerInvariant() -ne $actualChecksum) {
         Fail "Checksum mismatch for $asset."

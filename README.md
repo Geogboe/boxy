@@ -4,21 +4,21 @@ Boxy is a resource pooling and sandbox orchestration tool. It pre-provisions poo
 
 ## Install
 
-Release installers are available for Windows PowerShell and Linux. They download the newest published GitHub release, verify it against the published `checksums.txt`, and install it into a user-local bin directory.
+Release installers are available for Windows PowerShell, Linux, and macOS. They download the newest published GitHub release, verify it against the published `checksums.txt`, and install it into a user-local bin directory.
 
 Windows PowerShell:
 
 ```powershell
-& ([scriptblock]::Create((Invoke-RestMethod 'https://raw.githubusercontent.com/Geogboe/boxy/main/scripts/install.ps1')))
+irm https://raw.githubusercontent.com/Geogboe/boxy/main/scripts/install.ps1 | iex
 ```
 
-Linux:
+Linux / macOS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Geogboe/boxy/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Geogboe/boxy/main/scripts/install.sh | sh
 ```
 
-See [docs/install.md](docs/install.md) for supported platforms, version pinning, PATH behavior, and verification details.
+See [docs/install.md](docs/install.md) for supported platforms, version pinning, environment overrides, PATH behavior, and verification details.
 
 ## How It Works
 

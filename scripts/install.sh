@@ -3,6 +3,8 @@ set -euo pipefail
 
 REPO="Geogboe/boxy"
 DEFAULT_INSTALL_DIR="${HOME}/.local/bin"
+API_BASE_URL="${BOXY_INSTALL_API_BASE_URL:-https://api.github.com}"
+RELEASE_BASE_URL="${BOXY_INSTALL_RELEASE_BASE_URL:-}"
 
 # env var overrides (flags below take higher precedence)
 # BOXY_VERSION / INSTALLER_VERSION    — pin a release tag
@@ -114,7 +116,18 @@ esac
 
 info "platform: ${OS}/${ARCH}"
 
-if ! command -v curl >/dev/null 2>&1; then
+if [ -z "${RELEASE_BASE_URL}" ]; then
+  RELEASE_BASE_URL="https://github.com/${REPO}/releases/download"
+fi
+
+needs_curl=0
+if [[ "${VERSION}" == "latest" ]]; then
+  needs_curl=1
+fi
+if [ ! -d "${RELEASE_BASE_URL}" ]; then
+  needs_curl=1
+fi
+if [[ "${needs_curl}" -eq 1 ]] && ! command -v curl >/dev/null 2>&1; then
   fail "curl is required"
 fi
 
@@ -133,7 +146,7 @@ checksum_file() {
 
 resolve_latest_tag() {
   debug "resolving latest release tag"
-  local api="https://api.github.com/repos/${REPO}/releases?per_page=1"
+  local api="${API_BASE_URL%/}/repos/${REPO}/releases?per_page=1"
   local response
   response="$(curl -fsSL "${api}")" || fail "failed to query GitHub releases API"
 
@@ -160,8 +173,29 @@ info "version: ${VERSION}"
 VERSION_NUM="${VERSION#v}"
 ARCHIVE="boxy_${VERSION_NUM}_${OS}_${ARCH}.tar.gz"
 BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
-DOWNLOAD_URL="${BASE_URL}/${ARCHIVE}"
-CHECKSUMS_URL="${BASE_URL}/checksums.txt"
+release_asset_source() {
+  local asset_name="$1"
+  if [ -d "${RELEASE_BASE_URL}" ]; then
+    printf '%s/%s/%s\n' "${RELEASE_BASE_URL}" "${VERSION}" "${asset_name}"
+    return
+  fi
+  printf '%s/%s/%s\n' "${RELEASE_BASE_URL%/}" "${VERSION}" "${asset_name}"
+}
+
+download_release_file() {
+  local asset_name="$1"
+  local destination="$2"
+  local source_path
+  source_path="$(release_asset_source "${asset_name}")"
+
+  if [ -d "${RELEASE_BASE_URL}" ]; then
+    [ -f "${source_path}" ] || fail "release asset not found: ${source_path}"
+    cp "${source_path}" "${destination}" || fail "failed to copy ${asset_name}"
+    return
+  fi
+
+  curl -fsSL "${source_path}" -o "${destination}" || fail "failed to download ${asset_name}"
+}
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
@@ -171,10 +205,10 @@ debug "install_dir=${INSTALL_DIR}"
 debug "archive=${ARCHIVE}"
 
 step "Downloading..."
-info "${DOWNLOAD_URL}"
-curl -fsSL "${DOWNLOAD_URL}" -o "${TMP_DIR}/${ARCHIVE}" || fail "failed to download ${ARCHIVE}"
+info "$(release_asset_source "${ARCHIVE}")"
+download_release_file "${ARCHIVE}" "${TMP_DIR}/${ARCHIVE}"
 info "checksums.txt"
-curl -fsSL "${CHECKSUMS_URL}" -o "${TMP_DIR}/checksums.txt" || fail "failed to download checksums.txt"
+download_release_file "checksums.txt" "${TMP_DIR}/checksums.txt"
 
 step "Verifying checksum..."
 EXPECTED_CHECKSUM="$(awk -v asset="${ARCHIVE}" '$2 == asset { print $1 }' "${TMP_DIR}/checksums.txt")"

@@ -41,6 +41,23 @@ jobs:
       - name: Run tests
         run: go test -race -short ./...
 
+  installer-smoke:
+    name: Installer Smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run installer smoke tests
+        run: go test ./scripts -count=1
+
   build:
     name: Build
     runs-on: ubuntu-latest
