@@ -46,6 +46,7 @@ encryption.key
 
 # Temporary files
 tmp/
+.tmp/
 temp/
 
 # Local binaries
