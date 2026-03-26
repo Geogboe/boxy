@@ -146,8 +146,27 @@ checksum_file() {
 
 resolve_latest_tag() {
   debug "resolving latest release tag"
-  local api="${API_BASE_URL%/}/repos/${REPO}/releases?per_page=1"
+
+  # Prefer /releases/latest (excludes prereleases and drafts)
+  local latest_api="${API_BASE_URL%/}/repos/${REPO}/releases/latest"
   local response
+  if response="$(curl -fsSL "${latest_api}" 2>/dev/null)"; then
+    local tag
+    tag="$(
+      printf '%s\n' "${response}" \
+        | grep -m1 '"tag_name"' \
+        | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/'
+    )"
+    if [[ -n "${tag}" ]]; then
+      debug "resolved via /releases/latest: ${tag}"
+      printf '%s\n' "${tag}"
+      return
+    fi
+  fi
+  debug "releases/latest not available; falling back to most recent release"
+
+  # Fallback: most recent release (may be a prerelease)
+  local api="${API_BASE_URL%/}/repos/${REPO}/releases?per_page=1"
   response="$(curl -fsSL "${api}")" || fail "failed to query GitHub releases API"
 
   local tag
@@ -194,7 +213,14 @@ download_release_file() {
     return
   fi
 
-  curl -fsSL "${source_path}" -o "${destination}" || fail "failed to download ${asset_name}"
+  local http_code
+  http_code="$(curl -fsSL -w '%{http_code}' "${source_path}" -o "${destination}" 2>/dev/null)" || true
+  if [ ! -s "${destination}" ]; then
+    if [ "${http_code}" = "404" ]; then
+      fail "release asset not found: ${source_path} (HTTP 404). This version may not have compatible release assets."
+    fi
+    fail "failed to download ${asset_name} (HTTP ${http_code})"
+  fi
 }
 
 TMP_DIR="$(mktemp -d)"

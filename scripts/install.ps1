@@ -24,7 +24,6 @@ param(
 $ErrorActionPreference = "Stop"
 $repo = "Geogboe/boxy"
 $defaultInstallDir = Join-Path $env:LOCALAPPDATA "Programs\boxy\bin"
-$assetArch = "amd64"
 $apiBaseUrl = if ($env:BOXY_INSTALL_API_BASE_URL) { $env:BOXY_INSTALL_API_BASE_URL } else { "https://api.github.com" }
 $releaseBaseUrl = if ($env:BOXY_INSTALL_RELEASE_BASE_URL) { $env:BOXY_INSTALL_RELEASE_BASE_URL } else { $null }
 
@@ -81,6 +80,19 @@ function Resolve-LatestTag {
     param([string]$Repo)
 
     Write-DebugLog "Resolving latest release tag"
+
+    # Prefer /releases/latest (excludes prereleases and drafts)
+    try {
+        $release = Invoke-RestMethod -Uri "$($apiBaseUrl.TrimEnd('/'))/repos/$Repo/releases/latest"
+        if ($release.tag_name) {
+            Write-DebugLog "Resolved via /releases/latest: $($release.tag_name)"
+            return $release.tag_name
+        }
+    } catch {
+        Write-DebugLog "releases/latest failed: $($_.Exception.Message); falling back to most recent release"
+    }
+
+    # Fallback: most recent release (may be a prerelease)
     $releases = Invoke-RestMethod -Uri "$($apiBaseUrl.TrimEnd('/'))/repos/$Repo/releases?per_page=1"
     if (-not $releases) {
         Fail "Could not resolve latest release tag."
@@ -120,7 +132,15 @@ function Copy-ReleaseAsset {
         return
     }
 
-    Invoke-WebRequest -Uri $source -OutFile $Destination -UseBasicParsing
+    try {
+        Invoke-WebRequest -Uri $source -OutFile $Destination -UseBasicParsing
+    } catch {
+        $status = $_.Exception.Response.StatusCode.value__
+        if ($status -eq 404) {
+            Fail "Release asset not found: $source (HTTP 404). This version may not have compatible release assets."
+        }
+        Fail "Failed to download ${AssetName}: $($_.Exception.Message)"
+    }
 }
 
 function Get-ExpectedChecksum {
@@ -167,14 +187,17 @@ Write-Host ("─" * 38)
 
 Write-Step "Detecting platform..."
 
-$arch = Get-ProcessorArchitecture
-if ($arch -notin @("AMD64", "x86_64", "ARM64")) {
-    Fail "Unsupported architecture: $arch. Windows release assets are currently available for amd64 only."
+$detectedArch = Get-ProcessorArchitecture
+if ($detectedArch -notin @("AMD64", "x86_64", "ARM64")) {
+    Fail "Unsupported architecture: $detectedArch. Windows release assets are currently available for amd64 only."
 }
-if ($arch -eq "ARM64") {
-    Write-DebugLog "ARM64 host detected; using the amd64 Windows release asset."
+$assetArch = "amd64"
+if ($detectedArch -eq "ARM64") {
+    Write-Info "platform: windows/arm64"
+    Write-Warn "No native ARM64 build available; using amd64 binary (runs via Windows x64 emulation)."
+} else {
+    Write-Info "platform: windows/$assetArch"
 }
-Write-Info "platform: windows/$assetArch"
 
 Write-Step "Resolving version..."
 

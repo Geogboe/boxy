@@ -99,11 +99,42 @@ func TestInstallShDeclaresExpectedContracts(t *testing.T) {
 		"checksums.txt",
 		"boxy_${VERSION_NUM}_${OS}_${ARCH}.tar.gz",
 		"releases?per_page=1",
+		"releases/latest",
 	}
 
 	for _, snippet := range requiredSnippets {
 		if !strings.Contains(content, snippet) {
 			t.Fatalf("install.sh is missing required snippet %q", snippet)
+		}
+	}
+}
+
+func TestInstallPS1DeclaresExpectedContracts(t *testing.T) {
+	root := repoRoot(t)
+	content := string(mustReadFile(t, filepath.Join(root, "scripts", "install.ps1")))
+
+	requiredSnippets := []string{
+		"BOXY_VERSION",
+		"BOXY_INSTALL_VERSION",
+		"INSTALLER_VERSION",
+		"BOXY_INSTALL_DIR",
+		"INSTALLER_INSTALL_DIR",
+		"BOXY_FORCE",
+		"INSTALLER_FORCE",
+		"BOXY_DEBUG",
+		"INSTALLER_DEBUG",
+		"BOXY_INSTALL_RELEASE_BASE_URL",
+		"BOXY_INSTALL_API_BASE_URL",
+		"checksums.txt",
+		"releases?per_page=1",
+		"releases/latest",
+		"ARM64",
+		"No native ARM64 build available",
+	}
+
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(content, snippet) {
+			t.Fatalf("install.ps1 is missing required snippet %q", snippet)
 		}
 	}
 }
