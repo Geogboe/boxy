@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.9](https://github.com/Geogboe/boxy/compare/v0.1.8...v0.1.9) (2026-03-26)
+
+
+### Features
+
+* **install:** update install scripts for GoReleaser archive format ([e52631b](https://github.com/Geogboe/boxy/commit/e52631b12ad1f3d30cee6e4dd3af15ca67fc7326))
+
+
+### Bug Fixes
+
+* clean up cli lint issues ([f1627d1](https://github.com/Geogboe/boxy/commit/f1627d170b042e58a7f997bd68790cc4500dc27b))
+* harden release installers ([ca8fac1](https://github.com/Geogboe/boxy/commit/ca8fac19a6295c063ffa59406e48fec1a551d641))
+* **install:** correct ARM detection display and improve error handling ([58d76f1](https://github.com/Geogboe/boxy/commit/58d76f122db0e5cf13ff12d63cd828b3288e09b0))
+
 ## [0.1.8](https://github.com/Geogboe/boxy/compare/v0.1.7...v0.1.8) (2026-03-23)
 
 
