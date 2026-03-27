@@ -15,11 +15,11 @@ import (
 // SSHExec implements GuestExec over SSH. A new connection is made per Exec call
 // (no pooling needed for Boxy's short-lived VM use case).
 type SSHExec struct {
-	Host      string
-	Port      string // default "22"
-	User      string
+	Host       string
+	Port       string // default "22"
+	User       string
 	PrivateKey []byte // PEM-encoded private key; used when non-empty
-	Password  string // used when no PrivateKey is provided
+	Password   string // used when no PrivateKey is provided
 }
 
 // Exec opens an SSH session, runs the command, and returns stdout/stderr/exit code.

@@ -41,7 +41,7 @@ func runInit(force bool) error {
 		}
 	}
 
-	if err := os.WriteFile(dest, []byte(starterConfig), 0644); err != nil {
+	if err := os.WriteFile(dest, []byte(starterConfig), 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", configFileName, err)
 	}
 

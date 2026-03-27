@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/Geogboe/boxy/pkg/model"
-	"github.com/Geogboe/boxy/pkg/store"
 	"github.com/Geogboe/boxy/pkg/policycontroller"
+	"github.com/Geogboe/boxy/pkg/store"
 )
 
 type Clock interface {

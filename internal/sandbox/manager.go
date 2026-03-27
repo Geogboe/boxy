@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/Geogboe/boxy/pkg/model"
-	"github.com/Geogboe/boxy/pkg/store"
 	"github.com/Geogboe/boxy/pkg/resourcepool"
+	"github.com/Geogboe/boxy/pkg/store"
 )
 
 // Manager creates sandboxes and consumes resources from pools.

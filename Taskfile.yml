@@ -63,6 +63,13 @@ tasks:
     cmds:
       - go test ./scripts -run TestInstallShWSL -count=1
 
+  fmt:
+    desc: Format all Go source files
+    aliases:
+      - format
+    cmds:
+      - gofmt -w .
+
   lint:
     desc: Run golangci-lint (same as CI)
     aliases:

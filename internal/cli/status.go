@@ -124,4 +124,3 @@ func fetchJSON[T any](ctx context.Context, client *http.Client, url string) (T, 
 	}
 	return v, nil
 }
-

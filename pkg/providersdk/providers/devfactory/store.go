@@ -60,7 +60,7 @@ func loadStore(dataDir string) (*storeData, error) {
 
 // saveStore writes the store to disk as indented JSON.
 func saveStore(dataDir string, s *storeData) error {
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return err
 	}
 	path := filepath.Join(dataDir, storeFilename)
@@ -69,5 +69,5 @@ func saveStore(dataDir string, s *storeData) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0o600)
 }

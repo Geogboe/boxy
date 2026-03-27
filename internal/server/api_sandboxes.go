@@ -37,7 +37,7 @@ func (s *Server) handleGetSandbox(w http.ResponseWriter, r *http.Request) {
 
 // createSandboxRequest is the request body for POST /api/v1/sandboxes.
 type createSandboxRequest struct {
-	Name     string               `json:"name"`
+	Name     string                `json:"name"`
 	Policies model.SandboxPolicies `json:"policies,omitempty"`
 }
 

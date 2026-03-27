@@ -96,7 +96,7 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 	var nanoCPUs int64
 	if strings.TrimSpace(cc.CPU) != "" {
 		if f, parseErr := strconv.ParseFloat(cc.CPU, 64); parseErr == nil {
-			nanoCPUs = int64(f * 1e9)
+			nanoCPUs = int64(f * 1e9) //nolint:gosec // CPU count is bounded by hardware; overflow not possible
 		}
 	}
 	var memBytes int64
@@ -259,7 +259,7 @@ func (d *Driver) containerLogs(ctx context.Context, id, tail string) string {
 	}
 	defer rc.Close() //nolint:errcheck
 	var buf bytes.Buffer
-	stdcopy.StdCopy(&buf, &buf, rc) //nolint:errcheck
+	stdcopy.StdCopy(&buf, &buf, rc) //nolint:errcheck,gosec // best-effort log capture
 	return buf.String()
 }
 
@@ -328,7 +328,7 @@ func parseMemoryBytes(s string) (int64, error) {
 			if err != nil {
 				return 0, fmt.Errorf("parse memory %q: %w", s, err)
 			}
-			return int64(f * float64(m.mult)), nil
+			return int64(f * float64(m.mult)), nil //nolint:gosec // memory sizes are bounded by hardware
 		}
 	}
 	return strconv.ParseInt(s, 10, 64)

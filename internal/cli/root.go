@@ -53,7 +53,7 @@ func setupLogging(opts rootOpts) error {
 
 	var w *os.File
 	if opts.logFile != "" {
-		f, err := os.OpenFile(opts.logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		f, err := os.OpenFile(opts.logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err != nil {
 			return fmt.Errorf("open log file %q: %w", opts.logFile, err)
 		}

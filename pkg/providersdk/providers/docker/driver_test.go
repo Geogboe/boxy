@@ -21,14 +21,14 @@ import (
 
 // mockDockerClient is a test double for dockerClient.
 type mockDockerClient struct {
-	containerCreate  func(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, platform *ocispec.Platform, containerName string) (container.CreateResponse, error)
-	containerStart   func(ctx context.Context, containerID string, options container.StartOptions) error
-	containerInspect func(ctx context.Context, containerID string) (container.InspectResponse, error)
-	containerLogs    func(ctx context.Context, containerID string, options container.LogsOptions) (io.ReadCloser, error)
+	containerCreate      func(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, platform *ocispec.Platform, containerName string) (container.CreateResponse, error)
+	containerStart       func(ctx context.Context, containerID string, options container.StartOptions) error
+	containerInspect     func(ctx context.Context, containerID string) (container.InspectResponse, error)
+	containerLogs        func(ctx context.Context, containerID string, options container.LogsOptions) (io.ReadCloser, error)
 	containerExecCreate  func(ctx context.Context, containerID string, options container.ExecOptions) (container.ExecCreateResponse, error)
 	containerExecAttach  func(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error)
 	containerExecInspect func(ctx context.Context, execID string) (container.ExecInspect, error)
-	containerRemove  func(ctx context.Context, containerID string, options container.RemoveOptions) error
+	containerRemove      func(ctx context.Context, containerID string, options container.RemoveOptions) error
 }
 
 func (m *mockDockerClient) ContainerCreate(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, platform *ocispec.Platform, containerName string) (container.CreateResponse, error) {
@@ -88,8 +88,8 @@ func stdcopyFrame(stdout string) []byte {
 func pipeHijack(data []byte) types.HijackedResponse {
 	conn1, conn2 := net.Pipe()
 	go func() {
-		conn2.Write(data)  //nolint:errcheck
-		conn2.Close()      //nolint:errcheck
+		conn2.Write(data) //nolint:errcheck
+		conn2.Close()     //nolint:errcheck
 	}()
 	return types.HijackedResponse{
 		Conn:   conn1,

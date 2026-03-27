@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Geogboe/boxy/pkg/psdirect"
 	"github.com/Geogboe/boxy/pkg/providersdk"
+	"github.com/Geogboe/boxy/pkg/psdirect"
 	"github.com/Geogboe/boxy/pkg/vmsdk"
 )
 

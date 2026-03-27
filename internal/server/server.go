@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/Geogboe/boxy/internal/sandbox"
 	"github.com/Geogboe/boxy/pkg/store"
@@ -38,8 +39,9 @@ func New(st store.Store, sm *sandbox.Manager, addr string, uiEnabled bool) *Serv
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
 	s.srv = &http.Server{
-		Addr:    addr,
-		Handler: mux,
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 	return s
 }
@@ -71,10 +73,12 @@ func (s *Server) Start(ctx context.Context) error {
 	slog.Info("http server listening", "addr", ln.Addr().String())
 
 	// Shut down when context is cancelled.
-	go func() {
+	go func() { //nolint:gosec // intentional use of background context for shutdown grace period
 		<-ctx.Done()
 		slog.Info("http server shutting down")
-		_ = s.srv.Shutdown(context.Background())
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = s.srv.Shutdown(shutdownCtx)
 	}()
 
 	if err := s.srv.Serve(ln); err != nil && err != http.ErrServerClosed {

@@ -79,7 +79,7 @@ func (s *DiskStore) load() error {
 
 func (s *DiskStore) persistLocked() error {
 	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("mkdir %q: %w", dir, err)
 	}
 
@@ -89,7 +89,7 @@ func (s *DiskStore) persistLocked() error {
 	}
 
 	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return fmt.Errorf("write store tmp %q: %w", tmp, err)
 	}
 	if err := os.Rename(tmp, s.path); err != nil {

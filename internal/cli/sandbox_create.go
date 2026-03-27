@@ -197,7 +197,7 @@ func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 
 	printConnectionInfo(sb, resources)
 
-	if !opts.noEnvFile && term.IsTerminal(int(os.Stdin.Fd())) {
+	if !opts.noEnvFile && term.IsTerminal(int(os.Stdin.Fd())) { //nolint:gosec // Fd() fits in int on all supported platforms
 		if err := promptEnvFile(sb, resources); err != nil {
 			return err
 		}
@@ -336,14 +336,14 @@ func envVarSegment(s string) string {
 // readSingleKey reads a single keypress without requiring Enter.
 // Returns 0 and nil on non-interactive stdin.
 func readSingleKey() (byte, error) {
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) { //nolint:gosec // Fd() fits in int on all supported platforms
 		return 0, nil
 	}
-	old, err := term.MakeRaw(int(os.Stdin.Fd()))
+	old, err := term.MakeRaw(int(os.Stdin.Fd())) //nolint:gosec // Fd() fits in int on all supported platforms
 	if err != nil {
 		return 0, nil
 	}
-	defer term.Restore(int(os.Stdin.Fd()), old) //nolint:errcheck
+	defer term.Restore(int(os.Stdin.Fd()), old) //nolint:errcheck,gosec // Fd() fits in int on all supported platforms
 
 	buf := make([]byte, 1)
 	if _, err := os.Stdin.Read(buf); err != nil {

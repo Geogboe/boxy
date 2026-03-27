@@ -34,11 +34,11 @@ func main() {
 	}
 	b = append(b, '\n')
 
-	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(outPath), 0o700); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, "mkdir: "+err.Error())
 		os.Exit(1)
 	}
-	if err := os.WriteFile(outPath, b, 0o644); err != nil {
+	if err := os.WriteFile(outPath, b, 0o600); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, "write: "+err.Error())
 		os.Exit(1)
 	}

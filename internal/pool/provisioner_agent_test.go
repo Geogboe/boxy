@@ -13,12 +13,12 @@ import (
 
 // mockAgent is a minimal test double for agentsdk.Agent.
 type mockAgent struct {
-	info            agentsdk.AgentInfo
-	createCalls     []mockCreateCall
-	deleteCalls     []string
-	nextResourceID  string
-	createErr       error
-	deleteErr       error
+	info           agentsdk.AgentInfo
+	createCalls    []mockCreateCall
+	deleteCalls    []string
+	nextResourceID string
+	createErr      error
+	deleteErr      error
 }
 
 type mockCreateCall struct {
@@ -146,7 +146,7 @@ func TestAgentProvisioner_Destroy(t *testing.T) {
 
 func TestAgentProvisioner_DriverTypeForPool_Docker(t *testing.T) {
 	provisioner := &AgentProvisioner{
-		Specs: map[model.PoolName]boxyconfig.PoolSpec{},
+		Specs:     map[model.PoolName]boxyconfig.PoolSpec{},
 		Providers: map[string]providersdk.Instance{},
 	}
 

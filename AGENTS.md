@@ -8,6 +8,10 @@ Periodically update this document with guidelines, architectural decisions, less
 - **Go version:** 1.25
 - **Dependencies:** cobra (CLI), yaml.v3 (config parsing)
 
+## Issue Tracking
+
+Features, bugs, and roadmap items are tracked as GitHub issues on `Geogboe/boxy`. There is no separate roadmap file — GitHub issues are the single source of truth for planned work. Use `gh issue list` to see current priorities and `gh issue view <number>` for details.
+
 ## Commands
 
 ```bash
