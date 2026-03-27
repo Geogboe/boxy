@@ -1,0 +1,73 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/go .
+{
+	"name": "Go",
+	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
+	"image": "mcr.microsoft.com/devcontainers/go:2-1.25-trixie",
+	"features": {
+		"ghcr.io/devcontainers/features/copilot-cli:1": {},
+		// Codex is installed via npm in postCreateCommand; the dedicated feature was not resolvable here.
+		"ghcr.io/devcontainers/features/node:1": {
+			"version": "lts"
+		},
+		"ghcr.io/devcontainers/features/github-cli:1": {},
+		"ghcr.io/devcontainers-extra/features/go-task:1": {},
+		// Trixie no longer ships the moby packages this feature defaults to.
+		"ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
+			"moby": false
+		},
+		"ghcr.io/devcontainers/features/powershell:2": {},
+		"ghcr.io/devcontainers-extra/features/claude-code:1": {},
+		"ghcr.io/devcontainers-extra/features/markdownlint-cli:1": {}
+	},
+	// Reuse local AI tool configuration inside the container so CLI auth and settings carry over.
+	"mounts": [
+		"source=${localEnv:USERPROFILE}/.codex,target=/home/vscode/.codex,type=bind,consistency=cached",
+		"source=${localEnv:USERPROFILE}/.agents,target=/home/vscode/.agents,type=bind,consistency=cached",
+		"source=${localEnv:USERPROFILE}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached",
+		"source=${localEnv:USERPROFILE}/.copilot,target=/home/vscode/.copilot,type=bind,consistency=cached"
+	],
+	// Install CLI tools here when their feature variants are unavailable or unreliable in this environment.
+	"postCreateCommand": "npm install -g @openai/codex && go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest && go install github.com/goreleaser/goreleaser/v2@latest",
+	"customizations": {
+		"vscode": {
+			// Add editor support for repo-heavy file types beyond what features already install.
+			"extensions": [
+				"redhat.vscode-yaml",
+				"github.vscode-github-actions",
+				"DavidAnson.vscode-markdownlint",
+				"task.vscode-task",
+				"timonwong.shellcheck",
+				"mkhl.shfmt"
+			],
+			"settings": {
+				"files.associations": {
+					"*.sandbox.yaml": "yaml"
+				},
+				"yaml.validate": true,
+				"yaml.format.enable": true,
+				"yaml.schemas": {
+					"./internal/config/schema/boxy.schema.json": [
+						"boxy.yaml",
+						"*.sandbox.yaml"
+					]
+				}
+			}
+		}
+	}
+
+	// Features to add to the dev container. More info: https://containers.dev/features.
+	// "features": {},
+
+	// Use 'forwardPorts' to make a list of ports inside the container available locally.
+	// "forwardPorts": [],
+
+	// Use 'postCreateCommand' to run commands after the container is created.
+	// "postCreateCommand": "go version",
+
+	// Configure tool-specific properties.
+	// "customizations": {},
+
+	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
+	// "remoteUser": "root"
+}
