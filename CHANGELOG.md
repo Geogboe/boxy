@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.11](https://github.com/Geogboe/boxy/compare/v0.1.10...v0.1.11) (2026-03-27)
+
+
+### Features
+
+* add devcontainer config ([1772b00](https://github.com/Geogboe/boxy/commit/1772b00183ce702b835082ae75420ac4b55724e5))
+
+
+### Bug Fixes
+
+* remove roadmap ([59af64c](https://github.com/Geogboe/boxy/commit/59af64c7eaf1fba1a0ba6506b52168a9ddf975b4))
+* resolve pre-existing golangci-lint failures ([222e26b](https://github.com/Geogboe/boxy/commit/222e26b2a3684594405c35e2bd757a6721c2de4c)), closes [#59](https://github.com/Geogboe/boxy/issues/59)
+
 ## [0.1.10](https://github.com/Geogboe/boxy/compare/v0.1.9...v0.1.10) (2026-03-26)
 
 
