@@ -2,11 +2,9 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
-	"time"
 
 	boxyconfig "github.com/Geogboe/boxy/internal/config"
 	"github.com/Geogboe/boxy/pkg/model"
@@ -36,9 +34,9 @@ func newStatusCommand() *cobra.Command {
 
 func runStatus(ctx context.Context, opts statusOpts, cmd *cobra.Command) error {
 	addr := resolveServerAddr(opts, cmd)
-	base := "http://" + addr
+	base := apiBaseURL(addr)
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := defaultAPIClient()
 
 	// Health check
 	healthy, err := checkHealth(ctx, client, base)
@@ -104,23 +102,4 @@ func checkHealth(ctx context.Context, client *http.Client, base string) (bool, e
 	}
 	_ = resp.Body.Close()
 	return resp.StatusCode == http.StatusOK, nil
-}
-
-func fetchJSON[T any](ctx context.Context, client *http.Client, url string) (T, error) {
-	var zero T
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return zero, err
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return zero, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var v T
-	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
-		return zero, fmt.Errorf("decode response from %s: %w", url, err)
-	}
-	return v, nil
 }

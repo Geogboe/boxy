@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/Geogboe/boxy/pkg/model"
-	"github.com/Geogboe/boxy/pkg/store"
 	"github.com/spf13/cobra"
 )
 
@@ -19,28 +18,32 @@ type sandboxGetOutput struct {
 	Resources []model.Resource      `json:"resources"`
 }
 
-func newSandboxGetCommand(configPath, statePath *string) *cobra.Command {
+func newSandboxGetCommand(serverAddr func() string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "get <id>",
 		Short: "Get a sandbox by ID",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			st, err := resolveSandboxStore(*configPath, *statePath, "")
+			client := defaultAPIClient()
+			base := apiBaseURL(serverAddr())
+
+			sb, err := fetchJSON[model.Sandbox](cmd.Context(), client, base+"/api/v1/sandboxes/"+args[0])
 			if err != nil {
-				return err
-			}
-			sb, err := st.GetSandbox(cmd.Context(), model.SandboxID(args[0]))
-			if err != nil {
-				if errors.Is(err, store.ErrNotFound) {
+				var apiErr *apiError
+				if errors.As(err, &apiErr) && apiErr.StatusCode == 404 {
 					return fmt.Errorf("sandbox %q not found", args[0])
 				}
-				return err
+				return fmt.Errorf("get sandbox %q: %w", args[0], err)
 			}
 
 			resources := make([]model.Resource, 0, len(sb.Resources))
 			for _, rid := range sb.Resources {
-				res, err := st.GetResource(cmd.Context(), rid)
+				res, err := fetchJSON[model.Resource](cmd.Context(), client, base+"/api/v1/resources/"+string(rid))
 				if err != nil {
+					var apiErr *apiError
+					if errors.As(err, &apiErr) && apiErr.StatusCode == 404 {
+						continue
+					}
 					continue // skip resources that can't be found
 				}
 				resources = append(resources, res)

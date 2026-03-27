@@ -1,33 +1,35 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
+	"net/http"
 
-	"github.com/Geogboe/boxy/pkg/model"
-	"github.com/Geogboe/boxy/pkg/store"
 	"github.com/spf13/cobra"
 )
 
-func newSandboxDeleteCommand(configPath, statePath *string) *cobra.Command {
+func newSandboxDeleteCommand(serverAddr func() string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "delete <id>",
 		Short: "Delete a sandbox by ID",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			st, err := resolveSandboxStore(*configPath, *statePath, "")
+			client := defaultAPIClient()
+			base := apiBaseURL(serverAddr())
+
+			status, err := deleteAPI(cmd.Context(), client, base+"/api/v1/sandboxes/"+args[0])
 			if err != nil {
-				return err
+				return fmt.Errorf("delete sandbox %q: %w", args[0], err)
 			}
-			id := model.SandboxID(args[0])
-			if err := st.DeleteSandbox(cmd.Context(), id); err != nil {
-				if errors.Is(err, store.ErrNotFound) {
-					return fmt.Errorf("sandbox %q not found", args[0])
-				}
-				return err
+
+			switch status {
+			case http.StatusNoContent:
+				fmt.Printf("deleted sandbox %s\n", args[0])
+				return nil
+			case http.StatusNotFound:
+				return fmt.Errorf("sandbox %q not found", args[0])
+			default:
+				return fmt.Errorf("delete sandbox %q: unexpected status %d", args[0], status)
 			}
-			fmt.Printf("deleted sandbox %s\n", id)
-			return nil
 		},
 	}
 }

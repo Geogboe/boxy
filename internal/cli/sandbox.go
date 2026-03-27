@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Geogboe/boxy/pkg/store"
 	"github.com/spf13/cobra"
 )
 
@@ -18,7 +17,7 @@ type sandboxCreateOpts struct {
 }
 
 func newSandboxCommand() *cobra.Command {
-	var configPath, statePath, file string
+	var configPath, statePath, file, server string
 
 	cmd := &cobra.Command{
 		Use:   "sandbox",
@@ -28,8 +27,7 @@ func newSandboxCommand() *cobra.Command {
 		},
 	}
 
-	cmd.PersistentFlags().StringVar(&configPath, "config", "", "config file path; default: boxy.yaml next to --file or in cwd")
-	cmd.PersistentFlags().StringVar(&statePath, "state", "", "state file path; default: .boxy/state.json next to config")
+	cmd.PersistentFlags().StringVar(&server, "server", "", "server address (default 127.0.0.1:9090)")
 	cmd.PersistentFlags().StringVarP(&file, "file", "f", "", "sandbox spec file (default: sandbox.yaml in cwd)")
 
 	var noEnvFile bool
@@ -48,9 +46,11 @@ func newSandboxCommand() *cobra.Command {
 	create.Flags().BoolVar(&noEnvFile, "no-env-file", false, "skip writing connection info to a .sandbox-<name>.env file")
 	cmd.AddCommand(create)
 
-	cmd.AddCommand(newSandboxListCommand(&configPath, &statePath, &file))
-	cmd.AddCommand(newSandboxGetCommand(&configPath, &statePath))
-	cmd.AddCommand(newSandboxDeleteCommand(&configPath, &statePath))
+	serverAddr := func() string { return server }
+
+	cmd.AddCommand(newSandboxListCommand(serverAddr))
+	cmd.AddCommand(newSandboxGetCommand(serverAddr))
+	cmd.AddCommand(newSandboxDeleteCommand(serverAddr))
 
 	return cmd
 }
@@ -102,23 +102,4 @@ func findDefaultSandboxFile() string {
 		return p
 	}
 	return ""
-}
-
-// resolveSandboxStore opens a DiskStore using the provided config, state, and optional spec paths.
-// If statePath is empty, it defaults to .boxy/state.json next to the config file.
-func resolveSandboxStore(configPath, statePath, sandboxFile string) (*store.DiskStore, error) {
-	if statePath == "" {
-		if sandboxFile == "" {
-			sandboxFile = findDefaultSandboxFile()
-		}
-		cfgPath, err := resolveConfigPath(configPath, sandboxFile)
-		if err != nil {
-			return nil, err
-		}
-		if cfgPath == "" {
-			return nil, fmt.Errorf("no config file found (specify --config, --state, or add sandbox.yaml to cwd)")
-		}
-		statePath = filepath.Join(filepath.Dir(cfgPath), ".boxy", "state.json")
-	}
-	return store.NewDiskStore(statePath)
 }

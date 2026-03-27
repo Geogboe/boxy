@@ -3,11 +3,12 @@ package cli
 import (
 	"fmt"
 
+	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
 
-func newSandboxListCommand(configPath, statePath, file *string) *cobra.Command {
+func newSandboxListCommand(serverAddr func() string) *cobra.Command {
 	var format string
 
 	cmd := &cobra.Command{
@@ -15,13 +16,12 @@ func newSandboxListCommand(configPath, statePath, file *string) *cobra.Command {
 		Short: "List all sandboxes",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			st, err := resolveSandboxStore(*configPath, *statePath, *file)
+			client := defaultAPIClient()
+			base := apiBaseURL(serverAddr())
+
+			sbs, err := fetchJSON[[]model.Sandbox](cmd.Context(), client, base+"/api/v1/sandboxes")
 			if err != nil {
-				return err
-			}
-			sbs, err := st.ListSandboxes(cmd.Context())
-			if err != nil {
-				return err
+				return fmt.Errorf("list sandboxes: %w", err)
 			}
 			if format == "json" {
 				return printJSON(sbs)

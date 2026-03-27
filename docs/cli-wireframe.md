@@ -64,8 +64,7 @@ boxy
 │
 │
 ├── sandbox                                    Manage sandboxes
-│   ├── --config <path>                          (persistent flag)
-│   ├── --state <path>                           (persistent flag)
+│   ├── --server <addr>                          Server address (default 127.0.0.1:9090)
 │   │
 │   ├── create -f <spec>                         Create sandbox from spec file
 │   │   └── -f, --file <path>                      Sandbox spec file (required)
