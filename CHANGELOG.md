@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.12](https://github.com/Geogboe/boxy/compare/v0.1.11...v0.1.12) (2026-03-31)
+
+
+### Features
+
+* **cli:** use api for sandbox commands ([66e195e](https://github.com/Geogboe/boxy/commit/66e195efafb9783789192091ca5068dad3f7661d))
+
 ## [0.1.11](https://github.com/Geogboe/boxy/compare/v0.1.10...v0.1.11) (2026-03-27)
 
 
