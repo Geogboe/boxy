@@ -22,8 +22,5 @@ const DownloadBase = "https://github.com"
 // AssetName returns the archive base name for a given version, OS, and
 // architecture, matching the GoReleaser name_template.
 func AssetName(version, goos, goarch string) string {
-	if goos == "windows" && goarch == "arm64" {
-		goarch = "amd64"
-	}
 	return BinaryName + "_" + version + "_" + goos + "_" + goarch
 }

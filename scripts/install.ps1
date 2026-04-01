@@ -95,13 +95,12 @@ try {
     if ($Arch -notin @('AMD64', 'x86_64', 'ARM64')) {
         throw "Unsupported architecture: $Arch."
     }
-    $AssetArch = 'amd64'
     if ($Arch -eq 'ARM64') {
-        Write-Info 'platform: windows/arm64'
-        Write-Warn 'No native ARM64 build available; using amd64 binary (runs via Windows x64 emulation).'
+        $AssetArch = 'arm64'
     } else {
-        Write-Info "platform: windows/$AssetArch"
+        $AssetArch = 'amd64'
     }
+    Write-Info "platform: windows/$AssetArch"
 
     # ── Version ──────────────────────────────────────────────────────────────
     $Version = Resolve-BoxyVersion

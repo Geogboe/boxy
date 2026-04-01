@@ -126,7 +126,6 @@ func TestInstallPS1DeclaresExpectedContracts(t *testing.T) {
 		"checksums.txt",
 		"releases?per_page=1",
 		"ARM64",
-		"No native ARM64 build available",
 	}
 
 	for _, snippet := range requiredSnippets {
@@ -275,6 +274,7 @@ func releaseAssetsForOS(version, targetOS string) []releaseAsset {
 	case "windows":
 		return []releaseAsset{
 			{Name: fmt.Sprintf("boxy_%s_windows_amd64.zip", trimmedVersion), Arch: "amd64"},
+			{Name: fmt.Sprintf("boxy_%s_windows_arm64.zip", trimmedVersion), Arch: "arm64"},
 		}
 	case "linux":
 		return []releaseAsset{

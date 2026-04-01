@@ -63,6 +63,13 @@ tasks:
     cmds:
       - go test ./scripts -run TestInstallShWSL -count=1
 
+  generate:
+    desc: Run go generate (regenerate install scripts from templates)
+    aliases:
+      - gen
+    cmds:
+      - go generate ./scripts/...
+
   fmt:
     desc: Format all Go source files
     aliases:

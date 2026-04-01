@@ -4,8 +4,7 @@ Boxy install scripts download a published GitHub release binary, verify it again
 
 ## Supported Targets
 
-- Windows PowerShell: `windows/amd64`
-- Windows on ARM64: installs the published `windows/amd64` binary and relies on Windows x64 emulation
+- Windows: `windows/amd64`, `windows/arm64`
 - Linux: `linux/amd64`, `linux/arm64`
 - macOS: `darwin/amd64`, `darwin/arm64`
 
