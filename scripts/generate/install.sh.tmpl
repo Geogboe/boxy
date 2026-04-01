@@ -11,7 +11,10 @@
 #   BOXY_DEBUG       Set to 1 for verbose output.
 #   BOXY_FORCE       Set to 1 to overwrite an existing binary.
 
-set -euo pipefail
+set -eu
+# pipefail is a bash/zsh extension; enable it when available, ignore otherwise.
+# shellcheck disable=SC3040
+if (set -o pipefail) 2>/dev/null; then set -o pipefail; fi
 
 REPO="{{.Repo}}"
 BINARY="{{.BinaryName}}"

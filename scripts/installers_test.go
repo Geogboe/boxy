@@ -171,6 +171,46 @@ func TestInstallShInstallsReleaseFromLocalFixture(t *testing.T) {
 	}
 }
 
+func TestInstallShWorksWithPosixSh(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("POSIX sh installer smoke test only runs on linux and darwin")
+	}
+
+	// Find a POSIX sh that is distinct from bash, preferring dash.
+	sh, err := exec.LookPath("dash")
+	if err != nil {
+		sh = "/bin/sh"
+	}
+
+	// Only run if sh does not support pipefail (i.e. it is a strict POSIX sh).
+	// If sh is bash in disguise this test is redundant but still harmless.
+	if out, _ := exec.Command(sh, "-c", "set -o pipefail").CombinedOutput(); len(out) == 0 {
+		t.Skip("sh supports pipefail — not a strict POSIX sh, skipping")
+	}
+
+	root := repoRoot(t)
+	tempDir := t.TempDir()
+	version := "v9.9.9-test"
+	baseURL := createBaseURLFixture(t, root, tempDir, version, runtime.GOOS)
+	installDir := filepath.Join(tempDir, "install")
+
+	output := runCommand(t, root, []string{sh, filepath.Join(root, "scripts", "install.sh")}, map[string]string{
+		"BOXY_BASE_URL":    baseURL,
+		"BOXY_INSTALL_DIR": installDir,
+		"BOXY_VERSION":     version,
+		"BOXY_FORCE":       "1",
+	})
+
+	destination := filepath.Join(installDir, "boxy")
+	if _, err := os.Stat(destination); err != nil {
+		t.Fatalf("expected installed binary at %s: %v", destination, err)
+	}
+
+	if !strings.Contains(output, "installed to") {
+		t.Fatalf("expected install output to contain 'installed to', got:\n%s", output)
+	}
+}
+
 func TestInstallShWSL(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("WSL installer smoke test only runs on Windows")
