@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.13](https://github.com/Geogboe/boxy/compare/v0.1.12...v0.1.13) (2026-04-01)
+
+
+### Features
+
+* refactor install scripts, go generate, and boxy update command ([a3023e8](https://github.com/Geogboe/boxy/commit/a3023e8e445919fd0a4e3a4a05b757a7ec0e3fdc))
+
 ## [0.1.12](https://github.com/Geogboe/boxy/compare/v0.1.11...v0.1.12) (2026-03-31)
 
 
