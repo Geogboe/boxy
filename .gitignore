@@ -33,6 +33,9 @@ go.work
 .DS_Store
 Thumbs.db
 
+# Release notes live on GitHub Releases, not in-repo
+CHANGELOG.md
+
 # Boxy specific
 boxy.db
 encryption.key
