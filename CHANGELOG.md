@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.14](https://github.com/Geogboe/boxy/compare/v0.1.13...v0.1.14) (2026-04-01)
+
+
+### Features
+
+* add native Windows ARM64 build support ([d3474ae](https://github.com/Geogboe/boxy/commit/d3474ae8f611728d7f7055d876ef571ae8a878c4))
+
 ## [0.1.13](https://github.com/Geogboe/boxy/compare/v0.1.12...v0.1.13) (2026-04-01)
 
 
