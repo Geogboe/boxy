@@ -213,4 +213,6 @@ vite.config.ts.timestamp-*
 
 .claude/
 
+.copilot/
+
 *.env

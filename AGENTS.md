@@ -14,12 +14,16 @@ Features, bugs, and roadmap items are tracked as GitHub issues on `Geogboe/boxy`
 
 ## Commands
 
+**Always check `Taskfile.yml` for existing tasks before running raw commands.** Use `task <name>` instead of raw `go test`, `golangci-lint run`, etc.
+
 ```bash
 task build            # Build ./boxy binary
+task test             # Run all tests
+task lint             # Run golangci-lint (same as CI)
+task fmt              # Format all Go source files
 task serve            # Run boxy serve (daemon mode)
 task serve:once       # Run boxy serve --once (single reconciliation pass)
 task go:run -- <args> # Run boxy via go run with arbitrary args
-go test ./...         # Run all tests
 task release:check    # Validate GoReleaser config via the pinned tools module
 ```
 

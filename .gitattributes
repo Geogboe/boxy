@@ -1,1 +1,4 @@
 *.sh text eol=lf
+*.sh.tmpl text eol=lf
+*.ps1.tmpl text eol=lf
+scripts/install.ps1 text eol=lf

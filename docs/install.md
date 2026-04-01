@@ -11,7 +11,7 @@ Boxy install scripts download a published GitHub release binary, verify it again
 
 ## Defaults
 
-- Windows install dir: `%LOCALAPPDATA%\Programs\boxy\bin`
+- Windows install dir: `$HOME\.local\bin`
 - Linux/macOS install dir: `$HOME/.local/bin`
 - `latest` means the newest published GitHub release, including prereleases
 
@@ -26,22 +26,16 @@ The installers target the GoReleaser archives published by [release.yml](../.git
 - `boxy_<version>_windows_amd64.zip`
 - `checksums.txt`
 
-## Environment Overrides
+## Environment Variables
 
-Preferred Boxy-specific variables:
+Both installers accept only environment variables — there are no CLI flags.
 
-- `BOXY_VERSION`: install a specific tag instead of `latest`
-- `BOXY_INSTALL_DIR`: override the destination directory
-- `BOXY_FORCE=1`: overwrite an existing install
-- `BOXY_DEBUG=1`: enable installer debug logging
-
-Compatibility aliases are also supported:
-
-- `BOXY_INSTALL_VERSION`
-- `INSTALLER_VERSION`
-- `INSTALLER_INSTALL_DIR`
-- `INSTALLER_FORCE`
-- `INSTALLER_DEBUG`
+| Variable | Description |
+|----------|-------------|
+| `BOXY_VERSION` | Install a specific tag (e.g. `v0.1.9`). Defaults to latest. |
+| `BOXY_INSTALL_DIR` | Override the destination directory. |
+| `BOXY_FORCE=1` | Overwrite an existing binary. |
+| `BOXY_DEBUG=1` | Enable verbose installer output. |
 
 ## Windows
 
@@ -60,33 +54,56 @@ irm https://raw.githubusercontent.com/Geogboe/boxy/main/scripts/install.ps1 | ie
 
 Important behavior:
 
-- Verifies the downloaded `.exe` against `checksums.txt`
-- Adds the default install directory to the user `Path` when needed
-- Prints an explicit remediation command instead of editing `Path` automatically for custom install directories
-- Refuses to overwrite an existing binary unless `-Force` is provided
-- Supports `-Verbose`, `BOXY_DEBUG=1`, or `INSTALLER_DEBUG=1` for install diagnostics
+- Verifies the downloaded archive against `checksums.txt`
+- Prints PATH instructions if the install directory is not in `$env:Path` — does not modify PATH automatically
+- Refuses to overwrite an existing binary unless `BOXY_FORCE=1` is set
 
 ## Linux / macOS
 
 Run from a POSIX shell:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Geogboe/boxy/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Geogboe/boxy/main/scripts/install.sh | bash
 ```
 
 Install a specific release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Geogboe/boxy/main/scripts/install.sh | BOXY_VERSION=v0.1.5 sh
+BOXY_VERSION=v0.1.5 curl -fsSL https://raw.githubusercontent.com/Geogboe/boxy/main/scripts/install.sh | bash
 ```
 
 Important behavior:
 
 - Verifies the downloaded binary against `checksums.txt`
 - Installs to `~/.local/bin` by default
-- Prints an exact shell-specific PATH remediation command when the install directory is not already on `PATH`
-- Refuses to overwrite an existing binary unless `--force` is provided
-- Supports `--debug`, `BOXY_DEBUG=1`, or `INSTALLER_DEBUG=1` for install diagnostics
+- Prints a shell-specific `PATH` remediation command when the install directory is not on `PATH`
+- Refuses to overwrite an existing binary unless `BOXY_FORCE=1` is set
+
+## Update
+
+Once installed, boxy can update itself:
+
+```bash
+boxy update
+```
+
+Check for an available update without installing:
+
+```bash
+boxy update --check
+```
+
+Install a specific version:
+
+```bash
+boxy update --version v0.1.9
+```
+
+Environment variables:
+
+| Variable | Description |
+|----------|-------------|
+| `BOXY_GITHUB_TOKEN` | GitHub API token to avoid rate limits. |
 
 ## Verify
 
