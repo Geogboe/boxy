@@ -162,6 +162,53 @@ func testStoreDeleteSandbox(t *testing.T, newStore storeFactory) {
 	})
 }
 
+func testStoreSandboxFieldsRoundTrip(t *testing.T, newStore storeFactory) {
+	t.Helper()
+
+	t.Run("Sandbox_fields_round_trip", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		s := newStore(t)
+
+		want := model.Sandbox{
+			ID:     "sb-async",
+			Name:   "async-lab",
+			Status: model.SandboxStatusProvisioning,
+			Error:  "still provisioning",
+			Policies: model.SandboxPolicies{
+				AutoDestroyAfter: "8h",
+				SecurityProfile:  "lab",
+			},
+			Requests: []model.ResourceRequest{
+				{Type: model.ResourceTypeContainer, Profile: "alpine", Count: 2},
+			},
+			Resources: []model.ResourceID{"res-1"},
+		}
+
+		if err := s.CreateSandbox(ctx, want); err != nil {
+			t.Fatalf("CreateSandbox: %v", err)
+		}
+
+		got, err := s.GetSandbox(ctx, want.ID)
+		if err != nil {
+			t.Fatalf("GetSandbox: %v", err)
+		}
+
+		if got.Status != want.Status {
+			t.Fatalf("status = %q, want %q", got.Status, want.Status)
+		}
+		if got.Error != want.Error {
+			t.Fatalf("error = %q, want %q", got.Error, want.Error)
+		}
+		if len(got.Requests) != 1 {
+			t.Fatalf("requests len = %d, want 1", len(got.Requests))
+		}
+		if got.Requests[0] != want.Requests[0] {
+			t.Fatalf("request = %+v, want %+v", got.Requests[0], want.Requests[0])
+		}
+	})
+}
+
 var memoryFactory = func(t *testing.T) store.Store {
 	return store.NewMemoryStore()
 }
@@ -193,4 +240,14 @@ func TestMemoryStore_DeleteSandbox(t *testing.T) {
 func TestDiskStore_DeleteSandbox(t *testing.T) {
 	t.Parallel()
 	testStoreDeleteSandbox(t, diskFactory)
+}
+
+func TestMemoryStore_SandboxFieldsRoundTrip(t *testing.T) {
+	t.Parallel()
+	testStoreSandboxFieldsRoundTrip(t, memoryFactory)
+}
+
+func TestDiskStore_SandboxFieldsRoundTrip(t *testing.T) {
+	t.Parallel()
+	testStoreSandboxFieldsRoundTrip(t, diskFactory)
 }

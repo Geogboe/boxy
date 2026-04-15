@@ -57,7 +57,7 @@ Boxy keeps pools of generic, ready-to-use resources warm ahead of time. When a u
 
 **Pool** — A named, homogeneous inventory of pre-provisioned resources. Declared in config. Each pool carries its own provisioning config (`type` identifies the provider/driver, `config` is a driver-interpreted opaque blob) and policy (preheat, recycle). The pool IS the spec — there is no separate "blueprint", "template", or "spec" entity.
 
-**Sandbox** — A user-facing environment containing 1..N resources drawn from pools. Sandbox classes are defined in separate `.sandbox.yaml` files and instantiated via CLI. When resources move from pool to sandbox, post-allocation hooks run to personalize them (set credentials, configure networking, etc.). Boxy returns connection info to the user; it is not a proxy.
+**Sandbox** — A user-facing environment containing 1..N resources drawn from pools. Sandbox creation is asynchronous on the server: the API persists a sandbox request in `pending`, the reconcile loop fulfills it, and the sandbox transitions to `ready` or `failed`. When resources move from pool to sandbox, post-allocation hooks run to personalize them (set credentials, configure networking, etc.). Boxy returns connection info to the user; it is not a proxy.
 
 **Provider** — An external system that provides resources (Docker, Hyper-V, Podman, VMware, etc.). Providers have a type that maps to a driver. Provider connection details (socket, host, certs) are owned by the agent, not the server. Drivers auto-discover their environment where possible.
 
@@ -130,9 +130,30 @@ When a resource moves from a pool into a sandbox, hooks run to personalize it:
 
 Resources in pools are intentionally generic (no specific user, no credentials). Hooks make them specific at allocation time. This means credentials don't exist until allocation — they are generated/set by the hook and returned as connection info.
 
+### Async Sandbox API Flow
+
+Sandbox creation is a server-side async workflow:
+
+1. Client `POST`s a sandbox request to `/api/v1/sandboxes`
+2. Server persists the sandbox and returns `202 Accepted` with `status: "pending"`
+3. The daemon reconcile loop provisions and allocates resources
+4. Client polls `GET /api/v1/sandboxes/{id}` until status becomes `ready` or `failed`
+
+The create API uses resource requests rather than allocated resource IDs:
+
+```json
+{
+  "name": "pentest-lab",
+  "requests": [
+    {"type": "container", "profile": "kali", "count": 3},
+    {"type": "container", "profile": "ubuntu-targets", "count": 1}
+  ]
+}
+```
+
 ### Sandbox Access Model
 
-Boxy is not a proxy. When a sandbox is created, Boxy returns connection info for each resource:
+Boxy is not a proxy. When a sandbox reaches `ready`, Boxy returns connection info for each resource:
 - SSH host/port/key for Linux VMs
 - RDP address for Windows VMs
 - SMB path for file shares

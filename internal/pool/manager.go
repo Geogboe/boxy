@@ -41,6 +41,19 @@ func (m *Manager) SetClock(c Clock) {
 
 // Reconcile performs one reconciliation pass for the pool.
 func (m *Manager) Reconcile(ctx context.Context, poolName model.PoolName) error {
+	return m.reconcile(ctx, poolName, 0)
+}
+
+// EnsureReady ensures the pool has at least minReady resources available,
+// without mutating the pool's configured preheat policy.
+func (m *Manager) EnsureReady(ctx context.Context, poolName model.PoolName, minReady int) error {
+	if minReady <= 0 {
+		return nil
+	}
+	return m.reconcile(ctx, poolName, minReady)
+}
+
+func (m *Manager) reconcile(ctx context.Context, poolName model.PoolName, minReadyOverride int) error {
 	if m == nil {
 		return fmt.Errorf("pool manager is nil")
 	}
@@ -83,7 +96,12 @@ func (m *Manager) Reconcile(ctx context.Context, poolName model.PoolName) error 
 			}
 			p.Inventory.Resources = kept
 
-			toProv := computeToProvision(p)
+			effectiveMinReady := p.Policies.Preheat.MinReady
+			if minReadyOverride > effectiveMinReady {
+				effectiveMinReady = minReadyOverride
+			}
+
+			toProv := computeToProvision(p, effectiveMinReady)
 			reason := "noop"
 			should := false
 			if len(stale) > 0 || toProv > 0 {
@@ -165,8 +183,7 @@ func computeStale(p model.Pool, now time.Time) (stale []model.Resource, kept []m
 	return stale, kept, nil
 }
 
-func computeToProvision(p model.Pool) int {
-	minReady := p.Policies.Preheat.MinReady
+func computeToProvision(p model.Pool, minReady int) int {
 	maxTotal := p.Policies.Preheat.MaxTotal
 	if minReady <= 0 {
 		return 0

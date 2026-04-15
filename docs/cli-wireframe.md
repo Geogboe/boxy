@@ -75,12 +75,14 @@ boxy
 │   ├── list                                     List all sandboxes
 │   │
 │   │   $ boxy sandbox list
-│   │     [JSON array of sandboxes]
+│   │     ID         NAME         STATUS       RESOURCES
+│   │     sb-a1b2c3  pentest-lab  ready        3
+│   │     sb-d4e5f6  warmup-lab   pending      0
 │   │
 │   ├── get <id>                                 Get sandbox details
 │   │
 │   │   $ boxy sandbox get sb-a1b2c3
-│   │     [JSON object]
+│   │     {"id":"sb-a1b2c3","name":"pentest-lab","status":"ready",...}
 │   │
 │   └── delete <id>                              Delete a sandbox
 │

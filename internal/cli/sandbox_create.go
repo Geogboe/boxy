@@ -169,8 +169,13 @@ func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 	for _, req := range spec.Resources {
 		sb, err = sm.AddFromPool(ctx, sb.ID, model.PoolName(req.Pool), req.Count)
 		if err != nil {
-			return err
+			return failLocalSandboxCreate(ctx, st, sb.ID, err)
 		}
+	}
+	sb.Status = model.SandboxStatusReady
+	sb.Error = ""
+	if err := st.PutSandbox(ctx, sb); err != nil {
+		return failLocalSandboxCreate(ctx, st, sb.ID, fmt.Errorf("put sandbox %q: %w", sb.ID, err))
 	}
 	doneAllocate(fmt.Sprintf("%s  ·  %d resource(s)", sb.ID, len(sb.Resources)))
 
@@ -208,6 +213,26 @@ func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 	pterm.Println()
 
 	return nil
+}
+
+func failLocalSandboxCreate(ctx context.Context, st store.Store, sandboxID model.SandboxID, cause error) error {
+	if cause == nil {
+		return nil
+	}
+	if st == nil || sandboxID == "" {
+		return cause
+	}
+
+	sb, err := st.GetSandbox(ctx, sandboxID)
+	if err != nil {
+		return cause
+	}
+	sb.Status = model.SandboxStatusFailed
+	sb.Error = cause.Error()
+	if putErr := st.PutSandbox(ctx, sb); putErr != nil {
+		return fmt.Errorf("%w (also failed to mark sandbox %q failed: %v)", cause, sandboxID, putErr)
+	}
+	return cause
 }
 
 // printConnectionInfo displays sandbox connection info once to the terminal.

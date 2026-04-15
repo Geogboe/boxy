@@ -56,10 +56,13 @@ docs/adr/             # Architecture Decision Records
 
 - Pools are homogeneous inventories of resources (see `pkg/model/pool.go` and `pkg/model/resource_collection.go`).
 - **Resources are single-use:** when a resource is allocated into a sandbox, it is never returned to a pool. (ADR-0002)
+- The daemon reconcile loop runs pool reconciliation both before and after sandbox fulfillment so preheat targets are restored in the same tick after allocations drain a pool.
 
 ### Sandboxes
 
 - A sandbox is an environment that can be as small as a single resource or as large as a full lab.
+- Sandbox creation via the REST API is asynchronous: `POST /api/v1/sandboxes` persists a sandbox request in `pending`, the daemon fulfillment loop provisions/allocates resources, and the sandbox transitions to `ready` or `failed`.
+- `boxy serve` persists runtime state in `.boxy/state.json` next to the active config (or under the working directory when no config file is used), so accepted async sandbox requests survive normal daemon restarts.
 - Preferred phrasing when describing compositions:
   - "container sandbox" (1 container)
   - "3 VM lab sandbox" (multi-VM lab)
@@ -111,6 +114,7 @@ Wrap repeated commands in `Taskfile.yml`. If a command is run more than once, ad
 
 - `gopls` is available locally for code navigation, refactoring, and linting.
 - `task` (go-task) for running project commands.
+- `task lint` mirrors CI by running `golangci-lint` v2 from source via `go run`, so it does not depend on a preinstalled local binary version.
 - GoReleaser is pinned in the isolated `tools/` module; use `task release:check` and `task release:snapshot` instead of assuming a global `goreleaser` binary is installed.
 
 ## Installer Notes

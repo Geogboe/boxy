@@ -23,8 +23,18 @@ func New(s store.Store, allocator SandboxAllocator) *Manager {
 	return &Manager{store: s, allocator: allocator}
 }
 
-// Create creates an empty sandbox.
+// Create creates an empty sandbox request.
 func (m *Manager) Create(ctx context.Context, sbName string, policies model.SandboxPolicies) (model.Sandbox, error) {
+	return m.CreateRequested(ctx, sbName, policies, nil)
+}
+
+// CreateRequested creates a sandbox request in pending state.
+func (m *Manager) CreateRequested(
+	ctx context.Context,
+	sbName string,
+	policies model.SandboxPolicies,
+	requests []model.ResourceRequest,
+) (model.Sandbox, error) {
 	if m == nil {
 		return model.Sandbox{}, fmt.Errorf("sandbox manager is nil")
 	}
@@ -39,6 +49,8 @@ func (m *Manager) Create(ctx context.Context, sbName string, policies model.Sand
 		ID:       sbID,
 		Name:     sbName,
 		Policies: policies,
+		Status:   model.SandboxStatusPending,
+		Requests: append([]model.ResourceRequest(nil), requests...),
 	}
 	if err := m.store.CreateSandbox(ctx, sb); err != nil {
 		return model.Sandbox{}, fmt.Errorf("create sandbox: %w", err)
@@ -97,10 +109,6 @@ func (m *Manager) AddFromPool(
 	}
 
 	sb.Resources = append(sb.Resources, resourceIDs(selected)...)
-	if err := m.store.PutSandbox(ctx, sb); err != nil {
-		return model.Sandbox{}, fmt.Errorf("put sandbox: %w", err)
-	}
-
 	for _, res := range selected {
 		if res.ID == "" {
 			return model.Sandbox{}, fmt.Errorf("selected resource has empty id")
@@ -123,6 +131,10 @@ func (m *Manager) AddFromPool(
 		if err := m.store.PutResource(ctx, res); err != nil {
 			return model.Sandbox{}, fmt.Errorf("put resource %q: %w", res.ID, err)
 		}
+	}
+
+	if err := m.store.PutSandbox(ctx, sb); err != nil {
+		return model.Sandbox{}, fmt.Errorf("put sandbox: %w", err)
 	}
 
 	return sb, nil
@@ -191,6 +203,7 @@ func (m *Manager) CreateFromPool(
 		ID:        sbID,
 		Name:      sbName,
 		Policies:  policies,
+		Status:    model.SandboxStatusReady,
 		Resources: resourceIDs(selected),
 	}
 	if err := m.store.CreateSandbox(ctx, sb); err != nil {

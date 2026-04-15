@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/Geogboe/boxy/pkg/httpjson"
 	"github.com/Geogboe/boxy/pkg/model"
@@ -37,23 +38,39 @@ func (s *Server) handleGetSandbox(w http.ResponseWriter, r *http.Request) {
 
 // createSandboxRequest is the request body for POST /api/v1/sandboxes.
 type createSandboxRequest struct {
-	Name     string                `json:"name"`
-	Policies model.SandboxPolicies `json:"policies,omitempty"`
+	Name     string                  `json:"name"`
+	Policies model.SandboxPolicies   `json:"policies,omitempty"`
+	Requests []model.ResourceRequest `json:"requests"`
 }
 
-// handleCreateSandbox creates a new sandbox and returns it with 201.
+// handleCreateSandbox creates a new sandbox request and returns it with 202.
 func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	var req createSandboxRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpjson.Error(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	sb, err := s.sandboxMgr.Create(r.Context(), req.Name, req.Policies)
+	if strings.TrimSpace(req.Name) == "" {
+		httpjson.Error(w, http.StatusBadRequest, "sandbox name is required")
+		return
+	}
+	if len(req.Requests) == 0 {
+		httpjson.Error(w, http.StatusBadRequest, "sandbox requests are required")
+		return
+	}
+	for _, request := range req.Requests {
+		if err := request.Validate(); err != nil {
+			httpjson.Error(w, http.StatusBadRequest, "invalid sandbox request: "+err.Error())
+			return
+		}
+	}
+
+	sb, err := s.sandboxMgr.CreateRequested(r.Context(), req.Name, req.Policies, req.Requests)
 	if err != nil {
 		httpjson.Error(w, http.StatusInternalServerError, "failed to create sandbox")
 		return
 	}
-	httpjson.Write(w, http.StatusCreated, sb)
+	httpjson.Write(w, http.StatusAccepted, sb)
 }
 
 // handleDeleteSandbox deletes a sandbox by ID and returns 204.

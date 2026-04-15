@@ -106,7 +106,12 @@ func TestAPI_ListSandboxes_withData(t *testing.T) {
 	t.Parallel()
 	st := store.NewMemoryStore()
 	ctx := context.Background()
-	_ = st.CreateSandbox(ctx, model.Sandbox{ID: "sb-1", Name: "test"})
+	_ = st.CreateSandbox(ctx, model.Sandbox{
+		ID:       "sb-1",
+		Name:     "test",
+		Status:   model.SandboxStatusPending,
+		Requests: []model.ResourceRequest{{Type: model.ResourceTypeContainer, Profile: "alpine", Count: 1}},
+	})
 
 	mux := server.NewTestMux(st, sandbox.New(st, nil), false)
 	w := httptest.NewRecorder()
@@ -122,6 +127,9 @@ func TestAPI_ListSandboxes_withData(t *testing.T) {
 	}
 	if sbs[0].ID != "sb-1" {
 		t.Fatalf("sandbox id = %q, want %q", sbs[0].ID, "sb-1")
+	}
+	if sbs[0].Status != model.SandboxStatusPending {
+		t.Fatalf("sandbox status = %q, want %q", sbs[0].Status, model.SandboxStatusPending)
 	}
 }
 
@@ -246,7 +254,13 @@ func TestAPI_GetSandbox_found(t *testing.T) {
 	t.Parallel()
 	st := store.NewMemoryStore()
 	ctx := context.Background()
-	_ = st.CreateSandbox(ctx, model.Sandbox{ID: "sb-42", Name: "found"})
+	_ = st.CreateSandbox(ctx, model.Sandbox{
+		ID:       "sb-42",
+		Name:     "found",
+		Status:   model.SandboxStatusFailed,
+		Error:    "pool not found",
+		Requests: []model.ResourceRequest{{Type: model.ResourceTypeContainer, Profile: "demo", Count: 1}},
+	})
 
 	mux := server.NewTestMux(st, sandbox.New(st, nil), false)
 	w := httptest.NewRecorder()
@@ -262,6 +276,12 @@ func TestAPI_GetSandbox_found(t *testing.T) {
 	}
 	if sb.ID != "sb-42" {
 		t.Fatalf("sandbox id = %q, want %q", sb.ID, "sb-42")
+	}
+	if sb.Status != model.SandboxStatusFailed {
+		t.Fatalf("sandbox status = %q, want %q", sb.Status, model.SandboxStatusFailed)
+	}
+	if sb.Error != "pool not found" {
+		t.Fatalf("sandbox error = %q, want %q", sb.Error, "pool not found")
 	}
 }
 
@@ -282,14 +302,14 @@ func TestAPI_CreateSandbox(t *testing.T) {
 	st := store.NewMemoryStore()
 	mux := server.NewTestMux(st, sandbox.New(st, nil), false)
 
-	body := bytes.NewBufferString(`{"name":"new-box"}`)
+	body := bytes.NewBufferString(`{"name":"new-box","requests":[{"type":"container","profile":"alpine","count":2}]}`)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes", body)
 	r.Header.Set("Content-Type", "application/json")
 	mux.ServeHTTP(w, r)
 
-	if w.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want 201; body: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body: %s", w.Code, w.Body.String())
 	}
 	var sb model.Sandbox
 	if err := json.Unmarshal(w.Body.Bytes(), &sb); err != nil {
@@ -300,6 +320,50 @@ func TestAPI_CreateSandbox(t *testing.T) {
 	}
 	if sb.Name != "new-box" {
 		t.Fatalf("sandbox name = %q, want %q", sb.Name, "new-box")
+	}
+	if sb.Status != model.SandboxStatusPending {
+		t.Fatalf("sandbox status = %q, want %q", sb.Status, model.SandboxStatusPending)
+	}
+	if len(sb.Resources) != 0 {
+		t.Fatalf("sandbox resources len = %d, want 0", len(sb.Resources))
+	}
+	if len(sb.Requests) != 1 {
+		t.Fatalf("sandbox requests len = %d, want 1", len(sb.Requests))
+	}
+	if sb.Requests[0].Type != model.ResourceTypeContainer || sb.Requests[0].Profile != "alpine" || sb.Requests[0].Count != 2 {
+		t.Fatalf("sandbox request = %+v", sb.Requests[0])
+	}
+}
+
+func TestAPI_CreateSandbox_requiresRequests(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	mux := server.NewTestMux(st, sandbox.New(st, nil), false)
+
+	body := bytes.NewBufferString(`{"name":"new-box"}`)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes", body)
+	r.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAPI_CreateSandbox_validatesRequests(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	mux := server.NewTestMux(st, sandbox.New(st, nil), false)
+
+	body := bytes.NewBufferString(`{"name":"new-box","requests":[{"type":"container","profile":"","count":0}]}`)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes", body)
+	r.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
 	}
 }
 
