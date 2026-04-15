@@ -63,6 +63,7 @@ docs/adr/             # Architecture Decision Records
 - A sandbox is an environment that can be as small as a single resource or as large as a full lab.
 - Sandbox creation via the REST API is asynchronous: `POST /api/v1/sandboxes` persists a sandbox request in `pending`, the daemon fulfillment loop provisions/allocates resources, and the sandbox transitions to `ready` or `failed`.
 - `boxy serve` persists runtime state in `.boxy/state.json` next to the active config (or under the working directory when no config file is used), so accepted async sandbox requests survive normal daemon restarts.
+- `boxy sandbox create -f ...` is daemon-backed: the CLI loads a sandbox spec, resolves named pools from the daemon pool catalog, submits async `requests`, and waits for `ready`/`failed` by default. Use `--no-wait` to return after the daemon accepts the request.
 - Preferred phrasing when describing compositions:
   - "container sandbox" (1 container)
   - "3 VM lab sandbox" (multi-VM lab)
@@ -99,6 +100,7 @@ When decisions are made, save them as ADR documents in /docs/adr. This is a livi
 - Cost model differs from human dev cycles: refactors are cheap when an agent can apply wide changes quickly, resolve merges/rebases, and keep `go test ./...` green.
 - Bias toward a single source of truth: remove duplication promptly and update all call sites together (avoid parallel “old vs new” models).
 - Treat “no regressions” as “no regressions covered by tests”: add/extend targeted tests whenever behavior changes.
+- Use `pkg/` for generic contracts, primitives, or shared vocabulary that reduce conceptual load in isolation. Keep Boxy application workflow glue in `internal/`; do not promote daemon/CLI orchestration code to `pkg/` unless a genuinely general concept has emerged.
 
 ## Development Notes
 

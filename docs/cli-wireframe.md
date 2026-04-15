@@ -67,10 +67,17 @@ boxy
 │   ├── --server <addr>                          Server address (default 127.0.0.1:9090)
 │   │
 │   ├── create -f <spec>                         Create sandbox from spec file
-│   │   └── -f, --file <path>                      Sandbox spec file (required)
+│   │   ├── -f, --file <path>                      Sandbox spec file (required)
+│   │   └── --no-wait                              Return after request is accepted
 │   │
 │   │   $ boxy sandbox create -f lab.sandbox.yaml
-│   │     Sandbox created  id=sb-a1b2c3  name=pentest-lab  resources=3
+│   │     Waiting for sandbox "pentest-lab"  sb-a1b2c3 · 3 resource(s)
+│   │
+│   │   $ boxy sandbox create -f lab.sandbox.yaml --no-wait
+│   │     Sandbox accepted
+│   │       id: sb-a1b2c3
+│   │       name: pentest-lab
+│   │       status: pending
 │   │
 │   ├── list                                     List all sandboxes
 │   │
