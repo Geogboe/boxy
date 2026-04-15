@@ -41,15 +41,16 @@ jsonpath "$" count == 0
 
 POST {{base_url}}/api/v1/sandboxes
 Content-Type: application/json
-{"name": "hurl-test"}
+{"name": "hurl-test", "requests": [{"type": "container", "profile": "demo", "count": 1}]}
 
-HTTP 201
+HTTP 202
 [Captures]
 sandbox_id: jsonpath "$.id"
 [Asserts]
 header "Content-Type" contains "application/json"
 jsonpath "$.name" == "hurl-test"
 jsonpath "$.id" isString
+jsonpath "$.status" == "pending"
 
 
 # ── GET /api/v1/sandboxes/{id} ──────────────────────────────────────────
@@ -58,6 +59,7 @@ GET {{base_url}}/api/v1/sandboxes/{{sandbox_id}}
 HTTP 200
 [Asserts]
 jsonpath "$.id" == {{sandbox_id}}
+jsonpath "$.status" exists
 
 
 # ── DELETE /api/v1/sandboxes/{id} ───────────────────────────────────────

@@ -68,8 +68,8 @@ func newSandboxTestServer(t *testing.T, listItems []model.Sandbox) *httptest.Ser
 	}
 
 	sandboxes := map[string]model.Sandbox{
-		"sb-1": {ID: "sb-1", Name: "one", Resources: []model.ResourceID{"res-1"}},
-		"sb-2": {ID: "sb-2", Name: "two", Resources: []model.ResourceID{"res-1", "res-2"}},
+		"sb-1": {ID: "sb-1", Name: "one", Status: model.SandboxStatusPending, Requests: []model.ResourceRequest{{Type: model.ResourceTypeContainer, Profile: "ubuntu-2204", Count: 1}}, Resources: []model.ResourceID{"res-1"}},
+		"sb-2": {ID: "sb-2", Name: "two", Status: model.SandboxStatusReady, Requests: []model.ResourceRequest{{Type: model.ResourceTypeContainer, Profile: "ubuntu-2204", Count: 1}, {Type: model.ResourceTypeVM, Profile: "win-2022", Count: 1}}, Resources: []model.ResourceID{"res-1", "res-2"}},
 	}
 	resources := map[string]model.Resource{
 		"res-1": resourceOne,
@@ -151,8 +151,8 @@ func TestSandboxList_empty(t *testing.T) {
 
 func TestSandboxList_with_sandboxes(t *testing.T) {
 	srv := newSandboxTestServer(t, []model.Sandbox{
-		{ID: "sb-1", Name: "one", Resources: []model.ResourceID{"res-1"}},
-		{ID: "sb-2", Name: "two", Resources: []model.ResourceID{"res-1", "res-2"}},
+		{ID: "sb-1", Name: "one", Status: model.SandboxStatusPending, Resources: []model.ResourceID{"res-1"}},
+		{ID: "sb-2", Name: "two", Status: model.SandboxStatusReady, Resources: []model.ResourceID{"res-1", "res-2"}},
 	})
 	defer srv.Close()
 
@@ -165,7 +165,7 @@ func TestSandboxList_with_sandboxes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	for _, want := range []string{"sb-1", "one", "sb-2", "two", "2"} {
+	for _, want := range []string{"sb-1", "one", "pending", "sb-2", "two", "ready", "2"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("output = %q, want %q", output, want)
 		}
@@ -174,8 +174,8 @@ func TestSandboxList_with_sandboxes(t *testing.T) {
 
 func TestSandboxGet_found(t *testing.T) {
 	srv := newSandboxTestServer(t, []model.Sandbox{
-		{ID: "sb-1", Name: "one", Resources: []model.ResourceID{"res-1"}},
-		{ID: "sb-2", Name: "two", Resources: []model.ResourceID{"res-1", "res-2"}},
+		{ID: "sb-1", Name: "one", Status: model.SandboxStatusPending, Resources: []model.ResourceID{"res-1"}},
+		{ID: "sb-2", Name: "two", Status: model.SandboxStatusReady, Resources: []model.ResourceID{"res-1", "res-2"}},
 	})
 	defer srv.Close()
 
@@ -188,7 +188,7 @@ func TestSandboxGet_found(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	for _, want := range []string{`"id": "sb-2"`, `"name": "two"`, `"security_profile": "lab"`, `"id": "res-1"`, `"id": "res-2"`} {
+	for _, want := range []string{`"id": "sb-2"`, `"name": "two"`, `"status": "ready"`, `"security_profile": "lab"`, `"profile": "ubuntu-2204"`, `"id": "res-1"`, `"id": "res-2"`} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("output = %q, want %q", output, want)
 		}
@@ -197,8 +197,8 @@ func TestSandboxGet_found(t *testing.T) {
 
 func TestSandboxGet_not_found(t *testing.T) {
 	srv := newSandboxTestServer(t, []model.Sandbox{
-		{ID: "sb-1", Name: "one", Resources: []model.ResourceID{"res-1"}},
-		{ID: "sb-2", Name: "two", Resources: []model.ResourceID{"res-1", "res-2"}},
+		{ID: "sb-1", Name: "one", Status: model.SandboxStatusPending, Resources: []model.ResourceID{"res-1"}},
+		{ID: "sb-2", Name: "two", Status: model.SandboxStatusReady, Resources: []model.ResourceID{"res-1", "res-2"}},
 	})
 	defer srv.Close()
 
@@ -216,8 +216,8 @@ func TestSandboxGet_not_found(t *testing.T) {
 
 func TestSandboxDelete_found(t *testing.T) {
 	srv := newSandboxTestServer(t, []model.Sandbox{
-		{ID: "sb-1", Name: "one", Resources: []model.ResourceID{"res-1"}},
-		{ID: "sb-2", Name: "two", Resources: []model.ResourceID{"res-1", "res-2"}},
+		{ID: "sb-1", Name: "one", Status: model.SandboxStatusPending, Resources: []model.ResourceID{"res-1"}},
+		{ID: "sb-2", Name: "two", Status: model.SandboxStatusReady, Resources: []model.ResourceID{"res-1", "res-2"}},
 	})
 	defer srv.Close()
 
@@ -237,8 +237,8 @@ func TestSandboxDelete_found(t *testing.T) {
 
 func TestSandboxDelete_not_found(t *testing.T) {
 	srv := newSandboxTestServer(t, []model.Sandbox{
-		{ID: "sb-1", Name: "one", Resources: []model.ResourceID{"res-1"}},
-		{ID: "sb-2", Name: "two", Resources: []model.ResourceID{"res-1", "res-2"}},
+		{ID: "sb-1", Name: "one", Status: model.SandboxStatusPending, Resources: []model.ResourceID{"res-1"}},
+		{ID: "sb-2", Name: "two", Status: model.SandboxStatusReady, Resources: []model.ResourceID{"res-1", "res-2"}},
 	})
 	defer srv.Close()
 

@@ -30,11 +30,12 @@ func newSandboxListCommand(serverAddr func() string) *cobra.Command {
 				pterm.Println("  No sandboxes found.")
 				return nil
 			}
-			rows := [][]string{{"ID", "NAME", "RESOURCES"}}
+			rows := [][]string{{"ID", "NAME", "STATUS", "RESOURCES"}}
 			for _, sb := range sbs {
 				rows = append(rows, []string{
 					string(sb.ID),
 					sb.Name,
+					string(sb.Status),
 					fmt.Sprintf("%d", len(sb.Resources)),
 				})
 			}

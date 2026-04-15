@@ -34,6 +34,15 @@ func (u *serveUI) reconcileError(pool model.PoolName, err error) {
 	}
 }
 
+// printErr reports a non-pool-specific reconciliation error.
+func (u *serveUI) printErr(err error) {
+	if u.pretty {
+		pterm.Error.Printfln("%v", err)
+	} else {
+		slog.Error("reconcile sandboxes", "err", err)
+	}
+}
+
 // shutdown prints the shutdown message.
 func (u *serveUI) shutdown() {
 	if u.pretty {

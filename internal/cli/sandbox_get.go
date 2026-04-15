@@ -12,10 +12,13 @@ import (
 // It embeds the sandbox and includes full Resource objects (with Properties)
 // so callers can access allocation-time connection info after the fact.
 type sandboxGetOutput struct {
-	ID        model.SandboxID       `json:"id"`
-	Name      string                `json:"name"`
-	Policies  model.SandboxPolicies `json:"policies"`
-	Resources []model.Resource      `json:"resources"`
+	ID        model.SandboxID         `json:"id"`
+	Name      string                  `json:"name"`
+	Policies  model.SandboxPolicies   `json:"policies"`
+	Status    model.SandboxStatus     `json:"status"`
+	Requests  []model.ResourceRequest `json:"requests,omitempty"`
+	Error     string                  `json:"error,omitempty"`
+	Resources []model.Resource        `json:"resources"`
 }
 
 func newSandboxGetCommand(serverAddr func() string) *cobra.Command {
@@ -53,6 +56,9 @@ func newSandboxGetCommand(serverAddr func() string) *cobra.Command {
 				ID:        sb.ID,
 				Name:      sb.Name,
 				Policies:  sb.Policies,
+				Status:    sb.Status,
+				Requests:  sb.Requests,
+				Error:     sb.Error,
 				Resources: resources,
 			})
 		},

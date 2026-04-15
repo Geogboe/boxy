@@ -83,7 +83,7 @@ tasks:
       - lint:go
       - golangci-lint
     cmds:
-      - golangci-lint run ./...
+      - go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...
 
   release:check:
     desc: Validate GoReleaser config using the pinned tools module

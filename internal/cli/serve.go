@@ -97,7 +97,12 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		providersMap[p.Name] = p
 	}
 
-	st := store.NewMemoryStore()
+	doneState := ui.step("Opening state")
+	st, statePath, err := openServeStore(cfgPath)
+	if err != nil {
+		return err
+	}
+	doneState(statePath)
 
 	// Drivers + embedded agent
 	doneAgent := ui.step("Starting embedded agent")
@@ -119,6 +124,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	}
 	poolMgr := pool.New(st, provisioner)
 	sandboxMgr := sandbox.New(st, provisioner)
+	sandboxFulfiller := sandbox.NewFulfiller(st, poolMgr, sandboxMgr)
 
 	// Pools
 	donePools := ui.step("Initializing pools")
@@ -148,7 +154,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		return srv.Start(ctx)
 	})
 	g.Go(func() error {
-		return serveLoop(ctx, poolMgr, poolNames, ui)
+		return serveLoop(ctx, poolMgr, sandboxFulfiller, poolNames, ui)
 	})
 
 	printServeBanner(listenAddr, uiEnabled, len(cfg.Pools))
@@ -175,6 +181,30 @@ func resolveUIEnabled(opts serveOpts, cmd *cobra.Command, cfg boxyconfig.Config)
 		return opts.ui
 	}
 	return cfg.Server.UIEnabled()
+}
+
+func openServeStore(cfgPath string) (store.Store, string, error) {
+	statePath, err := serveStatePath(cfgPath)
+	if err != nil {
+		return nil, "", err
+	}
+	st, err := store.NewDiskStore(statePath)
+	if err != nil {
+		return nil, "", err
+	}
+	return st, statePath, nil
+}
+
+func serveStatePath(cfgPath string) (string, error) {
+	if cfgPath != "" {
+		return filepath.Join(filepath.Dir(cfgPath), ".boxy", "state.json"), nil
+	}
+
+	wd, err := effectiveWD()
+	if err != nil {
+		return "", fmt.Errorf("get working directory: %w", err)
+	}
+	return filepath.Join(wd, ".boxy", "state.json"), nil
 }
 
 func loadConfig(explicitPath string) (cfg boxyconfig.Config, usedPath string, _ error) {
@@ -209,7 +239,13 @@ func findDefaultConfigPath() (string, error) {
 	return findConfigPathInDir(wd)
 }
 
-func serveLoop(ctx context.Context, poolMgr *pool.Manager, poolNames []model.PoolName, ui *serveUI) error {
+func serveLoop(
+	ctx context.Context,
+	poolMgr servePoolReconciler,
+	sandboxFulfiller serveSandboxReconciler,
+	poolNames []model.PoolName,
+	ui *serveUI,
+) error {
 	const tickEvery = 10 * time.Second
 
 	ticker := time.NewTicker(tickEvery)
@@ -221,13 +257,45 @@ func serveLoop(ctx context.Context, poolMgr *pool.Manager, poolNames []model.Poo
 			ui.shutdown()
 			return nil
 		case <-ticker.C:
-			for _, name := range poolNames {
-				if err := poolMgr.Reconcile(ctx, name); err != nil {
-					ui.reconcileError(name, err)
-				}
+			serveReconcilePass(ctx, poolMgr, sandboxFulfiller, poolNames, ui)
+		}
+	}
+}
+
+type servePoolReconciler interface {
+	Reconcile(ctx context.Context, poolName model.PoolName) error
+}
+
+type serveSandboxReconciler interface {
+	Reconcile(ctx context.Context) error
+}
+
+type serveSandboxReconcilerFunc func(ctx context.Context) error
+
+func (f serveSandboxReconcilerFunc) Reconcile(ctx context.Context) error {
+	return f(ctx)
+}
+
+func serveReconcilePass(
+	ctx context.Context,
+	poolMgr servePoolReconciler,
+	sandboxFulfiller serveSandboxReconciler,
+	poolNames []model.PoolName,
+	ui *serveUI,
+) {
+	reconcilePools := func() {
+		for _, name := range poolNames {
+			if err := poolMgr.Reconcile(ctx, name); err != nil {
+				ui.reconcileError(name, err)
 			}
 		}
 	}
+
+	reconcilePools()
+	if err := sandboxFulfiller.Reconcile(ctx); err != nil {
+		ui.printErr(err)
+	}
+	reconcilePools()
 }
 
 // poolSpecToModel converts a config PoolSpec into a runtime model.Pool.

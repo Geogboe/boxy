@@ -72,3 +72,60 @@ func TestManager_CreateFromPool_ConsumesReadyResource(t *testing.T) {
 		t.Fatalf("expected resource allocated, got %q", updatedRes.State)
 	}
 }
+
+func TestManager_AddFromPool_PreservesSandboxStatusUntilCallerFinalizes(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+
+	ready := model.Resource{
+		ID:        "res_1",
+		Type:      model.ResourceTypeContainer,
+		Profile:   model.ResourceProfileDefault,
+		Provider:  model.ProviderRef{Name: "prov_1"},
+		State:     model.ResourceStateReady,
+		CreatedAt: time.Unix(1, 0).UTC(),
+	}
+	if err := st.PutResource(ctx, ready); err != nil {
+		t.Fatalf("put resource: %v", err)
+	}
+
+	pool := model.Pool{
+		Name:      "docker-containers",
+		Policies:  model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 0}},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault, Resources: []model.Resource{ready}},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	sb := model.Sandbox{
+		ID:       "sb-1",
+		Name:     "demo",
+		Status:   model.SandboxStatusProvisioning,
+		Requests: []model.ResourceRequest{{Type: model.ResourceTypeContainer, Profile: model.ResourceProfileDefault, Count: 1}},
+	}
+	if err := st.CreateSandbox(ctx, sb); err != nil {
+		t.Fatalf("create sandbox: %v", err)
+	}
+
+	mgr := New(st, nil)
+	got, err := mgr.AddFromPool(ctx, sb.ID, pool.Name, 1)
+	if err != nil {
+		t.Fatalf("add from pool: %v", err)
+	}
+
+	if got.Status != model.SandboxStatusProvisioning {
+		t.Fatalf("status = %q, want %q", got.Status, model.SandboxStatusProvisioning)
+	}
+
+	stored, err := st.GetSandbox(ctx, sb.ID)
+	if err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if stored.Status != model.SandboxStatusProvisioning {
+		t.Fatalf("stored status = %q, want %q", stored.Status, model.SandboxStatusProvisioning)
+	}
+	if len(stored.Resources) != 1 {
+		t.Fatalf("resources len = %d, want 1", len(stored.Resources))
+	}
+}
