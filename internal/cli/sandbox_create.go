@@ -146,12 +146,19 @@ func compileSandboxRequests(spec boxyconfig.SandboxSpec, pools []model.Pool) ([]
 }
 
 func waitForSandboxReady(ctx context.Context, client *http.Client, base string, initial model.Sandbox) (model.Sandbox, error) {
-	spin, _ := boxySpinner.Start(fmt.Sprintf("Waiting for sandbox %q", initial.Name))
-	defer func() {
-		if spin.IsActive {
-			_ = spin.Stop()
-		}
-	}()
+	var (
+		spin       *pterm.SpinnerPrinter
+		useSpinner = useSpinnerOutput()
+	)
+	if useSpinner {
+		started, _ := boxySpinner.Start(fmt.Sprintf("Waiting for sandbox %q", initial.Name))
+		spin = started
+		defer func() {
+			if spin.IsActive {
+				_ = spin.Stop()
+			}
+		}()
+	}
 
 	sb := initial
 	ticker := time.NewTicker(sandboxPollInterval)
@@ -160,20 +167,33 @@ func waitForSandboxReady(ctx context.Context, client *http.Client, base string, 
 	for {
 		switch sb.Status {
 		case model.SandboxStatusReady:
-			spin.Success(fmt.Sprintf("Waiting for sandbox %q  %s", sb.Name, pterm.FgDarkGray.Sprintf("%s  ·  %d resource(s)", sb.ID, len(sb.Resources))))
+			msg := fmt.Sprintf("Waiting for sandbox %q  %s", sb.Name, pterm.FgDarkGray.Sprintf("%s  ·  %d resource(s)", sb.ID, len(sb.Resources)))
+			if useSpinner {
+				spin.Success(msg)
+			} else {
+				boxySuccessPrinter.Println(msg)
+			}
 			return sb, nil
 		case model.SandboxStatusFailed:
 			msg := strings.TrimSpace(sb.Error)
 			if msg == "" {
 				msg = "sandbox request failed"
 			}
-			spin.Fail(msg)
+			if useSpinner {
+				spin.Fail(msg)
+			} else {
+				boxyFailPrinter.Println(msg)
+			}
 			return sb, fmt.Errorf("sandbox %q failed: %s", sb.ID, msg)
 		}
 
 		select {
 		case <-ctx.Done():
-			spin.Fail("interrupted")
+			if useSpinner {
+				spin.Fail("interrupted")
+			} else {
+				boxyFailPrinter.Println("interrupted")
+			}
 			return sb, fmt.Errorf("sandbox %q created but wait was interrupted: %w", sb.ID, ctx.Err())
 		case <-ticker.C:
 		}
@@ -181,10 +201,18 @@ func waitForSandboxReady(ctx context.Context, client *http.Client, base string, 
 		next, err := fetchJSON[model.Sandbox](ctx, client, base+"/api/v1/sandboxes/"+string(sb.ID))
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				spin.Fail("interrupted")
+				if useSpinner {
+					spin.Fail("interrupted")
+				} else {
+					boxyFailPrinter.Println("interrupted")
+				}
 				return sb, fmt.Errorf("sandbox %q created but wait was interrupted: %w", sb.ID, err)
 			}
-			spin.Fail(err.Error())
+			if useSpinner {
+				spin.Fail(err.Error())
+			} else {
+				boxyFailPrinter.Println(err.Error())
+			}
 			return sb, fmt.Errorf("wait for sandbox %q: %w", sb.ID, err)
 		}
 		sb = next
