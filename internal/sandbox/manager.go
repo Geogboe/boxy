@@ -113,6 +113,9 @@ func (m *Manager) AddFromPool(
 		if res.ID == "" {
 			return model.Sandbox{}, fmt.Errorf("selected resource has empty id")
 		}
+		if res.OriginPool == "" {
+			res.OriginPool = pool.Name
+		}
 		if m.allocator != nil {
 			extra, err := m.allocator.Allocate(ctx, pool, res)
 			if err != nil {
@@ -214,6 +217,9 @@ func (m *Manager) CreateFromPool(
 	for _, res := range selected {
 		if res.ID == "" {
 			return model.Sandbox{}, fmt.Errorf("selected resource has empty id")
+		}
+		if res.OriginPool == "" {
+			res.OriginPool = pool.Name
 		}
 		if m.allocator != nil {
 			extra, err := m.allocator.Allocate(ctx, pool, res)

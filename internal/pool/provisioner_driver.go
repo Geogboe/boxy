@@ -55,6 +55,7 @@ func (dp *DriverProvisioner) Provision(ctx context.Context, pool model.Pool) (mo
 		ID:         model.ResourceID(res.ID),
 		Type:       pool.Inventory.ExpectedType,
 		Profile:    pool.Inventory.ExpectedProfile,
+		OriginPool: pool.Name,
 		Provider:   model.ProviderRef{Name: providerName},
 		State:      model.ResourceStateReady,
 		Properties: props,

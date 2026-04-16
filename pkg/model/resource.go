@@ -42,6 +42,11 @@ type Resource struct {
 	// Example: vm "win-2022", container "ubuntu-2204".
 	Profile ResourceProfile `json:"profile,omitempty" yaml:"profile,omitempty"`
 
+	// OriginPool is the immutable pool that originally provisioned this resource.
+	// It is used for pool-level capacity accounting even after allocation removes
+	// the resource from ready inventory.
+	OriginPool PoolName `json:"origin_pool,omitempty" yaml:"origin_pool,omitempty"`
+
 	// Provider identifies the external system instance this resource belongs to.
 	Provider ProviderRef `json:"provider" yaml:"provider"`
 
