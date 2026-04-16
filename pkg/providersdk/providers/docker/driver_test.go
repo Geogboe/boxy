@@ -13,7 +13,9 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	imagetypes "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/client"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/Geogboe/boxy/pkg/providersdk"
@@ -21,6 +23,8 @@ import (
 
 // mockDockerClient is a test double for dockerClient.
 type mockDockerClient struct {
+	imageInspect         func(ctx context.Context, imageID string, inspectOpts ...client.ImageInspectOption) (imagetypes.InspectResponse, error)
+	imagePull            func(ctx context.Context, refStr string, options imagetypes.PullOptions) (io.ReadCloser, error)
 	containerCreate      func(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, platform *ocispec.Platform, containerName string) (container.CreateResponse, error)
 	containerStart       func(ctx context.Context, containerID string, options container.StartOptions) error
 	containerInspect     func(ctx context.Context, containerID string) (container.InspectResponse, error)
@@ -31,6 +35,18 @@ type mockDockerClient struct {
 	containerRemove      func(ctx context.Context, containerID string, options container.RemoveOptions) error
 }
 
+func (m *mockDockerClient) ImageInspect(ctx context.Context, imageID string, opts ...client.ImageInspectOption) (imagetypes.InspectResponse, error) {
+	if m.imageInspect != nil {
+		return m.imageInspect(ctx, imageID, opts...)
+	}
+	return imagetypes.InspectResponse{}, nil
+}
+func (m *mockDockerClient) ImagePull(ctx context.Context, ref string, opts imagetypes.PullOptions) (io.ReadCloser, error) {
+	if m.imagePull != nil {
+		return m.imagePull(ctx, ref, opts)
+	}
+	return io.NopCloser(strings.NewReader("")), nil
+}
 func (m *mockDockerClient) ContainerCreate(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, platform *ocispec.Platform, containerName string) (container.CreateResponse, error) {
 	return m.containerCreate(ctx, config, hostConfig, networkingConfig, platform, containerName)
 }
@@ -97,6 +113,25 @@ func pipeHijack(data []byte) types.HijackedResponse {
 	}
 }
 
+type notFoundError struct{ msg string }
+
+func (e notFoundError) Error() string { return e.msg }
+func (notFoundError) NotFound()       {}
+
+type trackingReadCloser struct {
+	reader io.Reader
+	closed bool
+}
+
+func (r *trackingReadCloser) Read(p []byte) (int, error) {
+	return r.reader.Read(p)
+}
+
+func (r *trackingReadCloser) Close() error {
+	r.closed = true
+	return nil
+}
+
 // --- Create ---
 
 func TestDriver_Create_HappyPath(t *testing.T) {
@@ -129,6 +164,121 @@ func TestDriver_Create_HappyPath(t *testing.T) {
 	}
 	if res.ConnectionInfo["image"] != "alpine:latest" {
 		t.Errorf("image = %q, want alpine:latest", res.ConnectionInfo["image"])
+	}
+}
+
+func TestDriver_Create_PullsMissingImage(t *testing.T) {
+	const imageRef = "alpine:latest"
+
+	inspectCalls := 0
+	pullCalls := 0
+	createCalls := 0
+	stream := &trackingReadCloser{
+		reader: strings.NewReader("{\"status\":\"Pulled\"}\n"),
+	}
+	mock := &mockDockerClient{
+		imageInspect: func(_ context.Context, got string, _ ...client.ImageInspectOption) (imagetypes.InspectResponse, error) {
+			inspectCalls++
+			if got != imageRef {
+				t.Errorf("inspect image = %q, want %q", got, imageRef)
+			}
+			return imagetypes.InspectResponse{}, notFoundError{msg: "missing image"}
+		},
+		imagePull: func(_ context.Context, got string, _ imagetypes.PullOptions) (io.ReadCloser, error) {
+			pullCalls++
+			if got != imageRef {
+				t.Errorf("pull image = %q, want %q", got, imageRef)
+			}
+			return stream, nil
+		},
+		containerCreate: func(_ context.Context, _ *container.Config, _ *container.HostConfig, _ *network.NetworkingConfig, _ *ocispec.Platform, _ string) (container.CreateResponse, error) {
+			createCalls++
+			return container.CreateResponse{ID: "abc123def456"}, nil
+		},
+		containerStart: func(_ context.Context, _ string, _ container.StartOptions) error { return nil },
+		containerInspect: func(_ context.Context, _ string) (container.InspectResponse, error) {
+			return runningInspect("abc123def456", "boxy-abc123"), nil
+		},
+	}
+
+	d := &Driver{cli: mock}
+	if _, err := d.Create(context.Background(), &CreateConfig{Image: imageRef}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if inspectCalls != 1 {
+		t.Fatalf("inspect calls = %d, want 1", inspectCalls)
+	}
+	if pullCalls != 1 {
+		t.Fatalf("pull calls = %d, want 1", pullCalls)
+	}
+	if createCalls != 1 {
+		t.Fatalf("create calls = %d, want 1", createCalls)
+	}
+	if !stream.closed {
+		t.Fatal("expected image pull stream to be closed")
+	}
+}
+
+func TestDriver_Create_ImageInspectError(t *testing.T) {
+	mock := &mockDockerClient{
+		imageInspect: func(_ context.Context, _ string, _ ...client.ImageInspectOption) (imagetypes.InspectResponse, error) {
+			return imagetypes.InspectResponse{}, fmt.Errorf("docker daemon unavailable")
+		},
+	}
+
+	d := &Driver{cli: mock}
+	_, err := d.Create(context.Background(), &CreateConfig{Image: "alpine:latest"})
+	if err == nil {
+		t.Fatal("expected inspect error")
+	}
+	if !strings.Contains(err.Error(), `docker ImageInspect "alpine:latest"`) {
+		t.Fatalf("error = %q, want image inspect context", err)
+	}
+}
+
+func TestDriver_Create_ImagePullError(t *testing.T) {
+	mock := &mockDockerClient{
+		imageInspect: func(_ context.Context, _ string, _ ...client.ImageInspectOption) (imagetypes.InspectResponse, error) {
+			return imagetypes.InspectResponse{}, notFoundError{msg: "missing image"}
+		},
+		imagePull: func(_ context.Context, _ string, _ imagetypes.PullOptions) (io.ReadCloser, error) {
+			return nil, fmt.Errorf("registry timeout")
+		},
+	}
+
+	d := &Driver{cli: mock}
+	_, err := d.Create(context.Background(), &CreateConfig{Image: "alpine:latest"})
+	if err == nil {
+		t.Fatal("expected pull error")
+	}
+	if !strings.Contains(err.Error(), `docker ImagePull "alpine:latest": registry timeout`) {
+		t.Fatalf("error = %q, want image pull context", err)
+	}
+}
+
+func TestDriver_Create_ImagePullStreamError(t *testing.T) {
+	stream := &trackingReadCloser{
+		reader: strings.NewReader("{\"errorDetail\":{\"message\":\"pull failed\"},\"error\":\"pull failed\"}\n"),
+	}
+	mock := &mockDockerClient{
+		imageInspect: func(_ context.Context, _ string, _ ...client.ImageInspectOption) (imagetypes.InspectResponse, error) {
+			return imagetypes.InspectResponse{}, notFoundError{msg: "missing image"}
+		},
+		imagePull: func(_ context.Context, _ string, _ imagetypes.PullOptions) (io.ReadCloser, error) {
+			return stream, nil
+		},
+	}
+
+	d := &Driver{cli: mock}
+	_, err := d.Create(context.Background(), &CreateConfig{Image: "alpine:latest"})
+	if err == nil {
+		t.Fatal("expected pull stream error")
+	}
+	if !strings.Contains(err.Error(), `docker ImagePull "alpine:latest": pull failed`) {
+		t.Fatalf("error = %q, want JSON stream pull error", err)
+	}
+	if !stream.closed {
+		t.Fatal("expected image pull stream to be closed")
 	}
 }
 
