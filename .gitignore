@@ -223,3 +223,5 @@ vite.config.ts.timestamp-*
 .copilot/
 
 *.env
+
+.codex

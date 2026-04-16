@@ -1,0 +1,44 @@
+---
+# docker-containers — real Docker containers, requires a running Docker daemon.
+#
+# Prerequisites:
+#   - Docker daemon running (docker info should succeed)
+#   - Sufficient disk to pull nginx:alpine and alpine images
+#
+# Run: ./serve.sh   (Linux/macOS)
+#      ./serve.ps1  (Windows)
+server:
+  listen: ":9090"
+
+# providers block is optional for docker — boxy auto-creates a "docker-local"
+# provider pointing to the default socket. Uncomment to override:
+#
+# providers:
+#   - name: docker-local
+#     type: docker
+#     config:
+#       host: "unix:///var/run/docker.sock"
+
+pools:
+  - name: web
+    type: docker
+    policy:
+      preheat:
+        min_ready: 1
+        max_total: 3
+      recycle:
+        max_age: 1h
+    config:
+      image: nginx:alpine
+
+  - name: client
+    type: docker
+    policy:
+      preheat:
+        min_ready: 1
+        max_total: 3
+      recycle:
+        max_age: 1h
+    config:
+      image: alpine
+      command: ["sh", "-c", "sleep infinity"]
