@@ -53,7 +53,7 @@ Boxy keeps pools of generic, ready-to-use resources warm ahead of time. When a u
 
 ## Core Domain Model
 
-**Resource** — A runtime record of a provisioned instance (VM, container, share, network, etc.). Has an ID, type, state, provider handle, and properties. Resources are single-use: once allocated to a sandbox they are never returned to a pool (ADR-0002). A resource does not carry a "spec" or "profile" — it is simply evidence that provisioning succeeded.
+**Resource** — A runtime record of a provisioned instance (VM, container, share, network, etc.). Has an ID, type, state, provider handle, and properties. Resources are single-use: once allocated to a sandbox they are never returned to a pool (ADR-0002). Resources also retain immutable pool provenance so the daemon can reason about capacity even after allocation removes them from ready inventory.
 
 **Pool** — A named, homogeneous inventory of pre-provisioned resources. Declared in config. Each pool carries its own provisioning config (`type` identifies the provider/driver, `config` is a driver-interpreted opaque blob) and policy (preheat, recycle). The pool IS the spec — there is no separate "blueprint", "template", or "spec" entity.
 
@@ -221,7 +221,7 @@ pools:
 policy:
   preheat:
     min_ready: N       # target number of ready resources
-    max_total: N       # hard cap
+    max_total: N       # hard cap across ready + allocated resources from this pool
   recycle:
     max_age: "168h"    # destroy and replace unused resources older than this
 ```
@@ -250,7 +250,7 @@ boxy sandbox create -f pentest-lab.sandbox.yaml
 boxy sandbox create -f pentest-lab.sandbox.yaml --no-wait
 ```
 
-The file-based path is the primary, repeatable, version-controlled way. The CLI compiles pool references from the spec into daemon API requests, submits them to `boxy serve`, and waits for a terminal sandbox status by default.
+The file-based path is the primary, repeatable, version-controlled way. The CLI compiles pool references from the spec into daemon API requests, submits them to `boxy serve`, and waits for a terminal sandbox status by default. If a matching pool has exhausted its `max_total` hard cap, the sandbox request fails with `status: "failed"` rather than provisioning beyond the cap.
 
 See [examples/](examples/) for complete configurations.
 

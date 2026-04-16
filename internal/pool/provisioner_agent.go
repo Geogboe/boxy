@@ -52,6 +52,7 @@ func (ap *AgentProvisioner) Provision(ctx context.Context, pool model.Pool) (mod
 		ID:         model.ResourceID(res.ID),
 		Type:       pool.Inventory.ExpectedType,
 		Profile:    pool.Inventory.ExpectedProfile,
+		OriginPool: pool.Name,
 		Provider:   model.ProviderRef{Name: string(driverType)},
 		State:      model.ResourceStateReady,
 		Properties: props,

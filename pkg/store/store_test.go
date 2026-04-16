@@ -209,6 +209,40 @@ func testStoreSandboxFieldsRoundTrip(t *testing.T, newStore storeFactory) {
 	})
 }
 
+func testStoreResourceFieldsRoundTrip(t *testing.T, newStore storeFactory) {
+	t.Helper()
+
+	t.Run("Resource_fields_round_trip", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		s := newStore(t)
+
+		want := model.Resource{
+			ID:         "res-origin",
+			Type:       model.ResourceTypeContainer,
+			Profile:    "web",
+			OriginPool: "web",
+			Provider:   model.ProviderRef{Name: "docker"},
+			State:      model.ResourceStateAllocated,
+		}
+
+		if err := s.PutResource(ctx, want); err != nil {
+			t.Fatalf("PutResource: %v", err)
+		}
+
+		got, err := s.GetResource(ctx, want.ID)
+		if err != nil {
+			t.Fatalf("GetResource: %v", err)
+		}
+		if got.OriginPool != want.OriginPool {
+			t.Fatalf("origin_pool = %q, want %q", got.OriginPool, want.OriginPool)
+		}
+		if got.State != want.State {
+			t.Fatalf("state = %q, want %q", got.State, want.State)
+		}
+	})
+}
+
 var memoryFactory = func(t *testing.T) store.Store {
 	return store.NewMemoryStore()
 }
@@ -250,4 +284,14 @@ func TestMemoryStore_SandboxFieldsRoundTrip(t *testing.T) {
 func TestDiskStore_SandboxFieldsRoundTrip(t *testing.T) {
 	t.Parallel()
 	testStoreSandboxFieldsRoundTrip(t, diskFactory)
+}
+
+func TestMemoryStore_ResourceFieldsRoundTrip(t *testing.T) {
+	t.Parallel()
+	testStoreResourceFieldsRoundTrip(t, memoryFactory)
+}
+
+func TestDiskStore_ResourceFieldsRoundTrip(t *testing.T) {
+	t.Parallel()
+	testStoreResourceFieldsRoundTrip(t, diskFactory)
 }

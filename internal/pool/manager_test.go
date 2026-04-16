@@ -110,4 +110,116 @@ func TestManager_Reconcile_RecycleStale(t *testing.T) {
 	if updated.Inventory.Resources[0].ID == "res_old" {
 		t.Fatalf("expected old resource to be recycled")
 	}
+
+	oldAfter, err := st.GetResource(context.Background(), old.ID)
+	if err != nil {
+		t.Fatalf("get old resource: %v", err)
+	}
+	if oldAfter.State != model.ResourceStateDestroyed {
+		t.Fatalf("old resource state = %q, want %q", oldAfter.State, model.ResourceStateDestroyed)
+	}
+}
+
+func TestManager_EnsureReady_RespectsMaxTotalAcrossAllocatedResources(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+
+	allocated := model.Resource{
+		ID:         "res_allocated",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		OriginPool: "p1",
+		Provider:   model.ProviderRef{Name: "prov_1"},
+		State:      model.ResourceStateAllocated,
+		CreatedAt:  time.Unix(1000, 0).UTC(),
+		UpdatedAt:  time.Unix(1000, 0).UTC(),
+	}
+	if err := st.PutResource(ctx, allocated); err != nil {
+		t.Fatalf("put allocated resource: %v", err)
+	}
+	pool := model.Pool{
+		Name: "p1",
+		Policies: model.PoolPolicies{
+			Preheat: model.PreheatPolicy{MinReady: 1, MaxTotal: 1},
+		},
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: model.ResourceProfileDefault,
+		},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &fakeProvisioner{}
+	mgr := New(st, prov)
+
+	err := mgr.EnsureReady(ctx, "p1", 1)
+	if err == nil {
+		t.Fatal("expected ensure ready to fail at max_total")
+	}
+	if err.Error() != `pool "p1" is at max_total 1 (1 total, 0 ready), cannot satisfy requested ready count 1` {
+		t.Fatalf("ensure ready error = %v", err)
+	}
+
+	updated, err := st.GetPool(ctx, "p1")
+	if err != nil {
+		t.Fatalf("get pool: %v", err)
+	}
+	if len(updated.Inventory.Resources) != 0 {
+		t.Fatalf("inventory len = %d, want 0", len(updated.Inventory.Resources))
+	}
+	if prov.n != 0 {
+		t.Fatalf("provision count = %d, want 0", prov.n)
+	}
+}
+
+func TestManager_Reconcile_IgnoresDestroyedResourcesWhenApplyingMaxTotal(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+
+	destroyed := model.Resource{
+		ID:         "res_destroyed",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		OriginPool: "p1",
+		Provider:   model.ProviderRef{Name: "prov_1"},
+		State:      model.ResourceStateDestroyed,
+		CreatedAt:  time.Unix(1000, 0).UTC(),
+		UpdatedAt:  time.Unix(1001, 0).UTC(),
+	}
+	if err := st.PutResource(ctx, destroyed); err != nil {
+		t.Fatalf("put destroyed resource: %v", err)
+	}
+	pool := model.Pool{
+		Name: "p1",
+		Policies: model.PoolPolicies{
+			Preheat: model.PreheatPolicy{MinReady: 1, MaxTotal: 1},
+		},
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: model.ResourceProfileDefault,
+		},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &fakeProvisioner{}
+	mgr := New(st, prov)
+
+	if err := mgr.Reconcile(ctx, "p1"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	updated, err := st.GetPool(ctx, "p1")
+	if err != nil {
+		t.Fatalf("get pool: %v", err)
+	}
+	if len(updated.Inventory.Resources) != 1 {
+		t.Fatalf("inventory len = %d, want 1", len(updated.Inventory.Resources))
+	}
+	if prov.n != 1 {
+		t.Fatalf("provision count = %d, want 1", prov.n)
+	}
 }

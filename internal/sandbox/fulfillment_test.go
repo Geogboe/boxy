@@ -45,13 +45,14 @@ func (p *fakeFulfillProvisioner) Provision(ctx context.Context, pl model.Pool) (
 	}
 	p.nextID++
 	return model.Resource{
-		ID:        model.ResourceID(fmt.Sprintf("res-%d", p.nextID)),
-		Type:      pl.Inventory.ExpectedType,
-		Profile:   pl.Inventory.ExpectedProfile,
-		Provider:  model.ProviderRef{Name: "fake"},
-		State:     model.ResourceStateReady,
-		CreatedAt: time.Unix(int64(1000+p.nextID), 0).UTC(),
-		UpdatedAt: time.Unix(int64(1000+p.nextID), 0).UTC(),
+		ID:         model.ResourceID(fmt.Sprintf("res-%d", p.nextID)),
+		Type:       pl.Inventory.ExpectedType,
+		Profile:    pl.Inventory.ExpectedProfile,
+		OriginPool: pl.Name,
+		Provider:   model.ProviderRef{Name: "fake"},
+		State:      model.ResourceStateReady,
+		CreatedAt:  time.Unix(int64(1000+p.nextID), 0).UTC(),
+		UpdatedAt:  time.Unix(int64(1000+p.nextID), 0).UTC(),
 	}, nil
 }
 
@@ -171,6 +172,68 @@ func TestFulfiller_ReconcilePending_ProvisionsResourcesBeforeAllocation(t *testi
 	}
 	if prov.nextID != 1 {
 		t.Fatalf("provision count = %d, want 1", prov.nextID)
+	}
+}
+
+func TestFulfiller_ReconcilePending_FailsWhenPoolHitsMaxTotal(t *testing.T) {
+	t.Parallel()
+
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+
+	allocated := model.Resource{
+		ID:         "res-allocated",
+		Type:       model.ResourceTypeContainer,
+		Profile:    "kali",
+		OriginPool: "kali",
+		Provider:   model.ProviderRef{Name: "fake"},
+		State:      model.ResourceStateAllocated,
+		CreatedAt:  time.Unix(1, 0).UTC(),
+		UpdatedAt:  time.Unix(1, 0).UTC(),
+	}
+	if err := st.PutResource(ctx, allocated); err != nil {
+		t.Fatalf("put resource: %v", err)
+	}
+	if err := st.PutPool(ctx, model.Pool{
+		Name: "kali",
+		Policies: model.PoolPolicies{
+			Preheat: model.PreheatPolicy{MaxTotal: 1},
+		},
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: "kali",
+		},
+	}); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+	sb := model.Sandbox{
+		ID:       "sb-1",
+		Name:     "lab",
+		Status:   model.SandboxStatusPending,
+		Requests: []model.ResourceRequest{{Type: model.ResourceTypeContainer, Profile: "kali", Count: 1}},
+	}
+	if err := st.CreateSandbox(ctx, sb); err != nil {
+		t.Fatalf("create sandbox: %v", err)
+	}
+
+	prov := &fakeFulfillProvisioner{}
+	f := NewFulfiller(st, pool.New(st, prov), New(st, fakeAllocator{}))
+	if err := f.Reconcile(ctx); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	got, err := st.GetSandbox(ctx, sb.ID)
+	if err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if got.Status != model.SandboxStatusFailed {
+		t.Fatalf("status = %q, want %q", got.Status, model.SandboxStatusFailed)
+	}
+	if !strings.Contains(got.Error, `pool "kali" is at max_total 1`) {
+		t.Fatalf("error = %q, want max_total failure", got.Error)
+	}
+	if prov.nextID != 0 {
+		t.Fatalf("provision count = %d, want 0", prov.nextID)
 	}
 }
 
