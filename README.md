@@ -209,7 +209,7 @@ pools:
 
 **Key design decisions:**
 - `server.providers` declares what the embedded local agent handles. Drivers auto-discover connection details (socket paths, PowerShell, etc.) — no connection config needed.
-- `agents:` declares remote agents the server should expect. If a declared agent is not connected, the server can warn/alert. Remote agents authenticate via the token bootstrap flow (see [ROADMAP.md](ROADMAP.md)).
+- `agents:` declares remote agents the server should expect. If a declared agent is not connected, the server can warn/alert. Remote agents authenticate via the token bootstrap flow tracked in the GitHub issue tracker.
 - Pool `type` is the provider type (`docker`, `hyperv`, `podman`, `vmware`). It maps directly to a driver and determines routing. The abstract resource category (container, VM) is derived from the driver's capabilities.
 - Pool `config:` is an opaque blob interpreted by the driver. Different providers expose different config options.
 - Specs/blueprints are NOT a separate entity. The pool owns its provisioning config inline.
@@ -326,7 +326,7 @@ pkg/
 
 ## Status
 
-Early development. See [ROADMAP.md](ROADMAP.md) for design details on upcoming work.
+Early development. See the GitHub issue tracker for design details on upcoming work.
 
 ## License
 

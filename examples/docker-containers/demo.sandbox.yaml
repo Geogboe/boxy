@@ -1,0 +1,10 @@
+---
+# Allocate one web server and one client from the docker pools.
+#
+# Run: boxy sandbox create -f demo.sandbox.yaml
+name: docker-sandbox
+resources:
+  - pool: web
+    count: 1
+  - pool: client
+    count: 1
