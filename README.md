@@ -61,7 +61,7 @@ Boxy keeps pools of generic, ready-to-use resources warm ahead of time. When a u
 
 **Provider** — An external system that provides resources (Docker, Hyper-V, Podman, VMware, etc.). Providers have a type that maps to a driver. Provider connection details (socket, host, certs) are owned by the agent, not the server. Drivers auto-discover their environment where possible.
 
-**Driver** — Code that knows how to talk to a specific provider type. Interprets pool provisioning config. Lives in `pkg/providersdk/drivers/`. Drivers auto-discover their environment (e.g., Docker checks for local socket, Hyper-V discovers via PowerShell). A pool's `type` field maps directly to a driver (e.g., `type: docker` → Docker driver, `type: hyperv` → Hyper-V driver).
+**Driver** — Code that knows how to talk to a specific provider type. Interprets pool provisioning config. Lives in `pkg/providersdk/drivers/`. Drivers auto-discover their environment (e.g., Docker checks for local socket, Hyper-V discovers via PowerShell). A pool's `type` field maps directly to a driver (e.g., `type: docker` → Docker driver, `type: hyperv` → Hyper-V driver). Docker pools automatically pull a missing image on first provision instead of requiring a manual `docker pull`.
 
 **Agent** — The runtime entity that executes provider operations using drivers. Can be:
 - **Embedded (local):** runs inside `boxy serve`, handles providers declared in `server.providers`.

@@ -13,10 +13,13 @@ import (
 	"strconv"
 	"strings"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	imagetypes "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -27,6 +30,8 @@ import (
 // dockerClient is the minimal Docker API surface used by this driver.
 // *client.Client satisfies this interface; tests inject a mock.
 type dockerClient interface {
+	ImageInspect(ctx context.Context, imageID string, inspectOpts ...client.ImageInspectOption) (imagetypes.InspectResponse, error)
+	ImagePull(ctx context.Context, refStr string, options imagetypes.PullOptions) (io.ReadCloser, error)
 	ContainerCreate(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, platform *ocispec.Platform, containerName string) (container.CreateResponse, error)
 	ContainerStart(ctx context.Context, containerID string, options container.StartOptions) error
 	ContainerInspect(ctx context.Context, containerID string) (container.InspectResponse, error)
@@ -67,6 +72,9 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 	}
 	if strings.TrimSpace(cc.Image) == "" {
 		return nil, fmt.Errorf("config.image is required")
+	}
+	if err := d.ensureImageAvailable(ctx, cc.Image); err != nil {
+		return nil, err
 	}
 
 	command := toStringSlice(cc.Command)
@@ -156,6 +164,27 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 			"image":          cc.Image,
 		},
 	}, nil
+}
+
+func (d *Driver) ensureImageAvailable(ctx context.Context, ref string) error {
+	if _, err := d.cli.ImageInspect(ctx, ref); err == nil {
+		return nil
+	} else if !cerrdefs.IsNotFound(err) {
+		return fmt.Errorf("docker ImageInspect %q: %w", ref, err)
+	}
+
+	stream, err := d.cli.ImagePull(ctx, ref, imagetypes.PullOptions{})
+	if err != nil {
+		return fmt.Errorf("docker ImagePull %q: %w", ref, err)
+	}
+	defer func() {
+		_ = stream.Close()
+	}()
+
+	if err := jsonmessage.DisplayJSONMessagesStream(stream, io.Discard, 0, false, nil); err != nil {
+		return fmt.Errorf("docker ImagePull %q: %w", ref, err)
+	}
+	return nil
 }
 
 func (d *Driver) Read(ctx context.Context, id string) (*providersdk.ResourceStatus, error) {

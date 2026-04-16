@@ -56,6 +56,7 @@ docs/adr/             # Architecture Decision Records
 
 - Pools are homogeneous inventories of resources (see `pkg/model/pool.go` and `pkg/model/resource_collection.go`).
 - **Resources are single-use:** when a resource is allocated into a sandbox, it is never returned to a pool. (ADR-0002)
+- Docker pool provisioning auto-pulls a configured image when it is missing locally; first-run Docker pools should not require a manual `docker pull`.
 - `model.Resource.OriginPool` is immutable provenance: it records which pool provisioned the resource, and `pool.preheat.max_total` is enforced against all non-destroyed resources with that origin, not just current ready inventory.
 - The daemon reconcile loop runs pool reconciliation both before and after sandbox fulfillment so preheat targets are restored in the same tick after allocations drain a pool.
 
