@@ -1,7 +1,11 @@
 package cli
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/pterm/pterm"
+	"golang.org/x/term"
 )
 
 var boxySuccessPrinter = pterm.PrefixPrinter{
@@ -33,6 +37,16 @@ var boxySpinner = pterm.SpinnerPrinter{
 // step starts a boxySpinner for a single CLI step and returns a done
 // callback that marks it successful with an optional detail string.
 func step(label string) func(detail string) {
+	if !useSpinnerOutput() {
+		return func(detail string) {
+			if detail != "" {
+				boxySuccessPrinter.Println(fmt.Sprintf("%s  %s", label, detail))
+				return
+			}
+			boxySuccessPrinter.Println(label)
+		}
+	}
+
 	spin, _ := boxySpinner.Start(label)
 	return func(detail string) {
 		if detail != "" {
@@ -41,4 +55,8 @@ func step(label string) func(detail string) {
 			spin.Success(label)
 		}
 	}
+}
+
+func useSpinnerOutput() bool {
+	return term.IsTerminal(int(os.Stdout.Fd())) //nolint:gosec // Fd() fits in int on all supported platforms.
 }

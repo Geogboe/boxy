@@ -2,9 +2,9 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"io"
-	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,192 +12,70 @@ import (
 	"time"
 
 	boxyconfig "github.com/Geogboe/boxy/internal/config"
-	"github.com/Geogboe/boxy/internal/pool"
-	"github.com/Geogboe/boxy/internal/sandbox"
-	"github.com/Geogboe/boxy/pkg/agentsdk"
 	"github.com/Geogboe/boxy/pkg/model"
-	"github.com/Geogboe/boxy/pkg/providersdk"
-	"github.com/Geogboe/boxy/pkg/providersdk/builtins"
-	"github.com/Geogboe/boxy/pkg/store"
 	"github.com/pterm/pterm"
 	"golang.org/x/term"
 )
 
-func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
-	// Silence internal slog output; progress is reported via pterm spinners.
-	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+const sandboxPollInterval = time.Second
 
+type createSandboxBody struct {
+	Name     string                  `json:"name"`
+	Policies model.SandboxPolicies   `json:"policies,omitempty"`
+	Requests []model.ResourceRequest `json:"requests"`
+}
+
+func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 	pterm.Println()
 
-	// --- Load sandbox spec ---
 	doneSpec := step("Loading sandbox spec")
-	spec, err := boxyconfig.LoadSandboxFile(opts.file)
+	spec, err := loadSandboxSpec(opts.file)
 	if err != nil {
 		return err
-	}
-	if strings.TrimSpace(spec.Name) == "" {
-		return fmt.Errorf("sandbox spec name is required")
-	}
-	if len(spec.Resources) == 0 {
-		return fmt.Errorf("sandbox spec resources is required")
 	}
 	doneSpec(fmt.Sprintf("%s  (%d resource group(s))", spec.Name, len(spec.Resources)))
 
-	// --- Load config ---
-	doneConfig := step("Loading config")
-	cfgPath, err := resolveConfigPath(opts.configPath, opts.file)
+	client := defaultAPIClient()
+	base := apiBaseURL(opts.server)
+
+	donePools := step("Loading pool catalog")
+	pools, err := fetchJSON[[]model.Pool](ctx, client, base+"/api/v1/pools")
+	if err != nil {
+		return fmt.Errorf("load pool catalog: %w", err)
+	}
+	donePools(fmt.Sprintf("%d pool(s)", len(pools)))
+
+	requests, err := compileSandboxRequests(spec, pools)
 	if err != nil {
 		return err
 	}
-	if cfgPath == "" {
-		return fmt.Errorf("no config file found (expected boxy.yaml next to %q or in cwd)", opts.file)
-	}
-	cfg, err := boxyconfig.LoadFile(cfgPath)
+
+	doneCreate := step(fmt.Sprintf("Creating sandbox %q", spec.Name))
+	sb, err := postJSON[createSandboxBody, model.Sandbox](ctx, client, base+"/api/v1/sandboxes", createSandboxBody{
+		Name:     spec.Name,
+		Policies: model.SandboxPolicies{},
+		Requests: requests,
+	})
 	if err != nil {
+		return fmt.Errorf("create sandbox %q: %w", spec.Name, err)
+	}
+	doneCreate(fmt.Sprintf("%s  ·  %s", sb.ID, sb.Status))
+
+	if opts.noWait {
+		printAcceptedSandbox(sb)
+		printSandboxCommands(sb.ID)
+		return nil
+	}
+
+	sb, err = waitForSandboxReady(ctx, client, base, sb)
+	if err != nil {
+		printSandboxCommands(sb.ID)
 		return err
 	}
-	doneConfig(fmt.Sprintf("%s  (%d provider(s), %d pool(s))", filepath.Base(cfgPath), len(cfg.Providers), len(cfg.Pools)))
 
-	// --- Register + validate providers ---
-	doneProviders := step("Registering providers")
-	reg := providersdk.NewRegistry()
-	if err := builtins.RegisterBuiltins(reg); err != nil {
-		return fmt.Errorf("register builtin providers: %w", err)
-	}
-	providers := ensureImplicitProviders(cfg.Providers, cfg.Pools)
-	if err := reg.ValidateInstances(ctx, providers); err != nil {
-		return fmt.Errorf("validate providers: %w", err)
-	}
-	doneProviders(strings.Join(providerTypes(reg), ", "))
-
-	// --- Open state store ---
-	doneState := step("Opening state")
-	statePath := opts.statePath
-	if statePath == "" {
-		statePath = filepath.Join(filepath.Dir(cfgPath), ".boxy", "state.json")
-	}
-	st, err := store.NewDiskStore(statePath)
+	resources, err := hydrateSandboxResources(ctx, client, base, sb)
 	if err != nil {
 		return err
-	}
-	doneState(statePath)
-
-	specByName := make(map[model.PoolName]boxyconfig.PoolSpec, len(cfg.Pools))
-	for i := range cfg.Pools {
-		p := cfg.Pools[i]
-		if strings.TrimSpace(p.Name) == "" {
-			return fmt.Errorf("pools[%d].name is required", i)
-		}
-		specByName[model.PoolName(p.Name)] = p
-	}
-	providerByName := make(map[string]providersdk.Instance, len(providers))
-	for _, inst := range providers {
-		providerByName[inst.Name] = inst
-	}
-
-	for _, ps := range cfg.Pools {
-		mp, err := poolModelFromSpec(ps)
-		if err != nil {
-			return err
-		}
-		if err := upsertPool(ctx, st, mp); err != nil {
-			return err
-		}
-	}
-
-	needByPool := make(map[model.PoolName]int)
-	for i := range spec.Resources {
-		r := spec.Resources[i]
-		if strings.TrimSpace(r.Pool) == "" {
-			return fmt.Errorf("resources[%d].pool is required", i)
-		}
-		if r.Count <= 0 {
-			return fmt.Errorf("resources[%d].count must be > 0", i)
-		}
-		needByPool[model.PoolName(r.Pool)] += r.Count
-	}
-
-	pterm.Println()
-	pterm.Bold.Printfln("  Creating sandbox %q", spec.Name)
-	pterm.Println()
-
-	drivers, err := buildDrivers(reg, providers)
-	if err != nil {
-		return fmt.Errorf("build drivers: %w", err)
-	}
-	embeddedAgent, err := agentsdk.NewEmbeddedAgent("embedded", "Embedded Agent", drivers...)
-	if err != nil {
-		return fmt.Errorf("create embedded agent: %w", err)
-	}
-
-	prov := &pool.AgentProvisioner{
-		Agent:     embeddedAgent,
-		Specs:     specByName,
-		Providers: providerByName,
-	}
-	pm := pool.New(st, prov)
-	sm := sandbox.New(st, prov)
-
-	// --- Ensure pools have enough ready resources ---
-	for poolName, need := range needByPool {
-		p, err := st.GetPool(ctx, poolName)
-		if err != nil {
-			return fmt.Errorf("get pool %q: %w", poolName, err)
-		}
-		if p.Policies.Preheat.MinReady < need {
-			p.Policies.Preheat.MinReady = need
-			if err := st.PutPool(ctx, p); err != nil {
-				return fmt.Errorf("put pool %q: %w", poolName, err)
-			}
-		}
-		label := fmt.Sprintf("Pool %s  provisioning %d resource(s)", poolName, need)
-		spin, _ := boxySpinner.Start(label)
-		t0 := time.Now()
-		if err := pm.Reconcile(ctx, poolName); err != nil {
-			spin.Fail(err.Error())
-			return fmt.Errorf("reconcile pool %q: %w", poolName, err)
-		}
-		spin.Success(label + "  " + pterm.FgDarkGray.Sprintf("done  (%s)", time.Since(t0).Round(time.Millisecond)))
-	}
-
-	// --- Allocate resources into sandbox ---
-	doneAllocate := step(fmt.Sprintf("Allocating sandbox %q", spec.Name))
-	sb, err := sm.Create(ctx, spec.Name, model.SandboxPolicies{})
-	if err != nil {
-		return err
-	}
-	for _, req := range spec.Resources {
-		sb, err = sm.AddFromPool(ctx, sb.ID, model.PoolName(req.Pool), req.Count)
-		if err != nil {
-			return failLocalSandboxCreate(ctx, st, sb.ID, err)
-		}
-	}
-	sb.Status = model.SandboxStatusReady
-	sb.Error = ""
-	if err := st.PutSandbox(ctx, sb); err != nil {
-		return failLocalSandboxCreate(ctx, st, sb.ID, fmt.Errorf("put sandbox %q: %w", sb.ID, err))
-	}
-	doneAllocate(fmt.Sprintf("%s  ·  %d resource(s)", sb.ID, len(sb.Resources)))
-
-	// Collect full resource details (includes Allocate-time properties).
-	resources := make([]model.Resource, 0, len(sb.Resources))
-	for _, rid := range sb.Resources {
-		res, err := st.GetResource(ctx, rid)
-		if err == nil {
-			resources = append(resources, res)
-		}
-	}
-
-	// --- Replenish pools so preheat targets stay satisfied ---
-	for poolName := range needByPool {
-		label := fmt.Sprintf("Pool %s  replenishing", poolName)
-		spin, _ := boxySpinner.Start(label)
-		t0 := time.Now()
-		if err := pm.Reconcile(ctx, poolName); err != nil {
-			spin.Fail(err.Error())
-			return fmt.Errorf("reconcile pool %q after allocation: %w", poolName, err)
-		}
-		spin.Success(label + "  " + pterm.FgDarkGray.Sprintf("done  (%s)", time.Since(t0).Round(time.Millisecond)))
 	}
 
 	printConnectionInfo(sb, resources)
@@ -208,31 +86,168 @@ func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 		}
 	}
 
-	pterm.FgDarkGray.Printfln("  boxy sandbox get %s", sb.ID)
-	pterm.FgDarkGray.Printfln("  boxy sandbox delete %s", sb.ID)
+	printSandboxCommands(sb.ID)
 	pterm.Println()
-
 	return nil
 }
 
-func failLocalSandboxCreate(ctx context.Context, st store.Store, sandboxID model.SandboxID, cause error) error {
-	if cause == nil {
-		return nil
+func loadSandboxSpec(path string) (boxyconfig.SandboxSpec, error) {
+	spec, err := boxyconfig.LoadSandboxFile(path)
+	if err != nil {
+		return boxyconfig.SandboxSpec{}, err
 	}
-	if st == nil || sandboxID == "" {
-		return cause
+	if strings.TrimSpace(spec.Name) == "" {
+		return boxyconfig.SandboxSpec{}, fmt.Errorf("sandbox spec name is required")
+	}
+	if len(spec.Resources) == 0 {
+		return boxyconfig.SandboxSpec{}, fmt.Errorf("sandbox spec resources is required")
+	}
+	for i := range spec.Resources {
+		res := spec.Resources[i]
+		if strings.TrimSpace(res.Pool) == "" {
+			return boxyconfig.SandboxSpec{}, fmt.Errorf("resources[%d].pool is required", i)
+		}
+		if res.Count <= 0 {
+			return boxyconfig.SandboxSpec{}, fmt.Errorf("resources[%d].count must be > 0", i)
+		}
+	}
+	return spec, nil
+}
+
+func compileSandboxRequests(spec boxyconfig.SandboxSpec, pools []model.Pool) ([]model.ResourceRequest, error) {
+	poolByName := make(map[model.PoolName]model.Pool, len(pools))
+	for _, pool := range pools {
+		poolByName[pool.Name] = pool
 	}
 
-	sb, err := st.GetSandbox(ctx, sandboxID)
-	if err != nil {
-		return cause
+	requests := make([]model.ResourceRequest, 0, len(spec.Resources))
+	for i := range spec.Resources {
+		res := spec.Resources[i]
+		poolName := model.PoolName(strings.TrimSpace(res.Pool))
+		pool, ok := poolByName[poolName]
+		if !ok {
+			return nil, fmt.Errorf("resources[%d].pool %q not found on server", i, res.Pool)
+		}
+		if pool.Inventory.ExpectedType == "" || pool.Inventory.ExpectedType == model.ResourceTypeUnknown {
+			return nil, fmt.Errorf("pool %q is missing expected resource type", pool.Name)
+		}
+		if strings.TrimSpace(string(pool.Inventory.ExpectedProfile)) == "" {
+			return nil, fmt.Errorf("pool %q is missing expected resource profile", pool.Name)
+		}
+
+		requests = append(requests, model.ResourceRequest{
+			Type:    pool.Inventory.ExpectedType,
+			Profile: pool.Inventory.ExpectedProfile,
+			Count:   res.Count,
+		})
 	}
-	sb.Status = model.SandboxStatusFailed
-	sb.Error = cause.Error()
-	if putErr := st.PutSandbox(ctx, sb); putErr != nil {
-		return fmt.Errorf("%w (also failed to mark sandbox %q failed: %v)", cause, sandboxID, putErr)
+
+	return requests, nil
+}
+
+func waitForSandboxReady(ctx context.Context, client *http.Client, base string, initial model.Sandbox) (model.Sandbox, error) {
+	var (
+		spin       *pterm.SpinnerPrinter
+		useSpinner = useSpinnerOutput()
+	)
+	if useSpinner {
+		started, _ := boxySpinner.Start(fmt.Sprintf("Waiting for sandbox %q", initial.Name))
+		spin = started
+		defer func() {
+			if spin.IsActive {
+				_ = spin.Stop()
+			}
+		}()
 	}
-	return cause
+
+	sb := initial
+	ticker := time.NewTicker(sandboxPollInterval)
+	defer ticker.Stop()
+
+	for {
+		switch sb.Status {
+		case model.SandboxStatusReady:
+			msg := fmt.Sprintf("Waiting for sandbox %q  %s", sb.Name, pterm.FgDarkGray.Sprintf("%s  ·  %d resource(s)", sb.ID, len(sb.Resources)))
+			if useSpinner {
+				spin.Success(msg)
+			} else {
+				boxySuccessPrinter.Println(msg)
+			}
+			return sb, nil
+		case model.SandboxStatusFailed:
+			msg := strings.TrimSpace(sb.Error)
+			if msg == "" {
+				msg = "sandbox request failed"
+			}
+			if useSpinner {
+				spin.Fail(msg)
+			} else {
+				boxyFailPrinter.Println(msg)
+			}
+			return sb, fmt.Errorf("sandbox %q failed: %s", sb.ID, msg)
+		}
+
+		select {
+		case <-ctx.Done():
+			if useSpinner {
+				spin.Fail("interrupted")
+			} else {
+				boxyFailPrinter.Println("interrupted")
+			}
+			return sb, fmt.Errorf("sandbox %q created but wait was interrupted: %w", sb.ID, ctx.Err())
+		case <-ticker.C:
+		}
+
+		next, err := fetchJSON[model.Sandbox](ctx, client, base+"/api/v1/sandboxes/"+string(sb.ID))
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				if useSpinner {
+					spin.Fail("interrupted")
+				} else {
+					boxyFailPrinter.Println("interrupted")
+				}
+				return sb, fmt.Errorf("sandbox %q created but wait was interrupted: %w", sb.ID, err)
+			}
+			if useSpinner {
+				spin.Fail(err.Error())
+			} else {
+				boxyFailPrinter.Println(err.Error())
+			}
+			return sb, fmt.Errorf("wait for sandbox %q: %w", sb.ID, err)
+		}
+		sb = next
+	}
+}
+
+func hydrateSandboxResources(ctx context.Context, client *http.Client, base string, sb model.Sandbox) ([]model.Resource, error) {
+	resources := make([]model.Resource, 0, len(sb.Resources))
+	for _, rid := range sb.Resources {
+		res, err := fetchJSON[model.Resource](ctx, client, base+"/api/v1/resources/"+string(rid))
+		if err != nil {
+			var apiErr *apiError
+			if errors.As(err, &apiErr) && apiErr.StatusCode == 404 {
+				continue
+			}
+			return nil, fmt.Errorf("get resource %q for sandbox %q: %w", rid, sb.ID, err)
+		}
+		resources = append(resources, res)
+	}
+	return resources, nil
+}
+
+func printAcceptedSandbox(sb model.Sandbox) {
+	pterm.Println()
+	pterm.Bold.Printfln("  Sandbox accepted")
+	pterm.Println()
+	pterm.Printfln("    id: %s", sb.ID)
+	pterm.Printfln("    name: %s", sb.Name)
+	pterm.Printfln("    status: %s", sb.Status)
+	pterm.Println()
+}
+
+func printSandboxCommands(id model.SandboxID) {
+	pterm.FgDarkGray.Printfln("  boxy sandbox get %s", id)
+	pterm.FgDarkGray.Printfln("  boxy sandbox delete %s", id)
 }
 
 // printConnectionInfo displays sandbox connection info once to the terminal.
@@ -377,73 +392,6 @@ func readSingleKey() (byte, error) {
 	return buf[0], nil
 }
 
-func upsertPool(ctx context.Context, st store.Store, desired model.Pool) error {
-	existing, err := st.GetPool(ctx, desired.Name)
-	if err != nil && err != store.ErrNotFound {
-		return fmt.Errorf("get pool %q: %w", desired.Name, err)
-	}
-	if err == nil {
-		// Preserve existing inventory to avoid orphaning resources on disk.
-		if existing.Inventory.ExpectedType == desired.Inventory.ExpectedType && existing.Inventory.ExpectedProfile == desired.Inventory.ExpectedProfile {
-			desired.Inventory.Resources = existing.Inventory.Resources
-		}
-	}
-	if err := st.PutPool(ctx, desired); err != nil {
-		return fmt.Errorf("put pool %q: %w", desired.Name, err)
-	}
-	return nil
-}
-
-func resolveConfigPath(explicitPath, sandboxFile string) (string, error) {
-	if explicitPath != "" {
-		return explicitPath, nil
-	}
-	if sandboxFile != "" {
-		dir := filepath.Dir(sandboxFile)
-		p, err := findConfigPathInDir(dir)
-		if err != nil {
-			return "", err
-		}
-		if p != "" {
-			return p, nil
-		}
-	}
-	wd, err := effectiveWD()
-	if err != nil {
-		return "", fmt.Errorf("get working directory: %w", err)
-	}
-	return findConfigPathInDir(wd)
-}
-
-func poolModelFromSpec(ps boxyconfig.PoolSpec) (model.Pool, error) {
-	name := model.PoolName(strings.TrimSpace(ps.Name))
-	if name == "" {
-		return model.Pool{}, fmt.Errorf("pool name is required")
-	}
-	expectedType, err := poolExpectedType(ps.Type)
-	if err != nil {
-		return model.Pool{}, fmt.Errorf("pool %q type invalid: %w", name, err)
-	}
-	pol := ps.EffectivePolicy()
-	return model.Pool{
-		Name: name,
-		Policies: model.PoolPolicies{
-			Preheat: model.PreheatPolicy{
-				MinReady: pol.Preheat.MinReady,
-				MaxTotal: pol.Preheat.MaxTotal,
-			},
-			Recycle: model.RecyclePolicy{
-				MaxAge: pol.Recycle.MaxAge,
-			},
-		},
-		Inventory: model.ResourceCollection{
-			ExpectedType:    expectedType,
-			ExpectedProfile: model.ResourceProfile(name),
-			Resources:       nil,
-		},
-	}, nil
-}
-
 func poolExpectedType(t string) (model.ResourceType, error) {
 	switch strings.TrimSpace(t) {
 	case "container", "docker":
@@ -457,50 +405,4 @@ func poolExpectedType(t string) (model.ResourceType, error) {
 	default:
 		return model.ResourceTypeUnknown, fmt.Errorf("unsupported pool type %q", t)
 	}
-}
-
-func ensureImplicitProviders(explicit []providersdk.Instance, pools []boxyconfig.PoolSpec) []providersdk.Instance {
-	out := make([]providersdk.Instance, 0, len(explicit)+2)
-	out = append(out, explicit...)
-
-	byName := make(map[string]providersdk.Instance, len(out))
-	for _, inst := range out {
-		byName[inst.Name] = inst
-	}
-
-	need := make(map[string]providersdk.Type)
-	for _, p := range pools {
-		name := strings.TrimSpace(p.Provider)
-		if name == "" && strings.TrimSpace(p.Type) == "docker" {
-			name = "docker-local"
-		}
-		if name == "" {
-			// Default provider for container pools.
-			name = "docker-local"
-		}
-		if _, exists := byName[name]; exists {
-			continue
-		}
-		need[name] = "docker"
-	}
-
-	for name, typ := range need {
-		if typ != "docker" {
-			continue
-		}
-		host := "unix:///var/run/docker.sock"
-		if name == "docker-remote" {
-			// Placeholder that satisfies schema validation; override later via explicit config.
-			host = "tcp://docker-host:2376"
-		}
-		out = append(out, providersdk.Instance{
-			Name: name,
-			Type: "docker",
-			Config: map[string]any{
-				"host": host,
-			},
-		})
-	}
-
-	return out
 }

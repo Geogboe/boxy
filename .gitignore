@@ -67,7 +67,11 @@ bin/
 
 .env
 .envrc
-.archive/
+.archive/*
+!.archive/ROADMAP.md
+!.archive/cli/
+.archive/cli/*
+!.archive/cli/legacy-sandbox-create.md
 
 # Logs
 logs

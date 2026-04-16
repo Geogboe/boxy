@@ -245,14 +245,12 @@ Sandboxes are instantiated via CLI:
 ```
 # From a file (primary path)
 boxy sandbox create -f pentest-lab.sandbox.yaml
-boxy sandbox create -f pentest-lab.sandbox.yaml -n 10  # 10 instances for a class
 
-# Quick one-off (sugar)
-boxy sandbox create --pool kali
-boxy sandbox create --pool kali:3 --pool ubuntu-targets:1
+# Return after the daemon accepts the request instead of waiting for ready/failed
+boxy sandbox create -f pentest-lab.sandbox.yaml --no-wait
 ```
 
-The file-based path is the primary, repeatable, version-controlled way. The `--pool` shorthand is sugar for quick testing — it constructs the same sandbox object internally.
+The file-based path is the primary, repeatable, version-controlled way. The CLI compiles pool references from the spec into daemon API requests, submits them to `boxy serve`, and waits for a terminal sandbox status by default.
 
 See [examples/](examples/) for complete configurations.
 
@@ -273,7 +271,7 @@ boxy init                               — create starter boxy.yaml in current 
 boxy serve                              — start the daemon (API server + reconcile loop)
 boxy status                             — check server health and summary
 boxy config validate                    — validate config file and exit
-boxy sandbox create -f <file>           — create sandbox from a spec file
+boxy sandbox create -f <file>           — create sandbox from a spec file (waits by default; use --no-wait to return after acceptance)
 boxy sandbox list                       — list sandboxes
 boxy sandbox get <id>                   — get sandbox details
 boxy sandbox delete <id>                — delete a sandbox

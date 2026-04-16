@@ -10,14 +10,14 @@ import (
 )
 
 type sandboxCreateOpts struct {
-	file       string
-	configPath string
-	statePath  string
-	noEnvFile  bool
+	file      string
+	server    string
+	noEnvFile bool
+	noWait    bool
 }
 
 func newSandboxCommand() *cobra.Command {
-	var configPath, statePath, file, server string
+	var file, server string
 
 	cmd := &cobra.Command{
 		Use:   "sandbox",
@@ -30,20 +30,21 @@ func newSandboxCommand() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&server, "server", "", "server address (default 127.0.0.1:9090)")
 	cmd.PersistentFlags().StringVarP(&file, "file", "f", "", "sandbox spec file (default: sandbox.yaml in cwd)")
 
-	var noEnvFile bool
+	var noEnvFile, noWait bool
 	create := &cobra.Command{
 		Use:   "create",
 		Short: "Create a sandbox from a spec file",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSandboxCreate(cmd.Context(), sandboxCreateOpts{
-				file:       file,
-				configPath: configPath,
-				statePath:  statePath,
-				noEnvFile:  noEnvFile,
+				file:      file,
+				server:    server,
+				noEnvFile: noEnvFile,
+				noWait:    noWait,
 			})
 		},
 	}
 	create.Flags().BoolVar(&noEnvFile, "no-env-file", false, "skip writing connection info to a .sandbox-<name>.env file")
+	create.Flags().BoolVar(&noWait, "no-wait", false, "return immediately after the sandbox request is accepted")
 	cmd.AddCommand(create)
 
 	serverAddr := func() string { return server }
@@ -63,7 +64,6 @@ func runSandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 		return fmt.Errorf("no sandbox spec found: pass -f or create sandbox.yaml in cwd")
 	}
 	opts.file = resolveRelative(opts.file)
-	opts.configPath = resolveRelative(opts.configPath)
 	return sandboxCreate(ctx, opts)
 }
 
