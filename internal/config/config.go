@@ -7,7 +7,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"gopkg.in/yaml.v3"
 )
@@ -98,4 +100,28 @@ func ensureJSONEOF(dec *json.Decoder) error {
 		return fmt.Errorf("decode json: trailing content: %w", err)
 	}
 	return nil
+}
+
+// Validate checks semantic config constraints that decoding alone does not enforce.
+func (c Config) Validate() error {
+	for _, pool := range c.Pools {
+		if _, err := ResolvePoolExpectedType(pool.Type); err != nil {
+			return fmt.Errorf("pool %q type invalid: %w", pool.Name, err)
+		}
+	}
+	return nil
+}
+
+// ResolvePoolExpectedType maps a config pool type to the runtime resource type.
+func ResolvePoolExpectedType(t string) (model.ResourceType, error) {
+	switch strings.TrimSpace(t) {
+	case "", "container", "docker":
+		return model.ResourceTypeContainer, nil
+	case "vm":
+		return model.ResourceTypeVM, nil
+	case "share":
+		return model.ResourceTypeShare, nil
+	default:
+		return model.ResourceTypeUnknown, fmt.Errorf("unsupported pool type %q", t)
+	}
 }

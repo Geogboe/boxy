@@ -85,6 +85,9 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	if err := reg.ValidateInstances(ctx, cfg.Providers); err != nil {
 		return fmt.Errorf("validate providers: %w", err)
 	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
 	doneValidate(fmt.Sprintf("%d configured", len(cfg.Providers)))
 
 	// Build lookup maps for the DriverProvisioner.
@@ -301,7 +304,7 @@ func serveReconcilePass(
 // poolSpecToModel converts a config PoolSpec into a runtime model.Pool.
 // Initializes the pool's inventory with the expected type and profile.
 func poolSpecToModel(spec boxyconfig.PoolSpec) (model.Pool, error) {
-	expectedType, err := poolExpectedType(spec.Type)
+	expectedType, err := boxyconfig.ResolvePoolExpectedType(spec.Type)
 	if err != nil {
 		return model.Pool{}, fmt.Errorf("pool %q type invalid: %w", spec.Name, err)
 	}

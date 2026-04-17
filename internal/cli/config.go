@@ -58,6 +58,9 @@ func runConfigValidate(ctx context.Context, opts configValidateOpts) error {
 	if err := reg.ValidateInstances(ctx, cfg.Providers); err != nil {
 		return fmt.Errorf("validate providers: %w", err)
 	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
 
 	fmt.Println("config OK")
 	return nil

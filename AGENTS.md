@@ -108,6 +108,7 @@ When decisions are made, save them as ADR documents in /docs/adr. This is a livi
 
 - Primary developer has an OOP background — write idiomatic Go (composition over inheritance) while respecting the project's values.
 - Don't think about "simple for v1" — I like to think about the entire architecture when designing personal experimental projects like this. Design for sound, maintainable architecture even if features aren't strictly needed for v1.
+- Look for clear interface contracts and separation of concerns. If a package is doing too much, consider how to split it up or abstract responsibilities. Make these abstract responsibilities reusable and composable where it makes sense and in public pkg/, but avoid premature generalization. A public package shouldn't feel coupled to the internal application structure it should completely usable outside of boxy. See existing `agentsdk` and `providersdk` packages for examples of this approach. These packages define general concepts like "Agent" and "Driver" that are implemented by the internal application but could also be used by external projects without depending on boxy-specific types or workflows. Developing this way also ensure we are only focusing on one problem at a time. For example, when working on the agent system, we can focus on defining a clean Agent interface and implementation without worrying about how it will be used in the daemon or CLI until we have a solid design for the agent itself.
 
 ## Taskfile
 
