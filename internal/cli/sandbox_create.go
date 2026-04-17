@@ -391,18 +391,3 @@ func readSingleKey() (byte, error) {
 	}
 	return buf[0], nil
 }
-
-func poolExpectedType(t string) (model.ResourceType, error) {
-	switch strings.TrimSpace(t) {
-	case "container", "docker":
-		return model.ResourceTypeContainer, nil
-	case "vm":
-		return model.ResourceTypeVM, nil
-	case "share":
-		return model.ResourceTypeShare, nil
-	case "":
-		return model.ResourceTypeContainer, nil
-	default:
-		return model.ResourceTypeUnknown, fmt.Errorf("unsupported pool type %q", t)
-	}
-}

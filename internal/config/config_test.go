@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Geogboe/boxy/pkg/model"
 )
 
 func TestLoadFile_YAML_HappyPath(t *testing.T) {
@@ -195,5 +197,83 @@ func TestLoadFile_JSON_UnknownProviderFieldFails(t *testing.T) {
 
 	if _, err := LoadFile(p); err == nil {
 		t.Fatalf("LoadFile: expected error, got nil")
+	}
+}
+
+func TestResolvePoolExpectedType(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		input   string
+		want    model.ResourceType
+		wantErr string
+	}{
+		{name: "empty defaults to container", input: "", want: model.ResourceTypeContainer},
+		{name: "container", input: "container", want: model.ResourceTypeContainer},
+		{name: "docker", input: "docker", want: model.ResourceTypeContainer},
+		{name: "vm", input: "vm", want: model.ResourceTypeVM},
+		{name: "share", input: "share", want: model.ResourceTypeShare},
+		{name: "invalid", input: "badtype", want: model.ResourceTypeUnknown, wantErr: `unsupported pool type "badtype"`},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := ResolvePoolExpectedType(tt.input)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("ResolvePoolExpectedType(%q) error = nil, want %q", tt.input, tt.wantErr)
+				}
+				if err.Error() != tt.wantErr {
+					t.Fatalf("ResolvePoolExpectedType(%q) error = %q, want %q", tt.input, err.Error(), tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ResolvePoolExpectedType(%q) error = %v", tt.input, err)
+			}
+			if got != tt.want {
+				t.Fatalf("ResolvePoolExpectedType(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestConfigValidate_invalid_pool_type(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		Pools: []PoolSpec{
+			{Name: "test", Type: "badtype"},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() error = nil, want invalid pool type")
+	}
+	if got, want := err.Error(), `pool "test" type invalid: unsupported pool type "badtype"`; got != want {
+		t.Fatalf("Validate() error = %q, want %q", got, want)
+	}
+}
+
+func TestConfigValidate_valid_pool_type_aliases(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		Pools: []PoolSpec{
+			{Name: "default-empty"},
+			{Name: "container", Type: "container"},
+			{Name: "docker", Type: "docker"},
+			{Name: "vm", Type: "vm"},
+			{Name: "share", Type: "share"},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
 	}
 }

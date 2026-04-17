@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	boxyconfig "github.com/Geogboe/boxy/internal/config"
 	"github.com/Geogboe/boxy/pkg/model"
 )
 
@@ -111,5 +112,17 @@ func TestOpenServeStore_PersistsStateAcrossReopen(t *testing.T) {
 	}
 	if got.ID != sb.ID || got.Status != model.SandboxStatusPending {
 		t.Fatalf("sandbox = %+v, want pending sandbox %q", got, sb.ID)
+	}
+}
+
+func TestPoolSpecToModel_invalid_pool_type(t *testing.T) {
+	t.Parallel()
+
+	_, err := poolSpecToModel(boxyconfig.PoolSpec{Name: "test", Type: "badtype"})
+	if err == nil {
+		t.Fatal("poolSpecToModel() error = nil, want invalid pool type")
+	}
+	if got, want := err.Error(), `pool "test" type invalid: unsupported pool type "badtype"`; got != want {
+		t.Fatalf("poolSpecToModel() error = %q, want %q", got, want)
 	}
 }
