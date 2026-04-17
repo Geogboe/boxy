@@ -46,7 +46,9 @@ type createSandboxRequest struct {
 // handleCreateSandbox creates a new sandbox request and returns it with 202.
 func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	var req createSandboxRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
 		httpjson.Error(w, http.StatusBadRequest, "invalid request body")
 		return
 	}

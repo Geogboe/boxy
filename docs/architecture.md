@@ -401,39 +401,52 @@ sequenceDiagram
 
 ---
 
-## Sandbox Allocation Flow
+## Async Sandbox Fulfillment Flow
 
-When a user requests a sandbox, resources are **taken** from pools (never returned).
+Sandbox creation is accepted immediately, then fulfilled asynchronously by the
+daemon reconcile loop. Allocated resources are still **taken** from pools
+(never returned).
 
 ```mermaid
 sequenceDiagram
-    participant User as User (CLI)
+    participant User as User
+    participant CLI as boxy CLI
     participant API as REST API
+    participant Fulfiller as Sandbox Fulfiller
     participant SBM as Sandbox Manager
     participant Store as Store
     participant RP as ResourcePool
 
-    User->>API: boxy sandbox create --pool kali:3
+    User->>CLI: boxy sandbox create -f pentest-lab.sandbox.yaml
+    CLI->>API: POST /api/v1/sandboxes {name, requests}
+    API->>SBM: CreateRequested(name, policies, requests)
+    SBM->>Store: CreateSandbox{id, status: pending, requests: [...]}
+    API-->>CLI: 202 Accepted {id, status: pending}
 
-    API->>SBM: CreateFromPool("kali", 3, ...)
-    SBM->>Store: GetPool("kali")
-    Store-->>SBM: Pool{inventory: [r1,r2,r3,r4,r5]}
+    loop Reconcile tick
+        Fulfiller->>Store: GetSandbox/ListPools
+        Fulfiller->>Store: GetPool("kali")
+        Store-->>Fulfiller: Pool{inventory: [r1,r2,r3,r4,r5]}
 
-    SBM->>RP: Take(3, filter=ready)
-    RP-->>SBM: [r1, r2, r3]
-    Note over RP: Pool inventory now: [r4, r5]
+        Fulfiller->>SBM: AddFromPool("kali", 3)
+        SBM->>RP: Take(3, filter=ready)
+        RP-->>SBM: [r1, r2, r3]
+        Note over RP: Pool inventory now: [r4, r5]
 
-    SBM->>Store: PutPool(updated pool)
-    SBM->>Store: CreateSandbox{id, resources:[r1,r2,r3]}
+        SBM->>Store: PutPool(updated pool)
 
-    loop For each selected resource
-        SBM->>Store: PutResource(state=allocated)
+        loop For each selected resource
+            SBM->>Store: PutResource(state=allocated)
+        end
+
+        SBM->>Store: PutSandbox{status: ready, resources:[r1,r2,r3]}
     end
 
     Note over SBM: Post-allocation hooks run here<br/>(set credentials, configure networking)
 
-    SBM-->>API: Sandbox{id, connection_info}
-    API-->>User: Connection info (SSH, RDP, etc.)
+    CLI->>API: GET /api/v1/sandboxes/{id} until ready/failed
+    API-->>CLI: Sandbox{id, status, resources}
+    CLI-->>User: Connection info (SSH, RDP, etc.)
 
     Note over User: User connects directly with native client.<br/>Boxy is NOT a proxy.
 ```

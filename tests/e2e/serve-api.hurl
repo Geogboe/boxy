@@ -53,6 +53,26 @@ jsonpath "$.id" isString
 jsonpath "$.status" == "pending"
 
 
+# ── POST /api/v1/sandboxes validation ───────────────────────────────────
+
+POST {{base_url}}/api/v1/sandboxes
+Content-Type: application/json
+{"requests": [{"type": "container", "profile": "demo", "count": 1}]}
+
+HTTP 400
+[Asserts]
+jsonpath "$.error" == "sandbox name is required"
+
+
+POST {{base_url}}/api/v1/sandboxes
+Content-Type: application/json
+{"name": "legacy-shape", "resources": [{"pool": "demo", "count": 1}]}
+
+HTTP 400
+[Asserts]
+jsonpath "$.error" == "invalid request body"
+
+
 # ── GET /api/v1/sandboxes/{id} ──────────────────────────────────────────
 
 GET {{base_url}}/api/v1/sandboxes/{{sandbox_id}}

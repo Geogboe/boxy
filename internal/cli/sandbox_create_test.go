@@ -199,6 +199,9 @@ func TestSandboxCreate_BlockingSuccess(t *testing.T) {
 	if !strings.Contains(srv.createBody, `"profile":"web"`) || !strings.Contains(srv.createBody, `"type":"container"`) {
 		t.Fatalf("createBody = %s, want compiled request payload", srv.createBody)
 	}
+	if strings.Contains(srv.createBody, `"pool":"web"`) {
+		t.Fatalf("createBody = %s, did not expect raw pool references in API payload", srv.createBody)
+	}
 }
 
 func TestSandboxCreate_NoWait(t *testing.T) {

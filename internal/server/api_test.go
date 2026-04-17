@@ -335,6 +335,25 @@ func TestAPI_CreateSandbox(t *testing.T) {
 	}
 }
 
+func TestAPI_CreateSandbox_requiresName(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	mux := server.NewTestMux(st, sandbox.New(st, nil), false)
+
+	body := bytes.NewBufferString(`{"requests":[{"type":"container","profile":"alpine","count":2}]}`)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes", body)
+	r.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`sandbox name is required`)) {
+		t.Fatalf("body = %s, want sandbox name validation error", w.Body.String())
+	}
+}
+
 func TestAPI_CreateSandbox_requiresRequests(t *testing.T) {
 	t.Parallel()
 	st := store.NewMemoryStore()
@@ -348,6 +367,25 @@ func TestAPI_CreateSandbox_requiresRequests(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAPI_CreateSandbox_rejectsUnknownFields(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	mux := server.NewTestMux(st, sandbox.New(st, nil), false)
+
+	body := bytes.NewBufferString(`{"name":"new-box","resources":[{"pool":"web","count":1}]}`)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes", body)
+	r.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`invalid request body`)) {
+		t.Fatalf("body = %s, want invalid request body error", w.Body.String())
 	}
 }
 

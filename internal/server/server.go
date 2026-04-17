@@ -1,9 +1,10 @@
 // Package server provides the HTTP server that serves both the JSON REST API
 // and the optional web dashboard for Boxy.
 //
-// The server takes a [store.Store] as its data source and exposes read-only
-// endpoints for pools, resources, and sandboxes. The web UI (Go templates + HTMX)
-// can be toggled via the UIEnabled option.
+// The server takes a [store.Store] as its data source and exposes the Boxy REST
+// API for pools, resources, and sandboxes. Sandbox creation/deletion is served
+// here, while the web UI (Go templates + HTMX) can be toggled via the UIEnabled
+// option.
 package server
 
 import (

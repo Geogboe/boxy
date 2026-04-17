@@ -64,6 +64,7 @@ docs/adr/             # Architecture Decision Records
 
 - A sandbox is an environment that can be as small as a single resource or as large as a full lab.
 - Sandbox creation via the REST API is asynchronous: `POST /api/v1/sandboxes` persists a sandbox request in `pending`, the daemon fulfillment loop provisions/allocates resources, and the sandbox transitions to `ready` or `failed`.
+- `POST /api/v1/sandboxes` accepts typed `requests`, not sandbox-spec `resources`; the handler rejects unknown fields so stale clients fail fast instead of silently sending the wrong shape.
 - `boxy serve` persists runtime state in `.boxy/state.json` next to the active config (or under the working directory when no config file is used), so accepted async sandbox requests survive normal daemon restarts.
 - `boxy sandbox create -f ...` is daemon-backed: the CLI loads a sandbox spec, resolves named pools from the daemon pool catalog, submits async `requests`, and waits for `ready`/`failed` by default. Use `--no-wait` to return after the daemon accepts the request.
 - Preferred phrasing when describing compositions:
