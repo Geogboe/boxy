@@ -67,13 +67,13 @@ func InstallCanonical(force bool, version string) (string, error) {
 			return "", fmt.Errorf("reset canonical skill dir: %w", err)
 		}
 	}
-	if err := os.MkdirAll(canonicalPath, 0o755); err != nil {
+	if err := os.MkdirAll(canonicalPath, 0o750); err != nil {
 		return "", fmt.Errorf("create canonical skill dir: %w", err)
 	}
 	if err := copyEmbeddedSkill(canonicalPath); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(canonicalPath, VersionFileName), []byte(strings.TrimSpace(version)+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(canonicalPath, VersionFileName), []byte(strings.TrimSpace(version)+"\n"), 0o600); err != nil {
 		return "", fmt.Errorf("write version file: %w", err)
 	}
 	return canonicalPath, nil
@@ -88,7 +88,7 @@ func LinkAt(canonicalPath, targetParent string, force bool) (string, bool, error
 	if ready {
 		return targetPath, false, nil
 	}
-	if err := os.MkdirAll(targetParent, 0o755); err != nil {
+	if err := os.MkdirAll(targetParent, 0o750); err != nil {
 		return "", false, fmt.Errorf("create target parent %q: %w", targetParent, err)
 	}
 	copyFallback, err := createDirLink(canonicalPath, targetPath)
@@ -96,7 +96,7 @@ func LinkAt(canonicalPath, targetParent string, force bool) (string, bool, error
 		return "", false, fmt.Errorf("link skill into %q: %w", targetParent, err)
 	}
 	if copyFallback {
-		if err := os.WriteFile(filepath.Join(targetPath, SourceFileName), []byte(canonicalPath+"\n"), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(targetPath, SourceFileName), []byte(canonicalPath+"\n"), 0o600); err != nil {
 			return "", false, fmt.Errorf("write managed source marker: %w", err)
 		}
 	}
@@ -159,69 +159,37 @@ func copyEmbeddedSkill(dst string) error {
 		}
 		target := filepath.Join(dst, filepath.FromSlash(rel))
 		if d.IsDir() {
-			return os.MkdirAll(target, 0o755)
+			return os.MkdirAll(target, 0o750)
 		}
 		return copyEmbeddedFile(name, target)
 	})
 }
 
-func copyEmbeddedFile(srcName, dst string) error {
+func copyEmbeddedFile(srcName, dst string) (retErr error) {
 	src, err := embeddedAssets.Open(srcName)
 	if err != nil {
 		return fmt.Errorf("open embedded asset %q: %w", srcName, err)
 	}
-	defer src.Close()
+	defer func() {
+		if cerr := src.Close(); cerr != nil && retErr == nil {
+			retErr = fmt.Errorf("close embedded asset %q: %w", srcName, cerr)
+		}
+	}()
 
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
 		return fmt.Errorf("create target dir for %q: %w", dst, err)
 	}
-	f, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("open target %q: %w", dst, err)
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && retErr == nil {
+			retErr = fmt.Errorf("close target file %q: %w", dst, cerr)
+		}
+	}()
 	if _, err := io.Copy(f, src); err != nil {
 		return fmt.Errorf("copy embedded asset into %q: %w", dst, err)
-	}
-	return nil
-}
-
-func copyDir(src, dst string) error {
-	return filepath.WalkDir(src, func(name string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(src, name)
-		if err != nil {
-			return err
-		}
-		if rel == "." {
-			return os.MkdirAll(dst, 0o755)
-		}
-		target := filepath.Join(dst, rel)
-		if d.IsDir() {
-			return os.MkdirAll(target, 0o755)
-		}
-		return copyLocalFile(name, target)
-	})
-}
-
-func copyLocalFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
-	}
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	if _, err := io.Copy(out, in); err != nil {
-		return err
 	}
 	return nil
 }
