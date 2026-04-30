@@ -23,6 +23,8 @@ task lint             # Run golangci-lint (same as CI)
 task fmt              # Format all Go source files
 task serve            # Run boxy serve (daemon mode)
 task serve:once       # Run boxy serve --once (single reconciliation pass)
+task skills:check     # Run bundled skill drift/install checks
+task skills:install:dev # Install bundled skill into ./.tmp/skills for inspection
 task go:run -- <args> # Run boxy via go run with arbitrary args
 task release:check    # Validate GoReleaser config via the pinned tools module
 ```
@@ -39,6 +41,7 @@ internal/
   config/             # Configuration parsing and pool/sandbox specs
   pool/               # Pool manager and provisioner
   sandbox/            # Sandbox manager and ID generation
+  skills/             # Bundled coding-agent skill assets and installer/link logic
 pkg/
   agentsdk/           # Agent interface (embedded or remote)
   model/              # Core domain models (Resource, Pool, Sandbox, Profile)
@@ -87,6 +90,13 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
 - **Agent**: execution layer for driver operations — can be embedded (in-process) or remote (gRPC) (`pkg/agentsdk/`)
 - **PolicyController**: reconciler that compares desired vs actual pool state and issues driver operations (`pkg/policycontroller/`)
 
+### Bundled Agent Skill
+
+- Bundled skill assets live under `internal/skills/assets/boxy-cli/` and are embedded into the binary.
+- The canonical installed copy lives at `~/.config/boxy/skills/boxy-cli/` on all platforms.
+- `boxy skills install` links or copies that canonical skill into agent-specific directories such as `~/.agents/skills/`.
+- `boxy help all` is the machine-readable command surface the bundled skill points agents to when they need current syntax.
+
 ## ADRs
 
 When decisions are made, save them as ADR documents in /docs/adr. This is a living document, so feel free to update it as needed. When an ADR is updated, add a note at the end of the document describing the change and the date it was made.
@@ -110,6 +120,12 @@ When decisions are made, save them as ADR documents in /docs/adr. This is a livi
 - Primary developer has an OOP background — write idiomatic Go (composition over inheritance) while respecting the project's values.
 - Don't think about "simple for v1" — I like to think about the entire architecture when designing personal experimental projects like this. Design for sound, maintainable architecture even if features aren't strictly needed for v1.
 - Look for clear interface contracts and separation of concerns. If a package is doing too much, consider how to split it up or abstract responsibilities. Make these abstract responsibilities reusable and composable where it makes sense and in public pkg/, but avoid premature generalization. A public package shouldn't feel coupled to the internal application structure it should completely usable outside of boxy. See existing `agentsdk` and `providersdk` packages for examples of this approach. These packages define general concepts like "Agent" and "Driver" that are implemented by the internal application but could also be used by external projects without depending on boxy-specific types or workflows. Developing this way also ensure we are only focusing on one problem at a time. For example, when working on the agent system, we can focus on defining a clean Agent interface and implementation without worrying about how it will be used in the daemon or CLI until we have a solid design for the agent itself.
+
+## CLI Change Checklist
+
+- Any CLI surface change (new command, renamed command, flag/output shape change that affects usage) must update both `docs/cli-wireframe.md` and `internal/skills/assets/boxy-cli/` in the same PR.
+- `internal/skills/drift_test.go` enforces command-token coverage for the bundled skill. Keep it green.
+- When adding or changing a common skill-related workflow, update `task skills:check` if the validation surface changes.
 
 ## Taskfile
 

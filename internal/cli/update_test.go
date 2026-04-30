@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -193,5 +195,32 @@ func TestUpdateCommand_TokenFromEnv(t *testing.T) {
 
 	if capturedOpts.token != "my-secret-token" {
 		t.Errorf("expected token 'my-secret-token', got %q", capturedOpts.token)
+	}
+}
+
+func TestRunUpdate_RefreshesCanonicalSkillAfterInstall(t *testing.T) {
+	withVersion(t, "v1.0.0")
+	mock := &mockUpdater{latestVersion: "v1.1.0"}
+	withMockUpdater(t, mock)
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config-home"))
+	t.Setenv("BOXY_TEST_EXE_PATH", filepath.Join(t.TempDir(), "boxy"))
+
+	var out bytes.Buffer
+	if err := runUpdate(newTestUpdateCmd(&out), updateOptions{}); err != nil {
+		t.Fatalf("runUpdate: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config-home", "boxy", "skills", "boxy-cli", "SKILL.md")); err != nil {
+		t.Fatalf("expected canonical skill to be refreshed: %v", err)
+	}
+	versionData, err := os.ReadFile(filepath.Join(home, ".config-home", "boxy", "skills", "boxy-cli", ".boxy-skill-version"))
+	if err != nil {
+		t.Fatalf("ReadFile version: %v", err)
+	}
+	if strings.TrimSpace(string(versionData)) != "v1.1.0" {
+		t.Fatalf("skill version = %q, want v1.1.0", strings.TrimSpace(string(versionData)))
 	}
 }

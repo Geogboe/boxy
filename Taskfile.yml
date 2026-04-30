@@ -48,6 +48,17 @@ tasks:
     cmds:
       - go test ./internal/cli
 
+  skills:check:
+    desc: Run bundled skill drift and installer checks
+    cmds:
+      - go test ./internal/skills ./internal/cli -run 'TestBundledSkillMentionsAllCommands|TestSkillsInstall_|TestSkillsUninstall_|TestHelpAllPrintsNewCommands|TestRunUpdate_RefreshesCanonicalSkillAfterInstall'
+
+  skills:install:dev:
+    desc: Install the bundled skill into a local temp directory for manual inspection
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - go run ./cmd/boxy skills install --path ./.tmp/skills --force
+
   test:installers:
     desc: Run installer smoke tests
     aliases:

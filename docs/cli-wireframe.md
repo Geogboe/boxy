@@ -21,6 +21,17 @@ boxy
 │     Error: boxy.yaml already exists (use --force to overwrite)
 │
 │
+├── help
+│   └── all                                    Print help for every command
+│
+│       $ boxy help all
+│         # boxy
+│         # boxy serve
+│         # boxy sandbox create
+│         # boxy skills install
+│         ...
+│
+│
 ├── serve                                      Start the Boxy daemon
 │   ├── --config <path>                          Config file (.yaml/.yml/.json)
 │   ├── --listen <addr>                          HTTP listen address (default :9090)
@@ -97,6 +108,37 @@ boxy
 │         deleted sandbox sb-a1b2c3
 │
 │
+├── skills                                     Install bundled coding-agent skills
+│   │
+│   ├── install                                Install or refresh bundled skill assets
+│   │   ├── --user                               Link skill into ~/.agents/skills (default target)
+│   │   ├── --project                            Link skill into ./.agents/skills in cwd
+│   │   ├── --path <dir>                         Additional directory to receive boxy-cli
+│   │   └── --force                              Replace conflicting targets and refresh canonical copy
+│   │
+│   │   $ boxy skills install
+│   │     Canonical: ~/.config/boxy/skills/boxy-cli
+│   │     Linked: ~/.agents/skills/boxy-cli
+│   │
+│   │   $ boxy skills install --project --path ./.claude/skills
+│   │     Canonical: ~/.config/boxy/skills/boxy-cli
+│   │     Linked: ./.agents/skills/boxy-cli
+│   │     Linked: ./.claude/skills/boxy-cli
+│   │
+│   └── uninstall                              Remove installed skill links/copies
+│       ├── --user                               Remove ~/.agents/skills target (default target)
+│       ├── --project                            Remove ./.agents/skills target in cwd
+│       ├── --path <dir>                         Additional directory to remove boxy-cli from
+│       └── --purge                              Also remove ~/.config/boxy/skills/boxy-cli
+│
+│       $ boxy skills uninstall
+│         Removed: ~/.agents/skills/boxy-cli
+│
+│       $ boxy skills uninstall --purge
+│         Removed: ~/.agents/skills/boxy-cli
+│         Purged: ~/.config/boxy/skills/boxy-cli
+│
+│
 ├── debug
 │   └── provider                               Exercise devfactory provider
 │       ├── --data-dir <path>                    (default .devfactory/)
@@ -118,6 +160,11 @@ boxy
 Global flags (on root command):
   --log-level debug|info|warn|error              (default info)
   --log-file <path>                              Write structured logs to file
+
+Bundled skill notes:
+  - Canonical skill copy lives at ~/.config/boxy/skills/boxy-cli on all platforms.
+  - Agent-specific locations should point at that canonical copy, usually via symlink.
+  - On Windows, skill install may fall back to a managed copy if symlinks are unavailable.
 
 
 Output conventions:

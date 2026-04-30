@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Geogboe/boxy/internal/buildcfg"
+	boxyskills "github.com/Geogboe/boxy/internal/skills"
 	"github.com/Geogboe/rog/pkg/selfupdate"
 	"github.com/spf13/cobra"
 )
@@ -161,6 +162,9 @@ func runUpdate(cmd *cobra.Command, opts updateOptions) error {
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ boxy updated to %s\n", latest)
+	if _, err := boxyskills.InstallCanonical(true, latest); err != nil {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not refresh bundled skills: %v\n", err)
+	}
 
 	installDir := filepath.Dir(exePath)
 	if msg := selfupdate.PathWarningMessage(installDir); msg != "" {

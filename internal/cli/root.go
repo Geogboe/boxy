@@ -40,9 +40,11 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newSandboxCommand())
 	root.AddCommand(newDebugCommand())
 	root.AddCommand(newInitCommand())
+	root.AddCommand(newSkillsCommand())
 	root.AddCommand(newStatusCommand())
 	root.AddCommand(newVersionCommand())
 	root.AddCommand(newUpdateCommand())
+	root.SetHelpCommand(newHelpCommand(root))
 	return root
 }
 
