@@ -20,8 +20,9 @@ func newServeUI(pretty bool) *serveUI {
 }
 
 // step starts a spinner for a startup step using the shared boxySpinner style.
-// The returned function marks the step successful and appends a detail string.
-func (u *serveUI) step(label string) func(detail string) {
+// The returned done function marks the step successful and appends a detail string.
+// The returned fail function marks the step failed and appends a detail string.
+func (u *serveUI) step(label string) (done func(detail string), fail func(detail string)) {
 	return step(label)
 }
 

@@ -305,6 +305,34 @@ func TestSandboxCreate_CreateAPIErrorIncludesServerMessage(t *testing.T) {
 	}
 }
 
+func TestSandboxCreate_EarlyValidationFailShowsFailStep(t *testing.T) {
+	// A spec with empty resources should fail the "Loading sandbox spec" step
+	// and the fail output should appear in the output — not after the error.
+	specPath := writeSandboxSpec(t, "name: test\nresources: []\n")
+
+	cmd := NewRootCommand()
+	// Use a dummy server URL; the spec validation fails before any network call.
+	cmd.SetArgs([]string{"sandbox", "--server", "http://127.0.0.1:0", "create", "-f", specPath})
+
+	output, err := captureSandboxStdout(t, func() error {
+		return cmd.ExecuteContext(context.Background())
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "sandbox spec resources is required") {
+		t.Fatalf("error = %v, want spec validation message", err)
+	}
+	// The fail callback should render "Loading sandbox spec  — sandbox spec resources is required"
+	// in the output so the user knows which step failed.
+	if !strings.Contains(output, "Loading sandbox spec") {
+		t.Fatalf("output = %q, want fail step label in output", output)
+	}
+	if !strings.Contains(output, "sandbox spec resources is required") {
+		t.Fatalf("output = %q, want error detail in output", output)
+	}
+}
+
 func TestWaitForSandboxReady_Interrupted(t *testing.T) {
 	srv := newSandboxCreateTestServer(t)
 	defer srv.Close()
