@@ -324,7 +324,7 @@ func TestSandboxCreate_EarlyValidationFailShowsFailStep(t *testing.T) {
 		t.Fatalf("error = %v, want spec validation message", err)
 	}
 	// The fail callback should render "Loading sandbox spec  — sandbox spec resources is required"
-	// in the output so the user knows which step failed.
+	// (two spaces, em dash, one space, error detail) in the output so the user knows which step failed.
 	if !strings.Contains(output, "Loading sandbox spec") {
 		t.Fatalf("output = %q, want fail step label in output", output)
 	}
