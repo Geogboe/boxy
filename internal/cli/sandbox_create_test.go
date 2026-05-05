@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -350,5 +351,45 @@ func TestWaitForSandboxReady_Interrupted(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `sandbox "sb-create" created but wait was interrupted`) {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+// TestStep_FailStopsSpinnerSynchronously forces the spinner path by overriding
+// useSpinnerOutput and redirecting boxySpinner.Writer, then verifies that
+// calling fail() writes the failure message synchronously before the function
+// returns. This catches the original regression where the spinner goroutine was
+// left running (and its output could appear after the error was already
+// displayed).
+//
+// pterm's SpinnerPrinter.Fail() calls Fprinto(s.Writer, failPrinter.Sprint(...))
+// — the formatted fail message is written to the same writer as the animation
+// frames, so we assert on that buffer.
+func TestStep_FailStopsSpinnerSynchronously(t *testing.T) {
+	// Force the spinner path.
+	oldUseSpinner := useSpinnerOutput
+	useSpinnerOutput = func() bool { return true }
+	defer func() { useSpinnerOutput = oldUseSpinner }()
+
+	// Redirect all spinner output (animation frames AND the final fail message)
+	// to a single buffer. spin.Fail() calls Fprinto(s.Writer, ...), which writes
+	// to this same writer.
+	var spinBuf bytes.Buffer
+	oldSpinnerWriter := boxySpinner.Writer
+	boxySpinner.Writer = &spinBuf
+	defer func() { boxySpinner.Writer = oldSpinnerWriter }()
+
+	_, fail := step("My step")
+	fail("something went wrong")
+
+	// spin.Fail() must have written the formatted fail message synchronously to
+	// spinBuf. If the fail callback did not call spin.Fail() (pre-fix regression),
+	// spinBuf would contain only spinner animation frames but NOT the fail
+	// message, and the test would fail.
+	got := spinBuf.String()
+	if !strings.Contains(got, "My step") {
+		t.Errorf("spinner fail output = %q, want step label", got)
+	}
+	if !strings.Contains(got, "something went wrong") {
+		t.Errorf("spinner fail output = %q, want error detail", got)
 	}
 }

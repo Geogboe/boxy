@@ -3,7 +3,9 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	boxyconfig "github.com/Geogboe/boxy/internal/config"
@@ -124,5 +126,33 @@ func TestPoolSpecToModel_invalid_pool_type(t *testing.T) {
 	}
 	if got, want := err.Error(), `pool "test" type invalid: unsupported pool type "badtype"`; got != want {
 		t.Fatalf("poolSpecToModel() error = %q, want %q", got, want)
+	}
+}
+
+// TestServeStartup_ConfigFailureShowsFailStep runs boxy serve with a config
+// file that contains an unknown field. It verifies that the "Loading config"
+// startup step emits its failure output synchronously (before runServe returns)
+// so the user always sees which step failed rather than a bare error message.
+func TestServeStartup_ConfigFailureShowsFailStep(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "boxy.yaml")
+	if err := os.WriteFile(cfgPath, []byte("not_a_valid_field: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"serve", "--config", cfgPath})
+
+	output, err := captureSandboxStdout(t, func() error {
+		return cmd.ExecuteContext(context.Background())
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid config")
+	}
+	// The failConfig callback must have written the "Loading config" fail step
+	// to stdout before runServe returned the error. Without the fail callback
+	// this would be empty and the user would see only a bare error message.
+	if !strings.Contains(output, "Loading config") {
+		t.Fatalf("output = %q, want fail step label for config load error", output)
 	}
 }

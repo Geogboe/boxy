@@ -74,6 +74,8 @@ func step(label string) (done func(detail string), fail func(detail string)) {
 	return done, fail
 }
 
-func useSpinnerOutput() bool {
+// useSpinnerOutput reports whether interactive spinner output should be used.
+// It is a variable so tests can override it to exercise the spinner code path.
+var useSpinnerOutput = func() bool {
 	return term.IsTerminal(int(os.Stdout.Fd())) //nolint:gosec // Fd() fits in int on all supported platforms.
 }
