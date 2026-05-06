@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -305,6 +306,34 @@ func TestSandboxCreate_CreateAPIErrorIncludesServerMessage(t *testing.T) {
 	}
 }
 
+func TestSandboxCreate_EarlyValidationFailShowsFailStep(t *testing.T) {
+	// A spec with empty resources should fail the "Loading sandbox spec" step
+	// and the fail output should appear in the output — not after the error.
+	specPath := writeSandboxSpec(t, "name: test\nresources: []\n")
+
+	cmd := NewRootCommand()
+	// Use a dummy server URL; the spec validation fails before any network call.
+	cmd.SetArgs([]string{"sandbox", "--server", "http://127.0.0.1:0", "create", "-f", specPath})
+
+	output, err := captureSandboxStdout(t, func() error {
+		return cmd.ExecuteContext(context.Background())
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "sandbox spec resources is required") {
+		t.Fatalf("error = %v, want spec validation message", err)
+	}
+	// The fail callback should render "Loading sandbox spec  — sandbox spec resources is required"
+	// (two spaces, em dash, one space, error detail) in the output so the user knows which step failed.
+	if !strings.Contains(output, "Loading sandbox spec") {
+		t.Fatalf("output = %q, want fail step label in output", output)
+	}
+	if !strings.Contains(output, "sandbox spec resources is required") {
+		t.Fatalf("output = %q, want error detail in output", output)
+	}
+}
+
 func TestWaitForSandboxReady_Interrupted(t *testing.T) {
 	srv := newSandboxCreateTestServer(t)
 	defer srv.Close()
@@ -322,5 +351,48 @@ func TestWaitForSandboxReady_Interrupted(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `sandbox "sb-create" created but wait was interrupted`) {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+// TestStep_FailStopsSpinnerSynchronously forces the spinner path by overriding
+// useSpinnerOutput and redirecting boxySpinner.Writer, then verifies that
+// calling fail() writes the failure message synchronously before the function
+// returns, and that no data race is detected.
+//
+// The fix: step() manages its own animation goroutine via a channel instead of
+// using pterm's Start() (which reads IsActive without synchronisation). The
+// animation goroutine is joined before sp.Fail()/sp.Success() writes IsActive,
+// so there is no concurrent access to SpinnerPrinter fields.
+//
+// sp.Fail() calls Fprinto(s.Writer, failPrinter.Sprint(...)) — the formatted
+// fail message is written to the same writer as animation frames, so we assert
+// on that buffer.
+func TestStep_FailStopsSpinnerSynchronously(t *testing.T) {
+	// Force the spinner path.
+	oldUseSpinner := useSpinnerOutput
+	useSpinnerOutput = func() bool { return true }
+	defer func() { useSpinnerOutput = oldUseSpinner }()
+
+	// Redirect all spinner output (animation frames AND the final fail message)
+	// to a single buffer. sp.Fail() calls Fprinto(s.Writer, ...), which writes
+	// to this same writer.
+	var spinBuf bytes.Buffer
+	oldSpinnerWriter := boxySpinner.Writer
+	boxySpinner.Writer = &spinBuf
+	defer func() { boxySpinner.Writer = oldSpinnerWriter }()
+
+	_, fail := step("My step")
+	fail("something went wrong")
+
+	// sp.Fail() must have written the formatted fail message synchronously to
+	// spinBuf before fail() returned. The animation goroutine is joined before
+	// sp.Fail() is called, so there is no concurrent write and the message is
+	// guaranteed to be present.
+	got := spinBuf.String()
+	if !strings.Contains(got, "My step") {
+		t.Errorf("spinner fail output = %q, want step label", got)
+	}
+	if !strings.Contains(got, "something went wrong") {
+		t.Errorf("spinner fail output = %q, want error detail", got)
 	}
 }
