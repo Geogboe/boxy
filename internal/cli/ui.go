@@ -3,6 +3,8 @@ package cli
 import (
 	"fmt"
 	"os"
+	"sync"
+	"time"
 
 	"github.com/pterm/pterm"
 	"golang.org/x/term"
@@ -56,20 +58,69 @@ func step(label string) (done func(detail string), fail func(detail string)) {
 		return done, fail
 	}
 
-	spin, _ := boxySpinner.Start(label)
-	done = func(detail string) {
-		if detail != "" {
-			spin.Success(label + "  " + pterm.FgDarkGray.Sprint(detail))
-		} else {
-			spin.Success(label)
+	// Create a SpinnerPrinter value copy without calling Start(). pterm's Start()
+	// launches a goroutine that reads IsActive without synchronisation; calling
+	// Stop()/Fail()/Success() concurrently with that goroutine is a data race.
+	// Instead we manage our own animation goroutine and stop it (joining via a
+	// channel) before delegating to the pterm finalisation methods so that
+	// IsActive is never written while a goroutine is reading it.
+	sp := boxySpinner // value copy – captures Writer, Style, etc. at call time
+	sp.IsActive = true
+	sp.Text = label
+
+	delay := sp.Delay
+	if delay <= 0 {
+		delay = 100 * time.Millisecond
+	}
+
+	stopCh := make(chan struct{})
+	stoppedCh := make(chan struct{})
+
+	go func() {
+		defer close(stoppedCh)
+		ticker := time.NewTicker(delay)
+		defer ticker.Stop()
+		i := 0
+		for {
+			select {
+			case <-stopCh:
+				return
+			case <-ticker.C:
+				if !pterm.RawOutput {
+					seq := sp.Sequence[i%len(sp.Sequence)]
+					i++
+					pterm.Fprinto(sp.Writer, sp.Style.Sprint(seq)+" "+sp.MessageStyle.Sprint(sp.Text))
+				}
+			}
 		}
+	}()
+
+	var once sync.Once
+	finalize := func(fn func()) {
+		once.Do(func() {
+			close(stopCh)
+			<-stoppedCh // wait for animation goroutine to exit before touching sp
+			fn()
+		})
+	}
+
+	done = func(detail string) {
+		finalize(func() {
+			if detail != "" {
+				sp.Success(label + "  " + pterm.FgDarkGray.Sprint(detail))
+			} else {
+				sp.Success(label)
+			}
+		})
 	}
 	fail = func(detail string) {
-		if detail != "" {
-			spin.Fail(label + "  \u2014 " + detail)
-		} else {
-			spin.Fail(label)
-		}
+		finalize(func() {
+			if detail != "" {
+				sp.Fail(label + "  \u2014 " + detail)
+			} else {
+				sp.Fail(label)
+			}
+		})
 	}
 	return done, fail
 }

@@ -357,13 +357,16 @@ func TestWaitForSandboxReady_Interrupted(t *testing.T) {
 // TestStep_FailStopsSpinnerSynchronously forces the spinner path by overriding
 // useSpinnerOutput and redirecting boxySpinner.Writer, then verifies that
 // calling fail() writes the failure message synchronously before the function
-// returns. This catches the original regression where the spinner goroutine was
-// left running (and its output could appear after the error was already
-// displayed).
+// returns, and that no data race is detected.
 //
-// pterm's SpinnerPrinter.Fail() calls Fprinto(s.Writer, failPrinter.Sprint(...))
-// — the formatted fail message is written to the same writer as the animation
-// frames, so we assert on that buffer.
+// The fix: step() manages its own animation goroutine via a channel instead of
+// using pterm's Start() (which reads IsActive without synchronisation). The
+// animation goroutine is joined before sp.Fail()/sp.Success() writes IsActive,
+// so there is no concurrent access to SpinnerPrinter fields.
+//
+// sp.Fail() calls Fprinto(s.Writer, failPrinter.Sprint(...)) — the formatted
+// fail message is written to the same writer as animation frames, so we assert
+// on that buffer.
 func TestStep_FailStopsSpinnerSynchronously(t *testing.T) {
 	// Force the spinner path.
 	oldUseSpinner := useSpinnerOutput
@@ -371,7 +374,7 @@ func TestStep_FailStopsSpinnerSynchronously(t *testing.T) {
 	defer func() { useSpinnerOutput = oldUseSpinner }()
 
 	// Redirect all spinner output (animation frames AND the final fail message)
-	// to a single buffer. spin.Fail() calls Fprinto(s.Writer, ...), which writes
+	// to a single buffer. sp.Fail() calls Fprinto(s.Writer, ...), which writes
 	// to this same writer.
 	var spinBuf bytes.Buffer
 	oldSpinnerWriter := boxySpinner.Writer
@@ -381,10 +384,10 @@ func TestStep_FailStopsSpinnerSynchronously(t *testing.T) {
 	_, fail := step("My step")
 	fail("something went wrong")
 
-	// spin.Fail() must have written the formatted fail message synchronously to
-	// spinBuf. If the fail callback did not call spin.Fail() (pre-fix regression),
-	// spinBuf would contain only spinner animation frames but NOT the fail
-	// message, and the test would fail.
+	// sp.Fail() must have written the formatted fail message synchronously to
+	// spinBuf before fail() returned. The animation goroutine is joined before
+	// sp.Fail() is called, so there is no concurrent write and the message is
+	// guaranteed to be present.
 	got := spinBuf.String()
 	if !strings.Contains(got, "My step") {
 		t.Errorf("spinner fail output = %q, want step label", got)
