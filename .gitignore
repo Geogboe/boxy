@@ -72,6 +72,10 @@ bin/
 !.archive/cli/
 .archive/cli/*
 !.archive/cli/legacy-sandbox-create.md
+!.archive/pkg/
+.archive/pkg/*
+!.archive/pkg/poolpolicy/
+!.archive/pkg/poolpolicy/*
 
 # Logs
 logs

@@ -8,7 +8,6 @@ import (
 
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/policycontroller"
-	"github.com/Geogboe/boxy/pkg/poolpolicy"
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
@@ -219,7 +218,7 @@ func computeStale(p model.Pool, now time.Time) (stale []model.Resource, kept []m
 		return nil, p.Inventory.Resources, nil
 	}
 
-	stale, kept = poolpolicy.PartitionByMaxAge(
+	stale, kept = partitionByMaxAge(
 		p.Inventory.Resources,
 		now,
 		maxAge,
@@ -231,8 +230,8 @@ func computeStale(p model.Pool, now time.Time) (stale []model.Resource, kept []m
 
 func computeToProvision(p model.Pool, minReady int, totalCount int) int {
 	readyCount := countReadyResources(p.Inventory.Resources)
-	return poolpolicy.ComputeToProvision(
-		poolpolicy.PreheatPolicy{
+	return computeToProvisionCount(
+		model.PreheatPolicy{
 			MinReady: minReady,
 			MaxTotal: p.Policies.Preheat.MaxTotal,
 		},
@@ -303,8 +302,8 @@ func maxTotalShortfall(
 	if maxTotal <= 0 || requestedReady <= 0 {
 		return nil
 	}
-	if poolpolicy.CanSatisfyRequestedReady(
-		poolpolicy.PreheatPolicy{MaxTotal: maxTotal},
+	if canSatisfyRequestedReady(
+		maxTotal,
 		readyCount,
 		totalCount,
 		requestedReady,
