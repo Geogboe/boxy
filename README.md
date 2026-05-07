@@ -226,6 +226,10 @@ policy:
     max_age: "168h"    # destroy and replace unused resources older than this
 ```
 
+Implementation note: preheat/recycle planning logic should live in reusable public
+`pkg/` primitives (not only daemon glue) so policy math is testable and composable
+outside `internal/` runtime wiring.
+
 ### Sandbox Definitions (`.sandbox.yaml`)
 
 Sandbox classes are defined in separate files, not in the server config. A sandbox definition specifies which pools to draw resources from and how many:
