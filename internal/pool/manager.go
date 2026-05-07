@@ -218,45 +218,26 @@ func computeStale(p model.Pool, now time.Time) (stale []model.Resource, kept []m
 		return nil, p.Inventory.Resources, nil
 	}
 
-	stale = make([]model.Resource, 0)
-	kept = make([]model.Resource, 0, len(p.Inventory.Resources))
-	for _, res := range p.Inventory.Resources {
-		ageBase := res.CreatedAt
-		if ageBase.IsZero() {
-			ageBase = res.UpdatedAt
-		}
-		if ageBase.IsZero() || now.Sub(ageBase) <= maxAge {
-			kept = append(kept, res)
-			continue
-		}
-		stale = append(stale, res)
-	}
+	stale, kept = partitionByMaxAge(
+		p.Inventory.Resources,
+		now,
+		maxAge,
+		func(res model.Resource) time.Time { return res.CreatedAt },
+		func(res model.Resource) time.Time { return res.UpdatedAt },
+	)
 	return stale, kept, nil
 }
 
 func computeToProvision(p model.Pool, minReady int, totalCount int) int {
-	maxTotal := p.Policies.Preheat.MaxTotal
-	if minReady <= 0 {
-		return 0
-	}
-
 	readyCount := countReadyResources(p.Inventory.Resources)
-	need := minReady - readyCount
-	if need <= 0 {
-		return 0
-	}
-
-	if maxTotal > 0 {
-		avail := maxTotal - totalCount
-		if avail <= 0 {
-			return 0
-		}
-		if need > avail {
-			need = avail
-		}
-	}
-
-	return need
+	return computeToProvisionCount(
+		model.PreheatPolicy{
+			MinReady: minReady,
+			MaxTotal: p.Policies.Preheat.MaxTotal,
+		},
+		readyCount,
+		totalCount,
+	)
 }
 
 func countReadyResources(resources []model.Resource) int {
@@ -321,11 +302,12 @@ func maxTotalShortfall(
 	if maxTotal <= 0 || requestedReady <= 0 {
 		return nil
 	}
-	availableToProvision := maxTotal - totalCount
-	if availableToProvision < 0 {
-		availableToProvision = 0
-	}
-	if readyCount+availableToProvision >= requestedReady {
+	if canSatisfyRequestedReady(
+		maxTotal,
+		readyCount,
+		totalCount,
+		requestedReady,
+	) {
 		return nil
 	}
 	return &MaxTotalReachedError{

@@ -226,6 +226,10 @@ policy:
     max_age: "168h"    # destroy and replace unused resources older than this
 ```
 
+Implementation note: preheat/recycle planning logic is intentionally kept in
+`internal/pool` (not exposed as a public `pkg/` API) because this policy is
+Boxy-specific domain behavior rather than a generic reusable SDK contract.
+
 ### Sandbox Definitions (`.sandbox.yaml`)
 
 Sandbox classes are defined in separate files, not in the server config. A sandbox definition specifies which pools to draw resources from and how many:

@@ -379,7 +379,7 @@ sequenceDiagram
     Observer-->>PC: observed{pool, now}
 
     PC->>Evaluator: Evaluate(ctx, observed)
-    Note over Evaluator: computeStale(): find resources past max_age<br/>computeToProvision(): gap = min_ready - ready_count
+    Note over Evaluator: compose pkg-level planning primitives<br/>for stale partition + preheat capacity math
     Evaluator-->>PC: Decision{ShouldAct, Plan}
 
     alt ShouldAct == true
