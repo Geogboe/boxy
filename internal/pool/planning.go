@@ -6,7 +6,7 @@ import (
 	"github.com/Geogboe/boxy/pkg/model"
 )
 
-// computeToProvision returns how many additional ready resources are needed to
+// computeToProvisionCount returns how many additional ready resources are needed to
 // satisfy minReady, capped by MaxTotal when MaxTotal > 0.
 func computeToProvisionCount(policy model.PreheatPolicy, readyCount int, totalCount int) int {
 	if policy.MinReady <= 0 {

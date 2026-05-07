@@ -226,9 +226,9 @@ policy:
     max_age: "168h"    # destroy and replace unused resources older than this
 ```
 
-Implementation note: preheat/recycle planning logic should live in reusable public
-`pkg/` primitives (not only daemon glue) so policy math is testable and composable
-outside `internal/` runtime wiring.
+Implementation note: preheat/recycle planning logic is intentionally kept in
+`internal/pool` (not exposed as a public `pkg/` API) because this policy is
+Boxy-specific domain behavior rather than a generic reusable SDK contract.
 
 ### Sandbox Definitions (`.sandbox.yaml`)
 
