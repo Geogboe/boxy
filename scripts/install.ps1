@@ -7,8 +7,9 @@
 # Environment variables:
 #   $env:BOXY_VERSION     Pin a specific version (e.g. v0.1.8). Defaults to latest release.
 #   $env:BOXY_INSTALL_DIR Override install directory. Defaults to $HOME\.local\bin.
+#   $env:BOXY_SKIP_UPGRADE Set to 1 to keep an existing install unchanged.
 #   $env:BOXY_DEBUG       Set to 1 for verbose output.
-#   $env:BOXY_FORCE       Set to 1 to overwrite an existing installation.
+#   $env:BOXY_FORCE       Legacy no-op; upgrades happen automatically.
 
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -16,7 +17,7 @@ $ErrorActionPreference = 'Stop'
 $Repo       = 'Geogboe/boxy'
 $InstallDir = if ($env:BOXY_INSTALL_DIR) { $env:BOXY_INSTALL_DIR } else { "$HOME\.local\bin" }
 $IsDebug    = $env:BOXY_DEBUG -eq '1'
-$IsForce    = $env:BOXY_FORCE -eq '1'
+$SkipUpgrade = $env:BOXY_SKIP_UPGRADE -eq '1'
 $BaseUrl    = $env:BOXY_BASE_URL
 
 function Write-Info ([string]$Msg) { Write-Host "==> $Msg" -ForegroundColor Cyan }
@@ -136,8 +137,10 @@ try {
     # ── Install ──────────────────────────────────────────────────────────────
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
     $BinaryDest = Join-Path $InstallDir 'boxy.exe'
-    if ((Test-Path $BinaryDest) -and -not $IsForce) {
-        throw "$BinaryDest already exists. Set BOXY_FORCE=1 to overwrite."
+    if ((Test-Path $BinaryDest) -and $SkipUpgrade) {
+        Write-Ok "boxy already installed at $BinaryDest; skipping upgrade because BOXY_SKIP_UPGRADE=1"
+        Write-Host "Run 'boxy --help' to get started."
+        return
     }
 
     $ExtractDir = Join-Path $TmpDir 'extract'
