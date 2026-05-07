@@ -59,9 +59,10 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	}
 
 	// Config
-	doneConfig := ui.step("Loading config")
+	doneConfig, failConfig := ui.step("Loading config")
 	cfg, cfgPath, err := loadConfig(opts.configPath)
 	if err != nil {
+		failConfig(err.Error())
 		return err
 	}
 	var configMsg string
@@ -73,19 +74,22 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	doneConfig(configMsg)
 
 	// Providers
-	doneProviders := ui.step("Registering providers")
+	doneProviders, failProviders := ui.step("Registering providers")
 	reg := providersdk.NewRegistry()
 	if err := builtins.RegisterBuiltins(reg); err != nil {
+		failProviders(err.Error())
 		return fmt.Errorf("register builtin providers: %w", err)
 	}
 	doneProviders(strings.Join(providerTypes(reg), ", "))
 
 	// Validate
-	doneValidate := ui.step("Validating provider config")
+	doneValidate, failValidate := ui.step("Validating provider config")
 	if err := reg.ValidateInstances(ctx, cfg.Providers); err != nil {
+		failValidate(err.Error())
 		return fmt.Errorf("validate providers: %w", err)
 	}
 	if err := cfg.Validate(); err != nil {
+		failValidate(err.Error())
 		return err
 	}
 	doneValidate(fmt.Sprintf("%d configured", len(cfg.Providers)))
@@ -100,21 +104,24 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		providersMap[p.Name] = p
 	}
 
-	doneState := ui.step("Opening state")
+	doneState, failState := ui.step("Opening state")
 	st, statePath, err := openServeStore(cfgPath)
 	if err != nil {
+		failState(err.Error())
 		return err
 	}
 	doneState(statePath)
 
 	// Drivers + embedded agent
-	doneAgent := ui.step("Starting embedded agent")
+	doneAgent, failAgent := ui.step("Starting embedded agent")
 	drivers, err := buildDrivers(reg, cfg.Providers)
 	if err != nil {
+		failAgent(err.Error())
 		return fmt.Errorf("build drivers: %w", err)
 	}
 	embeddedAgent, err := agentsdk.NewEmbeddedAgent("embedded", "Embedded Agent", drivers...)
 	if err != nil {
+		failAgent(err.Error())
 		return fmt.Errorf("create embedded agent: %w", err)
 	}
 	doneAgent(fmt.Sprintf("%d drivers", len(drivers)))
@@ -130,14 +137,16 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	sandboxFulfiller := sandbox.NewFulfiller(st, poolMgr, sandboxMgr)
 
 	// Pools
-	donePools := ui.step("Initializing pools")
+	donePools, failPools := ui.step("Initializing pools")
 	poolNames := make([]model.PoolName, 0, len(cfg.Pools))
 	for _, spec := range cfg.Pools {
 		p, err := poolSpecToModel(spec)
 		if err != nil {
+			failPools(err.Error())
 			return fmt.Errorf("create pool model for %q: %w", spec.Name, err)
 		}
 		if err := st.PutPool(ctx, p); err != nil {
+			failPools(err.Error())
 			return fmt.Errorf("seed pool %q: %w", spec.Name, err)
 		}
 		poolNames = append(poolNames, p.Name)

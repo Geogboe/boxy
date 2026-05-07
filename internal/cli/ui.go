@@ -34,27 +34,44 @@ var boxySpinner = pterm.SpinnerPrinter{
 	Writer:              pterm.DefaultSpinner.Writer,
 }
 
-// step starts a boxySpinner for a single CLI step and returns a done
-// callback that marks it successful with an optional detail string.
-func step(label string) func(detail string) {
+// step starts a boxySpinner for a single CLI step and returns a done callback
+// and a fail callback. Call done on success or fail on error so the spinner is
+// always resolved before returning.
+func step(label string) (done func(detail string), fail func(msg string)) {
 	if !useSpinnerOutput() {
-		return func(detail string) {
+		done = func(detail string) {
 			if detail != "" {
 				boxySuccessPrinter.Println(fmt.Sprintf("%s  %s", label, detail))
 				return
 			}
 			boxySuccessPrinter.Println(label)
 		}
+		fail = func(msg string) {
+			if msg != "" {
+				boxyFailPrinter.Println(fmt.Sprintf("%s  —  %s", label, msg))
+				return
+			}
+			boxyFailPrinter.Println(label)
+		}
+		return
 	}
 
 	spin, _ := boxySpinner.Start(label)
-	return func(detail string) {
+	done = func(detail string) {
 		if detail != "" {
 			spin.Success(label + "  " + pterm.FgDarkGray.Sprint(detail))
 		} else {
 			spin.Success(label)
 		}
 	}
+	fail = func(msg string) {
+		if msg != "" {
+			spin.Fail(label + "  —  " + msg)
+		} else {
+			spin.Fail(label)
+		}
+	}
+	return
 }
 
 func useSpinnerOutput() bool {

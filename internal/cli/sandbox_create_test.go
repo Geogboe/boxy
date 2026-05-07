@@ -260,6 +260,43 @@ func TestSandboxCreate_UnknownPool(t *testing.T) {
 	}
 }
 
+// TestSandboxCreate_InvalidSpec verifies that early spec-validation failures
+// produce the "✗  <step>  —  <error>" output pattern rather than leaving the
+// spinner spinning until after the error message has been printed.
+func TestSandboxCreate_InvalidSpec(t *testing.T) {
+	srv := newSandboxCreateTestServer(t)
+	defer srv.Close()
+
+	// A spec with no resources should fail validation before hitting the server.
+	specPath := writeSandboxSpec(t, "name: test\nresources: []\n")
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"sandbox", "--server", srv.server.URL, "create", "-f", specPath})
+
+	output, err := captureSandboxStdout(t, func() error {
+		return cmd.ExecuteContext(context.Background())
+	})
+	if err == nil {
+		t.Fatal("expected error for empty resources")
+	}
+	if !strings.Contains(err.Error(), "sandbox spec resources is required") {
+		t.Fatalf("error = %v", err)
+	}
+	// The fail output should appear in stdout so the spinner is resolved.
+	if !strings.Contains(output, "Loading sandbox spec") {
+		t.Fatalf("output = %q, want step label in fail output", output)
+	}
+	if !strings.Contains(output, "sandbox spec resources is required") {
+		t.Fatalf("output = %q, want error detail in fail output", output)
+	}
+
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	if srv.createCalls != 0 {
+		t.Fatalf("createCalls = %d, want 0 (validation should fail before server call)", srv.createCalls)
+	}
+}
+
 func TestSandboxCreate_FailedStatus(t *testing.T) {
 	srv := newSandboxCreateTestServer(t)
 	srv.sandboxStates = []model.Sandbox{
