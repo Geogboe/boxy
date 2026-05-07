@@ -28,9 +28,10 @@ type createSandboxBody struct {
 func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 	pterm.Println()
 
-	doneSpec := step("Loading sandbox spec")
+	doneSpec, failSpec := step("Loading sandbox spec")
 	spec, err := loadSandboxSpec(opts.file)
 	if err != nil {
+		failSpec(err.Error())
 		return err
 	}
 	doneSpec(fmt.Sprintf("%s  (%d resource group(s))", spec.Name, len(spec.Resources)))
@@ -38,9 +39,10 @@ func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 	client := defaultAPIClient()
 	base := apiBaseURL(opts.server)
 
-	donePools := step("Loading pool catalog")
+	donePools, failPools := step("Loading pool catalog")
 	pools, err := fetchJSON[[]model.Pool](ctx, client, base+"/api/v1/pools")
 	if err != nil {
+		failPools(err.Error())
 		return fmt.Errorf("load pool catalog: %w", err)
 	}
 	donePools(fmt.Sprintf("%d pool(s)", len(pools)))
@@ -50,13 +52,14 @@ func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 		return err
 	}
 
-	doneCreate := step(fmt.Sprintf("Creating sandbox %q", spec.Name))
+	doneCreate, failCreate := step(fmt.Sprintf("Creating sandbox %q", spec.Name))
 	sb, err := postJSON[createSandboxBody, model.Sandbox](ctx, client, base+"/api/v1/sandboxes", createSandboxBody{
 		Name:     spec.Name,
 		Policies: model.SandboxPolicies{},
 		Requests: requests,
 	})
 	if err != nil {
+		failCreate(err.Error())
 		return fmt.Errorf("create sandbox %q: %w", spec.Name, err)
 	}
 	doneCreate(fmt.Sprintf("%s  ·  %s", sb.ID, sb.Status))
