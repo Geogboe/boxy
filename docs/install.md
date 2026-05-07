@@ -33,7 +33,7 @@ Both installers accept only environment variables — there are no CLI flags.
 |----------|-------------|
 | `BOXY_VERSION` | Install a specific tag (e.g. `v0.1.9`). Defaults to latest. |
 | `BOXY_INSTALL_DIR` | Override the destination directory. |
-| `BOXY_FORCE=1` | Overwrite an existing binary. |
+| `BOXY_SKIP_UPGRADE=1` | Keep an existing install unchanged instead of upgrading it. |
 | `BOXY_DEBUG=1` | Enable verbose installer output. |
 
 ## Windows
@@ -55,7 +55,8 @@ Important behavior:
 
 - Verifies the downloaded archive against `checksums.txt`
 - Prints PATH instructions if the install directory is not in `$env:Path` — does not modify PATH automatically
-- Refuses to overwrite an existing binary unless `BOXY_FORCE=1` is set
+- Upgrades an existing install automatically by default
+- Skips replacing an existing install when `BOXY_SKIP_UPGRADE=1` is set
 
 ## Linux / macOS
 
@@ -76,7 +77,8 @@ Important behavior:
 - Verifies the downloaded binary against `checksums.txt`
 - Installs to `~/.local/bin` by default
 - Prints a shell-specific `PATH` remediation command when the install directory is not on `PATH`
-- Refuses to overwrite an existing binary unless `BOXY_FORCE=1` is set
+- Upgrades an existing install automatically by default
+- Skips replacing an existing install when `BOXY_SKIP_UPGRADE=1` is set
 
 ## Update
 

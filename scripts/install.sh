@@ -8,8 +8,9 @@
 # Environment variables:
 #   BOXY_VERSION     Pin a specific version (e.g. v0.2.0). Defaults to latest release.
 #   BOXY_INSTALL_DIR Override install directory. Defaults to $HOME/.local/bin.
+#   BOXY_SKIP_UPGRADE Set to 1 to keep an existing install unchanged.
 #   BOXY_DEBUG       Set to 1 for verbose output.
-#   BOXY_FORCE       Set to 1 to overwrite an existing binary.
+#   BOXY_FORCE       Legacy no-op; upgrades happen automatically.
 
 set -eu
 # pipefail is a bash/zsh extension; enable it when available, ignore otherwise.
@@ -142,8 +143,10 @@ main() {
     mkdir -p "${INSTALL_DIR}"
 
     local dest="${INSTALL_DIR}/${BINARY}"
-    if [ -e "${dest}" ] && [ "${BOXY_FORCE:-}" != "1" ]; then
-        error "${dest} already exists. Set BOXY_FORCE=1 to overwrite."
+    if [ -e "${dest}" ] && [ "${BOXY_SKIP_UPGRADE:-}" = "1" ]; then
+        ok "${BINARY} already installed at ${dest}; skipping upgrade because BOXY_SKIP_UPGRADE=1"
+        printf "Run '%s --help' to get started.\n" "${BINARY}" >&2
+        return
     fi
 
     tar -xzf "${tmp_dir}/${archive}" -C "${tmp_dir}" "${BINARY}"
