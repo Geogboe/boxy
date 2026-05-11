@@ -15,7 +15,7 @@ func newInitCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize Boxy configuration in the current directory",
-		Long:  "Creates a starter boxy.yaml with a commented example pool definition.",
+		Long:  "Creates a comprehensive commented boxy.yaml starter configuration.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runInit(force)
 		},
@@ -56,27 +56,85 @@ func runInit(force bool) error {
 const starterConfig = `---
 # Boxy configuration
 #
-# Define pools of pre-warmed resources that can be allocated into sandboxes.
-# See docs/cli-wireframe.md for the full CLI reference.
+# This starter file is intentionally verbose. Keep the sections you need,
+# delete the rest, and uncomment examples as your setup grows.
+#
+# Top-level sections:
+#   - server: daemon listen address and web UI settings
+#   - providers: named driver instances available to boxy serve
+#   - agents: remote agents the server expects to see
+#   - pools: warm resource inventories Boxy reconciles for you
+#
+# Logging is configured with CLI flags rather than boxy.yaml:
+#   boxy serve --log-level debug --log-file ./boxy.log
 
 server:
   listen: ":9090"
   # ui: true                    # Web dashboard (default: enabled)
+  # providers: [docker, hyperv] # Optional embedded provider type hints
 
-# providers:
-#   - type: docker
-#     name: docker-local
+providers:
+  # Named provider instances. Pools can bind to these with provider: <name>.
+  - name: docker-local
+    type: docker
+    # config:
+    #   host: unix:///var/run/docker.sock
+
+  # Hyper-V provider example. Uncomment when running Boxy on a Windows host
+  # with Hyper-V available.
+  # - name: hyperv-local
+  #   type: hyperv
+
+agents: []
+# Uncomment and adapt entries here when distributed agent support is part of
+# your setup.
+# agents:
+#   - name: build-host
+#     providers: [docker]
 
 pools:
-  - name: example
+  # Docker/container pool example.
+  - name: alpine-dev
     type: docker
+    # provider: docker-local
     config:
       image: alpine:latest
       command: ["/bin/sh", "-c", "while true; do sleep 3600; done"]
+      # env:
+      #   DEMO_MODE: "true"
+      # labels:
+      #   purpose: starter
+      # ports:
+      #   - "8080:80"
+      # cpu: "1.0"
+      # memory: 512m
     policy:
       preheat:
         min_ready: 1
         max_total: 3
       recycle:
         max_age: 4h
+
+  # Hyper-V VM pool example.
+  # Use type: vm for VM inventory, then point provider: at a Hyper-V
+  # provider instance (or directly at the hyperv driver type).
+  # - name: win2022-base
+  #   type: vm
+  #   provider: hyperv-local
+  #   config:
+  #     template_vhd: "C:\\HyperV\\Images\\windows-2022-base.vhdx"
+  #     vhd_dir: "C:\\HyperV\\Boxy"
+  #     generation: 2
+  #     cpu_count: 4
+  #     memory_mb: 8192
+  #     switch: "LabSwitch"
+  #     guest_os: windows
+  #     guest_user: Administrator
+  #     guest_password_ref: env:BOXY_HYPERV_GUEST_PASSWORD
+  #   policy:
+  #     preheat:
+  #       min_ready: 2
+  #       max_total: 5
+  #     recycle:
+  #       max_age: 168h
 `
