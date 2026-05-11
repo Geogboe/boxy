@@ -67,6 +67,15 @@ func (ap *AgentProvisioner) Allocate(ctx context.Context, pool model.Pool, res m
 		return nil, fmt.Errorf("unknown pool %q", pool.Name)
 	}
 	driverType := ap.driverTypeForPool(spec)
+	if gp, ok := ap.Agent.(agentsdk.GuestPersonalizingAgent); ok {
+		result, err := gp.PersonalizeGuest(ctx, driverType, string(res.ID))
+		if err != nil {
+			return nil, err
+		}
+		if result != nil {
+			return result.AccessDetails.ToProperties(), nil
+		}
+	}
 	return ap.Agent.Allocate(ctx, driverType, string(res.ID))
 }
 

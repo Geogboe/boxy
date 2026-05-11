@@ -80,6 +80,9 @@ func TestDriver_Create_Defaults(t *testing.T) {
 	if !strings.Contains(capturedScript, "-ProcessorCount 2") {
 		t.Errorf("expected default cpu_count 2 in script: %s", capturedScript)
 	}
+	if strings.Contains(capturedScript, "boxy_guest_password=") {
+		t.Errorf("expected raw guest password to be absent from notes: %s", capturedScript)
+	}
 }
 
 func TestDriver_Create_CleanupOnFailure(t *testing.T) {
@@ -121,6 +124,24 @@ func TestDriver_Create_LinuxDefaults(t *testing.T) {
 	}
 	if !strings.Contains(capturedScript, "boxy_guest_user=admin") {
 		t.Errorf("expected default linux guest user 'admin' in notes: %s", capturedScript)
+	}
+}
+
+func TestDriver_Create_RejectsGuestPassword(t *testing.T) {
+	d := mockDriver(func(_ context.Context, _ string) (string, error) {
+		t.Fatal("psExec should not be called when guest_password is configured")
+		return "", nil
+	})
+
+	_, err := d.Create(context.Background(), &CreateConfig{
+		TemplateVHD:   `C:\t.vhdx`,
+		GuestPassword: "pass",
+	})
+	if err == nil {
+		t.Fatal("expected error for deprecated guest_password")
+	}
+	if !strings.Contains(err.Error(), "guest_password_ref") {
+		t.Fatalf("expected error to mention guest_password_ref, got %v", err)
 	}
 }
 
@@ -177,7 +198,7 @@ func TestDriver_Update_UnsupportedOp(t *testing.T) {
 
 func TestDriver_Update_ExecOp_EmptyCommand(t *testing.T) {
 	d := mockDriver(func(_ context.Context, _ string) (string, error) {
-		return "boxy_guest_os=windows;boxy_guest_user=admin;boxy_guest_password=pass\n", nil
+		return "boxy_guest_os=windows;boxy_guest_user=admin;boxy_guest_password_ref=env:BOX_PASSWORD\n", nil
 	})
 	_, err := d.Update(context.Background(), fakeGUID, &ExecOp{Command: []string{}})
 	if err == nil {
@@ -189,12 +210,21 @@ func TestDriver_Update_ExecOp_Windows(t *testing.T) {
 	var guestExecCalled bool
 	d := &Driver{
 		psExec: func(_ context.Context, _ string) (string, error) {
-			return "boxy_guest_os=windows;boxy_guest_user=Administrator;boxy_guest_password=pass\n", nil
+			return "boxy_guest_os=windows;boxy_guest_user=Administrator;boxy_guest_password_ref=env:BOX_PASSWORD\n", nil
+		},
+		resolveSecret: func(_ context.Context, ref providersdk.SecretRef) (string, error) {
+			if ref != "env:BOX_PASSWORD" {
+				t.Fatalf("unexpected secret ref %q", ref)
+			}
+			return "pass", nil
 		},
 		guestExecFactory: func(vmGUID, guestOS, guestUser, guestPassword, sshHost string) vmsdk.GuestExec {
 			guestExecCalled = true
 			if guestOS != "windows" {
 				t.Errorf("guestOS = %q, want windows", guestOS)
+			}
+			if guestPassword != "pass" {
+				t.Errorf("guestPassword = %q, want pass", guestPassword)
 			}
 			return &fakeGuestExec{stdout: "output", exitCode: 0}
 		},
@@ -220,7 +250,7 @@ func TestDriver_Update_ExecOp_Linux(t *testing.T) {
 			switch callNum {
 			case 1:
 				// readNotes
-				return "boxy_guest_os=linux;boxy_guest_user=admin;boxy_guest_password=\n", nil
+				return "boxy_guest_os=linux;boxy_guest_user=admin;boxy_guest_password_ref=env:BOX_PASSWORD\n", nil
 			case 2:
 				// vmNameFromID
 				return "boxy-abc123\n", nil
@@ -230,9 +260,18 @@ func TestDriver_Update_ExecOp_Linux(t *testing.T) {
 			}
 			return "", fmt.Errorf("unexpected call %d", callNum)
 		},
+		resolveSecret: func(_ context.Context, ref providersdk.SecretRef) (string, error) {
+			if ref != "env:BOX_PASSWORD" {
+				t.Fatalf("unexpected secret ref %q", ref)
+			}
+			return "linux-pass", nil
+		},
 		guestExecFactory: func(vmGUID, guestOS, guestUser, guestPassword, sshHost string) vmsdk.GuestExec {
 			if guestOS != "linux" {
 				t.Errorf("guestOS = %q, want linux", guestOS)
+			}
+			if guestPassword != "linux-pass" {
+				t.Errorf("guestPassword = %q, want linux-pass", guestPassword)
 			}
 			if sshHost != "10.0.0.5" {
 				t.Errorf("sshHost = %q, want 10.0.0.5", sshHost)
@@ -319,6 +358,30 @@ func TestDriver_Allocate_Linux(t *testing.T) {
 	}
 }
 
+func TestDriver_PersonalizeGuest_Linux(t *testing.T) {
+	callNum := 0
+	d := mockDriver(func(_ context.Context, _ string) (string, error) {
+		callNum++
+		switch callNum {
+		case 1:
+			return "boxy_guest_os=linux;boxy_guest_user=ubuntu\n", nil
+		case 2:
+			return "boxy-abc123\n", nil
+		case 3:
+			return "192.168.1.100\n", nil
+		}
+		return "", fmt.Errorf("unexpected call %d", callNum)
+	})
+
+	result, err := d.PersonalizeGuest(context.Background(), fakeGUID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.AccessDetails.Properties["ssh_user"]; got != "ubuntu" {
+		t.Errorf("ssh_user = %q, want ubuntu", got)
+	}
+}
+
 func TestDriver_Allocate_Windows(t *testing.T) {
 	callNum := 0
 	d := mockDriver(func(_ context.Context, _ string) (string, error) {
@@ -362,3 +425,4 @@ func (f *fakeGuestExec) Exec(_ context.Context, _ string, _ ...string) (*vmsdk.E
 // --- providersdk.Driver interface compliance ---
 
 var _ providersdk.Driver = (*Driver)(nil)
+var _ providersdk.GuestPersonalizer = (*Driver)(nil)

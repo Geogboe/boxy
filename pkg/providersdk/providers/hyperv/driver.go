@@ -24,6 +24,10 @@ type Driver struct {
 	// guestExecFactory constructs a vmsdk.GuestExec for a given guest.
 	// nil → real implementation. Inject a mock in tests.
 	guestExecFactory func(vmGUID, guestOS, guestUser, guestPassword, sshHost string) vmsdk.GuestExec
+
+	// resolveSecret resolves a persisted secret reference only when guest
+	// bootstrap access is needed.
+	resolveSecret func(ctx context.Context, ref providersdk.SecretRef) (string, error)
 }
 
 // New creates a Hyper-V driver.
@@ -57,6 +61,9 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 	if cc.GuestOS == "" {
 		cc.GuestOS = "windows"
 	}
+	if strings.TrimSpace(cc.GuestPassword) != "" {
+		return nil, fmt.Errorf("config.guest_password is no longer supported; use config.guest_password_ref")
+	}
 	guestUser := cc.GuestUser
 	if guestUser == "" {
 		if strings.EqualFold(cc.GuestOS, "linux") {
@@ -86,9 +93,11 @@ Connect-VMNetworkAdapter -VMName '%s' -SwitchName '%s' | Out-Null`,
 			psq(vmName), psq(cc.Switch))
 	}
 
-	// Store boxy metadata in VM Notes for use in later Update/Allocate calls.
-	notes := fmt.Sprintf("boxy_guest_os=%s;boxy_guest_user=%s;boxy_guest_password=%s",
-		cc.GuestOS, guestUser, cc.GuestPassword)
+	// Store non-sensitive Boxy guest metadata in VM Notes for later guest access
+	// and allocation-time personalization. The bootstrap secret is looked up from
+	// its reference at use time instead of being persisted here.
+	notes := fmt.Sprintf("boxy_guest_os=%s;boxy_guest_user=%s;boxy_guest_password_ref=%s",
+		cc.GuestOS, guestUser, strings.TrimSpace(cc.GuestPasswordRef))
 
 	createScript := fmt.Sprintf(`
 $ErrorActionPreference = 'Stop'
@@ -205,7 +214,10 @@ func (d *Driver) execOnGuest(ctx context.Context, id string, op *ExecOp) (*provi
 		guestOS = "windows"
 	}
 	guestUser := notes["boxy_guest_user"]
-	guestPassword := notes["boxy_guest_password"]
+	guestPassword, err := d.resolveGuestPassword(ctx, notes)
+	if err != nil {
+		return nil, fmt.Errorf("resolve guest password for %s: %w", id, err)
+	}
 
 	var ge vmsdk.GuestExec
 	if d.guestExecFactory != nil {
@@ -310,15 +322,33 @@ if (Test-Path '%s') { Remove-Item '%s' -Force }
 // --- Allocate ---
 
 func (d *Driver) Allocate(ctx context.Context, id string) (map[string]any, error) {
+	result, err := d.PersonalizeGuest(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.AccessDetails.ToProperties(), nil
+}
+
+func (d *Driver) PersonalizeGuest(ctx context.Context, id string) (*providersdk.GuestPersonalizationResult, error) {
 	notes, err := d.readNotes(ctx, id)
 	if err != nil {
 		notes = map[string]string{}
 	}
 
 	guestOS := notes["boxy_guest_os"]
+	if guestOS == "" {
+		guestOS = "windows"
+	}
 	guestUser := notes["boxy_guest_user"]
 	if guestUser == "" {
-		guestUser = "admin"
+		if strings.EqualFold(guestOS, "linux") {
+			guestUser = "admin"
+		} else {
+			guestUser = "Administrator"
+		}
 	}
 
 	vmName, err := d.vmNameFromID(ctx, id)
@@ -332,21 +362,29 @@ func (d *Driver) Allocate(ctx context.Context, id string) (map[string]any, error
 	}
 
 	if strings.EqualFold(guestOS, "linux") {
-		return map[string]any{
-			"access":   "ssh",
-			"ssh_host": ip,
-			"ssh_port": "22",
-			"ssh_user": guestUser,
-			"ssh_cmd":  fmt.Sprintf("ssh %s@%s", guestUser, ip),
+		return &providersdk.GuestPersonalizationResult{
+			AccessDetails: providersdk.GuestAccessDetails{
+				Properties: map[string]string{
+					"access":   "ssh",
+					"ssh_host": ip,
+					"ssh_port": "22",
+					"ssh_user": guestUser,
+					"ssh_cmd":  fmt.Sprintf("ssh %s@%s", guestUser, ip),
+				},
+			},
 		}, nil
 	}
 
 	// Windows: return WinRM/PSRP connection info.
-	return map[string]any{
-		"access":    "winrm",
-		"host":      ip,
-		"user":      guestUser,
-		"psrp_vmid": id,
+	return &providersdk.GuestPersonalizationResult{
+		AccessDetails: providersdk.GuestAccessDetails{
+			Properties: map[string]string{
+				"access":    "winrm",
+				"host":      ip,
+				"user":      guestUser,
+				"psrp_vmid": id,
+			},
+		},
 	}, nil
 }
 
@@ -409,6 +447,27 @@ func parseNotes(notes string) map[string]string {
 		}
 	}
 	return m
+}
+
+func (d *Driver) resolveGuestPassword(ctx context.Context, notes map[string]string) (string, error) {
+	ref := strings.TrimSpace(notes["boxy_guest_password_ref"])
+	if ref == "" {
+		return "", fmt.Errorf("VM has no guest_password_ref metadata")
+	}
+
+	resolver := d.resolveSecret
+	if resolver == nil {
+		resolver = providersdk.ResolveSecretRef
+	}
+
+	password, err := resolver(ctx, providersdk.SecretRef(ref))
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(password) == "" {
+		return "", fmt.Errorf("secret ref %q resolved to an empty secret", ref)
+	}
+	return password, nil
 }
 
 func (d *Driver) deleteBestEffort(ctx context.Context, vmName, vhdPath string) error {

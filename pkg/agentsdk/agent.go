@@ -44,6 +44,12 @@ type Agent interface {
 	Allocate(ctx context.Context, provider providersdk.Type, id string) (map[string]any, error)
 }
 
+// GuestPersonalizingAgent is an optional agent capability for providers that
+// expose the typed guest-personalization contract.
+type GuestPersonalizingAgent interface {
+	PersonalizeGuest(ctx context.Context, provider providersdk.Type, id string) (*providersdk.GuestPersonalizationResult, error)
+}
+
 // AgentInfo describes an agent and the providers it hosts.
 type AgentInfo struct {
 	// ID is a unique identifier for this agent instance.

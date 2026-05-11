@@ -41,7 +41,14 @@ type CreateConfig struct {
 	// Linux guests: used as the SSH username. Default: "admin".
 	GuestUser string `json:"guest_user" yaml:"guest_user"`
 
-	// GuestPassword is the guest OS password.
+	// GuestPasswordRef is an opaque lookup handle for the guest OS password.
 	// Windows guests: PSRP password. Linux guests: SSH password.
+	//
+	// Supported built-in forms:
+	//   - env:NAME
+	GuestPasswordRef string `json:"guest_password_ref" yaml:"guest_password_ref"`
+
+	// GuestPassword is deprecated and no longer used for bootstrap guest access.
+	// Use GuestPasswordRef instead so the raw secret does not have to be persisted.
 	GuestPassword string `json:"guest_password" yaml:"guest_password"`
 }

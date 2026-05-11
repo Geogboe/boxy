@@ -83,6 +83,19 @@ func (a *EmbeddedAgent) Allocate(ctx context.Context, provider providersdk.Type,
 	return d.Allocate(ctx, id)
 }
 
+func (a *EmbeddedAgent) PersonalizeGuest(ctx context.Context, provider providersdk.Type, id string) (*providersdk.GuestPersonalizationResult, error) {
+	d, err := a.driver(provider)
+	if err != nil {
+		return nil, err
+	}
+
+	gp, ok := d.(providersdk.GuestPersonalizer)
+	if !ok {
+		return nil, nil
+	}
+	return gp.PersonalizeGuest(ctx, id)
+}
+
 func (a *EmbeddedAgent) driver(provider providersdk.Type) (providersdk.Driver, error) {
 	d, ok := a.drivers[provider]
 	if !ok {

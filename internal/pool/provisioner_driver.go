@@ -69,6 +69,15 @@ func (dp *DriverProvisioner) Allocate(ctx context.Context, pool model.Pool, res 
 	if err != nil {
 		return nil, fmt.Errorf("allocate pool %q: %w", pool.Name, err)
 	}
+	if gp, ok := driver.(providersdk.GuestPersonalizer); ok {
+		result, err := gp.PersonalizeGuest(ctx, string(res.ID))
+		if err != nil {
+			return nil, err
+		}
+		if result != nil {
+			return result.AccessDetails.ToProperties(), nil
+		}
+	}
 	return driver.Allocate(ctx, string(res.ID))
 }
 

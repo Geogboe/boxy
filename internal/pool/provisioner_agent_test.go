@@ -19,6 +19,8 @@ type mockAgent struct {
 	nextResourceID string
 	createErr      error
 	deleteErr      error
+	allocateResult map[string]any
+	personalized   *providersdk.GuestPersonalizationResult
 }
 
 type mockCreateCall struct {
@@ -66,7 +68,11 @@ func (m *mockAgent) Delete(ctx context.Context, provider providersdk.Type, id st
 }
 
 func (m *mockAgent) Allocate(ctx context.Context, provider providersdk.Type, id string) (map[string]any, error) {
-	return nil, nil
+	return m.allocateResult, nil
+}
+
+func (m *mockAgent) PersonalizeGuest(ctx context.Context, provider providersdk.Type, id string) (*providersdk.GuestPersonalizationResult, error) {
+	return m.personalized, nil
 }
 
 func TestAgentProvisioner_Provision(t *testing.T) {
@@ -141,6 +147,38 @@ func TestAgentProvisioner_Destroy(t *testing.T) {
 		t.Errorf("expected 1 delete call, got %d", len(mockAgent.deleteCalls))
 	} else if mockAgent.deleteCalls[0] != "test-resource-id" {
 		t.Errorf("expected delete call for test-resource-id, got %q", mockAgent.deleteCalls[0])
+	}
+}
+
+func TestAgentProvisioner_Allocate_PrefersTypedGuestPersonalization(t *testing.T) {
+	mockAgent := newMockAgent(providersdk.Type("hyperv"))
+	mockAgent.allocateResult = map[string]any{"legacy": "path"}
+	mockAgent.personalized = &providersdk.GuestPersonalizationResult{
+		AccessDetails: providersdk.GuestAccessDetails{
+			Properties: map[string]string{"access": "winrm", "host": "10.0.0.5"},
+		},
+	}
+
+	provisioner := &AgentProvisioner{
+		Agent: mockAgent,
+		Specs: map[model.PoolName]boxyconfig.PoolSpec{
+			"vm-pool": {
+				Name: "vm-pool",
+				Type: "hyperv",
+			},
+		},
+		Providers: map[string]providersdk.Instance{},
+	}
+
+	got, err := provisioner.Allocate(context.Background(), model.Pool{Name: "vm-pool"}, model.Resource{ID: "vm-1"})
+	if err != nil {
+		t.Fatalf("Allocate: %v", err)
+	}
+	if got["access"] != "winrm" {
+		t.Fatalf("access = %v, want winrm", got["access"])
+	}
+	if _, ok := got["legacy"]; ok {
+		t.Fatal("expected typed guest personalization to bypass legacy allocate result")
 	}
 }
 

@@ -43,8 +43,12 @@
       "description": "Guest OS username for exec operations (PSRP auth for Windows; SSH user for Linux). Default: \"Administrator\" for Windows, \"admin\" for Linux.",
       "type": "string"
     },
+    "guest_password_ref": {
+      "description": "Opaque lookup handle for the guest OS password. Supported built-in form: env:NAME.",
+      "type": "string"
+    },
     "guest_password": {
-      "description": "Guest OS password (PSRP password for Windows; SSH password for Linux).",
+      "description": "Deprecated. Raw guest passwords are no longer supported; use guest_password_ref instead.",
       "type": "string"
     }
   },
