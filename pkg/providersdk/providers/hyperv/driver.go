@@ -276,7 +276,11 @@ func (d *Driver) Delete(ctx context.Context, id string) error {
 
 	infoScript := fmt.Sprintf(`
 $ErrorActionPreference = 'Stop'
-$vm = Get-VM -Id '%s'
+$vm = Get-VM -Id '%s' -ErrorAction SilentlyContinue
+if ($null -eq $vm) {
+  '__BOXY_NOT_FOUND__'
+  return
+}
 $vhd = (Get-VMHardDiskDrive -VMName $vm.Name | Select-Object -First 1).Path
 "$($vm.Name)|$vhd"
 `, psq(id))
@@ -284,6 +288,9 @@ $vhd = (Get-VMHardDiskDrive -VMName $vm.Name | Select-Object -First 1).Path
 	out, err := d.ps(ctx, infoScript)
 	if err != nil {
 		return fmt.Errorf("hyperv delete: get VM info for %s: %w", id, err)
+	}
+	if strings.TrimSpace(out) == "__BOXY_NOT_FOUND__" {
+		return nil
 	}
 
 	parts := strings.SplitN(strings.TrimSpace(out), "|", 2)

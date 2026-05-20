@@ -10,6 +10,7 @@ const (
 	SandboxStatusPending      SandboxStatus = "pending"
 	SandboxStatusProvisioning SandboxStatus = "provisioning"
 	SandboxStatusReady        SandboxStatus = "ready"
+	SandboxStatusDeleting     SandboxStatus = "deleting"
 	SandboxStatusFailed       SandboxStatus = "failed"
 )
 

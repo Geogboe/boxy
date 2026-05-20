@@ -278,7 +278,7 @@ boxy config validate                    — validate config file and exit
 boxy sandbox create -f <file>           — create sandbox from a spec file (waits by default; use --no-wait to return after acceptance)
 boxy sandbox list                       — list sandboxes
 boxy sandbox get <id>                   — get sandbox details
-boxy sandbox delete <id>                — delete a sandbox
+boxy sandbox delete <id>                — delete a sandbox (waits by default; use --no-wait to return after acceptance)
 ```
 
 **Planned (not yet implemented):**

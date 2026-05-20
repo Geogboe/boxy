@@ -136,6 +136,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	poolMgr := pool.New(st, provisioner)
 	sandboxMgr := sandbox.New(st, provisioner)
 	sandboxFulfiller := sandbox.NewFulfiller(st, poolMgr, sandboxMgr)
+	sandboxDeleter := sandbox.NewDeletionReconciler(st, poolMgr)
 
 	// Pools
 	donePools, failPools := ui.step("Initializing pools")
@@ -159,7 +160,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		return srv.Start(ctx)
 	})
 	g.Go(func() error {
-		return serveLoop(ctx, poolMgr, sandboxFulfiller, poolNames, ui)
+		return serveLoop(ctx, poolMgr, sandboxDeleter, sandboxFulfiller, poolNames, ui)
 	})
 
 	printServeBanner(listenAddr, uiEnabled, len(cfg.Pools))
@@ -291,6 +292,7 @@ func findDefaultConfigPath() (string, error) {
 func serveLoop(
 	ctx context.Context,
 	poolMgr servePoolReconciler,
+	sandboxDeleter serveSandboxReconciler,
 	sandboxFulfiller serveSandboxReconciler,
 	poolNames []model.PoolName,
 	ui *serveUI,
@@ -306,7 +308,7 @@ func serveLoop(
 			ui.shutdown()
 			return nil
 		case <-ticker.C:
-			serveReconcilePass(ctx, poolMgr, sandboxFulfiller, poolNames, ui)
+			serveReconcilePass(ctx, poolMgr, sandboxDeleter, sandboxFulfiller, poolNames, ui)
 		}
 	}
 }
@@ -328,6 +330,7 @@ func (f serveSandboxReconcilerFunc) Reconcile(ctx context.Context) error {
 func serveReconcilePass(
 	ctx context.Context,
 	poolMgr servePoolReconciler,
+	sandboxDeleter serveSandboxReconciler,
 	sandboxFulfiller serveSandboxReconciler,
 	poolNames []model.PoolName,
 	ui *serveUI,
@@ -340,9 +343,16 @@ func serveReconcilePass(
 		}
 	}
 
+	if sandboxDeleter != nil {
+		if err := sandboxDeleter.Reconcile(ctx); err != nil {
+			ui.printErr(err)
+		}
+	}
 	reconcilePools()
-	if err := sandboxFulfiller.Reconcile(ctx); err != nil {
-		ui.printErr(err)
+	if sandboxFulfiller != nil {
+		if err := sandboxFulfiller.Reconcile(ctx); err != nil {
+			ui.printErr(err)
+		}
 	}
 	reconcilePools()
 }

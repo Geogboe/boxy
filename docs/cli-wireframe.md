@@ -103,9 +103,13 @@ boxy
 │   │     {"id":"sb-a1b2c3","name":"pentest-lab","status":"ready",...}
 │   │
 │   └── delete <id>                              Delete a sandbox
+│       └── --no-wait                            Return after delete request is accepted
 │
 │       $ boxy sandbox delete sb-a1b2c3
 │         deleted sandbox sb-a1b2c3
+│
+│       $ boxy sandbox delete sb-a1b2c3 --no-wait
+│         accepted deletion of sandbox sb-a1b2c3
 │
 │
 ├── skills                                     Install bundled coding-agent skills

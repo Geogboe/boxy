@@ -216,7 +216,7 @@ func (d *Driver) Delete(ctx context.Context, id string) error {
 	}
 
 	if _, ok := store.Resources[id]; !ok {
-		return fmt.Errorf("devfactory: resource %q not found", id)
+		return nil
 	}
 	delete(store.Resources, id)
 

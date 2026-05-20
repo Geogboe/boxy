@@ -35,7 +35,8 @@ type Agent interface {
 	// Update performs an operation on an existing resource.
 	Update(ctx context.Context, provider providersdk.Type, id string, op providersdk.Operation) (*providersdk.Result, error)
 
-	// Delete destroys a resource.
+	// Delete destroys a resource. It follows the providersdk.Driver Delete
+	// contract: deleting an already-missing provider resource is successful.
 	Delete(ctx context.Context, provider providersdk.Type, id string) error
 
 	// Allocate runs allocation-time hooks on an existing resource and returns

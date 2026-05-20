@@ -263,6 +263,9 @@ func (d *Driver) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("resource id is required")
 	}
 	if err := d.cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true}); err != nil {
+		if cerrdefs.IsNotFound(err) {
+			return nil
+		}
 		return fmt.Errorf("docker ContainerRemove %s: %w", id, err)
 	}
 	return nil
