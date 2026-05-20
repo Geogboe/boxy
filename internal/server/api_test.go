@@ -8,11 +8,33 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/internal/sandbox"
 	"github.com/Geogboe/boxy/internal/server"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/store"
 )
+
+type fakePoolMaintenance struct {
+	drainPool model.Pool
+	fillPool  model.Pool
+	drainErr  error
+	fillErr   error
+	drained   []model.PoolName
+	filled    []model.PoolName
+}
+
+func (m *fakePoolMaintenance) Drain(ctx context.Context, poolName model.PoolName) (model.Pool, error) {
+	_ = ctx
+	m.drained = append(m.drained, poolName)
+	return m.drainPool, m.drainErr
+}
+
+func (m *fakePoolMaintenance) Fill(ctx context.Context, poolName model.PoolName) (model.Pool, error) {
+	_ = ctx
+	m.filled = append(m.filled, poolName)
+	return m.fillPool, m.fillErr
+}
 
 func TestAPI_ListPools_empty(t *testing.T) {
 	t.Parallel()
@@ -430,5 +452,64 @@ func TestAPI_DeleteSandbox_notfound(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", w.Code)
+	}
+}
+
+func TestAPI_DrainPool(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	maintenance := &fakePoolMaintenance{drainPool: model.Pool{
+		Name:  "web",
+		Drain: model.PoolDrainState{Operator: true},
+	}}
+	mux := server.NewTestMux(st, sandbox.New(st, nil), false, maintenance)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/pools/web/drain", nil)
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	if len(maintenance.drained) != 1 || maintenance.drained[0] != "web" {
+		t.Fatalf("drained = %v, want [web]", maintenance.drained)
+	}
+	var got model.Pool
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !got.Drain.Operator {
+		t.Fatalf("operator drain = false, want true")
+	}
+}
+
+func TestAPI_DrainPool_notFound(t *testing.T) {
+	t.Parallel()
+	maintenance := &fakePoolMaintenance{drainErr: store.ErrNotFound}
+	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), false, maintenance)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/pools/missing/drain", nil)
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAPI_FillPool_ConfigDeclaredDrain(t *testing.T) {
+	t.Parallel()
+	maintenance := &fakePoolMaintenance{fillErr: &pool.ConfigDeclaredDrainError{PoolName: "web"}}
+	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), false, maintenance)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/pools/web/fill", nil)
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body: %s", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`configured drained`)) {
+		t.Fatalf("body = %s, want configured drained message", w.Body.String())
 	}
 }

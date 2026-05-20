@@ -20,6 +20,7 @@ type Store interface {
 	// Resources
 	GetResource(ctx context.Context, id model.ResourceID) (model.Resource, error)
 	PutResource(ctx context.Context, res model.Resource) error
+	DeleteResource(ctx context.Context, id model.ResourceID) error
 
 	// Sandboxes
 	GetSandbox(ctx context.Context, id model.SandboxID) (model.Sandbox, error)

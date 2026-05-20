@@ -10,6 +10,9 @@ type Pool struct {
 	// Policies are pool-level behavioral controls (preheating, limits, etc).
 	Policies PoolPolicies `json:"policies,omitempty" yaml:"policies,omitempty"`
 
+	// Drain records desired drain state for unused pool inventory.
+	Drain PoolDrainState `json:"drain,omitempty" yaml:"drain,omitempty"`
+
 	// Inventory is the current contents of the pool.
 	Inventory ResourceCollection `json:"inventory" yaml:"inventory"`
 }
@@ -25,6 +28,26 @@ type PoolPolicies struct {
 	// This does NOT mean resources are returned to the pool after sandbox use.
 	// Resources remain single-use; recycle applies only to unused inventory.
 	Recycle RecyclePolicy `json:"recycle,omitempty" yaml:"recycle,omitempty"`
+}
+
+// PoolDrainState records whether a pool should destroy and avoid creating
+// unused ready inventory.
+type PoolDrainState struct {
+	// ConfigDeclared is true when config declares the pool drained.
+	ConfigDeclared bool `json:"config_declared,omitempty" yaml:"config_declared,omitempty"`
+
+	// Operator is a persisted operator/debug override.
+	Operator bool `json:"operator,omitempty" yaml:"operator,omitempty"`
+}
+
+// Effective reports whether either config or operator state keeps the pool drained.
+func (d PoolDrainState) Effective() bool {
+	return d.ConfigDeclared || d.Operator
+}
+
+// EffectivelyDrained reports whether the pool should currently be drained.
+func (p Pool) EffectivelyDrained() bool {
+	return p.Drain.Effective()
 }
 
 // PreheatPolicy is the pool policy for keeping resources ready ahead of time.

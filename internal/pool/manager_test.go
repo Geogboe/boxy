@@ -2,6 +2,7 @@ package pool
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -10,7 +11,9 @@ import (
 )
 
 type fakeProvisioner struct {
-	n int
+	n          int
+	destroyed  []model.ResourceID
+	destroyErr error
 }
 
 func (p *fakeProvisioner) Provision(ctx context.Context, pool model.Pool) (model.Resource, error) {
@@ -29,13 +32,27 @@ func (p *fakeProvisioner) Provision(ctx context.Context, pool model.Pool) (model
 func (p *fakeProvisioner) Destroy(ctx context.Context, pool model.Pool, res model.Resource) error {
 	_ = ctx
 	_ = pool
-	_ = res
+	p.destroyed = append(p.destroyed, res.ID)
+	if p.destroyErr != nil {
+		return p.destroyErr
+	}
 	return nil
 }
 
 type fixedClock struct{ t time.Time }
 
 func (c fixedClock) Now() time.Time { return c.t }
+
+type deleteFailStore struct {
+	store.Store
+	err error
+}
+
+func (s *deleteFailStore) DeleteResource(ctx context.Context, id model.ResourceID) error {
+	_ = ctx
+	_ = id
+	return s.err
+}
 
 func TestManager_Reconcile_PrefillMinReady(t *testing.T) {
 	st := store.NewMemoryStore()
@@ -271,5 +288,327 @@ func TestManager_Reconcile_RebuildsReadyInventoryFromPersistedResources(t *testi
 	}
 	if prov.n != 0 {
 		t.Fatalf("provision count = %d, want 0", prov.n)
+	}
+}
+
+func TestManager_Reconcile_DrainsReadyInventory(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	ready := model.Resource{
+		ID:         "res_ready",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		OriginPool: "p1",
+		State:      model.ResourceStateReady,
+	}
+	allocated := model.Resource{
+		ID:         "res_allocated",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		OriginPool: "p1",
+		State:      model.ResourceStateAllocated,
+	}
+	if err := st.PutResource(ctx, ready); err != nil {
+		t.Fatalf("put ready resource: %v", err)
+	}
+	if err := st.PutResource(ctx, allocated); err != nil {
+		t.Fatalf("put allocated resource: %v", err)
+	}
+	if err := st.PutPool(ctx, model.Pool{
+		Name:  "p1",
+		Drain: model.PoolDrainState{ConfigDeclared: true},
+		Policies: model.PoolPolicies{
+			Preheat: model.PreheatPolicy{MinReady: 0, MaxTotal: 0},
+		},
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: model.ResourceProfileDefault,
+		},
+	}); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &fakeProvisioner{}
+	mgr := New(st, prov)
+	if err := mgr.Reconcile(ctx, "p1"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if len(prov.destroyed) != 1 || prov.destroyed[0] != ready.ID {
+		t.Fatalf("destroyed = %v, want [%s]", prov.destroyed, ready.ID)
+	}
+	if prov.n != 0 {
+		t.Fatalf("provision count = %d, want 0", prov.n)
+	}
+	if _, err := st.GetResource(ctx, ready.ID); err != store.ErrNotFound {
+		t.Fatalf("ready resource after drain err = %v, want ErrNotFound", err)
+	}
+	if _, err := st.GetResource(ctx, allocated.ID); err != nil {
+		t.Fatalf("allocated resource should remain: %v", err)
+	}
+	updated, err := st.GetPool(ctx, "p1")
+	if err != nil {
+		t.Fatalf("get pool: %v", err)
+	}
+	if len(updated.Inventory.Resources) != 0 {
+		t.Fatalf("inventory len = %d, want 0", len(updated.Inventory.Resources))
+	}
+}
+
+func TestManager_Reconcile_DrainProviderFailureKeepsStateForRetry(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	ready := model.Resource{
+		ID:         "res_ready",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		OriginPool: "p1",
+		State:      model.ResourceStateReady,
+	}
+	if err := st.PutResource(ctx, ready); err != nil {
+		t.Fatalf("put ready resource: %v", err)
+	}
+	if err := st.PutPool(ctx, model.Pool{
+		Name:  "p1",
+		Drain: model.PoolDrainState{Operator: true},
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: model.ResourceProfileDefault,
+			Resources:       []model.Resource{ready},
+		},
+	}); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &fakeProvisioner{destroyErr: errors.New("provider unavailable")}
+	mgr := New(st, prov)
+	err := mgr.Reconcile(ctx, "p1")
+	if err == nil {
+		t.Fatal("reconcile error = nil, want provider failure")
+	}
+	if _, getErr := st.GetResource(ctx, ready.ID); getErr != nil {
+		t.Fatalf("ready resource should remain for retry: %v", getErr)
+	}
+	updated, getErr := st.GetPool(ctx, "p1")
+	if getErr != nil {
+		t.Fatalf("get pool: %v", getErr)
+	}
+	if len(updated.Inventory.Resources) != 1 || updated.Inventory.Resources[0].ID != ready.ID {
+		t.Fatalf("inventory = %+v, want failed resource visible", updated.Inventory.Resources)
+	}
+}
+
+func TestManager_Reconcile_DrainDeleteFailureMarksDestroyedForRetry(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	ready := model.Resource{
+		ID:         "res_ready",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		OriginPool: "p1",
+		State:      model.ResourceStateReady,
+	}
+	if err := st.PutResource(ctx, ready); err != nil {
+		t.Fatalf("put ready resource: %v", err)
+	}
+	if err := st.PutPool(ctx, model.Pool{
+		Name:  "p1",
+		Drain: model.PoolDrainState{Operator: true},
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: model.ResourceProfileDefault,
+			Resources:       []model.Resource{ready},
+		},
+	}); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	deleteErr := errors.New("delete failed")
+	failingStore := &deleteFailStore{Store: st, err: deleteErr}
+	prov := &fakeProvisioner{}
+	mgr := New(failingStore, prov)
+	err := mgr.Reconcile(ctx, "p1")
+	if err == nil {
+		t.Fatal("reconcile error = nil, want delete failure")
+	}
+
+	stored, getErr := st.GetResource(ctx, ready.ID)
+	if getErr != nil {
+		t.Fatalf("get ready resource after delete failure: %v", getErr)
+	}
+	if stored.State != model.ResourceStateDestroyed {
+		t.Fatalf("resource state = %q, want %q", stored.State, model.ResourceStateDestroyed)
+	}
+	updated, getErr := st.GetPool(ctx, "p1")
+	if getErr != nil {
+		t.Fatalf("get pool: %v", getErr)
+	}
+	if len(updated.Inventory.Resources) != 0 {
+		t.Fatalf("inventory len = %d, want 0", len(updated.Inventory.Resources))
+	}
+
+	if err := mgr.Reconcile(ctx, "p1"); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if len(prov.destroyed) != 1 {
+		t.Fatalf("destroy calls = %v, want no retry after destroyed marker", prov.destroyed)
+	}
+}
+
+func TestManager_Reconcile_DrainLegacyEmbeddedInventory(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	legacy := model.Resource{
+		ID:      "res_legacy",
+		Type:    model.ResourceTypeContainer,
+		Profile: model.ResourceProfileDefault,
+		State:   model.ResourceStateReady,
+	}
+	if err := st.PutPool(ctx, model.Pool{
+		Name:  "p1",
+		Drain: model.PoolDrainState{Operator: true},
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: model.ResourceProfileDefault,
+			Resources:       []model.Resource{legacy},
+		},
+	}); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &fakeProvisioner{}
+	mgr := New(st, prov)
+	if err := mgr.Reconcile(ctx, "p1"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if len(prov.destroyed) != 1 || prov.destroyed[0] != legacy.ID {
+		t.Fatalf("destroyed = %v, want legacy resource", prov.destroyed)
+	}
+	updated, err := st.GetPool(ctx, "p1")
+	if err != nil {
+		t.Fatalf("get pool: %v", err)
+	}
+	if len(updated.Inventory.Resources) != 0 {
+		t.Fatalf("inventory len = %d, want 0", len(updated.Inventory.Resources))
+	}
+}
+
+func TestManager_EnsureReady_FailsWhenPoolDrained(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	if err := st.PutPool(ctx, model.Pool{
+		Name:  "p1",
+		Drain: model.PoolDrainState{Operator: true},
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: model.ResourceProfileDefault,
+		},
+	}); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &fakeProvisioner{}
+	mgr := New(st, prov)
+	err := mgr.EnsureReady(ctx, "p1", 1)
+	if err == nil {
+		t.Fatal("EnsureReady error = nil, want drained pool error")
+	}
+	if got, want := err.Error(), `pool "p1" is drained; cannot satisfy requested ready count 1`; got != want {
+		t.Fatalf("EnsureReady error = %q, want %q", got, want)
+	}
+	if prov.n != 0 {
+		t.Fatalf("provision count = %d, want 0", prov.n)
+	}
+}
+
+func TestManager_Fill_ConfigDeclaredDrainStillDrainsInventory(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	ready := model.Resource{
+		ID:         "res_ready",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		OriginPool: "p1",
+		State:      model.ResourceStateReady,
+	}
+	if err := st.PutResource(ctx, ready); err != nil {
+		t.Fatalf("put ready resource: %v", err)
+	}
+	if err := st.PutPool(ctx, model.Pool{
+		Name: "p1",
+		Drain: model.PoolDrainState{
+			ConfigDeclared: true,
+			Operator:       true,
+		},
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: model.ResourceProfileDefault,
+			Resources:       []model.Resource{ready},
+		},
+	}); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &fakeProvisioner{}
+	mgr := New(st, prov)
+	filled, err := mgr.Fill(ctx, "p1")
+	if err == nil {
+		t.Fatal("Fill error = nil, want config-declared drain error")
+	}
+	var configErr *ConfigDeclaredDrainError
+	if !errors.As(err, &configErr) {
+		t.Fatalf("Fill error = %T %[1]v, want ConfigDeclaredDrainError", err)
+	}
+	if len(prov.destroyed) != 1 || prov.destroyed[0] != ready.ID {
+		t.Fatalf("destroyed = %v, want [%s]", prov.destroyed, ready.ID)
+	}
+	if filled.Drain.Operator {
+		t.Fatal("returned operator drain = true, want cleared")
+	}
+	if len(filled.Inventory.Resources) != 0 {
+		t.Fatalf("returned inventory len = %d, want 0", len(filled.Inventory.Resources))
+	}
+	if _, err := st.GetResource(ctx, ready.ID); err != store.ErrNotFound {
+		t.Fatalf("ready resource after fill err = %v, want ErrNotFound", err)
+	}
+	updated, err := st.GetPool(ctx, "p1")
+	if err != nil {
+		t.Fatalf("get pool: %v", err)
+	}
+	if updated.Drain.Operator {
+		t.Fatal("operator drain = true, want cleared")
+	}
+	if !updated.Drain.ConfigDeclared || !updated.EffectivelyDrained() {
+		t.Fatalf("drain state = %+v, want config-declared effective drain", updated.Drain)
+	}
+	if len(updated.Inventory.Resources) != 0 {
+		t.Fatalf("inventory len = %d, want 0", len(updated.Inventory.Resources))
+	}
+}
+
+func TestManager_Reconcile_DrainEmptyInventoryIsIdempotent(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	if err := st.PutPool(ctx, model.Pool{
+		Name:  "p1",
+		Drain: model.PoolDrainState{Operator: true},
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: model.ResourceProfileDefault,
+		},
+	}); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &fakeProvisioner{}
+	mgr := New(st, prov)
+	if err := mgr.Reconcile(ctx, "p1"); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	if err := mgr.Reconcile(ctx, "p1"); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if len(prov.destroyed) != 0 || prov.n != 0 {
+		t.Fatalf("destroyed=%v provisioned=%d, want no operations", prov.destroyed, prov.n)
 	}
 }

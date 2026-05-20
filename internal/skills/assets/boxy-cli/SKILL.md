@@ -23,6 +23,8 @@ Core commands you will commonly use:
 - `boxy sandbox get`
 - `boxy sandbox delete`
 - `boxy status`
+- `boxy debug pool drain`
+- `boxy debug pool fill`
 - `boxy debug provider list`
 - `boxy debug provider get`
 - `boxy debug provider exec`
@@ -38,6 +40,7 @@ Core commands you will commonly use:
 - Validate config with `boxy config validate` before telling the user to run `boxy serve`.
 - Prefer `boxy serve --once` for smoke checks and `boxy serve` for daemon usage.
 - Sandbox creation is asynchronous. Use `boxy sandbox create --no-wait` if you need the request accepted quickly, then poll with `boxy sandbox get`.
+- Use `boxy debug pool drain <pool>` and `boxy debug pool fill <pool>` for daemon-backed operator maintenance of unused ready pool inventory.
 - If a sandbox fails or stalls, use the diagnosis workflow instead of guessing.
 - Boxy persists daemon runtime state in `.boxy/state.json` near the active config or working directory; use that fact in diagnosis, not as the primary control interface.
 

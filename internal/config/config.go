@@ -108,6 +108,13 @@ func (c Config) Validate() error {
 		if _, err := ResolvePoolExpectedType(pool.Type); err != nil {
 			return fmt.Errorf("pool %q type invalid: %w", pool.Name, err)
 		}
+		if pool.PolicySet() && pool.PoliciesSet() {
+			return fmt.Errorf("pool %q sets both policy and policies; use only one", pool.Name)
+		}
+		policy := pool.EffectivePolicy()
+		if policy.Preheat.ConfiguresDrain() && policy.Preheat.MinReady > 0 {
+			return fmt.Errorf("pool %q preheat max_total: 0 conflicts with min_ready: %d", pool.Name, policy.Preheat.MinReady)
+		}
 	}
 	return nil
 }

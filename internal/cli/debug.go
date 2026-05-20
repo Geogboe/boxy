@@ -12,5 +12,6 @@ func newDebugCommand() *cobra.Command {
 	}
 
 	cmd.AddCommand(newDebugProviderCommand())
+	cmd.AddCommand(newDebugPoolCommand())
 	return cmd
 }

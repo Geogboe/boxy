@@ -162,6 +162,39 @@ func testStoreDeleteSandbox(t *testing.T, newStore storeFactory) {
 	})
 }
 
+func testStoreDeleteResource(t *testing.T, newStore storeFactory) {
+	t.Helper()
+
+	t.Run("DeleteResource_existing", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		s := newStore(t)
+		if err := s.PutResource(ctx, model.Resource{ID: "res-1"}); err != nil {
+			t.Fatalf("PutResource: %v", err)
+		}
+
+		if err := s.DeleteResource(ctx, "res-1"); err != nil {
+			t.Fatalf("DeleteResource: %v", err)
+		}
+
+		_, err := s.GetResource(ctx, "res-1")
+		if err != store.ErrNotFound {
+			t.Fatalf("GetResource after delete: got %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("DeleteResource_not_found", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		s := newStore(t)
+
+		err := s.DeleteResource(ctx, "no-such-id")
+		if err != store.ErrNotFound {
+			t.Fatalf("DeleteResource non-existent: got %v, want ErrNotFound", err)
+		}
+	})
+}
+
 func testStoreSandboxFieldsRoundTrip(t *testing.T, newStore storeFactory) {
 	t.Helper()
 
@@ -274,6 +307,16 @@ func TestMemoryStore_DeleteSandbox(t *testing.T) {
 func TestDiskStore_DeleteSandbox(t *testing.T) {
 	t.Parallel()
 	testStoreDeleteSandbox(t, diskFactory)
+}
+
+func TestMemoryStore_DeleteResource(t *testing.T) {
+	t.Parallel()
+	testStoreDeleteResource(t, memoryFactory)
+}
+
+func TestDiskStore_DeleteResource(t *testing.T) {
+	t.Parallel()
+	testStoreDeleteResource(t, diskFactory)
 }
 
 func TestMemoryStore_SandboxFieldsRoundTrip(t *testing.T) {
