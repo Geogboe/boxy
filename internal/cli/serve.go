@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -138,18 +139,10 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 
 	// Pools
 	donePools, failPools := ui.step("Initializing pools")
-	poolNames := make([]model.PoolName, 0, len(cfg.Pools))
-	for _, spec := range cfg.Pools {
-		p, err := poolSpecToModel(spec)
-		if err != nil {
-			failPools(err.Error())
-			return fmt.Errorf("create pool model for %q: %w", spec.Name, err)
-		}
-		if err := st.PutPool(ctx, p); err != nil {
-			failPools(err.Error())
-			return fmt.Errorf("seed pool %q: %w", spec.Name, err)
-		}
-		poolNames = append(poolNames, p.Name)
+	poolNames, err := seedConfiguredPools(ctx, st, cfg.Pools)
+	if err != nil {
+		failPools(err.Error())
+		return err
 	}
 	donePools(fmt.Sprintf("%d pool(s)", len(poolNames)))
 
@@ -172,6 +165,49 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	printServeBanner(listenAddr, uiEnabled, len(cfg.Pools))
 
 	return g.Wait()
+}
+
+func seedConfiguredPools(ctx context.Context, st store.Store, specs []boxyconfig.PoolSpec) ([]model.PoolName, error) {
+	resources, err := st.ListResources(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list resources for pool seeding: %w", err)
+	}
+
+	poolNames := make([]model.PoolName, 0, len(specs))
+	for _, spec := range specs {
+		p, err := poolSpecToModel(spec)
+		if err != nil {
+			return nil, fmt.Errorf("create pool model for %q: %w", spec.Name, err)
+		}
+
+		var fallback []model.Resource
+		existing, err := st.GetPool(ctx, p.Name)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return nil, fmt.Errorf("get existing pool %q: %w", p.Name, err)
+		}
+		if err == nil {
+			fallback = existing.Inventory.Resources
+		}
+
+		rebuilt, report, err := pool.RebuildReadyInventory(p, resources, fallback)
+		if err != nil {
+			return nil, fmt.Errorf("rebuild pool %q inventory: %w", p.Name, err)
+		}
+		for _, skipped := range report.Skipped {
+			slog.Warn(
+				"skipping persisted pool resource during startup",
+				"pool", p.Name,
+				"resource", skipped.ResourceID,
+				"reason", skipped.Reason,
+			)
+		}
+		if err := st.PutPool(ctx, rebuilt); err != nil {
+			return nil, fmt.Errorf("seed pool %q: %w", spec.Name, err)
+		}
+		poolNames = append(poolNames, rebuilt.Name)
+	}
+
+	return poolNames, nil
 }
 
 // resolveListenAddr picks the listen address with precedence:

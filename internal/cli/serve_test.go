@@ -8,6 +8,7 @@ import (
 
 	boxyconfig "github.com/Geogboe/boxy/internal/config"
 	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/store"
 )
 
 type fakeServePoolReconciler struct {
@@ -112,6 +113,102 @@ func TestOpenServeStore_PersistsStateAcrossReopen(t *testing.T) {
 	}
 	if got.ID != sb.ID || got.Status != model.SandboxStatusPending {
 		t.Fatalf("sandbox = %+v, want pending sandbox %q", got, sb.ID)
+	}
+}
+
+func TestSeedConfiguredPools_PreservesInventoryAndUpdatesConfig(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	embedded := model.Resource{
+		ID:         "res-ready",
+		Type:       model.ResourceTypeVM,
+		Profile:    "win-vm",
+		OriginPool: "win-vm",
+		State:      model.ResourceStateReady,
+		Properties: map[string]any{"source": "embedded"},
+	}
+	global := embedded
+	global.Properties = map[string]any{"source": "global"}
+
+	if err := st.PutPool(ctx, model.Pool{
+		Name: "win-vm",
+		Policies: model.PoolPolicies{
+			Preheat: model.PreheatPolicy{MinReady: 1, MaxTotal: 1},
+		},
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeVM,
+			ExpectedProfile: "win-vm",
+			Resources:       []model.Resource{embedded},
+		},
+	}); err != nil {
+		t.Fatalf("put existing pool: %v", err)
+	}
+	if err := st.PutResource(ctx, global); err != nil {
+		t.Fatalf("put resource: %v", err)
+	}
+
+	names, err := seedConfiguredPools(ctx, st, []boxyconfig.PoolSpec{{
+		Name: "win-vm",
+		Type: "vm",
+		Policy: boxyconfig.PoolPolicySpec{
+			Preheat: boxyconfig.PreheatPolicySpec{MinReady: 2, MaxTotal: 3},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("seedConfiguredPools: %v", err)
+	}
+	if len(names) != 1 || names[0] != "win-vm" {
+		t.Fatalf("names = %v, want [win-vm]", names)
+	}
+
+	got, err := st.GetPool(ctx, "win-vm")
+	if err != nil {
+		t.Fatalf("get pool: %v", err)
+	}
+	if got.Policies.Preheat.MinReady != 2 || got.Policies.Preheat.MaxTotal != 3 {
+		t.Fatalf("preheat policy = %+v, want min_ready=2 max_total=3", got.Policies.Preheat)
+	}
+	if len(got.Inventory.Resources) != 1 || got.Inventory.Resources[0].ID != "res-ready" {
+		t.Fatalf("inventory resources = %+v, want res-ready", got.Inventory.Resources)
+	}
+	if got.Inventory.Resources[0].Properties["source"] != "global" {
+		t.Fatalf("inventory resource source = %v, want global", got.Inventory.Resources[0].Properties["source"])
+	}
+}
+
+func TestSeedConfiguredPools_ReconstructsReadyInventoryFromResources(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	resources := []model.Resource{
+		{ID: "res-ready", Type: model.ResourceTypeVM, Profile: "win-vm", OriginPool: "win-vm", State: model.ResourceStateReady},
+		{ID: "res-allocated", Type: model.ResourceTypeVM, Profile: "win-vm", OriginPool: "win-vm", State: model.ResourceStateAllocated},
+		{ID: "res-destroyed", Type: model.ResourceTypeVM, Profile: "win-vm", OriginPool: "win-vm", State: model.ResourceStateDestroyed},
+		{ID: "res-provisioning", Type: model.ResourceTypeVM, Profile: "win-vm", OriginPool: "win-vm", State: model.ResourceStateProvisioning},
+		{ID: "res-released", Type: model.ResourceTypeVM, Profile: "win-vm", OriginPool: "win-vm", State: model.ResourceStateReleased},
+		{ID: "res-wrong-profile", Type: model.ResourceTypeVM, Profile: "other", OriginPool: "win-vm", State: model.ResourceStateReady},
+		{ID: "res-wrong-type", Type: model.ResourceTypeContainer, Profile: "win-vm", OriginPool: "win-vm", State: model.ResourceStateReady},
+		{ID: "res-other-pool", Type: model.ResourceTypeVM, Profile: "win-vm", OriginPool: "other", State: model.ResourceStateReady},
+	}
+	for _, res := range resources {
+		if err := st.PutResource(ctx, res); err != nil {
+			t.Fatalf("put resource %q: %v", res.ID, err)
+		}
+	}
+
+	if _, err := seedConfiguredPools(ctx, st, []boxyconfig.PoolSpec{{Name: "win-vm", Type: "vm"}}); err != nil {
+		t.Fatalf("seedConfiguredPools: %v", err)
+	}
+
+	got, err := st.GetPool(ctx, "win-vm")
+	if err != nil {
+		t.Fatalf("get pool: %v", err)
+	}
+	if len(got.Inventory.Resources) != 1 || got.Inventory.Resources[0].ID != "res-ready" {
+		t.Fatalf("inventory resources = %+v, want only res-ready", got.Inventory.Resources)
 	}
 }
 
