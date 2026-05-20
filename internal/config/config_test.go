@@ -277,3 +277,126 @@ func TestConfigValidate_valid_pool_type_aliases(t *testing.T) {
 		t.Fatalf("Validate() error = %v", err)
 	}
 }
+
+func TestPoolSpec_PreheatExplicitness(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "boxy.yaml")
+	if err := os.WriteFile(path, []byte(`
+providers: []
+pools:
+  - name: omitted-max
+    type: container
+    policy:
+      preheat:
+        min_ready: 0
+  - name: explicit-drain
+    type: container
+    policy:
+      preheat:
+        min_ready: 0
+        max_total: 0
+  - name: alias-drain
+    type: container
+    policies:
+      preheat:
+        max_total: 0
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+
+	omitted := cfg.Pools[0].EffectivePolicy().Preheat
+	if omitted.MaxTotal != 0 || omitted.MaxTotalSet() {
+		t.Fatalf("omitted max_total = (%d, set=%t), want zero and unset", omitted.MaxTotal, omitted.MaxTotalSet())
+	}
+	if omitted.ConfiguresDrain() {
+		t.Fatal("omitted max_total configured drain")
+	}
+
+	explicit := cfg.Pools[1].EffectivePolicy().Preheat
+	if explicit.MaxTotal != 0 || !explicit.MaxTotalSet() || !explicit.ConfiguresDrain() {
+		t.Fatalf("explicit max_total = (%d, set=%t, drain=%t), want explicit drain", explicit.MaxTotal, explicit.MaxTotalSet(), explicit.ConfiguresDrain())
+	}
+
+	alias := cfg.Pools[2]
+	if !alias.PoliciesSet() || alias.PolicySet() {
+		t.Fatalf("alias flags policy=%t policies=%t, want only policies", alias.PolicySet(), alias.PoliciesSet())
+	}
+	if !alias.EffectivePolicy().Preheat.ConfiguresDrain() {
+		t.Fatal("policies alias explicit max_total: 0 did not configure drain")
+	}
+}
+
+func TestConfigValidate_rejectsPolicyAliasesTogether(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "boxy.yaml")
+	if err := os.WriteFile(path, []byte(`
+providers: []
+pools:
+  - name: web
+    type: container
+    policy:
+      preheat:
+        min_ready: 0
+    policies:
+      preheat:
+        max_total: 0
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+
+	err = cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() error = nil, want policy alias conflict")
+	}
+	if got, want := err.Error(), `pool "web" sets both policy and policies; use only one`; got != want {
+		t.Fatalf("Validate() error = %q, want %q", got, want)
+	}
+}
+
+func TestConfigValidate_rejectsDrainWithPositiveMinReady(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "boxy.yaml")
+	if err := os.WriteFile(path, []byte(`
+providers: []
+pools:
+  - name: web
+    type: container
+    policy:
+      preheat:
+        min_ready: 1
+        max_total: 0
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	err = cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() error = nil, want drain/min_ready conflict")
+	}
+	if got, want := err.Error(), `pool "web" preheat max_total: 0 conflicts with min_ready: 1`; got != want {
+		t.Fatalf("Validate() error = %q, want %q", got, want)
+	}
+}

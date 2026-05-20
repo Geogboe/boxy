@@ -69,6 +69,16 @@ func (s *MemoryStore) PutResource(ctx context.Context, res model.Resource) error
 	return nil
 }
 
+func (s *MemoryStore) DeleteResource(_ context.Context, id model.ResourceID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.resources[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.resources, id)
+	return nil
+}
+
 func (s *MemoryStore) GetSandbox(ctx context.Context, id model.SandboxID) (model.Sandbox, error) {
 	_ = ctx
 	s.mu.Lock()

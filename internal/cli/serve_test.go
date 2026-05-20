@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -129,6 +130,7 @@ func TestSeedConfiguredPools_PreservesInventoryAndUpdatesConfig(t *testing.T) {
 		State:      model.ResourceStateReady,
 		Properties: map[string]any{"source": "embedded"},
 	}
+
 	global := embedded
 	global.Properties = map[string]any{"source": "global"}
 
@@ -178,6 +180,35 @@ func TestSeedConfiguredPools_PreservesInventoryAndUpdatesConfig(t *testing.T) {
 	}
 }
 
+func TestSeedConfiguredPools_PreservesOperatorDrainOverride(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	if err := st.PutPool(ctx, model.Pool{
+		Name:  "web",
+		Drain: model.PoolDrainState{Operator: true},
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: "web",
+		},
+	}); err != nil {
+		t.Fatalf("put existing pool: %v", err)
+	}
+
+	if _, err := seedConfiguredPools(ctx, st, []boxyconfig.PoolSpec{{Name: "web", Type: "container"}}); err != nil {
+		t.Fatalf("seedConfiguredPools: %v", err)
+	}
+
+	got, err := st.GetPool(ctx, "web")
+	if err != nil {
+		t.Fatalf("get pool: %v", err)
+	}
+	if !got.Drain.Operator {
+		t.Fatalf("operator drain override = false, want true")
+	}
+}
+
 func TestSeedConfiguredPools_ReconstructsReadyInventoryFromResources(t *testing.T) {
 	t.Parallel()
 
@@ -221,5 +252,64 @@ func TestPoolSpecToModel_invalid_pool_type(t *testing.T) {
 	}
 	if got, want := err.Error(), `pool "test" type invalid: unsupported pool type "badtype"`; got != want {
 		t.Fatalf("poolSpecToModel() error = %q, want %q", got, want)
+	}
+}
+
+func TestPoolSpecToModel_DrainExplicitnessFromConfig(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "boxy.yaml")
+	if err := os.WriteFile(cfgPath, []byte(`
+providers: []
+pools:
+  - name: lazy
+    type: container
+    policy:
+      preheat:
+        min_ready: 0
+  - name: drained
+    type: container
+    policy:
+      preheat:
+        min_ready: 0
+        max_total: 0
+  - name: capped
+    type: container
+    policy:
+      preheat:
+        min_ready: 0
+        max_total: 2
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, _, err := loadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+
+	lazy, err := poolSpecToModel(cfg.Pools[0])
+	if err != nil {
+		t.Fatalf("poolSpecToModel(lazy): %v", err)
+	}
+	if lazy.Policies.Preheat.MaxTotal != 0 || lazy.EffectivelyDrained() {
+		t.Fatalf("lazy pool max_total=%d drained=%t, want unbounded and not drained", lazy.Policies.Preheat.MaxTotal, lazy.EffectivelyDrained())
+	}
+
+	drained, err := poolSpecToModel(cfg.Pools[1])
+	if err != nil {
+		t.Fatalf("poolSpecToModel(drained): %v", err)
+	}
+	if !drained.Drain.ConfigDeclared || !drained.EffectivelyDrained() {
+		t.Fatalf("drained pool drain state = %+v, want config-declared drain", drained.Drain)
+	}
+
+	capped, err := poolSpecToModel(cfg.Pools[2])
+	if err != nil {
+		t.Fatalf("poolSpecToModel(capped): %v", err)
+	}
+	if capped.Policies.Preheat.MaxTotal != 2 || capped.EffectivelyDrained() {
+		t.Fatalf("capped pool max_total=%d drained=%t, want finite cap and not drained", capped.Policies.Preheat.MaxTotal, capped.EffectivelyDrained())
 	}
 }

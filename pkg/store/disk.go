@@ -142,6 +142,16 @@ func (s *DiskStore) PutResource(ctx context.Context, res model.Resource) error {
 	return s.persistLocked()
 }
 
+func (s *DiskStore) DeleteResource(_ context.Context, id model.ResourceID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.data.Resources[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.data.Resources, id)
+	return s.persistLocked()
+}
+
 func (s *DiskStore) GetSandbox(ctx context.Context, id model.SandboxID) (model.Sandbox, error) {
 	_ = ctx
 	s.mu.Lock()

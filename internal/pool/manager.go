@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/Geogboe/boxy/pkg/model"
@@ -38,11 +39,30 @@ func (e *MaxTotalReachedError) Error() string {
 	)
 }
 
+type DrainedPoolError struct {
+	PoolName       model.PoolName
+	RequestedReady int
+}
+
+func (e *DrainedPoolError) Error() string {
+	return fmt.Sprintf("pool %q is drained; cannot satisfy requested ready count %d", e.PoolName, e.RequestedReady)
+}
+
+type ConfigDeclaredDrainError struct {
+	PoolName model.PoolName
+}
+
+func (e *ConfigDeclaredDrainError) Error() string {
+	return fmt.Sprintf("pool %q is configured drained; edit config before filling it", e.PoolName)
+}
+
 // Manager reconciles a pool's inventory against its policies.
 type Manager struct {
 	store       store.Store
 	provisioner Provisioner
 	clock       Clock
+	locksMu     sync.Mutex
+	poolLocks   map[model.PoolName]*sync.Mutex
 }
 
 func New(s store.Store, p Provisioner) *Manager {
@@ -50,6 +70,7 @@ func New(s store.Store, p Provisioner) *Manager {
 		store:       s,
 		provisioner: p,
 		clock:       realClock{},
+		poolLocks:   make(map[model.PoolName]*sync.Mutex),
 	}
 }
 
@@ -61,7 +82,12 @@ func (m *Manager) SetClock(c Clock) {
 
 // Reconcile performs one reconciliation pass for the pool.
 func (m *Manager) Reconcile(ctx context.Context, poolName model.PoolName) error {
-	return m.reconcile(ctx, poolName, 0, false)
+	if m == nil {
+		return fmt.Errorf("pool manager is nil")
+	}
+	unlock := m.lockPool(poolName)
+	defer unlock()
+	return m.reconcileLocked(ctx, poolName, 0, false)
 }
 
 // EnsureReady ensures the pool has at least minReady resources available,
@@ -70,10 +96,102 @@ func (m *Manager) EnsureReady(ctx context.Context, poolName model.PoolName, minR
 	if minReady <= 0 {
 		return nil
 	}
-	return m.reconcile(ctx, poolName, minReady, true)
+	if m == nil {
+		return fmt.Errorf("pool manager is nil")
+	}
+	unlock := m.lockPool(poolName)
+	defer unlock()
+	return m.reconcileLocked(ctx, poolName, minReady, true)
 }
 
-func (m *Manager) reconcile(ctx context.Context, poolName model.PoolName, minReadyOverride int, requireMinReady bool) error {
+// Drain persists an operator drain override and immediately destroys unused ready inventory.
+func (m *Manager) Drain(ctx context.Context, poolName model.PoolName) (model.Pool, error) {
+	if m == nil {
+		return model.Pool{}, fmt.Errorf("pool manager is nil")
+	}
+	if m.store == nil {
+		return model.Pool{}, fmt.Errorf("store is nil")
+	}
+	if m.provisioner == nil {
+		return model.Pool{}, fmt.Errorf("provisioner is nil")
+	}
+	if poolName == "" {
+		return model.Pool{}, fmt.Errorf("pool name is required")
+	}
+	unlock := m.lockPool(poolName)
+	defer unlock()
+
+	p, err := m.store.GetPool(ctx, poolName)
+	if err != nil {
+		return model.Pool{}, fmt.Errorf("get pool: %w", err)
+	}
+	p.Drain.Operator = true
+	if err := m.store.PutPool(ctx, p); err != nil {
+		return model.Pool{}, fmt.Errorf("put pool drain override: %w", err)
+	}
+	if err := m.reconcileLocked(ctx, poolName, 0, false); err != nil {
+		return model.Pool{}, err
+	}
+	return m.store.GetPool(ctx, poolName)
+}
+
+// Fill clears an operator drain override and immediately reconciles configured capacity.
+func (m *Manager) Fill(ctx context.Context, poolName model.PoolName) (model.Pool, error) {
+	if m == nil {
+		return model.Pool{}, fmt.Errorf("pool manager is nil")
+	}
+	if m.store == nil {
+		return model.Pool{}, fmt.Errorf("store is nil")
+	}
+	if m.provisioner == nil {
+		return model.Pool{}, fmt.Errorf("provisioner is nil")
+	}
+	if poolName == "" {
+		return model.Pool{}, fmt.Errorf("pool name is required")
+	}
+	unlock := m.lockPool(poolName)
+	defer unlock()
+
+	p, err := m.store.GetPool(ctx, poolName)
+	if err != nil {
+		return model.Pool{}, fmt.Errorf("get pool: %w", err)
+	}
+	p.Drain.Operator = false
+	if err := m.store.PutPool(ctx, p); err != nil {
+		return model.Pool{}, fmt.Errorf("clear pool drain override: %w", err)
+	}
+	if p.Drain.ConfigDeclared {
+		if err := m.reconcileLocked(ctx, poolName, 0, false); err != nil {
+			return model.Pool{}, err
+		}
+		updated, err := m.store.GetPool(ctx, poolName)
+		if err != nil {
+			return model.Pool{}, fmt.Errorf("get pool after config-declared drain fill: %w", err)
+		}
+		return updated, &ConfigDeclaredDrainError{PoolName: poolName}
+	}
+	if err := m.reconcileLocked(ctx, poolName, 0, false); err != nil {
+		return model.Pool{}, err
+	}
+	return m.store.GetPool(ctx, poolName)
+}
+
+func (m *Manager) lockPool(poolName model.PoolName) func() {
+	m.locksMu.Lock()
+	if m.poolLocks == nil {
+		m.poolLocks = make(map[model.PoolName]*sync.Mutex)
+	}
+	lock := m.poolLocks[poolName]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		m.poolLocks[poolName] = lock
+	}
+	m.locksMu.Unlock()
+	lock.Lock()
+	return lock.Unlock
+}
+
+func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, minReadyOverride int, requireMinReady bool) error {
 	if m == nil {
 		return fmt.Errorf("pool manager is nil")
 	}
@@ -95,6 +213,8 @@ func (m *Manager) reconcile(ctx context.Context, poolName model.PoolName, minRea
 	type plan struct {
 		pool             model.Pool
 		stale            []model.Resource
+		drainResources   []model.Resource
+		drain            bool
 		now              time.Time
 		toProvision      int
 		inventoryChanged bool
@@ -121,6 +241,29 @@ func (m *Manager) reconcile(ctx context.Context, poolName model.PoolName, minRea
 				return policycontroller.Decision[plan]{}, err
 			}
 			p = rebuilt
+
+			if p.EffectivelyDrained() {
+				if requireMinReady {
+					return policycontroller.Decision[plan]{}, &DrainedPoolError{
+						PoolName:       p.Name,
+						RequestedReady: minReadyOverride,
+					}
+				}
+				toDrain := append([]model.Resource(nil), p.Inventory.Resources...)
+				reason := fmt.Sprintf("drain inventory_rebuilt=%t ready=%d", rebuildReport.Changed, len(toDrain))
+				return policycontroller.Decision[plan]{
+					ShouldAct: rebuildReport.Changed || len(toDrain) > 0,
+					Plan: plan{
+						pool:             p,
+						drainResources:   toDrain,
+						drain:            true,
+						now:              obs.now,
+						inventoryChanged: rebuildReport.Changed,
+						reason:           reason,
+					},
+					Reason: reason,
+				}, nil
+			}
 
 			stale, kept, err := computeStale(p, obs.now)
 			if err != nil {
@@ -166,6 +309,9 @@ func (m *Manager) reconcile(ctx context.Context, poolName model.PoolName, minRea
 		}),
 		Actuator: policycontroller.ActuatorFunc[plan](func(ctx context.Context, pl plan) error {
 			p := pl.pool
+			if pl.drain {
+				return m.applyDrain(ctx, p, pl.drainResources)
+			}
 
 			for _, res := range pl.stale {
 				if err := m.provisioner.Destroy(ctx, p, res); err != nil {
@@ -207,8 +353,54 @@ func (m *Manager) reconcile(ctx context.Context, poolName model.PoolName, minRea
 		if errors.As(err, &capErr) {
 			return capErr
 		}
+		var drainedErr *DrainedPoolError
+		if errors.As(err, &drainedErr) {
+			return drainedErr
+		}
 	}
 	return err
+}
+
+func (m *Manager) applyDrain(ctx context.Context, p model.Pool, resources []model.Resource) error {
+	if len(resources) == 0 {
+		p.Inventory.Resources = nil
+		if err := m.store.PutPool(ctx, p); err != nil {
+			return fmt.Errorf("put drained pool: %w", err)
+		}
+		return nil
+	}
+
+	for _, res := range resources {
+		if err := m.provisioner.Destroy(ctx, p, res); err != nil {
+			return fmt.Errorf("destroy drained resource %q in pool %q: %w", res.ID, p.Name, err)
+		}
+		res.State = model.ResourceStateDestroyed
+		if err := m.store.PutResource(ctx, res); err != nil {
+			return fmt.Errorf("mark drained resource %q destroyed: %w", res.ID, err)
+		}
+		p.Inventory.Resources = removeInventoryResource(p.Inventory.Resources, res.ID)
+		if err := m.store.PutPool(ctx, p); err != nil {
+			return fmt.Errorf("put drained pool: %w", err)
+		}
+		if err := m.store.DeleteResource(ctx, res.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("delete drained resource %q: %w", res.ID, err)
+		}
+	}
+	return nil
+}
+
+func removeInventoryResource(resources []model.Resource, id model.ResourceID) []model.Resource {
+	out := resources[:0]
+	for _, res := range resources {
+		if res.ID == id {
+			continue
+		}
+		out = append(out, res)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func computeStale(p model.Pool, now time.Time) (stale []model.Resource, kept []model.Resource, _ error) {

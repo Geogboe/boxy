@@ -140,6 +140,15 @@ boxy
 │
 │
 ├── debug
+│   ├── pool                                   Run daemon-backed pool maintenance
+│   │   ├── --server <addr>                      Server address (default 127.0.0.1:9090)
+│   │   ├── drain <pool>                         Drain unused ready inventory
+│   │   │   $ boxy debug pool drain win-vm
+│   │   │     drained pool win-vm
+│   │   └── fill <pool>                          Reconcile to configured min_ready
+│   │       $ boxy debug pool fill win-vm
+│   │         filled pool win-vm
+│   │
 │   └── provider                               Exercise devfactory provider
 │       ├── --data-dir <path>                    (default .devfactory/)
 │       ├── --profile container|vm|share         (default container)

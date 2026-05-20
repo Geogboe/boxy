@@ -152,7 +152,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	// Resolve UI enabled: flag > config > default (true)
 	uiEnabled := resolveUIEnabled(opts, cmd, cfg)
 
-	srv := server.New(st, sandboxMgr, listenAddr, uiEnabled)
+	srv := server.New(st, sandboxMgr, poolMgr, listenAddr, uiEnabled)
 
 	g, ctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
@@ -187,6 +187,7 @@ func seedConfiguredPools(ctx context.Context, st store.Store, specs []boxyconfig
 		}
 		if err == nil {
 			fallback = existing.Inventory.Resources
+			p.Drain.Operator = existing.Drain.Operator
 		}
 
 		rebuilt, report, err := pool.RebuildReadyInventory(p, resources, fallback)
@@ -364,6 +365,9 @@ func poolSpecToModel(spec boxyconfig.PoolSpec) (model.Pool, error) {
 			Recycle: model.RecyclePolicy{
 				MaxAge: policy.Recycle.MaxAge,
 			},
+		},
+		Drain: model.PoolDrainState{
+			ConfigDeclared: policy.Preheat.ConfiguresDrain(),
 		},
 		Inventory: model.ResourceCollection{
 			ExpectedType:    expectedType,

@@ -16,26 +16,35 @@ import (
 	"time"
 
 	"github.com/Geogboe/boxy/internal/sandbox"
+	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
+// PoolMaintenance performs operator pool maintenance actions for API handlers.
+type PoolMaintenance interface {
+	Drain(ctx context.Context, poolName model.PoolName) (model.Pool, error)
+	Fill(ctx context.Context, poolName model.PoolName) (model.Pool, error)
+}
+
 // Server is the HTTP server for the Boxy REST API and optional web UI.
 type Server struct {
-	store      store.Store
-	sandboxMgr *sandbox.Manager
-	uiEnabled  bool
-	addr       string
-	srv        *http.Server
+	store           store.Store
+	sandboxMgr      *sandbox.Manager
+	poolMaintenance PoolMaintenance
+	uiEnabled       bool
+	addr            string
+	srv             *http.Server
 }
 
 // New creates a Server that will listen on addr.
 // If uiEnabled is true, the web dashboard is served at /.
-func New(st store.Store, sm *sandbox.Manager, addr string, uiEnabled bool) *Server {
+func New(st store.Store, sm *sandbox.Manager, pm PoolMaintenance, addr string, uiEnabled bool) *Server {
 	s := &Server{
-		store:      st,
-		sandboxMgr: sm,
-		uiEnabled:  uiEnabled,
-		addr:       addr,
+		store:           st,
+		sandboxMgr:      sm,
+		poolMaintenance: pm,
+		uiEnabled:       uiEnabled,
+		addr:            addr,
 	}
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
