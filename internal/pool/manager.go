@@ -93,11 +93,12 @@ func (m *Manager) reconcile(ctx context.Context, poolName model.PoolName, minRea
 		now       time.Time
 	}
 	type plan struct {
-		pool        model.Pool
-		stale       []model.Resource
-		now         time.Time
-		toProvision int
-		reason      string
+		pool             model.Pool
+		stale            []model.Resource
+		now              time.Time
+		toProvision      int
+		inventoryChanged bool
+		reason           string
 	}
 
 	ctrl := policycontroller.Controller[observed, plan]{
@@ -115,6 +116,11 @@ func (m *Manager) reconcile(ctx context.Context, poolName model.PoolName, minRea
 		Evaluator: policycontroller.EvaluatorFunc[observed, plan](func(ctx context.Context, obs observed) (policycontroller.Decision[plan], error) {
 			_ = ctx
 			p := obs.pool
+			rebuilt, rebuildReport, err := RebuildReadyInventory(p, obs.resources, p.Inventory.Resources)
+			if err != nil {
+				return policycontroller.Decision[plan]{}, err
+			}
+			p = rebuilt
 
 			stale, kept, err := computeStale(p, obs.now)
 			if err != nil {
@@ -140,19 +146,20 @@ func (m *Manager) reconcile(ctx context.Context, poolName model.PoolName, minRea
 			toProv := computeToProvision(p, effectiveMinReady, totalCount)
 			reason := "noop"
 			should := false
-			if len(stale) > 0 || toProv > 0 {
+			if rebuildReport.Changed || len(stale) > 0 || toProv > 0 {
 				should = true
-				reason = fmt.Sprintf("stale=%d provision=%d", len(stale), toProv)
+				reason = fmt.Sprintf("inventory_rebuilt=%t stale=%d provision=%d", rebuildReport.Changed, len(stale), toProv)
 			}
 
 			return policycontroller.Decision[plan]{
 				ShouldAct: should,
 				Plan: plan{
-					pool:        p,
-					stale:       stale,
-					now:         obs.now,
-					toProvision: toProv,
-					reason:      reason,
+					pool:             p,
+					stale:            stale,
+					now:              obs.now,
+					toProvision:      toProv,
+					inventoryChanged: rebuildReport.Changed,
+					reason:           reason,
 				},
 				Reason: reason,
 			}, nil

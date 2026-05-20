@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
 
 	boxyconfig "github.com/Geogboe/boxy/internal/config"
 	"github.com/Geogboe/boxy/pkg/model"
@@ -41,16 +40,19 @@ func runStatus(ctx context.Context, opts statusOpts, cmd *cobra.Command) error {
 	// Health check
 	healthy, err := checkHealth(ctx, client, base)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  Error: cannot reach server at %s\n", addr)
-		fmt.Fprintf(os.Stderr, "  Is `boxy serve` running?\n")
+		errw := cmd.ErrOrStderr()
+		_, _ = fmt.Fprintf(errw, "  Error: cannot reach server at %s\n", addr)
+		_, _ = fmt.Fprintf(errw, "  Is `boxy serve` running?\n")
 		return err
 	}
 
-	healthStr := "healthy"
 	if !healthy {
-		healthStr = "unhealthy"
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "  Error: server at %s is unhealthy\n", addr)
+		return fmt.Errorf("server at %s is unhealthy", addr)
 	}
-	fmt.Fprintf(os.Stderr, "  Server:     %s (%s)\n", base, healthStr)
+
+	out := cmd.OutOrStdout()
+	_, _ = fmt.Fprintf(out, "  Server:     %s (healthy)\n", base)
 
 	// Pools
 	pools, err := fetchJSON[[]model.Pool](ctx, client, base+"/api/v1/pools")
@@ -62,14 +64,14 @@ func runStatus(ctx context.Context, opts statusOpts, cmd *cobra.Command) error {
 	for _, p := range pools {
 		totalResources += len(p.Inventory.Resources)
 	}
-	fmt.Fprintf(os.Stderr, "  Pools:      %d configured, %d resources ready\n", len(pools), totalResources)
+	_, _ = fmt.Fprintf(out, "  Pools:      %d configured, %d resources ready\n", len(pools), totalResources)
 
 	// Sandboxes
 	sandboxes, err := fetchJSON[[]model.Sandbox](ctx, client, base+"/api/v1/sandboxes")
 	if err != nil {
 		return fmt.Errorf("fetch sandboxes: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "  Sandboxes:  %d active\n", len(sandboxes))
+	_, _ = fmt.Fprintf(out, "  Sandboxes:  %d active\n", len(sandboxes))
 
 	return nil
 }
