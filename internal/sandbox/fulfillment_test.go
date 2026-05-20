@@ -38,6 +38,39 @@ type fakeFulfillProvisioner struct {
 	failPool model.PoolName
 }
 
+type deletingReadyEnsurer struct {
+	store store.Store
+}
+
+type deletingFailingReadyEnsurer struct {
+	store store.Store
+}
+
+func (e deletingReadyEnsurer) EnsureReady(ctx context.Context, poolName model.PoolName, minReady int) error {
+	_ = poolName
+	_ = minReady
+	sb, err := e.store.GetSandbox(ctx, "sb-1")
+	if err != nil {
+		return err
+	}
+	sb.Status = model.SandboxStatusDeleting
+	return e.store.PutSandbox(ctx, sb)
+}
+
+func (e deletingFailingReadyEnsurer) EnsureReady(ctx context.Context, poolName model.PoolName, minReady int) error {
+	_ = poolName
+	_ = minReady
+	sb, err := e.store.GetSandbox(ctx, "sb-1")
+	if err != nil {
+		return err
+	}
+	sb.Status = model.SandboxStatusDeleting
+	if err := e.store.PutSandbox(ctx, sb); err != nil {
+		return err
+	}
+	return fmt.Errorf("ensure failed after delete request")
+}
+
 func (p *fakeFulfillProvisioner) Provision(ctx context.Context, pl model.Pool) (model.Resource, error) {
 	_ = ctx
 	if pl.Name == p.failPool {
@@ -63,6 +96,27 @@ func (p *fakeFulfillProvisioner) Destroy(ctx context.Context, pool model.Pool, r
 	return nil
 }
 
+type deletingFailingAllocator struct {
+	store    store.Store
+	failPool model.PoolName
+}
+
+func (a deletingFailingAllocator) Allocate(ctx context.Context, p model.Pool, r model.Resource) (map[string]any, error) {
+	_ = r
+	if p.Name != a.failPool {
+		return map[string]any{"allocated": true}, nil
+	}
+	sb, err := a.store.GetSandbox(ctx, "sb-1")
+	if err != nil {
+		return nil, err
+	}
+	sb.Status = model.SandboxStatusDeleting
+	if err := a.store.PutSandbox(ctx, sb); err != nil {
+		return nil, err
+	}
+	return nil, fmt.Errorf("allocator failed after delete request")
+}
+
 func TestFulfiller_ReconcilePending_MarksSandboxReady(t *testing.T) {
 	t.Parallel()
 
@@ -78,6 +132,7 @@ func TestFulfiller_ReconcilePending_MarksSandboxReady(t *testing.T) {
 		CreatedAt: time.Unix(1, 0).UTC(),
 		UpdatedAt: time.Unix(1, 0).UTC(),
 	}
+
 	if err := st.PutResource(ctx, ready); err != nil {
 		t.Fatalf("put resource: %v", err)
 	}
@@ -126,6 +181,154 @@ func TestFulfiller_ReconcilePending_MarksSandboxReady(t *testing.T) {
 	}
 	if res.State != model.ResourceStateAllocated {
 		t.Fatalf("resource state = %q, want %q", res.State, model.ResourceStateAllocated)
+	}
+}
+
+func TestFulfiller_ReconcileDeletingSandboxDoesNotAllocate(t *testing.T) {
+	t.Parallel()
+
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	ready := model.Resource{
+		ID:      "res-ready",
+		Type:    model.ResourceTypeContainer,
+		Profile: "kali",
+		State:   model.ResourceStateReady,
+	}
+	if err := st.PutResource(ctx, ready); err != nil {
+		t.Fatalf("put resource: %v", err)
+	}
+	if err := st.PutPool(ctx, model.Pool{
+		Name: "kali",
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: "kali",
+			Resources:       []model.Resource{ready},
+		},
+	}); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+	if err := st.CreateSandbox(ctx, model.Sandbox{
+		ID:       "sb-1",
+		Name:     "lab",
+		Status:   model.SandboxStatusDeleting,
+		Requests: []model.ResourceRequest{{Type: model.ResourceTypeContainer, Profile: "kali", Count: 1}},
+	}); err != nil {
+		t.Fatalf("create sandbox: %v", err)
+	}
+
+	f := NewFulfiller(st, pool.New(st, &fakeFulfillProvisioner{}), New(st, fakeAllocator{}))
+	if err := f.Reconcile(ctx); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	sb, err := st.GetSandbox(ctx, "sb-1")
+	if err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if sb.Status != model.SandboxStatusDeleting || len(sb.Resources) != 0 {
+		t.Fatalf("sandbox = %+v, want deleting without resources", sb)
+	}
+	res, err := st.GetResource(ctx, ready.ID)
+	if err != nil {
+		t.Fatalf("get resource: %v", err)
+	}
+	if res.State != model.ResourceStateReady {
+		t.Fatalf("resource state = %q, want ready", res.State)
+	}
+}
+
+func TestFulfiller_ReconcileStopsIfSandboxStartsDeletingAfterEnsureReady(t *testing.T) {
+	t.Parallel()
+
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	ready := model.Resource{
+		ID:      "res-ready",
+		Type:    model.ResourceTypeContainer,
+		Profile: "kali",
+		State:   model.ResourceStateReady,
+	}
+	if err := st.PutResource(ctx, ready); err != nil {
+		t.Fatalf("put resource: %v", err)
+	}
+	if err := st.PutPool(ctx, model.Pool{
+		Name: "kali",
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: "kali",
+			Resources:       []model.Resource{ready},
+		},
+	}); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+	if err := st.CreateSandbox(ctx, model.Sandbox{
+		ID:       "sb-1",
+		Name:     "lab",
+		Status:   model.SandboxStatusPending,
+		Requests: []model.ResourceRequest{{Type: model.ResourceTypeContainer, Profile: "kali", Count: 1}},
+	}); err != nil {
+		t.Fatalf("create sandbox: %v", err)
+	}
+
+	f := NewFulfiller(st, deletingReadyEnsurer{store: st}, New(st, fakeAllocator{}))
+	if err := f.Reconcile(ctx); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	sb, err := st.GetSandbox(ctx, "sb-1")
+	if err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if sb.Status != model.SandboxStatusDeleting || len(sb.Resources) != 0 {
+		t.Fatalf("sandbox = %+v, want deletion to win race before allocation", sb)
+	}
+	res, err := st.GetResource(ctx, ready.ID)
+	if err != nil {
+		t.Fatalf("get resource: %v", err)
+	}
+	if res.State != model.ResourceStateReady {
+		t.Fatalf("resource state = %q, want ready", res.State)
+	}
+}
+
+func TestFulfiller_ReconcilePreservesDeletingWhenEnsureReadyFailsAfterDelete(t *testing.T) {
+	t.Parallel()
+
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	if err := st.PutPool(ctx, model.Pool{
+		Name: "kali",
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: "kali",
+		},
+	}); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+	if err := st.CreateSandbox(ctx, model.Sandbox{
+		ID:       "sb-1",
+		Name:     "lab",
+		Status:   model.SandboxStatusPending,
+		Requests: []model.ResourceRequest{{Type: model.ResourceTypeContainer, Profile: "kali", Count: 1}},
+	}); err != nil {
+		t.Fatalf("create sandbox: %v", err)
+	}
+
+	f := NewFulfiller(st, deletingFailingReadyEnsurer{store: st}, New(st, fakeAllocator{}))
+	if err := f.Reconcile(ctx); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	sb, err := st.GetSandbox(ctx, "sb-1")
+	if err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if sb.Status != model.SandboxStatusDeleting {
+		t.Fatalf("status = %q, want deleting", sb.Status)
+	}
+	if sb.Error != "" {
+		t.Fatalf("error = %q, want empty", sb.Error)
 	}
 }
 
@@ -269,6 +472,108 @@ func TestFulfiller_ReconcilePending_MarksSandboxFailedWhenNoMatchingPool(t *test
 	}
 	if len(got.Resources) != 0 {
 		t.Fatalf("resources len = %d, want 0", len(got.Resources))
+	}
+}
+
+func TestFulfiller_RollbackPreservesDeletingAndRestoresInventory(t *testing.T) {
+	t.Parallel()
+
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+
+	webRes := model.Resource{
+		ID:        "res-web",
+		Type:      model.ResourceTypeContainer,
+		Profile:   "web",
+		Provider:  model.ProviderRef{Name: "fake"},
+		State:     model.ResourceStateReady,
+		CreatedAt: time.Unix(1, 0).UTC(),
+		UpdatedAt: time.Unix(1, 0).UTC(),
+	}
+	winRes := model.Resource{
+		ID:        "res-win",
+		Type:      model.ResourceTypeVM,
+		Profile:   "win",
+		Provider:  model.ProviderRef{Name: "fake"},
+		State:     model.ResourceStateReady,
+		CreatedAt: time.Unix(2, 0).UTC(),
+		UpdatedAt: time.Unix(2, 0).UTC(),
+	}
+	for _, res := range []model.Resource{webRes, winRes} {
+		if err := st.PutResource(ctx, res); err != nil {
+			t.Fatalf("put resource %q: %v", res.ID, err)
+		}
+	}
+	for _, pl := range []model.Pool{
+		{
+			Name: "web",
+			Inventory: model.ResourceCollection{
+				ExpectedType:    model.ResourceTypeContainer,
+				ExpectedProfile: "web",
+				Resources:       []model.Resource{webRes},
+			},
+		},
+		{
+			Name: "win",
+			Inventory: model.ResourceCollection{
+				ExpectedType:    model.ResourceTypeVM,
+				ExpectedProfile: "win",
+				Resources:       []model.Resource{winRes},
+			},
+		},
+	} {
+		if err := st.PutPool(ctx, pl); err != nil {
+			t.Fatalf("put pool %q: %v", pl.Name, err)
+		}
+	}
+
+	if err := st.CreateSandbox(ctx, model.Sandbox{
+		ID:     "sb-1",
+		Name:   "lab",
+		Status: model.SandboxStatusPending,
+		Requests: []model.ResourceRequest{
+			{Type: model.ResourceTypeContainer, Profile: "web", Count: 1},
+			{Type: model.ResourceTypeVM, Profile: "win", Count: 1},
+		},
+	}); err != nil {
+		t.Fatalf("create sandbox: %v", err)
+	}
+
+	f := NewFulfiller(st, pool.New(st, &fakeFulfillProvisioner{}), New(st, deletingFailingAllocator{store: st, failPool: "win"}))
+	if err := f.Reconcile(ctx); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	sb, err := st.GetSandbox(ctx, "sb-1")
+	if err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if sb.Status != model.SandboxStatusDeleting {
+		t.Fatalf("status = %q, want deleting", sb.Status)
+	}
+	if len(sb.Resources) != 0 {
+		t.Fatalf("sandbox resources = %v, want rollback to pre-allocation resources", sb.Resources)
+	}
+	for _, poolName := range []model.PoolName{"web", "win"} {
+		pl, err := st.GetPool(ctx, poolName)
+		if err != nil {
+			t.Fatalf("get pool %q: %v", poolName, err)
+		}
+		if len(pl.Inventory.Resources) != 1 {
+			t.Fatalf("pool %q inventory len = %d, want 1", poolName, len(pl.Inventory.Resources))
+		}
+		if pl.Inventory.Resources[0].State != model.ResourceStateReady {
+			t.Fatalf("pool %q resource state = %q, want ready", poolName, pl.Inventory.Resources[0].State)
+		}
+	}
+	for _, resID := range []model.ResourceID{webRes.ID, winRes.ID} {
+		res, err := st.GetResource(ctx, resID)
+		if err != nil {
+			t.Fatalf("get resource %q: %v", resID, err)
+		}
+		if res.State != model.ResourceStateReady {
+			t.Fatalf("resource %q state = %q, want ready", res.ID, res.State)
+		}
 	}
 }
 

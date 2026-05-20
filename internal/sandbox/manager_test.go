@@ -85,6 +85,7 @@ func TestManager_AddFromPool_PreservesSandboxStatusUntilCallerFinalizes(t *testi
 		State:     model.ResourceStateReady,
 		CreatedAt: time.Unix(1, 0).UTC(),
 	}
+
 	if err := st.PutResource(ctx, ready); err != nil {
 		t.Fatalf("put resource: %v", err)
 	}
@@ -127,5 +128,93 @@ func TestManager_AddFromPool_PreservesSandboxStatusUntilCallerFinalizes(t *testi
 	}
 	if len(stored.Resources) != 1 {
 		t.Fatalf("resources len = %d, want 1", len(stored.Resources))
+	}
+}
+
+func TestManager_AddFromPool_RejectsDeletingSandboxBeforeConsumingResource(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+
+	ready := model.Resource{
+		ID:      "res-1",
+		Type:    model.ResourceTypeContainer,
+		Profile: model.ResourceProfileDefault,
+		State:   model.ResourceStateReady,
+	}
+	pool := model.Pool{
+		Name: "docker-containers",
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: model.ResourceProfileDefault,
+			Resources:       []model.Resource{ready},
+		},
+	}
+	sb := model.Sandbox{
+		ID:       "sb-1",
+		Name:     "demo",
+		Status:   model.SandboxStatusDeleting,
+		Requests: []model.ResourceRequest{{Type: model.ResourceTypeContainer, Profile: model.ResourceProfileDefault, Count: 1}},
+	}
+	if err := st.PutResource(ctx, ready); err != nil {
+		t.Fatalf("put resource: %v", err)
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+	if err := st.CreateSandbox(ctx, sb); err != nil {
+		t.Fatalf("create sandbox: %v", err)
+	}
+
+	_, err := New(st, nil).AddFromPool(ctx, sb.ID, pool.Name, 1)
+	if err != ErrSandboxDeleting {
+		t.Fatalf("AddFromPool error = %v, want ErrSandboxDeleting", err)
+	}
+
+	storedSandbox, err := st.GetSandbox(ctx, sb.ID)
+	if err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if len(storedSandbox.Resources) != 0 {
+		t.Fatalf("sandbox resources = %v, want empty", storedSandbox.Resources)
+	}
+	storedPool, err := st.GetPool(ctx, pool.Name)
+	if err != nil {
+		t.Fatalf("get pool: %v", err)
+	}
+	if len(storedPool.Inventory.Resources) != 1 || storedPool.Inventory.Resources[0].ID != ready.ID {
+		t.Fatalf("pool inventory = %+v, want ready resource still present", storedPool.Inventory.Resources)
+	}
+	storedResource, err := st.GetResource(ctx, ready.ID)
+	if err != nil {
+		t.Fatalf("get resource: %v", err)
+	}
+	if storedResource.State != model.ResourceStateReady {
+		t.Fatalf("resource state = %q, want ready", storedResource.State)
+	}
+}
+
+func TestManager_RequestDelete_MarksDeletingAndIsIdempotent(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	sb := model.Sandbox{ID: "sb-1", Name: "demo", Status: model.SandboxStatusReady, Resources: []model.ResourceID{"res-1"}}
+	if err := st.CreateSandbox(ctx, sb); err != nil {
+		t.Fatalf("create sandbox: %v", err)
+	}
+
+	mgr := New(st, nil)
+	first, err := mgr.RequestDelete(ctx, sb.ID)
+	if err != nil {
+		t.Fatalf("RequestDelete: %v", err)
+	}
+	if first.Status != model.SandboxStatusDeleting {
+		t.Fatalf("status = %q, want deleting", first.Status)
+	}
+
+	second, err := mgr.RequestDelete(ctx, sb.ID)
+	if err != nil {
+		t.Fatalf("RequestDelete second: %v", err)
+	}
+	if second.Status != model.SandboxStatusDeleting || len(second.Resources) != 1 {
+		t.Fatalf("second sandbox = %+v, want deleting with resource", second)
 	}
 }

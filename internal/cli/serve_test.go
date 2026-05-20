@@ -9,11 +9,42 @@ import (
 
 	boxyconfig "github.com/Geogboe/boxy/internal/config"
 	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
 type fakeServePoolReconciler struct {
 	calls []model.PoolName
+}
+
+type servePoolReconcilerFunc func(ctx context.Context, poolName model.PoolName) error
+
+func (f servePoolReconcilerFunc) Reconcile(ctx context.Context, poolName model.PoolName) error {
+	return f(ctx, poolName)
+}
+
+type serveDriverConfig struct {
+	Image string `json:"image"`
+}
+
+type serveDriver struct {
+	providerType providersdk.Type
+	cfg          any
+}
+
+func (d serveDriver) Type() providersdk.Type { return d.providerType }
+func (d serveDriver) Create(context.Context, any) (*providersdk.Resource, error) {
+	return &providersdk.Resource{}, nil
+}
+func (d serveDriver) Read(context.Context, string) (*providersdk.ResourceStatus, error) {
+	return &providersdk.ResourceStatus{}, nil
+}
+func (d serveDriver) Update(context.Context, string, providersdk.Operation) (*providersdk.Result, error) {
+	return &providersdk.Result{}, nil
+}
+func (d serveDriver) Delete(context.Context, string) error { return nil }
+func (d serveDriver) Allocate(context.Context, string) (map[string]any, error) {
+	return nil, nil
 }
 
 func (r *fakeServePoolReconciler) Reconcile(ctx context.Context, poolName model.PoolName) error {
@@ -38,7 +69,7 @@ func TestServeReconcilePass_ReconcilesPoolsBeforeAndAfterSandboxFulfillment(t *t
 	pools := &fakeServePoolReconciler{}
 	sandboxes := &fakeServeSandboxReconciler{}
 
-	serveReconcilePass(context.Background(), pools, sandboxes, []model.PoolName{"web", "win"}, newServeUI(false))
+	serveReconcilePass(context.Background(), pools, nil, sandboxes, []model.PoolName{"web", "win"}, newServeUI(false))
 
 	if sandboxes.calls != 1 {
 		t.Fatalf("sandbox reconcile calls = %d, want 1", sandboxes.calls)
@@ -55,6 +86,149 @@ func TestServeReconcilePass_ReconcilesPoolsBeforeAndAfterSandboxFulfillment(t *t
 	}
 }
 
+func TestResolveServeOptionsPreferFlagsThenConfigDefaults(t *testing.T) {
+	cfgUIFalse := false
+	cfg := boxyconfig.Config{
+		Server: boxyconfig.ServerSpec{Listen: ":7777", UI: &cfgUIFalse},
+	}
+
+	cmd := newServeCommand()
+	if got := resolveListenAddr(serveOpts{}, cmd, cfg); got != ":7777" {
+		t.Fatalf("resolveListenAddr config = %q, want :7777", got)
+	}
+	if got := resolveUIEnabled(serveOpts{}, cmd, cfg); got {
+		t.Fatal("resolveUIEnabled config = true, want false")
+	}
+
+	cmd = newServeCommand()
+	if err := cmd.Flags().Set("listen", ":8888"); err != nil {
+		t.Fatalf("set listen: %v", err)
+	}
+	if err := cmd.Flags().Set("ui", "true"); err != nil {
+		t.Fatalf("set ui: %v", err)
+	}
+	if got := resolveListenAddr(serveOpts{listen: ":8888"}, cmd, cfg); got != ":8888" {
+		t.Fatalf("resolveListenAddr flag = %q, want :8888", got)
+	}
+	if got := resolveUIEnabled(serveOpts{ui: true}, cmd, cfg); !got {
+		t.Fatal("resolveUIEnabled flag = false, want true")
+	}
+
+	cmd = newServeCommand()
+	if got := resolveListenAddr(serveOpts{}, cmd, boxyconfig.Config{}); got != defaultListenAddr {
+		t.Fatalf("resolveListenAddr default = %q, want %q", got, defaultListenAddr)
+	}
+	if got := resolveUIEnabled(serveOpts{}, cmd, boxyconfig.Config{}); !got {
+		t.Fatal("resolveUIEnabled default = false, want true")
+	}
+}
+
+func TestLoadConfigFindsDefaultConfigInEffectiveWorkingDirectory(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("BOXY_WORKING_DIR", dir)
+	cfgPath := filepath.Join(dir, "boxy.yml")
+	if err := os.WriteFile(cfgPath, []byte("providers: []\npools: []\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, usedPath, err := loadConfig("")
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if usedPath != cfgPath {
+		t.Fatalf("usedPath = %q, want %q", usedPath, cfgPath)
+	}
+	if len(cfg.Providers) != 0 || len(cfg.Pools) != 0 {
+		t.Fatalf("cfg = %+v, want empty config from default file", cfg)
+	}
+}
+
+func TestLoadConfigReturnsDefaultsWhenNoConfigFileExists(t *testing.T) {
+	t.Setenv("BOXY_WORKING_DIR", t.TempDir())
+
+	cfg, usedPath, err := loadConfig("")
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if usedPath != "" {
+		t.Fatalf("usedPath = %q, want empty", usedPath)
+	}
+	if len(cfg.Providers) != 0 || len(cfg.Pools) != 0 {
+		t.Fatalf("cfg = %+v, want zero-value config", cfg)
+	}
+}
+
+func TestDisplayAddr(t *testing.T) {
+	tests := map[string]string{
+		":9090":        "127.0.0.1:9090",
+		"0.0.0.0:9090": "127.0.0.1:9090",
+		"localhost:80": "localhost:80",
+	}
+	for input, want := range tests {
+		if got := displayAddr(input); got != want {
+			t.Fatalf("displayAddr(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestBuildDriversDecodesConfiguredInstancesAndDefaults(t *testing.T) {
+	reg := providersdk.NewRegistry()
+	var configs []any
+	for _, typ := range []providersdk.Type{"alpha", "beta"} {
+		typ := typ
+		if err := reg.Register(providersdk.Registration{
+			Type:        typ,
+			ConfigProto: func() any { return &serveDriverConfig{} },
+			NewDriver: func(cfg any) (providersdk.Driver, error) {
+				configs = append(configs, cfg)
+				return serveDriver{providerType: typ, cfg: cfg}, nil
+			},
+		}); err != nil {
+			t.Fatalf("register %q: %v", typ, err)
+		}
+	}
+
+	drivers, err := buildDrivers(reg, []providersdk.Instance{
+		{Name: "alpha-local", Type: "alpha", Config: map[string]any{"image": "alpine"}},
+	})
+	if err != nil {
+		t.Fatalf("buildDrivers: %v", err)
+	}
+	if len(drivers) != 2 {
+		t.Fatalf("drivers len = %d, want 2", len(drivers))
+	}
+	if types := providerTypes(reg); len(types) != 2 || types[0] != "alpha" || types[1] != "beta" {
+		t.Fatalf("providerTypes = %v, want [alpha beta]", types)
+	}
+	if cfg, ok := configs[0].(*serveDriverConfig); !ok || cfg.Image != "alpine" {
+		t.Fatalf("alpha config = %#v, want decoded image", configs[0])
+	}
+	if cfg, ok := configs[1].(*serveDriverConfig); !ok || cfg.Image != "" {
+		t.Fatalf("beta config = %#v, want zero-value default", configs[1])
+	}
+}
+
+func TestBuildDriversReportsDecodeAndFactoryErrors(t *testing.T) {
+	reg := providersdk.NewRegistry()
+	if err := reg.Register(providersdk.Registration{
+		Type:        "alpha",
+		ConfigProto: func() any { return &serveDriverConfig{} },
+		NewDriver: func(any) (providersdk.Driver, error) {
+			return nil, fmt.Errorf("factory failed")
+		},
+	}); err != nil {
+		t.Fatalf("register alpha: %v", err)
+	}
+
+	if _, err := buildDrivers(reg, []providersdk.Instance{{Name: "alpha-local", Type: "alpha", Config: map[string]any{"image": map[string]any{"bad": true}}}}); err == nil {
+		t.Fatal("buildDrivers decode error = nil")
+	}
+
+	if _, err := buildDrivers(reg, nil); err == nil {
+		t.Fatal("buildDrivers factory error = nil")
+	}
+}
+
 func TestServeReconcilePass_RunsPostFulfillmentPoolReconcileEvenAfterSandboxError(t *testing.T) {
 	t.Parallel()
 
@@ -64,7 +238,7 @@ func TestServeReconcilePass_RunsPostFulfillmentPoolReconcileEvenAfterSandboxErro
 		return fmt.Errorf("boom")
 	})
 
-	serveReconcilePass(context.Background(), pools, sandboxes, []model.PoolName{"web"}, newServeUI(false))
+	serveReconcilePass(context.Background(), pools, nil, sandboxes, []model.PoolName{"web"}, newServeUI(false))
 
 	want := []model.PoolName{"web", "web"}
 	if len(pools.calls) != len(want) {
@@ -73,6 +247,39 @@ func TestServeReconcilePass_RunsPostFulfillmentPoolReconcileEvenAfterSandboxErro
 	for i := range want {
 		if pools.calls[i] != want[i] {
 			t.Fatalf("pool reconcile calls = %v, want %v", pools.calls, want)
+		}
+	}
+}
+
+func TestServeReconcilePass_DeletesSandboxesBeforePoolRefill(t *testing.T) {
+	t.Parallel()
+
+	var order []string
+	pools := servePoolReconcilerFunc(func(ctx context.Context, poolName model.PoolName) error {
+		_ = ctx
+		order = append(order, "pool:"+string(poolName))
+		return nil
+	})
+	deleter := serveSandboxReconcilerFunc(func(ctx context.Context) error {
+		_ = ctx
+		order = append(order, "delete")
+		return nil
+	})
+	fulfiller := serveSandboxReconcilerFunc(func(ctx context.Context) error {
+		_ = ctx
+		order = append(order, "fulfill")
+		return nil
+	})
+
+	serveReconcilePass(context.Background(), pools, deleter, fulfiller, []model.PoolName{"web"}, newServeUI(false))
+
+	want := []string{"delete", "pool:web", "fulfill", "pool:web"}
+	if len(order) != len(want) {
+		t.Fatalf("order = %v, want %v", order, want)
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("order = %v, want %v", order, want)
 		}
 	}
 }

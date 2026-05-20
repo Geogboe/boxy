@@ -116,12 +116,19 @@ func newSandboxTestServer(t *testing.T, listItems []model.Sandbox) *httptest.Ser
 	})
 	mux.HandleFunc("DELETE /api/v1/sandboxes/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
-		if _, ok := sandboxes[id]; !ok {
+		sb, ok := sandboxes[id]
+		if !ok {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
+		sb.Status = model.SandboxStatusDeleting
+		sandboxes[id] = sb
 		delete(sandboxes, id)
-		w.WriteHeader(http.StatusNoContent)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		if err := printJSONTo(w, sb); err != nil {
+			t.Fatalf("encode sandbox delete: %v", err)
+		}
 	})
 
 	return httptest.NewServer(mux)
@@ -230,7 +237,28 @@ func TestSandboxDelete_found(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
+
 	if !strings.Contains(output, "deleted sandbox sb-1") {
+		t.Fatalf("output = %q", output)
+	}
+}
+
+func TestSandboxDelete_NoWaitReturnsAfterAccepted(t *testing.T) {
+	srv := newSandboxTestServer(t, []model.Sandbox{
+		{ID: "sb-1", Name: "one", Status: model.SandboxStatusReady, Resources: []model.ResourceID{"res-1"}},
+	})
+	defer srv.Close()
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"sandbox", "--server", srv.URL, "delete", "sb-1", "--no-wait"})
+
+	output, err := captureSandboxStdout(t, func() error {
+		return cmd.ExecuteContext(context.Background())
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(output, "accepted deletion of sandbox sb-1") {
 		t.Fatalf("output = %q", output)
 	}
 }
@@ -251,5 +279,57 @@ func TestSandboxDelete_not_found(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `sandbox "no-such-id" not found`) {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestWaitForSandboxDeleted_ReturnsNilOnNotFound(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/sandboxes/{id}", func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	if err := waitForSandboxDeleted(context.Background(), defaultAPIClient(), srv.URL, "sb-1"); err != nil {
+		t.Fatalf("waitForSandboxDeleted: %v", err)
+	}
+}
+
+func TestWaitForSandboxDeleted_ReturnsServerErrors(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/sandboxes/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = fmt.Fprint(w, `{"error":"cleanup status unavailable"}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	err := waitForSandboxDeleted(context.Background(), defaultAPIClient(), srv.URL, "sb-1")
+	if err == nil {
+		t.Fatal("expected wait error")
+	}
+	if !strings.Contains(err.Error(), "cleanup status unavailable") {
+		t.Fatalf("error = %v, want server message", err)
+	}
+}
+
+func TestWaitForSandboxDeleted_InterruptedWhileSandboxStillExists(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/sandboxes/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = printJSONTo(w, model.Sandbox{ID: "sb-1", Status: model.SandboxStatusDeleting})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := waitForSandboxDeleted(ctx, defaultAPIClient(), srv.URL, "sb-1")
+	if err == nil {
+		t.Fatal("expected interrupted wait error")
+	}
+	if !strings.Contains(err.Error(), "deletion accepted but wait was interrupted") {
+		t.Fatalf("error = %v, want interrupted message", err)
 	}
 }

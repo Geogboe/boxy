@@ -87,6 +87,41 @@ func TestEmbeddedAgent_UnknownProvider(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown provider")
 	}
+
+}
+
+func TestEmbeddedAgent_UnknownProviderForEveryLifecycleMethod(t *testing.T) {
+	agent := newTestAgent(t)
+	ctx := context.Background()
+	missing := providersdk.Type("nonexistent")
+
+	if _, err := agent.Read(ctx, missing, "res-1"); err == nil {
+		t.Fatal("Read unknown provider error = nil")
+	}
+	if _, err := agent.Update(ctx, missing, "res-1", &devfactory.ExecOp{}); err == nil {
+		t.Fatal("Update unknown provider error = nil")
+	}
+	if err := agent.Delete(ctx, missing, "res-1"); err == nil {
+		t.Fatal("Delete unknown provider error = nil")
+	}
+	if _, err := agent.Allocate(ctx, missing, "res-1"); err == nil {
+		t.Fatal("Allocate unknown provider error = nil")
+	}
+	if result, err := agent.PersonalizeGuest(ctx, missing, "res-1"); err == nil || result != nil {
+		t.Fatalf("PersonalizeGuest unknown provider result=%v err=%v, want error", result, err)
+	}
+}
+
+func TestEmbeddedAgent_PersonalizeGuestReturnsNilForDriverWithoutCapability(t *testing.T) {
+	agent := newTestAgent(t)
+
+	result, err := agent.PersonalizeGuest(context.Background(), devfactory.ProviderType, "res-1")
+	if err != nil {
+		t.Fatalf("PersonalizeGuest: %v", err)
+	}
+	if result != nil {
+		t.Fatalf("PersonalizeGuest result = %+v, want nil for driver without capability", result)
+	}
 }
 
 func TestEmbeddedAgent_DuplicateProviderType(t *testing.T) {

@@ -84,6 +84,124 @@ func TestManager_Reconcile_PrefillMinReady(t *testing.T) {
 	}
 }
 
+func TestManager_DestroyResource_DestroysAndDeletesWithoutReturningToInventory(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	res := model.Resource{
+		ID:         "res-allocated",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		OriginPool: "web",
+		State:      model.ResourceStateAllocated,
+	}
+	if err := st.PutResource(ctx, res); err != nil {
+		t.Fatalf("put resource: %v", err)
+	}
+	if err := st.PutPool(ctx, model.Pool{
+		Name: "web",
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: model.ResourceProfileDefault,
+			Resources:       []model.Resource{res},
+		},
+	}); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &fakeProvisioner{}
+	mgr := New(st, prov)
+	if err := mgr.DestroyResource(ctx, res); err != nil {
+		t.Fatalf("DestroyResource: %v", err)
+	}
+
+	if len(prov.destroyed) != 1 || prov.destroyed[0] != res.ID {
+		t.Fatalf("destroyed = %v, want [%s]", prov.destroyed, res.ID)
+	}
+	if _, err := st.GetResource(ctx, res.ID); err != store.ErrNotFound {
+		t.Fatalf("resource after destroy err = %v, want ErrNotFound", err)
+	}
+	p, err := st.GetPool(ctx, "web")
+	if err != nil {
+		t.Fatalf("get pool: %v", err)
+	}
+	if len(p.Inventory.Resources) != 0 {
+		t.Fatalf("inventory resources = %+v, want empty", p.Inventory.Resources)
+	}
+}
+
+func TestManager_DestroyResource_MissingOriginPoolFailsBeforeDestroy(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	res := model.Resource{
+		ID:         "res-allocated",
+		OriginPool: "missing",
+		State:      model.ResourceStateAllocated,
+	}
+
+	prov := &fakeProvisioner{}
+	mgr := New(st, prov)
+
+	err := mgr.DestroyResource(ctx, res)
+	if err == nil {
+		t.Fatal("expected missing origin pool error")
+	}
+	if len(prov.destroyed) != 0 {
+		t.Fatalf("destroyed = %v, want none", prov.destroyed)
+	}
+}
+
+func TestManager_DestroyResource_IgnoresMissingResourceRecordAfterProviderDelete(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	res := model.Resource{
+		ID:         "res-allocated",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		OriginPool: "web",
+		State:      model.ResourceStateAllocated,
+	}
+	if err := st.PutPool(ctx, model.Pool{
+		Name: "web",
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: model.ResourceProfileDefault,
+		},
+	}); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	failingStore := &deleteFailStore{Store: st, err: store.ErrNotFound}
+	prov := &fakeProvisioner{}
+	if err := New(failingStore, prov).DestroyResource(ctx, res); err != nil {
+		t.Fatalf("DestroyResource: %v", err)
+	}
+	if len(prov.destroyed) != 1 || prov.destroyed[0] != res.ID {
+		t.Fatalf("destroyed = %v, want [%s]", prov.destroyed, res.ID)
+	}
+}
+
+func TestManager_DestroyResource_ValidatesInputsBeforeProviderDelete(t *testing.T) {
+	tests := []struct {
+		name string
+		mgr  *Manager
+		res  model.Resource
+	}{
+		{name: "nil manager", mgr: nil, res: model.Resource{ID: "res-1", OriginPool: "web"}},
+		{name: "nil store", mgr: New(nil, &fakeProvisioner{}), res: model.Resource{ID: "res-1", OriginPool: "web"}},
+		{name: "nil provisioner", mgr: New(store.NewMemoryStore(), nil), res: model.Resource{ID: "res-1", OriginPool: "web"}},
+		{name: "empty resource id", mgr: New(store.NewMemoryStore(), &fakeProvisioner{}), res: model.Resource{OriginPool: "web"}},
+		{name: "empty origin pool", mgr: New(store.NewMemoryStore(), &fakeProvisioner{}), res: model.Resource{ID: "res-1"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.mgr.DestroyResource(context.Background(), tt.res)
+			if err == nil {
+				t.Fatal("DestroyResource error = nil, want validation error")
+			}
+		})
+	}
+}
+
 func TestManager_Reconcile_RecycleStale(t *testing.T) {
 	st := store.NewMemoryStore()
 	old := model.Resource{

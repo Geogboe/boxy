@@ -2,6 +2,7 @@ package pool
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -11,21 +12,38 @@ import (
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
+var (
+	errAgentDeleteFailed = errors.New("agent delete failed")
+	errPersonalizeFailed = errors.New("personalize failed")
+)
+
 // mockAgent is a minimal test double for agentsdk.Agent.
 type mockAgent struct {
 	info           agentsdk.AgentInfo
 	createCalls    []mockCreateCall
-	deleteCalls    []string
+	deleteCalls    []mockDeleteCall
+	allocateCalls  []mockAllocateCall
 	nextResourceID string
 	createErr      error
 	deleteErr      error
 	allocateResult map[string]any
 	personalized   *providersdk.GuestPersonalizationResult
+	personalizeErr error
 }
 
 type mockCreateCall struct {
 	driverType providersdk.Type
 	cfg        any
+}
+
+type mockDeleteCall struct {
+	driverType providersdk.Type
+	id         string
+}
+
+type mockAllocateCall struct {
+	driverType providersdk.Type
+	id         string
 }
 
 func newMockAgent(providers ...providersdk.Type) *mockAgent {
@@ -63,15 +81,19 @@ func (m *mockAgent) Update(ctx context.Context, provider providersdk.Type, id st
 }
 
 func (m *mockAgent) Delete(ctx context.Context, provider providersdk.Type, id string) error {
-	m.deleteCalls = append(m.deleteCalls, id)
+	m.deleteCalls = append(m.deleteCalls, mockDeleteCall{driverType: provider, id: id})
 	return m.deleteErr
 }
 
 func (m *mockAgent) Allocate(ctx context.Context, provider providersdk.Type, id string) (map[string]any, error) {
+	m.allocateCalls = append(m.allocateCalls, mockAllocateCall{driverType: provider, id: id})
 	return m.allocateResult, nil
 }
 
 func (m *mockAgent) PersonalizeGuest(ctx context.Context, provider providersdk.Type, id string) (*providersdk.GuestPersonalizationResult, error) {
+	if m.personalizeErr != nil {
+		return nil, m.personalizeErr
+	}
 	return m.personalized, nil
 }
 
@@ -145,8 +167,47 @@ func TestAgentProvisioner_Destroy(t *testing.T) {
 
 	if len(mockAgent.deleteCalls) != 1 {
 		t.Errorf("expected 1 delete call, got %d", len(mockAgent.deleteCalls))
-	} else if mockAgent.deleteCalls[0] != "test-resource-id" {
-		t.Errorf("expected delete call for test-resource-id, got %q", mockAgent.deleteCalls[0])
+	} else if mockAgent.deleteCalls[0].id != "test-resource-id" || mockAgent.deleteCalls[0].driverType != "docker" {
+		t.Errorf("delete call = %+v, want docker/test-resource-id", mockAgent.deleteCalls[0])
+	}
+}
+
+func TestAgentProvisioner_Destroy_RejectsEmptyIDBeforeAgentCall(t *testing.T) {
+	mockAgent := newMockAgent(providersdk.Type("docker"))
+	provisioner := &AgentProvisioner{
+		Agent: mockAgent,
+		Specs: map[model.PoolName]boxyconfig.PoolSpec{
+			"test-pool": {Name: "test-pool", Type: "docker"},
+		},
+		Providers: map[string]providersdk.Instance{},
+	}
+
+	err := provisioner.Destroy(context.Background(), model.Pool{Name: "test-pool"}, model.Resource{})
+	if err == nil {
+		t.Fatal("Destroy error = nil, want empty id error")
+	}
+	if len(mockAgent.deleteCalls) != 0 {
+		t.Fatalf("deleteCalls = %v, want none", mockAgent.deleteCalls)
+	}
+}
+
+func TestAgentProvisioner_Destroy_SurfacesAgentDeleteFailure(t *testing.T) {
+	mockAgent := newMockAgent(providersdk.Type("docker"))
+	mockAgent.deleteErr = errAgentDeleteFailed
+	provisioner := &AgentProvisioner{
+		Agent: mockAgent,
+		Specs: map[model.PoolName]boxyconfig.PoolSpec{
+			"test-pool": {Name: "test-pool", Type: "docker"},
+		},
+		Providers: map[string]providersdk.Instance{},
+	}
+
+	err := provisioner.Destroy(context.Background(), model.Pool{Name: "test-pool"}, model.Resource{ID: "test-resource-id"})
+	if err == nil {
+		t.Fatal("Destroy error = nil, want agent delete failure")
+	}
+	if len(mockAgent.deleteCalls) != 1 {
+		t.Fatalf("deleteCalls = %v, want one delete attempt", mockAgent.deleteCalls)
 	}
 }
 
@@ -179,6 +240,50 @@ func TestAgentProvisioner_Allocate_PrefersTypedGuestPersonalization(t *testing.T
 	}
 	if _, ok := got["legacy"]; ok {
 		t.Fatal("expected typed guest personalization to bypass legacy allocate result")
+	}
+}
+
+func TestAgentProvisioner_Allocate_FallsBackWhenPersonalizationReturnsNil(t *testing.T) {
+	mockAgent := newMockAgent(providersdk.Type("hyperv"))
+	mockAgent.allocateResult = map[string]any{"legacy": "path"}
+	provisioner := &AgentProvisioner{
+		Agent: mockAgent,
+		Specs: map[model.PoolName]boxyconfig.PoolSpec{
+			"vm-pool": {Name: "vm-pool", Type: "vm", Provider: "hyperv-local"},
+		},
+		Providers: map[string]providersdk.Instance{
+			"hyperv-local": {Name: "hyperv-local", Type: "hyperv"},
+		},
+	}
+
+	got, err := provisioner.Allocate(context.Background(), model.Pool{Name: "vm-pool"}, model.Resource{ID: "vm-1"})
+	if err != nil {
+		t.Fatalf("Allocate: %v", err)
+	}
+	if got["legacy"] != "path" {
+		t.Fatalf("Allocate result = %+v, want legacy fallback result", got)
+	}
+	if len(mockAgent.allocateCalls) != 1 || mockAgent.allocateCalls[0].driverType != "hyperv" || mockAgent.allocateCalls[0].id != "vm-1" {
+		t.Fatalf("allocateCalls = %+v, want hyperv/vm-1 fallback", mockAgent.allocateCalls)
+	}
+}
+
+func TestAgentProvisioner_Allocate_SurfacesPersonalizationFailure(t *testing.T) {
+	mockAgent := newMockAgent(providersdk.Type("hyperv"))
+	mockAgent.personalizeErr = errPersonalizeFailed
+	provisioner := &AgentProvisioner{
+		Agent: mockAgent,
+		Specs: map[model.PoolName]boxyconfig.PoolSpec{
+			"vm-pool": {Name: "vm-pool", Type: "hyperv"},
+		},
+		Providers: map[string]providersdk.Instance{},
+	}
+
+	if _, err := provisioner.Allocate(context.Background(), model.Pool{Name: "vm-pool"}, model.Resource{ID: "vm-1"}); err == nil {
+		t.Fatal("Allocate error = nil, want personalization failure")
+	}
+	if len(mockAgent.allocateCalls) != 0 {
+		t.Fatalf("allocateCalls = %+v, want no fallback after personalization failure", mockAgent.allocateCalls)
 	}
 }
 
@@ -268,5 +373,11 @@ func TestAgentProvisioner_UnknownPool(t *testing.T) {
 	_, err := provisioner.Provision(context.Background(), pool)
 	if err == nil {
 		t.Fatal("expected error for unknown pool")
+	}
+	if _, err := provisioner.Allocate(context.Background(), pool, model.Resource{ID: "res-1"}); err == nil {
+		t.Fatal("expected allocate error for unknown pool")
+	}
+	if err := provisioner.Destroy(context.Background(), pool, model.Resource{ID: "res-1"}); err == nil {
+		t.Fatal("expected destroy error for unknown pool")
 	}
 }

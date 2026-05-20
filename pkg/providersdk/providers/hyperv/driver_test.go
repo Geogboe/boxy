@@ -326,6 +326,21 @@ func TestDriver_Delete_HappyPath(t *testing.T) {
 	}
 }
 
+func TestDriver_Delete_MissingVMIsSuccess(t *testing.T) {
+	calls := 0
+	d := mockDriver(func(_ context.Context, _ string) (string, error) {
+		calls++
+		return "__BOXY_NOT_FOUND__\n", nil
+	})
+
+	if err := d.Delete(context.Background(), fakeGUID); err != nil {
+		t.Fatalf("Delete missing VM: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("powershell calls = %d, want 1", calls)
+	}
+}
+
 // --- Allocate ---
 
 func TestDriver_Allocate_Linux(t *testing.T) {
