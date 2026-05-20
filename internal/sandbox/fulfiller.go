@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -81,6 +82,9 @@ func (f *Fulfiller) reconcileSandbox(ctx context.Context, id model.SandboxID) er
 	if err != nil {
 		return fmt.Errorf("get sandbox %q: %w", id, err)
 	}
+	if sb.Status != model.SandboxStatusPending && sb.Status != model.SandboxStatusProvisioning {
+		return nil
+	}
 
 	if len(sb.Requests) == 0 {
 		return f.failSandbox(ctx, sb, "sandbox requests are required")
@@ -138,7 +142,20 @@ func (f *Fulfiller) reconcileSandbox(ctx context.Context, id model.SandboxID) er
 	}
 
 	for _, alloc := range allocations {
+		current, err := f.store.GetSandbox(ctx, sb.ID)
+		if err == store.ErrNotFound {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("get sandbox %q before allocation: %w", sb.ID, err)
+		}
+		if current.Status == model.SandboxStatusDeleting {
+			return nil
+		}
 		if _, err := f.sandboxMgr.AddFromPool(ctx, sb.ID, alloc.poolName, alloc.count); err != nil {
+			if errors.Is(err, ErrSandboxDeleting) {
+				return nil
+			}
 			return f.rollbackAllocation(ctx, snapshot, fmt.Sprintf("allocate from pool %q: %v", alloc.poolName, err))
 		}
 	}
@@ -149,6 +166,9 @@ func (f *Fulfiller) reconcileSandbox(ctx context.Context, id model.SandboxID) er
 	}
 	if err != nil {
 		return fmt.Errorf("get sandbox %q after allocation: %w", sb.ID, err)
+	}
+	if final.Status == model.SandboxStatusDeleting {
+		return nil
 	}
 	final.Status = model.SandboxStatusReady
 	final.Error = ""
@@ -215,6 +235,23 @@ func (f *Fulfiller) rollbackAllocation(ctx context.Context, snapshot allocationS
 		}
 	}
 
+	current, err := f.store.GetSandbox(ctx, snapshot.sandbox.ID)
+	if err == store.ErrNotFound {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("get sandbox %q after rollback: %w", snapshot.sandbox.ID, err)
+	}
+	if current.Status == model.SandboxStatusDeleting {
+		deleting := snapshot.sandbox
+		deleting.Status = model.SandboxStatusDeleting
+		deleting.Error = current.Error
+		if err := f.store.PutSandbox(ctx, deleting); err != nil {
+			return fmt.Errorf("restore deleting sandbox %q after rollback: %w", deleting.ID, err)
+		}
+		return nil
+	}
+
 	failed := snapshot.sandbox
 	failed.Status = model.SandboxStatusFailed
 	failed.Error = msg
@@ -231,6 +268,9 @@ func (f *Fulfiller) failSandbox(ctx context.Context, sb model.Sandbox, msg strin
 	}
 	if err != nil {
 		return fmt.Errorf("get sandbox %q for failure update: %w", sb.ID, err)
+	}
+	if current.Status == model.SandboxStatusDeleting {
+		return nil
 	}
 	current.Status = model.SandboxStatusFailed
 	current.Error = msg

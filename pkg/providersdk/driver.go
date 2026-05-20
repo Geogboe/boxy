@@ -32,6 +32,10 @@ type Driver interface {
 	Update(ctx context.Context, id string, op Operation) (*Result, error)
 
 	// Delete destroys a resource and cleans up associated state.
+	//
+	// Delete must be idempotent for missing provider resources: if the resource
+	// is already gone, return nil. Boxy may retry cleanup after partially
+	// completed state updates.
 	Delete(ctx context.Context, id string) error
 
 	// Allocate is called when a resource transitions from ready to allocated

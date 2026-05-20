@@ -2,12 +2,15 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/resourcepool"
 	"github.com/Geogboe/boxy/pkg/store"
 )
+
+var ErrSandboxDeleting = errors.New("sandbox is deleting")
 
 // Manager creates sandboxes and consumes resources from pools.
 //
@@ -86,6 +89,9 @@ func (m *Manager) AddFromPool(
 	sb, err := m.store.GetSandbox(ctx, sbID)
 	if err != nil {
 		return model.Sandbox{}, fmt.Errorf("get sandbox: %w", err)
+	}
+	if sb.Status == model.SandboxStatusDeleting {
+		return model.Sandbox{}, ErrSandboxDeleting
 	}
 
 	pool, err := m.store.GetPool(ctx, poolName)
@@ -241,6 +247,34 @@ func (m *Manager) CreateFromPool(
 		}
 	}
 
+	return sb, nil
+}
+
+// RequestDelete marks a sandbox for asynchronous deletion. Cleanup is performed
+// by the daemon reconciliation loop.
+func (m *Manager) RequestDelete(ctx context.Context, sbID model.SandboxID) (model.Sandbox, error) {
+	if m == nil {
+		return model.Sandbox{}, fmt.Errorf("sandbox manager is nil")
+	}
+	if m.store == nil {
+		return model.Sandbox{}, fmt.Errorf("store is nil")
+	}
+	if sbID == "" {
+		return model.Sandbox{}, fmt.Errorf("sandbox id is required")
+	}
+
+	sb, err := m.store.GetSandbox(ctx, sbID)
+	if err != nil {
+		return model.Sandbox{}, fmt.Errorf("get sandbox: %w", err)
+	}
+	if sb.Status == model.SandboxStatusDeleting {
+		return sb, nil
+	}
+	sb.Status = model.SandboxStatusDeleting
+	sb.Error = ""
+	if err := m.store.PutSandbox(ctx, sb); err != nil {
+		return model.Sandbox{}, fmt.Errorf("mark sandbox %q deleting: %w", sb.ID, err)
+	}
 	return sb, nil
 }
 

@@ -75,17 +75,17 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	httpjson.Write(w, http.StatusAccepted, sb)
 }
 
-// handleDeleteSandbox deletes a sandbox by ID and returns 204.
+// handleDeleteSandbox accepts a sandbox deletion request and returns 202.
 func (s *Server) handleDeleteSandbox(w http.ResponseWriter, r *http.Request) {
 	id := model.SandboxID(r.PathValue("id"))
-	err := s.store.DeleteSandbox(r.Context(), id)
+	sb, err := s.sandboxMgr.RequestDelete(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
 		httpjson.Error(w, http.StatusNotFound, "sandbox not found")
 		return
 	}
 	if err != nil {
-		httpjson.Error(w, http.StatusInternalServerError, "failed to delete sandbox")
+		httpjson.Error(w, http.StatusInternalServerError, "failed to request sandbox deletion")
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	httpjson.Write(w, http.StatusAccepted, sb)
 }

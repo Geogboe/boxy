@@ -178,8 +178,8 @@ func TestDriver_Delete_NotFound(t *testing.T) {
 	d := newTestDriver(t, &Config{})
 
 	err := d.Delete(context.Background(), "nonexistent")
-	if err == nil {
-		t.Fatal("expected error for nonexistent resource")
+	if err != nil {
+		t.Fatalf("Delete missing resource: %v", err)
 	}
 }
 

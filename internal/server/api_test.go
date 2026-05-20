@@ -438,14 +438,45 @@ func TestAPI_DeleteSandbox_found(t *testing.T) {
 	r := httptest.NewRequest(http.MethodDelete, "/api/v1/sandboxes/sb-del", nil)
 	mux.ServeHTTP(w, r)
 
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, want 204", w.Code)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", w.Code)
+	}
+	var got model.Sandbox
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if got.ID != "sb-del" || got.Status != model.SandboxStatusDeleting {
+		t.Fatalf("sandbox = %+v, want sb-del deleting", got)
+	}
+}
+
+func TestAPI_DeleteSandbox_alreadyDeletingIsAccepted(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	_ = st.CreateSandbox(ctx, model.Sandbox{ID: "sb-del", Name: "to-delete", Status: model.SandboxStatusDeleting})
+
+	mux := server.NewTestMux(st, sandbox.New(st, nil), false)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodDelete, "/api/v1/sandboxes/sb-del", nil)
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", w.Code)
+	}
+	var got model.Sandbox
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if got.ID != "sb-del" || got.Status != model.SandboxStatusDeleting {
+		t.Fatalf("sandbox = %+v, want sb-del deleting", got)
 	}
 }
 
 func TestAPI_DeleteSandbox_notfound(t *testing.T) {
 	t.Parallel()
-	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), false)
+	st := store.NewMemoryStore()
+	mux := server.NewTestMux(st, sandbox.New(st, nil), false)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodDelete, "/api/v1/sandboxes/nonexistent", nil)
 	mux.ServeHTTP(w, r)

@@ -1,7 +1,6 @@
 # yaml-language-server: $schema=https://taskfile.dev/schema.json
 
-version: '3'
-
+version: "3"
 
 tasks:
   default: task --list
@@ -10,9 +9,9 @@ tasks:
     desc: Run `boxy` via `go run`
     aliases:
       - run
-    dir: '{{.ROOT_DIR}}'
+    dir: "{{.ROOT_DIR}}"
     env:
-      BOXY_WORKING_DIR: '{{.USER_WORKING_DIR}}'
+      BOXY_WORKING_DIR: "{{.USER_WORKING_DIR}}"
     cmds:
       - go run ./cmd/boxy {{.CLI_ARGS}}
 
@@ -55,7 +54,7 @@ tasks:
 
   skills:install:dev:
     desc: Install the bundled skill into a local temp directory for manual inspection
-    dir: '{{.ROOT_DIR}}'
+    dir: "{{.ROOT_DIR}}"
     cmds:
       - go run ./cmd/boxy skills install --path ./.tmp/skills --force
 
@@ -83,18 +82,13 @@ tasks:
 
   fmt:
     desc: Format all Go source files
-    aliases:
-      - format
-    cmds:
-      - gofmt -w .
+    aliases: [format]
+    cmd: gofmt -w .
 
   lint:
     desc: Run golangci-lint (same as CI)
-    aliases:
-      - lint:go
-      - golangci-lint
-    cmds:
-      - go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...
+    aliases: [lint:go, golangci-lint]
+    cmd: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...
 
   release:check:
     desc: Validate GoReleaser config using the pinned tools module

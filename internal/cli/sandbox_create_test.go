@@ -361,3 +361,42 @@ func TestWaitForSandboxReady_Interrupted(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestWaitForSandboxReady_ReturnsPollingAPIError(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/sandboxes/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = fmt.Fprint(w, `{"error":"database unavailable"}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	_, err := waitForSandboxReady(context.Background(), defaultAPIClient(), srv.URL, model.Sandbox{
+		ID:     "sb-create",
+		Name:   "lab",
+		Status: model.SandboxStatusPending,
+	})
+	if err == nil {
+		t.Fatal("expected polling error")
+	}
+	if !strings.Contains(err.Error(), "database unavailable") {
+		t.Fatalf("error = %v, want server message", err)
+	}
+}
+
+func TestHydrateSandboxResourcesSkipsMissingResources(t *testing.T) {
+	srv := newSandboxCreateTestServer(t)
+	defer srv.Close()
+
+	resources, err := hydrateSandboxResources(context.Background(), defaultAPIClient(), srv.server.URL, model.Sandbox{
+		ID:        "sb-create",
+		Resources: []model.ResourceID{"res-1", "missing"},
+	})
+	if err != nil {
+		t.Fatalf("hydrateSandboxResources: %v", err)
+	}
+	if len(resources) != 1 || resources[0].ID != "res-1" {
+		t.Fatalf("resources = %+v, want only res-1", resources)
+	}
+}

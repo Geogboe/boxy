@@ -176,6 +176,55 @@ func (m *Manager) Fill(ctx context.Context, poolName model.PoolName) (model.Pool
 	return m.store.GetPool(ctx, poolName)
 }
 
+// DestroyResource tears down a tracked resource through its origin pool's
+// provider lifecycle and removes Boxy's resource record. Resources are
+// single-use; this never returns resources to ready inventory.
+func (m *Manager) DestroyResource(ctx context.Context, res model.Resource) error {
+	if m == nil {
+		return fmt.Errorf("pool manager is nil")
+	}
+	if m.store == nil {
+		return fmt.Errorf("store is nil")
+	}
+	if m.provisioner == nil {
+		return fmt.Errorf("provisioner is nil")
+	}
+	if res.ID == "" {
+		return fmt.Errorf("resource id is required")
+	}
+	if res.OriginPool == "" {
+		return fmt.Errorf("resource %q has no origin pool", res.ID)
+	}
+
+	unlock := m.lockPool(res.OriginPool)
+	defer unlock()
+
+	p, err := m.store.GetPool(ctx, res.OriginPool)
+	if errors.Is(err, store.ErrNotFound) {
+		return fmt.Errorf("origin pool %q for resource %q not found", res.OriginPool, res.ID)
+	}
+	if err != nil {
+		return fmt.Errorf("get origin pool %q for resource %q: %w", res.OriginPool, res.ID, err)
+	}
+
+	if err := m.provisioner.Destroy(ctx, p, res); err != nil {
+		return fmt.Errorf("destroy resource %q in pool %q: %w", res.ID, p.Name, err)
+	}
+	res.State = model.ResourceStateDestroyed
+	res.UpdatedAt = m.clock.Now()
+	if err := m.store.PutResource(ctx, res); err != nil {
+		return fmt.Errorf("mark resource %q destroyed: %w", res.ID, err)
+	}
+	p.Inventory.Resources = removeInventoryResource(p.Inventory.Resources, res.ID)
+	if err := m.store.PutPool(ctx, p); err != nil {
+		return fmt.Errorf("put pool %q after destroying resource %q: %w", p.Name, res.ID, err)
+	}
+	if err := m.store.DeleteResource(ctx, res.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+		return fmt.Errorf("delete resource %q: %w", res.ID, err)
+	}
+	return nil
+}
+
 func (m *Manager) lockPool(poolName model.PoolName) func() {
 	m.locksMu.Lock()
 	if m.poolLocks == nil {

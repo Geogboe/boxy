@@ -432,6 +432,18 @@ func TestDriver_Delete_EmptyID(t *testing.T) {
 	}
 }
 
+func TestDriver_Delete_NotFoundIsSuccess(t *testing.T) {
+	mock := &mockDockerClient{
+		containerRemove: func(_ context.Context, _ string, _ container.RemoveOptions) error {
+			return notFoundError{msg: "not found"}
+		},
+	}
+	d := &Driver{cli: mock}
+	if err := d.Delete(context.Background(), "missing"); err != nil {
+		t.Fatalf("Delete missing container: %v", err)
+	}
+}
+
 // --- Allocate ---
 
 func TestDriver_Allocate_ReturnsExecCommand(t *testing.T) {

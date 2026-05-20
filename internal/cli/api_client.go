@@ -52,6 +52,17 @@ func postJSON[TReq any, TResp any](ctx context.Context, client *http.Client, url
 	return doJSON[TResp](client, req)
 }
 
+func deleteJSON[T any](ctx context.Context, client *http.Client, url string) (T, error) {
+	var zero T
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return zero, err
+	}
+
+	return doJSON[T](client, req)
+}
+
 func doJSON[T any](client *http.Client, req *http.Request) (T, error) {
 	var zero T
 
@@ -71,21 +82,6 @@ func doJSON[T any](client *http.Client, req *http.Request) (T, error) {
 	}
 
 	return v, nil
-}
-
-func deleteAPI(ctx context.Context, client *http.Client, url string) (int, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
-	if err != nil {
-		return 0, err
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	return resp.StatusCode, nil
 }
 
 func decodeAPIError(resp *http.Response, url string) error {
@@ -121,4 +117,8 @@ func apiBaseURL(server string) string {
 
 func defaultAPIClient() *http.Client {
 	return &http.Client{Timeout: 5 * time.Second}
+}
+
+func maintenanceAPIClient() *http.Client {
+	return &http.Client{}
 }
