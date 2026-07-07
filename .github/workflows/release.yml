@@ -1,14 +1,14 @@
 # Release pipeline — Release Please manages version bumps and changelogs;
 # GoReleaser builds and attaches multi-platform archives when a release is created.
 # Both jobs live in the same file so GITHUB_TOKEN can wire them together.
+#
+# All third-party actions are pinned to a full commit SHA (not a mutable tag)
+# per #55. Dependabot (.github/dependabot.yml) opens PRs to bump these pins.
 name: Release
 
 on:
   push:
     branches: [main]
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 permissions: {}
 
@@ -23,9 +23,7 @@ jobs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      # v4.4.0 still declares node20; FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 above runs it on Node 24.
-      # Blocked on upstream: https://github.com/googleapis/release-please-action/pull/1188
-      - uses: googleapis/release-please-action@v4.4.0
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -40,19 +38,19 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           fetch-depth: 0
           ref: ${{ needs.release-please.outputs.tag_name }}
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
 
       - name: Install syft (for SBOM generation)
-        uses: anchore/sbom-action/download-syft@v0
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
 
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           args: release --clean
         env:
