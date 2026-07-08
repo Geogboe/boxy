@@ -41,6 +41,11 @@ jobs:
       - name: Run tests
         run: go test -race -short ./...
 
+      # debug_provider*.go (internal/cli) is only compiled with -tags devtools
+      # (see #68); run it too so that code path still has CI coverage.
+      - name: Run tests (devtools build tag)
+        run: go test -race -short -tags devtools ./internal/cli/...
+
   installer-smoke:
     name: Installer Smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
