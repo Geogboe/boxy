@@ -2,9 +2,11 @@ package hyperv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/vmsdk"
@@ -89,12 +91,17 @@ func TestDriver_Create_CleanupOnFailure(t *testing.T) {
 	callCount := 0
 	d := mockDriver(func(_ context.Context, script string) (string, error) {
 		callCount++
-		if callCount == 1 {
+		switch callCount {
+		case 1:
+			// Host health check succeeds.
+			return "OK\n", nil
+		case 2:
 			// Main create script fails.
 			return "", fmt.Errorf("New-VHD failed")
+		default:
+			// Cleanup script succeeds.
+			return "", nil
 		}
-		// Cleanup script succeeds.
-		return "", nil
 	})
 
 	_, err := d.Create(context.Background(), &CreateConfig{
@@ -103,8 +110,29 @@ func TestDriver_Create_CleanupOnFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when create script fails")
 	}
-	if callCount < 2 {
-		t.Errorf("expected cleanup call, callCount = %d", callCount)
+	if callCount < 3 {
+		t.Errorf("expected health check + create + cleanup calls, callCount = %d", callCount)
+	}
+}
+
+func TestDriver_Create_HealthCheckFailure(t *testing.T) {
+	callCount := 0
+	d := mockDriver(func(_ context.Context, _ string) (string, error) {
+		callCount++
+		return "", fmt.Errorf("Get-VMHost failed: VMMS unavailable")
+	})
+
+	_, err := d.Create(context.Background(), &CreateConfig{
+		TemplateVHD: `C:\t.vhdx`,
+	})
+	if err == nil {
+		t.Fatal("expected error when host health check fails")
+	}
+	if !strings.Contains(err.Error(), "health check failed") {
+		t.Errorf("error %q should mention health check", err.Error())
+	}
+	if callCount != 1 {
+		t.Errorf("callCount = %d, want 1 (should not attempt create after failed health check)", callCount)
 	}
 }
 
@@ -308,8 +336,8 @@ func TestDriver_Delete_HappyPath(t *testing.T) {
 		callNum++
 		switch callNum {
 		case 1:
-			// Info query: name|vhd
-			return "boxy-abc123|C:\\VMs\\boxy-abc123.vhdx\n", nil
+			// Info query: name|vhd|state (already off, no wait needed)
+			return "boxy-abc123|C:\\VMs\\boxy-abc123.vhdx|Off\n", nil
 		case 2:
 			// Stop+Remove
 			return "", nil
@@ -323,6 +351,9 @@ func TestDriver_Delete_HappyPath(t *testing.T) {
 	err := d.Delete(context.Background(), fakeGUID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if callNum != 3 {
+		t.Fatalf("callNum = %d, want 3 (no wait loop for an already-terminal VM)", callNum)
 	}
 }
 
@@ -338,6 +369,61 @@ func TestDriver_Delete_MissingVMIsSuccess(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("powershell calls = %d, want 1", calls)
+	}
+}
+
+func TestDriver_Delete_WaitsForStuckVMThenSucceeds(t *testing.T) {
+	callNum := 0
+	d := mockDriver(func(_ context.Context, _ string) (string, error) {
+		callNum++
+		switch callNum {
+		case 1:
+			// Info query: VM is mid-teardown.
+			return "boxy-abc123|C:\\VMs\\boxy-abc123.vhdx|Stopping\n", nil
+		case 2:
+			// First state poll: still stopping.
+			return "Stopping\n", nil
+		case 3:
+			// Second state poll: now settled.
+			return "Off\n", nil
+		case 4:
+			// Stop+Remove
+			return "", nil
+		case 5:
+			// Delete VHD
+			return "", nil
+		}
+		return "", fmt.Errorf("unexpected call %d", callNum)
+	})
+	d.deleteWaitInterval = time.Millisecond
+
+	if err := d.Delete(context.Background(), fakeGUID); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if callNum != 5 {
+		t.Fatalf("callNum = %d, want 5", callNum)
+	}
+}
+
+func TestDriver_Delete_TimesOutOnStuckVMWithoutForcingRemoval(t *testing.T) {
+	callNum := 0
+	d := mockDriver(func(_ context.Context, _ string) (string, error) {
+		callNum++
+		if callNum == 1 {
+			return "boxy-abc123|C:\\VMs\\boxy-abc123.vhdx|Stopping\n", nil
+		}
+		// Always still stopping — never settles.
+		return "Stopping\n", nil
+	})
+	d.deleteWaitTimeout = 5 * time.Millisecond
+	d.deleteWaitInterval = time.Millisecond
+
+	err := d.Delete(context.Background(), fakeGUID)
+	if err == nil {
+		t.Fatal("expected error when VM never reaches a terminal state")
+	}
+	if !errors.Is(err, ErrVMBusy) {
+		t.Fatalf("error = %v, want wrapped ErrVMBusy", err)
 	}
 }
 

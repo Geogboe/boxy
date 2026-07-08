@@ -11,13 +11,19 @@ import (
 )
 
 type fakeProvisioner struct {
-	n          int
-	destroyed  []model.ResourceID
-	destroyErr error
+	n              int
+	provisionCalls int
+	provisionErr   error
+	destroyed      []model.ResourceID
+	destroyErr     error
 }
 
 func (p *fakeProvisioner) Provision(ctx context.Context, pool model.Pool) (model.Resource, error) {
 	_ = ctx
+	p.provisionCalls++
+	if p.provisionErr != nil {
+		return model.Resource{}, p.provisionErr
+	}
 	p.n++
 	return model.Resource{
 		ID:        model.ResourceID("res_" + string(rune('a'+p.n-1))),
@@ -701,6 +707,130 @@ func TestManager_Fill_ConfigDeclaredDrainStillDrainsInventory(t *testing.T) {
 	}
 	if len(updated.Inventory.Resources) != 0 {
 		t.Fatalf("inventory len = %d, want 0", len(updated.Inventory.Resources))
+	}
+}
+
+func TestManager_Reconcile_ProvisionBackoffSkipsRetryUntilWindowElapses(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	pool := model.Pool{
+		Name: "p1",
+		Policies: model.PoolPolicies{
+			Preheat: model.PreheatPolicy{MinReady: 1, MaxTotal: 5},
+		},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &fakeProvisioner{provisionErr: errors.New("New-VHD failed: VMMS degraded")}
+	mgr := New(st, prov)
+	mgr.SetClock(fixedClock{t: time.Unix(2000, 0).UTC()})
+
+	if err := mgr.Reconcile(ctx, "p1"); err == nil {
+		t.Fatal("expected first reconcile to surface provisioning failure")
+	}
+	if prov.provisionCalls != 1 {
+		t.Fatalf("provisionCalls = %d, want 1", prov.provisionCalls)
+	}
+
+	// Immediately retrying should be skipped by backoff — no new provision attempt.
+	if err := mgr.Reconcile(ctx, "p1"); err != nil {
+		t.Fatalf("second reconcile (should be a no-op skip): %v", err)
+	}
+	if prov.provisionCalls != 1 {
+		t.Fatalf("provisionCalls after immediate retry = %d, want 1 (backoff should have skipped it)", prov.provisionCalls)
+	}
+
+	// Advance the clock past the backoff window; the next reconcile should retry.
+	mgr.SetClock(fixedClock{t: time.Unix(2000, 0).Add(provisionBackoffBase + time.Second).UTC()})
+	if err := mgr.Reconcile(ctx, "p1"); err == nil {
+		t.Fatal("expected reconcile after backoff window to retry and surface the failure again")
+	}
+	if prov.provisionCalls != 2 {
+		t.Fatalf("provisionCalls after backoff window elapsed = %d, want 2", prov.provisionCalls)
+	}
+}
+
+func TestManager_ProvisionBackoff_SuccessClearsFailureState(t *testing.T) {
+	mgr := New(store.NewMemoryStore(), &fakeProvisioner{})
+	now := time.Unix(2000, 0).UTC()
+
+	mgr.recordProvisionFailure("p1", now)
+	if !mgr.provisionBackoffActive("p1", now) {
+		t.Fatal("expected backoff to be active immediately after a failure")
+	}
+
+	mgr.recordProvisionSuccess("p1")
+	if mgr.provisionBackoffActive("p1", now) {
+		t.Fatal("expected success to clear backoff state")
+	}
+
+	// A fresh failure after a reset should back off from failCount=1 again
+	// (base delay), not carry over the previous failure count into a longer
+	// accumulated delay.
+	mgr.recordProvisionFailure("p1", now)
+	if mgr.provisionBackoffActive("p1", now.Add(provisionBackoffBase+time.Second)) {
+		t.Fatal("expected backoff window to have elapsed using base delay, not an accumulated longer delay")
+	}
+}
+
+func TestManager_ProvisionBackoff_EscalatesAndCaps(t *testing.T) {
+	mgr := New(store.NewMemoryStore(), &fakeProvisioner{})
+	now := time.Unix(2000, 0).UTC()
+
+	mgr.recordProvisionFailure("p1", now) // failCount=1 -> base delay
+	if mgr.provisionBackoffActive("p1", now.Add(provisionBackoffBase+time.Second)) {
+		t.Fatal("expected first failure's backoff window to have elapsed")
+	}
+
+	mgr.recordProvisionFailure("p1", now) // failCount=2 -> 2x base delay
+	if !mgr.provisionBackoffActive("p1", now.Add(provisionBackoffBase+time.Second)) {
+		t.Fatal("expected second failure's backoff window to still be active after only base delay")
+	}
+
+	for range 10 {
+		mgr.recordProvisionFailure("p1", now)
+	}
+	if mgr.provisionBackoffActive("p1", now.Add(provisionBackoffMax+time.Second)) {
+		t.Fatal("expected backoff delay to be capped at provisionBackoffMax")
+	}
+}
+
+func TestManager_EnsureReady_IgnoresProvisionBackoff(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	pool := model.Pool{
+		Name: "p1",
+		Policies: model.PoolPolicies{
+			Preheat: model.PreheatPolicy{MinReady: 0, MaxTotal: 5},
+		},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &fakeProvisioner{provisionErr: errors.New("degraded host")}
+	mgr := New(st, prov)
+	mgr.SetClock(fixedClock{t: time.Unix(2000, 0).UTC()})
+
+	// Trigger backoff via a background-style reconcile pass.
+	if err := mgr.EnsureReady(ctx, "p1", 1); err == nil {
+		t.Fatal("expected first EnsureReady to surface provisioning failure")
+	}
+	if prov.provisionCalls != 1 {
+		t.Fatalf("provisionCalls = %d, want 1", prov.provisionCalls)
+	}
+
+	// EnsureReady is user/allocation-triggered and should always attempt,
+	// even while background reconcile would be in a backoff window.
+	if err := mgr.EnsureReady(ctx, "p1", 1); err == nil {
+		t.Fatal("expected second EnsureReady to also attempt and surface the failure")
+	}
+	if prov.provisionCalls != 2 {
+		t.Fatalf("provisionCalls = %d, want 2 (EnsureReady must not be skipped by backoff)", prov.provisionCalls)
 	}
 }
 

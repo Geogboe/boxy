@@ -3,10 +3,12 @@ package hyperv
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/psdirect"
@@ -28,6 +30,54 @@ type Driver struct {
 	// resolveSecret resolves a persisted secret reference only when guest
 	// bootstrap access is needed.
 	resolveSecret func(ctx context.Context, ref providersdk.SecretRef) (string, error)
+
+	// deleteWaitTimeout/deleteWaitInterval bound how long Delete waits for a
+	// VM stuck mid-transition (e.g. "Turning Off") to reach a terminal state
+	// before giving up. Zero values use production defaults; tests override
+	// these to avoid real sleeps. See #118.
+	deleteWaitTimeout  time.Duration
+	deleteWaitInterval time.Duration
+}
+
+// ErrVMBusy indicates a VM is stuck transitioning between power states and
+// did not settle within the wait window. Callers should treat this as a
+// signal to back off and retry later rather than forcing removal, which can
+// leave a stale vmwp.exe worker and destabilize the host's Virtual Machine
+// Management service (see #118).
+var ErrVMBusy = errors.New("hyperv: vm did not reach a terminal power state in time")
+
+const (
+	defaultDeleteWaitTimeout  = 30 * time.Second
+	defaultDeleteWaitInterval = 3 * time.Second
+
+	// vmStateNotFound is a sentinel returned by state-polling scripts when
+	// the VM has disappeared (e.g. it finished tearing down on its own).
+	vmStateNotFound = "__BOXY_NOT_FOUND__"
+)
+
+// vmTransitionalStates are Hyper-V VMState values that mean "still moving
+// between power states" — not safe to force-remove against.
+var vmTransitionalStates = map[string]bool{
+	"starting": true,
+	"stopping": true,
+	"saving":   true,
+	"pausing":  true,
+	"resuming": true,
+	"reset":    true,
+}
+
+func (d *Driver) waitTimeout() time.Duration {
+	if d.deleteWaitTimeout > 0 {
+		return d.deleteWaitTimeout
+	}
+	return defaultDeleteWaitTimeout
+}
+
+func (d *Driver) waitInterval() time.Duration {
+	if d.deleteWaitInterval > 0 {
+		return d.deleteWaitInterval
+	}
+	return defaultDeleteWaitInterval
 }
 
 // New creates a Hyper-V driver.
@@ -71,6 +121,10 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 		} else {
 			guestUser = "Administrator"
 		}
+	}
+
+	if err := d.checkHostHealth(ctx); err != nil {
+		return nil, fmt.Errorf("hyperv host health check failed, refusing to provision: %w", err)
 	}
 
 	vhdDir := cc.VHDDir
@@ -268,6 +322,60 @@ func (d *Driver) execOnGuest(ctx context.Context, id string, op *ExecOp) (*provi
 
 // --- Delete ---
 
+// checkHostHealth runs a lightweight, VM-independent Hyper-V host probe
+// before attempting to provision. If VMMS is already degraded (as can
+// happen after a stuck teardown, see #118), this fails fast with a clear
+// error instead of letting New-VHD/New-VM run into the same degraded state
+// on every reconcile pass.
+func (d *Driver) checkHostHealth(ctx context.Context) error {
+	_, err := d.ps(ctx, `
+$ErrorActionPreference = 'Stop'
+Get-VMHost | Out-Null
+'OK'
+`)
+	if err != nil {
+		return fmt.Errorf("hyperv host probe (Get-VMHost) failed, VMMS may be degraded: %w", err)
+	}
+	return nil
+}
+
+// waitForTerminalVMState polls a VM's power state until it leaves the
+// transitional set (see vmTransitionalStates) or disappears entirely. It
+// never attempts to force a state change — it only observes — so a VM stuck
+// in a state like "Turning Off" cannot be pushed into a worse state by this
+// call. Returns ErrVMBusy if the VM is still transitioning when the wait
+// timeout elapses.
+func (d *Driver) waitForTerminalVMState(ctx context.Context, vmName string) (string, error) {
+	deadline := time.Now().Add(d.waitTimeout())
+	stateScript := fmt.Sprintf(`
+$vm = Get-VM -Name '%s' -ErrorAction SilentlyContinue
+if ($null -eq $vm) {
+  '%s'
+} else {
+  $vm.State.ToString()
+}
+`, psq(vmName), vmStateNotFound)
+
+	for {
+		out, err := d.ps(ctx, stateScript)
+		if err != nil {
+			return "", fmt.Errorf("check VM state: %w", err)
+		}
+		state := strings.TrimSpace(out)
+		if state == vmStateNotFound || !vmTransitionalStates[strings.ToLower(state)] {
+			return state, nil
+		}
+		if time.Now().After(deadline) {
+			return "", fmt.Errorf("%w (name=%q, last state=%q)", ErrVMBusy, vmName, state)
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(d.waitInterval()):
+		}
+	}
+}
+
 func (d *Driver) Delete(ctx context.Context, id string) error {
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -282,28 +390,49 @@ if ($null -eq $vm) {
   return
 }
 $vhd = (Get-VMHardDiskDrive -VMName $vm.Name | Select-Object -First 1).Path
-"$($vm.Name)|$vhd"
+"$($vm.Name)|$vhd|$($vm.State)"
 `, psq(id))
 
 	out, err := d.ps(ctx, infoScript)
 	if err != nil {
 		return fmt.Errorf("hyperv delete: get VM info for %s: %w", id, err)
 	}
-	if strings.TrimSpace(out) == "__BOXY_NOT_FOUND__" {
+	trimmed := strings.TrimSpace(out)
+	if trimmed == "__BOXY_NOT_FOUND__" {
 		return nil
 	}
 
-	parts := strings.SplitN(strings.TrimSpace(out), "|", 2)
+	parts := strings.SplitN(trimmed, "|", 3)
 	vmName := ""
 	vhdPath := ""
+	state := ""
 	if len(parts) >= 1 {
 		vmName = parts[0]
 	}
 	if len(parts) >= 2 {
 		vhdPath = parts[1]
 	}
+	if len(parts) >= 3 {
+		state = parts[2]
+	}
 	if vmName == "" {
 		return fmt.Errorf("hyperv delete: could not resolve VM name for id %s", id)
+	}
+
+	// Guard against forcing removal on a VM that's mid-transition (e.g.
+	// stuck in "Turning Off"). Blindly forcing Stop-VM/Remove-VM against
+	// such a VM is what left a stale vmwp.exe worker and destabilized VMMS
+	// in #118. Wait for it to settle first; if it never does, surface
+	// ErrVMBusy so the caller can back off instead of retrying immediately.
+	if vmTransitionalStates[strings.ToLower(state)] {
+		finalState, err := d.waitForTerminalVMState(ctx, vmName)
+		if err != nil {
+			return fmt.Errorf("hyperv delete VM %q: %w", vmName, err)
+		}
+		if finalState == vmStateNotFound {
+			// VM tore itself down while we were waiting; nothing left to do.
+			return nil
+		}
 	}
 
 	deleteScript := fmt.Sprintf(`
@@ -447,7 +576,7 @@ $ErrorActionPreference = 'Stop'
 
 func parseNotes(notes string) map[string]string {
 	m := map[string]string{}
-	for _, part := range strings.Split(notes, ";") {
+	for part := range strings.SplitSeq(notes, ";") {
 		kv := strings.SplitN(strings.TrimSpace(part), "=", 2)
 		if len(kv) == 2 {
 			m[kv[0]] = kv[1]

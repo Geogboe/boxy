@@ -56,6 +56,20 @@ func (e *ConfigDeclaredDrainError) Error() string {
 	return fmt.Sprintf("pool %q is configured drained; edit config before filling it", e.PoolName)
 }
 
+// provisionBackoffState tracks repeated provisioning failures for a pool so
+// the background reconcile loop can stop hammering a provider/host that's
+// already failing (e.g. a degraded Hyper-V host, see #118) instead of
+// retrying every tick forever.
+type provisionBackoffState struct {
+	failCount   int
+	nextAttempt time.Time
+}
+
+const (
+	provisionBackoffBase = 10 * time.Second
+	provisionBackoffMax  = 5 * time.Minute
+)
+
 // Manager reconciles a pool's inventory against its policies.
 type Manager struct {
 	store       store.Store
@@ -63,6 +77,52 @@ type Manager struct {
 	clock       Clock
 	locksMu     sync.Mutex
 	poolLocks   map[model.PoolName]*sync.Mutex
+
+	backoffMu sync.Mutex
+	backoff   map[model.PoolName]*provisionBackoffState
+}
+
+// provisionBackoffActive reports whether pool provisioning is currently in
+// a backoff window following repeated failures.
+func (m *Manager) provisionBackoffActive(poolName model.PoolName, now time.Time) bool {
+	m.backoffMu.Lock()
+	defer m.backoffMu.Unlock()
+	st := m.backoff[poolName]
+	if st == nil {
+		return false
+	}
+	return now.Before(st.nextAttempt)
+}
+
+// recordProvisionFailure increments the pool's failure count and schedules
+// the next allowed provisioning attempt using capped exponential backoff.
+func (m *Manager) recordProvisionFailure(poolName model.PoolName, now time.Time) {
+	m.backoffMu.Lock()
+	defer m.backoffMu.Unlock()
+	if m.backoff == nil {
+		m.backoff = make(map[model.PoolName]*provisionBackoffState)
+	}
+	st := m.backoff[poolName]
+	if st == nil {
+		st = &provisionBackoffState{}
+		m.backoff[poolName] = st
+	}
+	st.failCount++
+	delay := provisionBackoffBase
+	for i := 1; i < st.failCount && delay < provisionBackoffMax; i++ {
+		delay *= 2
+	}
+	if delay > provisionBackoffMax {
+		delay = provisionBackoffMax
+	}
+	st.nextAttempt = now.Add(delay)
+}
+
+// recordProvisionSuccess clears any backoff state for the pool.
+func (m *Manager) recordProvisionSuccess(poolName model.PoolName) {
+	m.backoffMu.Lock()
+	defer m.backoffMu.Unlock()
+	delete(m.backoff, poolName)
 }
 
 func New(s store.Store, p Provisioner) *Manager {
@@ -324,10 +384,7 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 			staleIDs := resourceIDSet(stale)
 			totalCount := countTrackedResources(p.Name, obs.resources, p.Inventory.Resources, staleIDs)
 
-			effectiveMinReady := p.Policies.Preheat.MinReady
-			if minReadyOverride > effectiveMinReady {
-				effectiveMinReady = minReadyOverride
-			}
+			effectiveMinReady := max(minReadyOverride, p.Policies.Preheat.MinReady)
 
 			if requireMinReady {
 				if capErr := maxTotalShortfall(p.Name, p.Policies.Preheat.MaxTotal, totalCount, readyCount, effectiveMinReady); capErr != nil {
@@ -336,11 +393,22 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 			}
 
 			toProv := computeToProvision(p, effectiveMinReady, totalCount)
+			// Background reconcile passes (requireMinReady=false) respect
+			// provisioning backoff so a failing provider/host isn't hammered
+			// every tick. Explicit EnsureReady calls always attempt, since
+			// those are user/allocation-triggered and deserve a live answer.
+			backoffActive := !requireMinReady && toProv > 0 && m.provisionBackoffActive(p.Name, obs.now)
+			if backoffActive {
+				toProv = 0
+			}
+
 			reason := "noop"
 			should := false
 			if rebuildReport.Changed || len(stale) > 0 || toProv > 0 {
 				should = true
 				reason = fmt.Sprintf("inventory_rebuilt=%t stale=%d provision=%d", rebuildReport.Changed, len(stale), toProv)
+			} else if backoffActive {
+				reason = fmt.Sprintf("provision backoff active for pool %q", p.Name)
 			}
 
 			return policycontroller.Decision[plan]{
@@ -376,8 +444,10 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 			for i := 0; i < pl.toProvision; i++ {
 				res, err := m.provisioner.Provision(ctx, p)
 				if err != nil {
+					m.recordProvisionFailure(p.Name, pl.now)
 					return fmt.Errorf("provision resource for pool %q: %w", p.Name, err)
 				}
+				m.recordProvisionSuccess(p.Name)
 				if res.OriginPool == "" {
 					res.OriginPool = p.Name
 				}
