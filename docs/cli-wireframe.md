@@ -176,6 +176,24 @@ boxy
 └── agent                                      Manage remote agents and registration tokens
     ├── --server <addr>                          Server address (default 127.0.0.1:9090)
     │
+    ├── serve                                    Run this host as a remote agent (dials the server's
+    │   │                                          gRPC listener, executes provider operations)
+    │   ├── --server <host:port>                   Server gRPC address (required; note: gRPC port,
+    │   │                                            default :9091 — not the REST port)
+    │   ├── --providers <list>                     Provider types this agent hosts (required)
+    │   ├── --token <token>                        Single-use registration token (first connection only)
+    │   ├── --ca-cert <path>                       Server CA cert, required for the first (token)
+    │   │                                            connection unless --insecure
+    │   ├── --name <name>                          Agent name (default: hostname)
+    │   ├── --data-dir <path>                      Issued-credential dir (default .boxy-agent in cwd)
+    │   ├── --insecure                             Connect without TLS (local development only)
+    │   │
+    │   $ boxy agent serve --server boxy.example.com:9091 --providers hyperv \
+    │       --token 4f9c…e2a1 --ca-cert ./ca.crt
+    │     (runs until stopped; reconnects with backoff; after the first
+    │      registration the issued mTLS client cert in .boxy-agent/ is used
+    │      and --token is no longer needed)
+    │
     ├── token                                    Manage single-use registration tokens
     │   ├── create                                 Mint a token (raw value shown once, never stored)
     │   │   ├── --label <note>                       Optional operator note (e.g. target host)

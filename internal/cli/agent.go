@@ -27,6 +27,7 @@ func newAgentCommand() *cobra.Command {
 	cmd.AddCommand(newAgentTokenCommand(serverAddr))
 	cmd.AddCommand(newAgentListCommand(serverAddr))
 	cmd.AddCommand(newAgentRevokeCommand(serverAddr))
+	cmd.AddCommand(newAgentServeCommand())
 
 	return cmd
 }
