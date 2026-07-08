@@ -2,19 +2,25 @@ package cli
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/Geogboe/boxy/internal/agentserver"
 	boxyconfig "github.com/Geogboe/boxy/internal/config"
+	"github.com/Geogboe/boxy/internal/pki"
 	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/internal/sandbox"
 	"github.com/Geogboe/boxy/internal/server"
+	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
 	"github.com/Geogboe/boxy/pkg/agentsdk"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
@@ -23,14 +29,21 @@ import (
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
-const defaultListenAddr = ":9090"
+const (
+	defaultListenAddr     = ":9090"
+	defaultGRPCListenAddr = ":9091"
+)
 
 type serveOpts struct {
 	configPath string
 	listen     string
 	ui         bool
+	grpcListen string
+	insecure   bool
 }
 
 func newServeCommand() *cobra.Command {
@@ -47,6 +60,10 @@ func newServeCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opts.configPath, "config", "", "config file path (.yaml/.yml/.json); default: ./boxy.yaml or ./boxy.yml if present")
 	cmd.Flags().StringVar(&opts.listen, "listen", "", "HTTP listen address (default :9090)")
 	cmd.Flags().BoolVar(&opts.ui, "ui", true, "enable web dashboard UI")
+	cmd.Flags().StringVar(&opts.grpcListen, "grpc-listen", "", "agent gRPC listen address (default :9091)")
+	// Deliberately a flag only — never a boxy.yaml field — so a stale or
+	// copy-pasted config can't silently disable mTLS in a real deployment.
+	cmd.Flags().BoolVar(&opts.insecure, "insecure", false, "serve agent gRPC without TLS/mTLS (local development only)")
 
 	return cmd
 }
@@ -162,11 +179,37 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	// Resolve UI enabled: flag > config > default (true)
 	uiEnabled := resolveUIEnabled(opts, cmd, cfg)
 
+	grpcListenAddr := resolveGRPCListenAddr(opts, cmd, cfg)
+	heartbeatInterval, err := cfg.Server.EffectiveAgentHeartbeatInterval()
+	if err != nil {
+		return err
+	}
+
+	// Agent transport: private CA + mTLS gRPC listener (ADR-0005).
+	doneTLS, failTLS := ui.step("Setting up agent CA/TLS")
+	grpcSrv, agentSrv, err := buildAgentGRPCServer(st, agentRegistry, filepath.Dir(statePath), grpcListenAddr, heartbeatInterval, opts.insecure)
+	if err != nil {
+		failTLS(err.Error())
+		return err
+	}
+	if opts.insecure {
+		doneTLS("INSECURE (no TLS — local development only)")
+	} else {
+		doneTLS("private CA + mTLS")
+	}
+
 	srv := server.New(st, sandboxMgr, poolMgr, listenAddr, uiEnabled)
 
 	g, ctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		return srv.Start(ctx)
+	})
+	g.Go(func() error {
+		return serveAgentGRPC(ctx, grpcSrv, grpcListenAddr)
+	})
+	g.Go(func() error {
+		agentSrv.RunHeartbeatMonitor(ctx)
+		return nil
 	})
 	g.Go(func() error {
 		return serveLoop(ctx, poolMgr, sandboxDeleter, sandboxFulfiller, poolNames, ui)
@@ -175,6 +218,83 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	printServeBanner(listenAddr, uiEnabled, len(cfg.Pools))
 
 	return g.Wait()
+}
+
+// buildAgentGRPCServer bootstraps the private CA and server cert under the
+// same .boxy/ directory that holds state.json, and constructs the gRPC
+// server hosting the AgentTransport service. TLS uses
+// VerifyClientCertIfGiven rather than RequireAndVerifyClientCert: a
+// first-time registrant has no client cert yet (it authenticates with a
+// single-use token instead, and receives its cert in the response), while
+// any presented cert must chain to boxy's own CA. The handler enforces
+// that a connection without a verified cert must carry a valid token.
+func buildAgentGRPCServer(st store.Store, registry *pool.AgentRegistry, boxyDir, listenAddr string, heartbeatInterval time.Duration, insecureMode bool) (*grpc.Server, *agentserver.Server, error) {
+	ca, err := pki.EnsureCA(boxyDir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ensure CA: %w", err)
+	}
+
+	agentSrv := agentserver.New(st, registry, ca, heartbeatInterval)
+
+	var serverOpts []grpc.ServerOption
+	if insecureMode {
+		slog.Warn("agent gRPC transport running WITHOUT TLS (--insecure); never use this outside local development")
+	} else {
+		sans := []string{"localhost", "127.0.0.1"}
+		if host, _, splitErr := net.SplitHostPort(listenAddr); splitErr == nil && host != "" && host != "0.0.0.0" && host != "::" {
+			sans = append(sans, host)
+		}
+		serverCert, err := pki.IssueServerCert(ca, boxyDir, sans)
+		if err != nil {
+			return nil, nil, fmt.Errorf("issue server cert: %w", err)
+		}
+		tlsCert, err := tls.X509KeyPair(serverCert.CertPEM, serverCert.KeyPEM)
+		if err != nil {
+			return nil, nil, fmt.Errorf("load server key pair: %w", err)
+		}
+		clientCAs := x509.NewCertPool()
+		clientCAs.AppendCertsFromPEM(ca.CertPEM)
+		serverOpts = append(serverOpts, grpc.Creds(credentials.NewTLS(&tls.Config{
+			Certificates: []tls.Certificate{tlsCert},
+			ClientAuth:   tls.VerifyClientCertIfGiven,
+			ClientCAs:    clientCAs,
+			MinVersion:   tls.VersionTLS13,
+		})))
+	}
+
+	grpcSrv := grpc.NewServer(serverOpts...)
+	boxyagentv1.RegisterAgentTransportServiceServer(grpcSrv, agentSrv)
+	return grpcSrv, agentSrv, nil
+}
+
+// serveAgentGRPC runs the agent gRPC listener with the same
+// shutdown-on-context-cancel pattern internal/server.Server.Start uses.
+func serveAgentGRPC(ctx context.Context, grpcSrv *grpc.Server, addr string) error {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listen agent grpc %q: %w", addr, err)
+	}
+	go func() {
+		<-ctx.Done()
+		grpcSrv.GracefulStop()
+	}()
+	if err := grpcSrv.Serve(ln); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+		return fmt.Errorf("serve agent grpc: %w", err)
+	}
+	return nil
+}
+
+// resolveGRPCListenAddr picks the agent gRPC listen address with
+// precedence: explicit --grpc-listen flag > config server.grpc_listen >
+// default :9091.
+func resolveGRPCListenAddr(opts serveOpts, cmd *cobra.Command, cfg boxyconfig.Config) string {
+	if cmd.Flags().Changed("grpc-listen") {
+		return opts.grpcListen
+	}
+	if cfg.Server.GRPCListen != "" {
+		return cfg.Server.GRPCListen
+	}
+	return defaultGRPCListenAddr
 }
 
 func seedConfiguredPools(ctx context.Context, st store.Store, specs []boxyconfig.PoolSpec) ([]model.PoolName, error) {

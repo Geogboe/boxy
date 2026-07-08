@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
@@ -32,12 +33,45 @@ type ServerSpec struct {
 	// UI controls whether the web dashboard is served alongside the API.
 	// Pointer so nil = default (enabled). Set to false to disable.
 	UI *bool `json:"ui,omitempty" yaml:"ui,omitempty"`
+
+	// GRPCListen is the address the agent-transport gRPC server listens
+	// on (see docs/adr/0005-remote-agent-transport-and-registration.md).
+	// Empty means the default (":9091").
+	GRPCListen string `json:"grpc_listen,omitempty" yaml:"grpc_listen,omitempty"`
+
+	// AgentHeartbeatInterval is how often connected remote agents send
+	// heartbeats, as a Go duration string (e.g. "15s"). Empty means the
+	// default (15s). Note: --insecure/--dev is deliberately a CLI flag
+	// only, never a config field, so a stale or copy-pasted config file
+	// can't silently disable mTLS in a real deployment.
+	AgentHeartbeatInterval string `json:"agent_heartbeat_interval,omitempty" yaml:"agent_heartbeat_interval,omitempty"`
 }
 
 // UIEnabled reports whether the web UI should be served.
 // Returns true when UI is nil (unset) or explicitly true.
 func (s ServerSpec) UIEnabled() bool {
 	return s.UI == nil || *s.UI
+}
+
+// DefaultAgentHeartbeatInterval is used when agent_heartbeat_interval is
+// unset — close to the daemon's existing 10s reconcile tick.
+const DefaultAgentHeartbeatInterval = 15 * time.Second
+
+// EffectiveAgentHeartbeatInterval parses AgentHeartbeatInterval, applying
+// the default when unset. Invalid values error (Validate also rejects them
+// at load time, so a running daemon should never hit that path).
+func (s ServerSpec) EffectiveAgentHeartbeatInterval() (time.Duration, error) {
+	if strings.TrimSpace(s.AgentHeartbeatInterval) == "" {
+		return DefaultAgentHeartbeatInterval, nil
+	}
+	d, err := time.ParseDuration(s.AgentHeartbeatInterval)
+	if err != nil {
+		return 0, fmt.Errorf("agent_heartbeat_interval %q: %w", s.AgentHeartbeatInterval, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("agent_heartbeat_interval %q must be positive", s.AgentHeartbeatInterval)
+	}
+	return d, nil
 }
 
 func LoadFile(path string) (Config, error) {
@@ -97,6 +131,9 @@ func ensureJSONEOF(dec *json.Decoder) error {
 
 // Validate checks semantic config constraints that decoding alone does not enforce.
 func (c Config) Validate() error {
+	if _, err := c.Server.EffectiveAgentHeartbeatInterval(); err != nil {
+		return fmt.Errorf("server: %w", err)
+	}
 	for _, pool := range c.Pools {
 		if _, err := ResolvePoolExpectedType(pool.Type); err != nil {
 			return fmt.Errorf("pool %q type invalid: %w", pool.Name, err)
