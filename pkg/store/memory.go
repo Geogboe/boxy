@@ -12,16 +12,20 @@ import (
 type MemoryStore struct {
 	mu sync.Mutex
 
-	pools     map[model.PoolName]model.Pool
-	resources map[model.ResourceID]model.Resource
-	sandboxes map[model.SandboxID]model.Sandbox
+	pools                  map[model.PoolName]model.Pool
+	resources              map[model.ResourceID]model.Resource
+	sandboxes              map[model.SandboxID]model.Sandbox
+	agentTokens            map[model.AgentTokenID]model.AgentRegistrationToken
+	revokedAgentIdentities map[model.AgentIdentityID]model.RevokedAgentIdentity
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		pools:     make(map[model.PoolName]model.Pool),
-		resources: make(map[model.ResourceID]model.Resource),
-		sandboxes: make(map[model.SandboxID]model.Sandbox),
+		pools:                  make(map[model.PoolName]model.Pool),
+		resources:              make(map[model.ResourceID]model.Resource),
+		sandboxes:              make(map[model.SandboxID]model.Sandbox),
+		agentTokens:            make(map[model.AgentTokenID]model.AgentRegistrationToken),
+		revokedAgentIdentities: make(map[model.AgentIdentityID]model.RevokedAgentIdentity),
 	}
 }
 
@@ -151,6 +155,77 @@ func (s *MemoryStore) ListSandboxes(_ context.Context) ([]model.Sandbox, error) 
 	out := make([]model.Sandbox, 0, len(s.sandboxes))
 	for _, sb := range s.sandboxes {
 		out = append(out, sb)
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) GetAgentToken(_ context.Context, id model.AgentTokenID) (model.AgentRegistrationToken, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tok, ok := s.agentTokens[id]
+	if !ok {
+		return model.AgentRegistrationToken{}, ErrNotFound
+	}
+	return tok, nil
+}
+
+func (s *MemoryStore) PutAgentToken(_ context.Context, tok model.AgentRegistrationToken) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if tok.ID == "" {
+		return fmt.Errorf("agent token id is required")
+	}
+	s.agentTokens[tok.ID] = tok
+	return nil
+}
+
+func (s *MemoryStore) DeleteAgentToken(_ context.Context, id model.AgentTokenID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.agentTokens[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.agentTokens, id)
+	return nil
+}
+
+func (s *MemoryStore) ListAgentTokens(_ context.Context) ([]model.AgentRegistrationToken, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]model.AgentRegistrationToken, 0, len(s.agentTokens))
+	for _, tok := range s.agentTokens {
+		out = append(out, tok)
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) PutRevokedAgentIdentity(_ context.Context, rev model.RevokedAgentIdentity) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rev.ID == "" {
+		return fmt.Errorf("revoked agent identity id is required")
+	}
+	s.revokedAgentIdentities[rev.ID] = rev
+	return nil
+}
+
+func (s *MemoryStore) IsAgentIdentityRevoked(_ context.Context, certSerial string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, rev := range s.revokedAgentIdentities {
+		if rev.CertSerial == certSerial {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *MemoryStore) ListRevokedAgentIdentities(_ context.Context) ([]model.RevokedAgentIdentity, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]model.RevokedAgentIdentity, 0, len(s.revokedAgentIdentities))
+	for _, rev := range s.revokedAgentIdentities {
+		out = append(out, rev)
 	}
 	return out, nil
 }
