@@ -37,16 +37,16 @@ operates in three modes: daemon server, CLI client, and distributed agent.
 ┌──────────────────────────────────────────────────────────────────┐
 │                        boxy serve (daemon)                       │
 │                                                                  │
-│   ┌─────────────┐   ┌────────────────┐   ┌──────────────────┐  │
-│   │  REST API    │   │  gRPC Server   │   │ PolicyController │  │
-│   │  (CLI cmds)  │   │  (agents)      │   │ (reconcile loop) │  │
-│   └──────┬───────┘   └───────┬────────┘   └────────┬─────────┘  │
+│   ┌─────────────┐   ┌────────────────────┐   ┌──────────────┐  │
+│   │  REST API +  │   │  gRPC Server        │   │PolicyControl-│  │
+│   │  web UI      │   │  (agents, planned)  │   │ler (reconcile│  │
+│   └──────┬───────┘   └───────┬────────────┘   └────────┬─────┘  │
 │          │                   │                     │             │
 │   ┌──────▼───────────────────▼─────────────────────▼──────────┐ │
 │   │              Core: Pool Manager + Sandbox Manager          │ │
 │   │                          │                                 │ │
 │   │              ┌───────────▼────────────┐                    │ │
-│   │              │     Store (bbolt)      │                    │ │
+│   │              │  Store (DiskStore/JSON) │                   │ │
 │   │              └────────────────────────┘                    │ │
 │   └───────────────────────────┬────────────────────────────────┘ │
 │                               │                                  │
@@ -342,16 +342,19 @@ graph LR
         StoreIF["Store interface<br/>──────────<br/>GetPool / PutPool<br/>GetResource / PutResource<br/>GetSandbox / CreateSandbox / PutSandbox"]
     end
 
-    MemStore["MemoryStore<br/>(in-memory maps)"]
-    DiskStore["DiskStore<br/>(bbolt — planned)"]
+    MemStore["MemoryStore<br/>(in-memory maps, used in tests)"]
+    DiskStore["DiskStore<br/>(single JSON file, e.g. .boxy/state.json)"]
 
     StoreIF -.->|implements| MemStore
     StoreIF -.->|implements| DiskStore
 ```
 
-Currently ships with a `MemoryStore` for development. The planned production
-store is **bbolt** (pure Go embedded key-value store). Config is NOT stored
-in the database — it's read from `boxy.yaml` on startup.
+`boxy serve` persists real runtime state via `DiskStore`, a single JSON file
+next to the active config (or under the working directory). `MemoryStore` is
+used in tests. A `bbolt`-backed implementation was the original plan and may
+still land if `DiskStore` stops being sufficient, but isn't implemented today.
+Config is NOT stored in the state store — it's read from `boxy.yaml` on
+startup.
 
 ---
 
@@ -460,7 +463,7 @@ End-to-end data flow showing how configuration becomes running sandboxes:
 ```mermaid
 graph TB
     subgraph "Configuration (static)"
-        BoxyYaml["boxy.yaml<br/>──────────<br/>server settings<br/>pool definitions<br/>agent declarations"]
+        BoxyYaml["boxy.yaml<br/>──────────<br/>server settings<br/>pool definitions"]
         SandboxYaml[".sandbox.yaml files<br/>──────────<br/>sandbox class definitions<br/>pool → count mappings"]
     end
 
@@ -473,12 +476,12 @@ graph TB
         RecLoop["Reconcile Loop (10s tick)<br/>──────────<br/>For each pool:<br/>Observe → Decide → Act"]
         PoolMgr["Pool Manager"]
         SandboxMgr["Sandbox Manager"]
-        StoreRT["Store (bbolt / memory)"]
+        StoreRT["Store (DiskStore/JSON, or memory in tests)"]
     end
 
     subgraph "Execution"
         EmbAgent["Embedded Agent"]
-        RemAgent["Remote Agents"]
+        RemAgent["Remote Agents (planned, #37/#62 — not yet implemented)"]
         Drivers["Provider Drivers<br/>(Docker, Hyper-V, ...)"]
     end
 
@@ -518,7 +521,6 @@ Configuration is **declarative and stateless**. Runtime state lives in the store
 graph LR
     subgraph "boxy.yaml"
         Server["server:<br/>  listen: ':9090'<br/>  providers: [docker, hyperv]"]
-        Agents["agents:<br/>  - name: build-host<br/>    providers: [docker]"]
         Pools["pools:<br/>  - name: win2022-base<br/>    type: hyperv<br/>    config: {template, cpu, ...}<br/>    policy: {preheat, recycle}"]
     end
 
@@ -527,7 +529,6 @@ graph LR
     end
 
     Server -->|"embedded agent providers"| Runtime["Runtime"]
-    Agents -->|"expected remote agents"| Runtime
     Pools -->|"pool definitions + policies"| Runtime
     SBDef -->|"sandbox creation (CLI)"| Runtime
 ```
@@ -544,20 +545,22 @@ graph LR
 
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
-| Language | **Go 1.22** | Core implementation |
+| Language | **Go 1.25** | Core implementation |
 | CLI Framework | **Cobra** (`spf13/cobra`) | Command-line interface |
 | Config Format | **YAML** (`gopkg.in/yaml.v3`) | Configuration files |
-| State Store | **bbolt** (planned) / Memory (current) | Runtime state persistence |
-| Server-Agent RPC | **gRPC over TLS** (planned) | Agent-server communication |
-| Client-Server API | **REST/HTTP** (planned) | CLI-server communication |
-| Auth | **JWT** (planned) | Agent registration + auth |
+| State Store | **DiskStore (JSON file)** / Memory (current); bbolt (possible future) | Runtime state persistence |
+| Server-Agent RPC | **gRPC over TLS** (planned, #37/#62) | Future agent-server communication |
+| Client-Server API | **REST/HTTP** (implemented) | CLI-server communication, primary interaction layer |
+| Auth | **JWT** (planned, #62) | Future agent registration + auth |
 | Task Runner | **Taskfile** (`Taskfile.yml`) | Build and development tasks |
 
 ### Project Status
 
 Boxy is in **early development**. The domain model, policy controller, provider
-SDK, and pool/sandbox managers are implemented. The REST API, gRPC transport,
-and remote agent support are on the roadmap.
+SDK, pool/sandbox managers, and REST API are implemented and are the primary
+way to operate Boxy today. gRPC transport and remote agent support are on the
+roadmap (#37/#62) but do not exist in the codebase yet — the only agent today
+is the embedded, in-process one inside `boxy serve`.
 
 ---
 
@@ -565,3 +568,5 @@ and remote agent support are on the roadmap.
 
 - [ADR-0001: Resource Identity and Provider Handle](adr/0001-resource-identity-and-provider-handle.md) — (Deprecated) Early discussion on resource identity
 - [ADR-0002: Resources Never Return to a Pool](adr/0002-no-resource-recycling.md) — Resources are single-use; pools only hold unused inventory
+- [ADR-0003: Sandbox Auto-Expiry and Extension Semantics](adr/0003-sandbox-auto-expiry-and-extension.md) — `ExpiresAt` computed at creation, extend compounds from current deadline, reuses the existing deletion reconciler
+- [ADR-0004: Hyper-V Teardown Guard and Provisioning Backoff](adr/0004-hyperv-teardown-guard-and-provisioning-backoff.md) — Never force-remove a transitioning VM; capped backoff for a repeatedly-failing pool's background reconcile

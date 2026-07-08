@@ -70,6 +70,7 @@ docs/adr/             # Architecture Decision Records
 - `POST /api/v1/sandboxes` accepts typed `requests`, not sandbox-spec `resources`; the handler rejects unknown fields so stale clients fail fast instead of silently sending the wrong shape.
 - `boxy serve` persists runtime state in `.boxy/state.json` next to the active config (or under the working directory when no config file is used), so accepted async sandbox requests survive normal daemon restarts.
 - `boxy sandbox create -f ...` is daemon-backed: the CLI loads a sandbox spec, resolves named pools from the daemon pool catalog, submits async `requests`, and waits for `ready`/`failed` by default. Use `--no-wait` to return after the daemon accepts the request.
+- `Policies.AutoDestroyAfter` (`auto_destroy_after` in requests) is enforced (as of 2026-07): sandbox creation computes a real `ExpiresAt`, and the existing async-deletion reconciler (`internal/sandbox/deleter.go`, ticked every 10s alongside everything else) promotes expired sandboxes into deletion. `POST /api/v1/sandboxes/{id}/extend` / `boxy sandbox extend <id> <duration>` push the deadline out, compounding from the current `ExpiresAt` rather than resetting from now. See ADR-0003.
 - Preferred phrasing when describing compositions:
   - "container sandbox" (1 container)
   - "3 VM lab sandbox" (multi-VM lab)
@@ -89,6 +90,8 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
 - **Driver**: code implementing CRUD operations for a specific provider type (`pkg/providersdk/driver.go`)
 - **Agent**: execution layer for driver operations — can be embedded (in-process) or remote (gRPC) (`pkg/agentsdk/`)
 - **PolicyController**: reconciler that compares desired vs actual pool state and issues driver operations (`pkg/policycontroller/`)
+- **`pkg/agentsdk` (live) vs. a config-declared `agents:` list (removed, 2026-07)**: don't confuse these. `pkg/agentsdk.EmbeddedAgent` is real, in-process code wired into `boxy serve` today. A separate `Config.Agents`/`AgentSpec` field once existed for a *pull-model* remote agent (server dials out to a static agent address) but was dead code — never read anywhere — and has been deleted. The actual planned remote-agent design is a *push* model (agent dials the server over gRPC) and doesn't exist yet; see #37/#62.
+- `boxy debug provider *` (drives the in-process `devfactory` reference driver directly, bypassing the daemon) is compiled only with `-tags devtools` and is absent from release binaries. `boxy debug pool drain/fill` is a separate, always-available command that does go through the daemon's HTTP API.
 
 ### Bundled Agent Skill
 
@@ -96,6 +99,48 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
 - The canonical installed copy lives at `~/.config/boxy/skills/boxy-cli/` on all platforms.
 - `boxy skills install` links or copies that canonical skill into agent-specific directories such as `~/.agents/skills/`.
 - `boxy help all` is the machine-readable command surface the bundled skill points agents to when they need current syntax.
+
+## Lessons Learned
+
+- **Line endings**: `.gitattributes` declares `* text=auto eol=lf` for the whole
+  repo, but that only normalizes files as they're touched — it does not
+  retroactively rewrite existing blobs. Several files (e.g. `release.yml`
+  before 2026-07) still have CRLF stored in their git blob from before that
+  policy existed. If you edit such a file with a full-file rewrite (rather
+  than an in-place string replacement), you'll silently flip it to LF and the
+  diff will show the *entire file* as changed instead of your actual edit —
+  reviewers can't see what you changed. Prefer targeted in-place edits over
+  full-file rewrites for any existing file, especially in `.github/workflows/`.
+  If you must rewrite a whole file, check `git show HEAD:<path> | head -c 100 | xxd`
+  first to see whether it's CRLF, and match it.
+- **Merging PRs that touch `.github/workflows/`**: the `gh` CLI's default
+  OAuth token often lacks the `workflow` scope, and `gh pr merge` fails with
+  a GraphQL permission error in that case. This requires the repo owner to
+  run `gh auth refresh -s workflow` themselves — it's a credential change, not
+  something to work around.
+- **Git commit signing / push over SSH via 1Password**: if commits or pushes
+  fail with `1Password: failed to fill whole buffer` or
+  `sign_and_send_pubkey: signing failed`, 1Password's SSH agent needs to be
+  unlocked — ask the user rather than reaching for `--no-gpg-sign` or similar
+  bypasses.
+- **Before creating a throwaway git branch for local testing**, double-check
+  the branch name is valid (e.g. no leading `/`) and confirm with
+  `git branch --show-current` that the checkout actually succeeded. A failed
+  `checkout -b` leaves you on whatever branch you were already on, and
+  subsequent commits land there instead — recoverable if caught immediately
+  (nothing had been pushed), but worth avoiding.
+- **Issue text drifts from reality fast** in an actively-developed repo. Before
+  planning work off an issue's description, grep/read the actual current code
+  — several issues this project tracked (e.g. #33, #34, #36, #13) turned out
+  to already be implemented, sometimes under a different architecture than
+  the issue described. Verify, don't assume the issue is current.
+- **This file (and README.md / docs/architecture.md) can also drift.** During
+  the 2026-07 session that added these notes, README.md and architecture.md
+  were found describing gRPC agents, a `bbolt` store, and an `agents:` config
+  section as if already built, when none of that existed in the codebase.
+  Docs describing "planned" work should say so explicitly and get corrected
+  once work actually lands (or is found to be dead/unbuilt) — don't assume
+  existing docs are accurate; verify against code before trusting them.
 
 ## ADRs
 
@@ -154,42 +199,35 @@ Wrap repeated commands in `Taskfile.yml`. If a command is run more than once, ad
 
 ## CI / CD Workflow Notes
 
-### GitHub Actions Node 20 → 24 Migration Status
+### GitHub Actions Node 24 migration — done
 
-All actions in `ci.yml` and `release.yml` are Node 24-compatible **except** for
-`googleapis/release-please-action`:
+All actions in `ci.yml` and `release.yml` are pinned to Node 24-compatible
+versions as of 2026-07 (`release-please-action` v5.0.0, `goreleaser-action`
+v7.2.3). The `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` workaround has been removed —
+it's no longer needed. See #100.
 
-| Workflow | Action | Node Runtime |
-|---|---|---|
-| ci.yml | `actions/checkout@v5` | Node 24 ✅ |
-| ci.yml | `actions/setup-go@v6` | Node 24 ✅ |
-| ci.yml | `golangci/golangci-lint-action@v9.2.0` | Node 24 ✅ |
-| release.yml | `actions/checkout@v5` | Node 24 ✅ |
-| release.yml | `actions/setup-go@v6` | Node 24 ✅ |
-| release.yml | `googleapis/release-please-action@v4.4.0` | Node 20 ⚠️ (see below) |
+### Action pinning and updates
 
-**Blocker — `googleapis/release-please-action@v4.4.0` (Node 20):**
-
-- Latest upstream release as of March 2026 is v4.4.0; it still declares
-  `runs.using: node20` in its `action.yml`.
-- Upstream tracking issue: `googleapis/release-please-action#1162`.
-- `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"` is set in `release.yml` as a
-  mitigation — this makes the runner execute the action with Node 24, but GitHub
-  still emits a `##[warning]` annotation because the action's metadata declares
-  `node20`.  The action runs correctly under Node 24.
-- **No action needed until June 2, 2026**, when GitHub will enforce Node 24 as
-  the default and may break Node 20 actions.
-- **Next step:** When `googleapis/release-please-action` publishes a Node 24
-  release (v4.x patch or v5), update the pin in `release.yml` and remove the
-  `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` env var.
+- Every third-party action in `ci.yml` and `release.yml` is pinned to a full
+  commit SHA (not a mutable tag), per #55. The tag is kept as a trailing
+  comment (`@<sha> # vX.Y.Z`) for readability.
+- `.github/dependabot.yml` watches the `github-actions` ecosystem and opens
+  PRs to bump these pins — don't hand-edit them without also checking whether
+  Dependabot would have caught the same update.
+- `.github/CODEOWNERS` requires owner review on any `.github/workflows/`
+  change.
+- A `gitleaks` job runs in `ci.yml` on every push/PR.
 
 ### GoReleaser Signing Notes
 
-- GoReleaser signs the published `checksums.txt` file in CI.
-- `release.yml` imports the CI signing key with `crazy-max/ghaction-import-gpg@v6`.
-- Required repository secrets:
-  - `GPG_PRIVATE_KEY`
-  - `GPG_PASSPHRASE`
+- GoReleaser publishes `checksums.txt` alongside release binaries and SBOMs.
+- Release-signing (a dedicated signing subkey, GitHub Environment approval
+  gates) is deliberately **not implemented yet** — tracked as remaining scope
+  on #55, not done in the 2026-07 security-hardening pass. Don't assume a
+  `GPG_PRIVATE_KEY`/`GPG_PASSPHRASE` secret pair exists; verify against the
+  actual `release.yml` before referencing signing in docs or code — this
+  section itself was previously stale and described signing that was never
+  actually wired up.
 
 # Deletions
 
