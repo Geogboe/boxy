@@ -23,6 +23,11 @@ Core commands you will commonly use:
 - `boxy sandbox get`
 - `boxy sandbox delete`
 - `boxy sandbox extend`
+- `boxy agent token create`
+- `boxy agent token list`
+- `boxy agent token revoke`
+- `boxy agent list`
+- `boxy agent revoke`
 - `boxy status`
 - `boxy debug pool drain`
 - `boxy debug pool fill`
@@ -44,6 +49,7 @@ Core commands you will commonly use:
 - Sandbox deletion is asynchronous. `boxy sandbox delete <id>` waits until the daemon finishes cleanup; use `--no-wait` to return after acceptance.
 - `boxy sandbox extend <id> <duration>` only works on sandboxes created with `policies.auto_destroy_after` set; it pushes that expiry out by `<duration>` and fails if the sandbox has no expiry to extend or is already being deleted.
 - Use `boxy debug pool drain <pool>` and `boxy debug pool fill <pool>` for daemon-backed operator maintenance of unused ready pool inventory.
+- Remote agents register with a single-use token: `boxy agent token create` prints the raw token exactly once (never stored or retrievable again); the agent redeems it on first connect and authenticates with an issued mTLS client certificate afterward. `boxy agent list` shows registered agents and availability; `boxy agent revoke <id>` deny-lists an agent's certificate and tears down its live connection.
 - If a sandbox fails or stalls, use the diagnosis workflow instead of guessing.
 - Boxy persists daemon runtime state in `.boxy/state.json` near the active config or working directory; use that fact in diagnosis, not as the primary control interface.
 

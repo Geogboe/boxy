@@ -173,10 +173,39 @@ boxy
 │       └── delete <id>
 │
 │
-└── [future] agent                             Planned — not yet implemented
-    ├── list                                     List agents and connection status
-    ├── token create                             Create registration token
-    └── revoke <id>                              Revoke an agent
+└── agent                                      Manage remote agents and registration tokens
+    ├── --server <addr>                          Server address (default 127.0.0.1:9090)
+    │
+    ├── token                                    Manage single-use registration tokens
+    │   ├── create                                 Mint a token (raw value shown once, never stored)
+    │   │   ├── --label <note>                       Optional operator note (e.g. target host)
+    │   │   ├── --ttl <duration>                     Validity as a Go duration (default 1h)
+    │   │   │
+    │   │   $ boxy agent token create --label lab-hv-1 --ttl 2h
+    │   │     token: 4f9c…e2a1
+    │   │     id: 6b1f0e7c-…
+    │   │     label: lab-hv-1
+    │   │     expires: 2026-07-08T18:00:00Z
+    │   │     The token is shown once and never stored — pass it to `boxy agent serve --token <token>` before it expires.
+    │   │
+    │   ├── list                                   List tokens (id, label, unused/used/expired, expiry)
+    │   │   $ boxy agent token list
+    │   │     6b1f0e7c-…	lab-hv-1	unused	expires 2026-07-08T18:00:00Z
+    │   │
+    │   └── revoke <id>                            Revoke an unredeemed token
+    │       $ boxy agent token revoke 6b1f0e7c-…
+    │         revoked token 6b1f0e7c-…
+    │
+    ├── list                                     List registered agents and availability
+    │   $ boxy agent list
+    │     0d9a…	lab-hv-1	[hyperv]	available
+    │
+    └── revoke <id>                              Revoke an agent's identity (deny-lists its mTLS cert
+        │                                          and tears down any live connection)
+        ├── --reason <text>                        Optional reason recorded with the revocation
+        │
+        $ boxy agent revoke 0d9a… --reason "host decommissioned"
+          revoked agent 0d9a…
 
 
 Global flags (on root command):
