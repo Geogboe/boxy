@@ -1,0 +1,11 @@
+version: v2
+# Uses the Buf Schema Registry's remote plugins (network access required only
+# when running `task proto:generate`, i.e. when editing the .proto schema —
+# never part of the normal build/test loop, since generated code is committed).
+plugins:
+  - remote: buf.build/protocolbuffers/go
+    out: pkg/agentproto
+    opt: paths=source_relative
+  - remote: buf.build/grpc/go
+    out: pkg/agentproto
+    opt: paths=source_relative

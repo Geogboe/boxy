@@ -1,0 +1,17 @@
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+  except:
+    # AgentMessage/ServerMessage are intentional oneof-envelope types shared
+    # across every frame of one long-lived bidi stream (register, heartbeat,
+    # command, result all multiplexed over the same Connect RPC) rather than
+    # a single request/response pair, so the standard "ConnectRequest"/
+    # "ConnectResponse" RPC-scoped naming convention doesn't fit here.
+    - RPC_REQUEST_STANDARD_NAME
+    - RPC_RESPONSE_STANDARD_NAME
+breaking:
+  use:
+    - FILE

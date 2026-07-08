@@ -90,6 +90,26 @@ tasks:
     aliases: [lint:go, golangci-lint]
     cmd: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...
 
+  proto:generate:
+    desc: Generate gRPC/protobuf Go stubs from proto/ using the pinned buf CLI
+    env:
+      # `-modfile` doesn't participate in Go's automatic toolchain switching,
+      # so on a machine whose default `go` predates tools/go.mod's `go`
+      # directive, resolving the module graph fails with a misleading
+      # "requires go >= ..." error even though the right toolchain would
+      # auto-download fine if invoked from within tools/ directly. Pin it
+      # explicitly here instead of requiring a matching local Go install.
+      GOTOOLCHAIN: go1.26.1
+    cmds:
+      - go run -modfile=tools/go.mod github.com/bufbuild/buf/cmd/buf generate
+
+  proto:lint:
+    desc: Lint proto/ using the pinned buf CLI
+    env:
+      GOTOOLCHAIN: go1.26.1
+    cmds:
+      - go run -modfile=tools/go.mod github.com/bufbuild/buf/cmd/buf lint
+
   release:check:
     desc: Validate GoReleaser config using the pinned tools module
     cmds:
