@@ -549,9 +549,9 @@ graph LR
 | CLI Framework | **Cobra** (`spf13/cobra`) | Command-line interface |
 | Config Format | **YAML** (`gopkg.in/yaml.v3`) | Configuration files |
 | State Store | **DiskStore (JSON file)** / Memory (current); bbolt (possible future) | Runtime state persistence |
-| Server-Agent RPC | **gRPC over TLS** (planned, #37/#62) | Future agent-server communication |
+| Server-Agent RPC | **gRPC over mTLS** (planned, see [ADR-0005](adr/0005-remote-agent-transport-and-registration.md)) | Future agent-server communication |
 | Client-Server API | **REST/HTTP** (implemented) | CLI-server communication, primary interaction layer |
-| Auth | **JWT** (planned, #62) | Future agent registration + auth |
+| Auth | **Single-use bootstrap token + mTLS client certificate** (planned, see [ADR-0005](adr/0005-remote-agent-transport-and-registration.md)) | Future agent registration; no ongoing JWT — a private CA issues a client cert at registration, used for all subsequent reconnects |
 | Task Runner | **Taskfile** (`Taskfile.yml`) | Build and development tasks |
 
 ### Project Status
@@ -570,3 +570,4 @@ is the embedded, in-process one inside `boxy serve`.
 - [ADR-0002: Resources Never Return to a Pool](adr/0002-no-resource-recycling.md) — Resources are single-use; pools only hold unused inventory
 - [ADR-0003: Sandbox Auto-Expiry and Extension Semantics](adr/0003-sandbox-auto-expiry-and-extension.md) — `ExpiresAt` computed at creation, extend compounds from current deadline, reuses the existing deletion reconciler
 - [ADR-0004: Hyper-V Teardown Guard and Provisioning Backoff](adr/0004-hyperv-teardown-guard-and-provisioning-backoff.md) — Never force-remove a transitioning VM; capped backoff for a repeatedly-failing pool's background reconcile
+- [ADR-0005: Remote Agent Transport and Registration](adr/0005-remote-agent-transport-and-registration.md) — gRPC bidirectional streaming (agent dials server), private CA + full mTLS, single-use bootstrap token issuing a client cert, per-resource agent provenance to prevent misrouted Destroy/Allocate calls across multiple agents
