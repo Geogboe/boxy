@@ -5,7 +5,9 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/Geogboe/boxy/internal/sandbox"
 	"github.com/Geogboe/boxy/pkg/httpjson"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/store"
@@ -39,7 +41,7 @@ func (s *Server) handleGetSandbox(w http.ResponseWriter, r *http.Request) {
 // createSandboxRequest is the request body for POST /api/v1/sandboxes.
 type createSandboxRequest struct {
 	Name     string                  `json:"name"`
-	Policies model.SandboxPolicies   `json:"policies,omitempty"`
+	Policies model.SandboxPolicies   `json:"policies"`
 	Requests []model.ResourceRequest `json:"requests"`
 }
 
@@ -88,4 +90,43 @@ func (s *Server) handleDeleteSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpjson.Write(w, http.StatusAccepted, sb)
+}
+
+// extendSandboxRequest is the request body for POST /api/v1/sandboxes/{id}/extend.
+type extendSandboxRequest struct {
+	// Duration is a Go duration string (e.g. "15m", "1h") to push the
+	// sandbox's expiry out by, measured from its current expiry.
+	Duration string `json:"duration"`
+}
+
+// handleExtendSandbox pushes a sandbox's auto-destroy expiry further out.
+// Fails with 409 if the sandbox has no expiry to extend (its policy never
+// set auto_destroy_after) or is already being deleted.
+func (s *Server) handleExtendSandbox(w http.ResponseWriter, r *http.Request) {
+	id := model.SandboxID(r.PathValue("id"))
+
+	var req extendSandboxRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		httpjson.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	extension, err := time.ParseDuration(req.Duration)
+	if err != nil || extension <= 0 {
+		httpjson.Error(w, http.StatusBadRequest, "duration must be a positive Go duration string (e.g. \"15m\")")
+		return
+	}
+
+	sb, err := s.sandboxMgr.RequestExtend(r.Context(), id, extension)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		httpjson.Error(w, http.StatusNotFound, "sandbox not found")
+	case errors.Is(err, sandbox.ErrSandboxDeleting), errors.Is(err, sandbox.ErrNoExpiry):
+		httpjson.Error(w, http.StatusConflict, err.Error())
+	case err != nil:
+		httpjson.Error(w, http.StatusInternalServerError, "failed to extend sandbox")
+	default:
+		httpjson.Write(w, http.StatusOK, sb)
+	}
 }

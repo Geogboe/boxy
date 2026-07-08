@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/store"
@@ -15,14 +16,30 @@ type ResourceDestroyer interface {
 }
 
 // DeletionReconciler cleans up sandboxes that have been accepted for async
-// deletion.
+// deletion, and promotes sandboxes past their Policies.AutoDestroyAfter
+// expiry into deletion.
 type DeletionReconciler struct {
 	store     store.Store
 	destroyer ResourceDestroyer
+	clock     Clock
 }
 
 func NewDeletionReconciler(st store.Store, destroyer ResourceDestroyer) *DeletionReconciler {
-	return &DeletionReconciler{store: st, destroyer: destroyer}
+	return &DeletionReconciler{store: st, destroyer: destroyer, clock: realClock{}}
+}
+
+// SetClock overrides the reconciler's time source. Used by tests.
+func (r *DeletionReconciler) SetClock(c Clock) {
+	if c != nil {
+		r.clock = c
+	}
+}
+
+func (r *DeletionReconciler) now() time.Time {
+	if r.clock == nil {
+		return time.Now().UTC()
+	}
+	return r.clock.Now()
 }
 
 func (r *DeletionReconciler) Reconcile(ctx context.Context) error {
@@ -44,9 +61,17 @@ func (r *DeletionReconciler) Reconcile(ctx context.Context) error {
 		return sandboxes[i].ID < sandboxes[j].ID
 	})
 
+	now := r.now()
 	for _, sb := range sandboxes {
 		if sb.Status != model.SandboxStatusDeleting {
-			continue
+			if sb.ExpiresAt == nil || sb.ExpiresAt.After(now) {
+				continue
+			}
+			sb.Status = model.SandboxStatusDeleting
+			sb.Error = ""
+			if err := r.store.PutSandbox(ctx, sb); err != nil {
+				return fmt.Errorf("mark expired sandbox %q deleting: %w", sb.ID, err)
+			}
 		}
 		if err := r.cleanupSandbox(ctx, sb.ID); err != nil {
 			return err

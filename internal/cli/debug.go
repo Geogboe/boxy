@@ -11,7 +11,11 @@ func newDebugCommand() *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(newDebugProviderCommand())
+	// `debug provider` (internal/cli/debug_provider*.go) only exercises the
+	// devfactory reference driver in-process; it's a development tool, not a
+	// release feature, so it's built behind the `devtools` build tag and
+	// excluded from release binaries. See #68.
+	registerDevtoolsDebugCommands(cmd)
 	cmd.AddCommand(newDebugPoolCommand())
 	return cmd
 }

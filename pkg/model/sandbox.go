@@ -1,5 +1,7 @@
 package model
 
+import "time"
+
 // SandboxID is a stable identifier for a sandbox (user-facing handle).
 type SandboxID string
 
@@ -23,7 +25,7 @@ type Sandbox struct {
 	Name string    `json:"name,omitempty" yaml:"name,omitempty"`
 
 	// Policies are sandbox-level behavioral controls (security, retention, etc).
-	Policies SandboxPolicies `json:"policies,omitempty" yaml:"policies,omitempty"`
+	Policies SandboxPolicies `json:"policies,omitzero" yaml:"policies,omitempty"`
 
 	// Status is the async lifecycle state of the sandbox request.
 	Status SandboxStatus `json:"status,omitempty" yaml:"status,omitempty"`
@@ -36,6 +38,11 @@ type Sandbox struct {
 
 	// Resources are the resources that make up this sandbox.
 	Resources []ResourceID `json:"resources,omitempty" yaml:"resources,omitempty"`
+
+	// ExpiresAt is the absolute time this sandbox should be automatically
+	// destroyed, computed from Policies.AutoDestroyAfter at creation time.
+	// Nil means no automatic expiry.
+	ExpiresAt *time.Time `json:"expires_at,omitempty" yaml:"expires_at,omitempty"`
 }
 
 // SandboxPolicies captures sandbox-level behavior without prescribing a specific

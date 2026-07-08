@@ -61,7 +61,6 @@ func TestRunInit_WritesComprehensiveStarterTemplate(t *testing.T) {
 
 	for _, want := range []string{
 		"providers:",
-		"agents: []",
 		"type: docker",
 		"type: vm",
 		"guest_password_ref:",

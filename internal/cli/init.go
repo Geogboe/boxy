@@ -60,9 +60,9 @@ const starterConfig = `---
 # delete the rest, and uncomment examples as your setup grows.
 #
 # Top-level sections:
-#   - server: daemon listen address and web UI settings
+#   - server: daemon listen address and web UI settings (the HTTP API is
+#     always served alongside the UI — there is no separate api: section)
 #   - providers: named driver instances available to boxy serve
-#   - agents: remote agents the server expects to see
 #   - pools: warm resource inventories Boxy reconciles for you
 #
 # Logging is configured with CLI flags rather than boxy.yaml:
@@ -70,7 +70,7 @@ const starterConfig = `---
 
 server:
   listen: ":9090"
-  # ui: true                    # Web dashboard (default: enabled)
+  # ui: true                    # Web dashboard, served at "/" (default: enabled)
   # providers: [docker, hyperv] # Optional embedded provider type hints
 
 providers:
@@ -84,13 +84,6 @@ providers:
   # with Hyper-V available.
   # - name: hyperv-local
   #   type: hyperv
-
-agents: []
-# Uncomment and adapt entries here when distributed agent support is part of
-# your setup.
-# agents:
-#   - name: build-host
-#     providers: [docker]
 
 pools:
   # Docker/container pool example.
@@ -108,12 +101,13 @@ pools:
       #   - "8080:80"
       # cpu: "1.0"
       # memory: 512m
+    # policy: only preheat and recycle are recognized here today.
     policy:
       preheat:
-        min_ready: 1
-        max_total: 3
+        min_ready: 1 # keep this many resources ready (warm) at all times
+        max_total: 3 # hard cap on total resources for this pool
       recycle:
-        max_age: 4h
+        max_age: 4h # destroy + replace ready resources older than this
 
   # Hyper-V VM pool example.
   # Use type: vm for VM inventory, then point provider: at a Hyper-V

@@ -114,6 +114,34 @@ func newSandboxTestServer(t *testing.T, listItems []model.Sandbox) *httptest.Ser
 			t.Fatalf("encode resource: %v", err)
 		}
 	})
+	mux.HandleFunc("POST /api/v1/sandboxes/{id}/extend", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		sb, ok := sandboxes[id]
+		if !ok {
+			http.Error(w, `{"error":"sandbox not found"}`, http.StatusNotFound)
+			return
+		}
+		var req struct {
+			Duration string `json:"duration"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+			return
+		}
+		d, err := time.ParseDuration(req.Duration)
+		if err != nil {
+			http.Error(w, `{"error":"invalid duration"}`, http.StatusBadRequest)
+			return
+		}
+		base := time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC)
+		expires := base.Add(d)
+		sb.ExpiresAt = &expires
+		sandboxes[id] = sb
+		w.Header().Set("Content-Type", "application/json")
+		if err := printJSONTo(w, sb); err != nil {
+			t.Fatalf("encode sandbox extend: %v", err)
+		}
+	})
 	mux.HandleFunc("DELETE /api/v1/sandboxes/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		sb, ok := sandboxes[id]
@@ -278,6 +306,73 @@ func TestSandboxDelete_not_found(t *testing.T) {
 		t.Fatal("expected error for non-existent sandbox")
 	}
 	if !strings.Contains(err.Error(), `sandbox "no-such-id" not found`) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestSandboxExtend_found(t *testing.T) {
+	srv := newSandboxTestServer(t, nil)
+	defer srv.Close()
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"sandbox", "--server", srv.URL, "extend", "sb-1", "15m"})
+
+	output, err := captureSandboxStdout(t, func() error {
+		return cmd.ExecuteContext(context.Background())
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(output, "extended sandbox sb-1") {
+		t.Fatalf("output = %q", output)
+	}
+}
+
+func TestSandboxExtend_not_found(t *testing.T) {
+	srv := newSandboxTestServer(t, nil)
+	defer srv.Close()
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"sandbox", "--server", srv.URL, "extend", "no-such-id", "15m"})
+
+	err := cmd.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatal("expected error for non-existent sandbox")
+	}
+	if !strings.Contains(err.Error(), `sandbox "no-such-id" not found`) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestSandboxExtend_invalidDurationArgRejectedBeforeRequest(t *testing.T) {
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"sandbox", "--server", "http://127.0.0.1:0", "extend", "sb-1", "not-a-duration"})
+
+	err := cmd.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatal("expected error for invalid duration")
+	}
+	if !strings.Contains(err.Error(), "invalid duration") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestSandboxExtend_conflictSurfacesServerMessage(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/v1/sandboxes/{id}/extend", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"sandbox has no expiry to extend"}`, http.StatusConflict)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"sandbox", "--server", srv.URL, "extend", "sb-1", "15m"})
+
+	err := cmd.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatal("expected error for conflict response")
+	}
+	if !strings.Contains(err.Error(), "sandbox has no expiry to extend") {
 		t.Fatalf("error = %v", err)
 	}
 }

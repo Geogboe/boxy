@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/pkg/model"
@@ -181,6 +182,71 @@ func (p *deletionProvisioner) Destroy(ctx context.Context, pl model.Pool, res mo
 	_ = pl
 	p.destroyed = append(p.destroyed, res.ID)
 	return nil
+}
+
+func TestDeletionReconciler_DestroysExpiredSandbox(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	res := model.Resource{ID: "res-1", OriginPool: "web", State: model.ResourceStateAllocated}
+	if err := st.PutResource(ctx, res); err != nil {
+		t.Fatalf("put resource: %v", err)
+	}
+	past := time.Unix(1000, 0).UTC()
+	if err := st.CreateSandbox(ctx, model.Sandbox{
+		ID:        "sb-1",
+		Status:    model.SandboxStatusReady,
+		Resources: []model.ResourceID{res.ID},
+		ExpiresAt: &past,
+	}); err != nil {
+		t.Fatalf("create sandbox: %v", err)
+	}
+
+	rec := NewDeletionReconciler(st, &fakeDestroyer{})
+	rec.SetClock(fixedClock{t: past.Add(time.Second)})
+
+	if err := rec.Reconcile(ctx); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if _, err := st.GetSandbox(ctx, "sb-1"); err != store.ErrNotFound {
+		t.Fatalf("sandbox err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestDeletionReconciler_LeavesUnexpiredSandboxAlone(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	res := model.Resource{ID: "res-1", OriginPool: "web", State: model.ResourceStateAllocated}
+	if err := st.PutResource(ctx, res); err != nil {
+		t.Fatalf("put resource: %v", err)
+	}
+	now := time.Unix(1000, 0).UTC()
+	future := now.Add(time.Hour)
+	if err := st.CreateSandbox(ctx, model.Sandbox{
+		ID:        "sb-1",
+		Status:    model.SandboxStatusReady,
+		Resources: []model.ResourceID{res.ID},
+		ExpiresAt: &future,
+	}); err != nil {
+		t.Fatalf("create sandbox: %v", err)
+	}
+
+	destroyer := &fakeDestroyer{}
+	rec := NewDeletionReconciler(st, destroyer)
+	rec.SetClock(fixedClock{t: now})
+
+	if err := rec.Reconcile(ctx); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(destroyer.destroyed) != 0 {
+		t.Fatalf("destroyed = %v, want none", destroyer.destroyed)
+	}
+	sb, err := st.GetSandbox(ctx, "sb-1")
+	if err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if sb.Status != model.SandboxStatusReady {
+		t.Fatalf("status = %q, want ready", sb.Status)
+	}
 }
 
 func TestDeletionReconciler_RemovesAllocatedResourceBeforePoolReplacesIt(t *testing.T) {
