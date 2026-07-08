@@ -35,7 +35,11 @@ type RemoteAgent struct {
 	// concurrent use by multiple goroutines on the send side.
 	sendMu sync.Mutex
 
-	lastSeen atomic.Int64 // unix seconds
+	// lastSeen is stored as UnixNano, not Unix seconds: whole-second
+	// resolution is too coarse for heartbeat intervals under ~1s (common
+	// in tests and for fast failure detection) and can make a just-arrived
+	// heartbeat appear stale by up to a second due to truncation.
+	lastSeen atomic.Int64
 
 	closed    chan struct{}
 	closeOnce sync.Once
@@ -50,7 +54,7 @@ func NewRemoteAgent(info AgentInfo, stream boxyagentv1.AgentTransportService_Con
 		pending: make(map[string]chan *boxyagentv1.CommandResult),
 		closed:  make(chan struct{}),
 	}
-	a.lastSeen.Store(time.Now().Unix())
+	a.lastSeen.Store(time.Now().UnixNano())
 	return a
 }
 
@@ -61,7 +65,7 @@ func (a *RemoteAgent) Info() AgentInfo {
 // LastSeen returns the time of the most recent Heartbeat (or connection
 // start, if none has arrived yet).
 func (a *RemoteAgent) LastSeen() time.Time {
-	return time.Unix(a.lastSeen.Load(), 0)
+	return time.Unix(0, a.lastSeen.Load())
 }
 
 // Serve reads AgentMessages off the stream until it ends for any reason,
@@ -77,7 +81,7 @@ func (a *RemoteAgent) Serve() error {
 		}
 		switch payload := msg.GetPayload().(type) {
 		case *boxyagentv1.AgentMessage_Heartbeat:
-			a.lastSeen.Store(time.Now().Unix())
+			a.lastSeen.Store(time.Now().UnixNano())
 		case *boxyagentv1.AgentMessage_Result:
 			a.deliver(payload.Result)
 		default:

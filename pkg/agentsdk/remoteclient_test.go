@@ -206,10 +206,10 @@ func (f *fakeClientStream) close() {
 
 func (f *fakeClientStream) Header() (metadata.MD, error) { return nil, nil }
 func (f *fakeClientStream) Trailer() metadata.MD         { return nil }
-func (f *fakeClientStream) CloseSend() error              { return nil }
-func (f *fakeClientStream) Context() context.Context      { return f.ctx }
-func (f *fakeClientStream) SendMsg(m any) error            { return nil }
-func (f *fakeClientStream) RecvMsg(m any) error            { return nil }
+func (f *fakeClientStream) CloseSend() error             { return nil }
+func (f *fakeClientStream) Context() context.Context     { return f.ctx }
+func (f *fakeClientStream) SendMsg(m any) error          { return nil }
+func (f *fakeClientStream) RecvMsg(m any) error          { return nil }
 
 func TestRunSession_RegistersAndDispatchesCommand(t *testing.T) {
 	stream := newFakeClientStream()

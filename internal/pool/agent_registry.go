@@ -111,12 +111,13 @@ func (r *AgentRegistry) Get(agentID string) (agentsdk.Agent, bool) {
 }
 
 // Resolve picks an agent to serve a NEW provisioning request for the given
-// provider type. If pinnedAgentID is non-empty, it must name a registered
-// agent that supports the provider type — pinning to the wrong agent (or a
-// nonexistent one) is a fail-fast config error, never a silent fallback.
-// Otherwise, the first available agent (by registration order) offering
-// the provider type is returned. Load-balancing across multiple available
-// agents offering the same type is out of scope for now.
+// provider type. If pinnedAgentID is non-empty, it must name a registered,
+// currently-available agent that supports the provider type — pinning to
+// the wrong, nonexistent, or unavailable agent is a fail-fast config/state
+// error, never a silent fallback to a different agent. Otherwise, the
+// first available agent (by registration order) offering the provider
+// type is returned. Load-balancing across multiple available agents
+// offering the same type is out of scope for now.
 func (r *AgentRegistry) Resolve(provider providersdk.Type, pinnedAgentID string) (agentsdk.Agent, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -128,6 +129,12 @@ func (r *AgentRegistry) Resolve(provider providersdk.Type, pinnedAgentID string)
 		}
 		if !supportsProvider(a, provider) {
 			return nil, fmt.Errorf("pinned agent %q does not support provider %q", pinnedAgentID, provider)
+		}
+		// A pin never bypasses the heartbeat-miss availability gate —
+		// otherwise it would silently defeat the whole mechanism for any
+		// pinned pool.
+		if !r.avail[pinnedAgentID] {
+			return nil, fmt.Errorf("pinned agent %q is currently unavailable", pinnedAgentID)
 		}
 		return a, nil
 	}
