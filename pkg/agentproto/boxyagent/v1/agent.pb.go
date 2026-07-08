@@ -534,9 +534,13 @@ func (*ServerMessage_Command) isServerMessage_Payload() {}
 type RegisterResponse struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	AgentId string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
-	// client_certificate_pem/ca_certificate_pem are populated only on a
-	// token-based (first-time) registration, not on a cert-based reconnect.
+	// client_certificate_pem/client_private_key_pem/ca_certificate_pem are
+	// populated only on a token-based (first-time) registration, not on a
+	// cert-based reconnect. The private key is generated fresh per agent and
+	// sent exactly once here — the server never persists it (see
+	// pki.IssueAgentCert and docs/adr/0005-remote-agent-transport-and-registration.md).
 	ClientCertificatePem     []byte `protobuf:"bytes,2,opt,name=client_certificate_pem,json=clientCertificatePem,proto3" json:"client_certificate_pem,omitempty"`
+	ClientPrivateKeyPem      []byte `protobuf:"bytes,5,opt,name=client_private_key_pem,json=clientPrivateKeyPem,proto3" json:"client_private_key_pem,omitempty"`
 	CaCertificatePem         []byte `protobuf:"bytes,3,opt,name=ca_certificate_pem,json=caCertificatePem,proto3" json:"ca_certificate_pem,omitempty"`
 	HeartbeatIntervalSeconds int32  `protobuf:"varint,4,opt,name=heartbeat_interval_seconds,json=heartbeatIntervalSeconds,proto3" json:"heartbeat_interval_seconds,omitempty"`
 	unknownFields            protoimpl.UnknownFields
@@ -583,6 +587,13 @@ func (x *RegisterResponse) GetAgentId() string {
 func (x *RegisterResponse) GetClientCertificatePem() []byte {
 	if x != nil {
 		return x.ClientCertificatePem
+	}
+	return nil
+}
+
+func (x *RegisterResponse) GetClientPrivateKeyPem() []byte {
+	if x != nil {
+		return x.ClientPrivateKeyPem
 	}
 	return nil
 }
@@ -1224,10 +1235,11 @@ const file_boxyagent_v1_agent_proto_rawDesc = "" +
 	"registered\x18\x01 \x01(\v2\x1e.boxyagent.v1.RegisterResponseH\x00R\n" +
 	"registered\x121\n" +
 	"\acommand\x18\x02 \x01(\v2\x15.boxyagent.v1.CommandH\x00R\acommandB\t\n" +
-	"\apayload\"\xcf\x01\n" +
+	"\apayload\"\x84\x02\n" +
 	"\x10RegisterResponse\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x124\n" +
-	"\x16client_certificate_pem\x18\x02 \x01(\fR\x14clientCertificatePem\x12,\n" +
+	"\x16client_certificate_pem\x18\x02 \x01(\fR\x14clientCertificatePem\x123\n" +
+	"\x16client_private_key_pem\x18\x05 \x01(\fR\x13clientPrivateKeyPem\x12,\n" +
 	"\x12ca_certificate_pem\x18\x03 \x01(\fR\x10caCertificatePem\x12<\n" +
 	"\x1aheartbeat_interval_seconds\x18\x04 \x01(\x05R\x18heartbeatIntervalSeconds\"\xe6\x02\n" +
 	"\aCommand\x12\x1d\n" +

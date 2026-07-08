@@ -68,9 +68,13 @@ message ServerMessage {
 
 message RegisterResponse {
   string agent_id = 1;
-  // client_certificate_pem/ca_certificate_pem are populated only on a
-  // token-based (first-time) registration, not on a cert-based reconnect.
+  // client_certificate_pem/client_private_key_pem/ca_certificate_pem are
+  // populated only on a token-based (first-time) registration, not on a
+  // cert-based reconnect. The private key is generated fresh per agent and
+  // sent exactly once here — the server never persists it (see
+  // pki.IssueAgentCert and docs/adr/0005-remote-agent-transport-and-registration.md).
   bytes client_certificate_pem = 2;
+  bytes client_private_key_pem = 5;
   bytes ca_certificate_pem = 3;
   int32 heartbeat_interval_seconds = 4;
 }
