@@ -127,9 +127,18 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	}
 	doneAgent(fmt.Sprintf("%d drivers", len(drivers)))
 
-	// Use AgentProvisioner to route pool operations through the agent.
+	// The registry starts with just the embedded agent; remote agents
+	// register themselves here too once they connect (see
+	// docs/adr/0005-remote-agent-transport-and-registration.md).
+	agentRegistry := pool.NewAgentRegistry()
+	if err := agentRegistry.Register(embeddedAgent); err != nil {
+		failAgent(err.Error())
+		return fmt.Errorf("register embedded agent: %w", err)
+	}
+
+	// Use AgentProvisioner to route pool operations through the registry.
 	provisioner := &pool.AgentProvisioner{
-		Agent:     embeddedAgent,
+		Registry:  agentRegistry,
 		Specs:     specsMap,
 		Providers: providersMap,
 	}
