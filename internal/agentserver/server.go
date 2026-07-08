@@ -6,6 +6,7 @@ package agentserver
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -73,6 +74,44 @@ func (s *Server) log() *slog.Logger {
 		return s.logger
 	}
 	return slog.Default()
+}
+
+// ListAgents returns a snapshot of every registered agent, for the
+// GET /api/v1/agents endpoint and `boxy agent list`.
+func (s *Server) ListAgents() []pool.AgentSummary {
+	return s.registry.List()
+}
+
+// DefaultTokenTTL is how long a freshly minted registration token stays
+// redeemable when no explicit TTL is given.
+const DefaultTokenTTL = time.Hour
+
+// MintToken creates a new single-use registration token: the raw secret is
+// returned exactly once (for the operator to hand to `boxy agent serve
+// --token ...`) and only its hash is persisted.
+func MintToken(ctx context.Context, st store.Store, label string, ttl time.Duration) (raw string, tok model.AgentRegistrationToken, err error) {
+	if ttl <= 0 {
+		ttl = DefaultTokenTTL
+	}
+
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		return "", model.AgentRegistrationToken{}, fmt.Errorf("generate token secret: %w", err)
+	}
+	raw = hex.EncodeToString(secret)
+
+	now := time.Now().UTC()
+	tok = model.AgentRegistrationToken{
+		ID:        model.AgentTokenID(uuid.NewString()),
+		TokenHash: hashToken(raw),
+		CreatedAt: now,
+		ExpiresAt: now.Add(ttl),
+		Label:     label,
+	}
+	if err := st.PutAgentToken(ctx, tok); err != nil {
+		return "", model.AgentRegistrationToken{}, fmt.Errorf("persist token: %w", err)
+	}
+	return raw, tok, nil
 }
 
 // Connect implements the AgentTransportService.Connect bidi-streaming RPC.

@@ -198,7 +198,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		doneTLS("private CA + mTLS")
 	}
 
-	srv := server.New(st, sandboxMgr, poolMgr, listenAddr, uiEnabled)
+	srv := server.New(st, sandboxMgr, poolMgr, agentSrv, listenAddr, uiEnabled)
 
 	g, ctx := errgroup.WithContext(ctx)
 	g.Go(func() error {

@@ -154,10 +154,10 @@ func supportsProvider(a agentsdk.Agent, provider providersdk.Type) bool {
 // AgentSummary is a read-only snapshot of a registered agent, for
 // `GET /api/v1/agents` and `boxy agent list`.
 type AgentSummary struct {
-	ID        string
-	Name      string
-	Providers []providersdk.Type
-	Available bool
+	ID        string             `json:"id"`
+	Name      string             `json:"name"`
+	Providers []providersdk.Type `json:"providers"`
+	Available bool               `json:"available"`
 }
 
 // List returns a snapshot of every registered agent.

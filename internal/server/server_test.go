@@ -15,7 +15,7 @@ func TestServer_healthz(t *testing.T) {
 	t.Parallel()
 
 	st := store.NewMemoryStore()
-	srv := server.New(st, sandbox.New(st, nil), nil, ":0", false)
+	srv := server.New(st, sandbox.New(st, nil), nil, nil, ":0", false)
 	_ = srv // we test via httptest below
 
 	// Use httptest to avoid binding a real port.
@@ -36,7 +36,7 @@ func TestServer_start_shutdown(t *testing.T) {
 	t.Parallel()
 
 	st := store.NewMemoryStore()
-	srv := server.New(st, sandbox.New(st, nil), nil, "127.0.0.1:0", false)
+	srv := server.New(st, sandbox.New(st, nil), nil, nil, "127.0.0.1:0", false)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)

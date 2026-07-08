@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/internal/sandbox"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/store"
@@ -26,11 +27,20 @@ type PoolMaintenance interface {
 	Fill(ctx context.Context, poolName model.PoolName) (model.Pool, error)
 }
 
+// AgentAdmin exposes operator actions against the agent transport for API
+// handlers — a narrow seam (same pattern as PoolMaintenance) implemented by
+// internal/agentserver.Server.
+type AgentAdmin interface {
+	ListAgents() []pool.AgentSummary
+	Revoke(ctx context.Context, agentID, reason string) error
+}
+
 // Server is the HTTP server for the Boxy REST API and optional web UI.
 type Server struct {
 	store           store.Store
 	sandboxMgr      *sandbox.Manager
 	poolMaintenance PoolMaintenance
+	agentAdmin      AgentAdmin
 	uiEnabled       bool
 	addr            string
 	srv             *http.Server
@@ -38,11 +48,12 @@ type Server struct {
 
 // New creates a Server that will listen on addr.
 // If uiEnabled is true, the web dashboard is served at /.
-func New(st store.Store, sm *sandbox.Manager, pm PoolMaintenance, addr string, uiEnabled bool) *Server {
+func New(st store.Store, sm *sandbox.Manager, pm PoolMaintenance, aa AgentAdmin, addr string, uiEnabled bool) *Server {
 	s := &Server{
 		store:           st,
 		sandboxMgr:      sm,
 		poolMaintenance: pm,
+		agentAdmin:      aa,
 		uiEnabled:       uiEnabled,
 		addr:            addr,
 	}
