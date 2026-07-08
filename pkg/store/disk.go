@@ -23,11 +23,12 @@ type DiskStore struct {
 }
 
 type diskState struct {
-	Pools                  map[model.PoolName]model.Pool                     `json:"pools"`
-	Resources              map[model.ResourceID]model.Resource               `json:"resources"`
-	Sandboxes              map[model.SandboxID]model.Sandbox                 `json:"sandboxes"`
-	AgentTokens            map[model.AgentTokenID]model.AgentRegistrationToken `json:"agent_tokens"`
+	Pools                  map[model.PoolName]model.Pool                        `json:"pools"`
+	Resources              map[model.ResourceID]model.Resource                  `json:"resources"`
+	Sandboxes              map[model.SandboxID]model.Sandbox                    `json:"sandboxes"`
+	AgentTokens            map[model.AgentTokenID]model.AgentRegistrationToken  `json:"agent_tokens"`
 	RevokedAgentIdentities map[model.AgentIdentityID]model.RevokedAgentIdentity `json:"revoked_agent_identities"`
+	AgentIdentities        map[string]model.AgentIdentity                       `json:"agent_identities"`
 }
 
 func NewDiskStore(path string) (*DiskStore, error) {
@@ -42,6 +43,7 @@ func NewDiskStore(path string) (*DiskStore, error) {
 			Sandboxes:              make(map[model.SandboxID]model.Sandbox),
 			AgentTokens:            make(map[model.AgentTokenID]model.AgentRegistrationToken),
 			RevokedAgentIdentities: make(map[model.AgentIdentityID]model.RevokedAgentIdentity),
+			AgentIdentities:        make(map[string]model.AgentIdentity),
 		},
 	}
 	if err := s.load(); err != nil {
@@ -82,6 +84,9 @@ func (s *DiskStore) load() error {
 	}
 	if st.RevokedAgentIdentities == nil {
 		st.RevokedAgentIdentities = make(map[model.AgentIdentityID]model.RevokedAgentIdentity)
+	}
+	if st.AgentIdentities == nil {
+		st.AgentIdentities = make(map[string]model.AgentIdentity)
 	}
 	s.data = st
 	return nil
@@ -310,4 +315,24 @@ func (s *DiskStore) ListRevokedAgentIdentities(_ context.Context) ([]model.Revok
 		out = append(out, rev)
 	}
 	return out, nil
+}
+
+func (s *DiskStore) PutAgentIdentity(_ context.Context, identity model.AgentIdentity) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if identity.AgentID == "" {
+		return fmt.Errorf("agent id is required")
+	}
+	s.data.AgentIdentities[identity.AgentID] = identity
+	return s.persistLocked()
+}
+
+func (s *DiskStore) GetAgentIdentity(_ context.Context, agentID string) (model.AgentIdentity, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	identity, ok := s.data.AgentIdentities[agentID]
+	if !ok {
+		return model.AgentIdentity{}, ErrNotFound
+	}
+	return identity, nil
 }

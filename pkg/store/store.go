@@ -45,6 +45,12 @@ type Store interface {
 	IsAgentIdentityRevoked(ctx context.Context, certSerial string) (bool, error)
 	ListRevokedAgentIdentities(ctx context.Context) ([]model.RevokedAgentIdentity, error)
 
+	// Agent identities record which cert serial an agent ID currently
+	// holds, so `boxy agent revoke <id>` can populate a serial-keyed
+	// RevokedAgentIdentity even for a currently-disconnected agent.
+	PutAgentIdentity(ctx context.Context, identity model.AgentIdentity) error
+	GetAgentIdentity(ctx context.Context, agentID string) (model.AgentIdentity, error)
+
 	// List operations return all entities of a given type.
 	// An empty store returns a non-nil, zero-length slice.
 	ListPools(ctx context.Context) ([]model.Pool, error)

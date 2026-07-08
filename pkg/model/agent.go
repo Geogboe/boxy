@@ -29,6 +29,17 @@ func (t AgentRegistrationToken) Expired(now time.Time) bool {
 	return now.After(t.ExpiresAt)
 }
 
+// AgentIdentity records which client certificate serial is currently
+// associated with a registered agent, so an operator can revoke an agent
+// by ID (`boxy agent revoke <id>`) even while it's disconnected — without
+// this, the server would only learn an agent's cert serial while it has a
+// live connection open.
+type AgentIdentity struct {
+	AgentID    string    `json:"agent_id" yaml:"agent_id"`
+	CertSerial string    `json:"cert_serial" yaml:"cert_serial"`
+	IssuedAt   time.Time `json:"issued_at" yaml:"issued_at"`
+}
+
 // AgentIdentityID identifies a revoked-agent-identity record.
 type AgentIdentityID string
 

@@ -428,6 +428,29 @@ func testStoreAgentTokensAndRevocation(t *testing.T, newStore storeFactory) {
 			t.Fatalf("ListRevokedAgentIdentities = %+v, want one entry for agent-a", list)
 		}
 	})
+
+	t.Run("AgentIdentity_roundtrip_and_not_found", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		s := newStore(t)
+
+		if _, err := s.GetAgentIdentity(ctx, "agent-a"); err != store.ErrNotFound {
+			t.Fatalf("GetAgentIdentity (unknown) error = %v, want ErrNotFound", err)
+		}
+
+		want := model.AgentIdentity{AgentID: "agent-a", CertSerial: "serial-123", IssuedAt: time.Now().UTC()}
+		if err := s.PutAgentIdentity(ctx, want); err != nil {
+			t.Fatalf("PutAgentIdentity: %v", err)
+		}
+
+		got, err := s.GetAgentIdentity(ctx, "agent-a")
+		if err != nil {
+			t.Fatalf("GetAgentIdentity: %v", err)
+		}
+		if got.CertSerial != "serial-123" {
+			t.Fatalf("CertSerial = %q, want serial-123", got.CertSerial)
+		}
+	})
 }
 
 var memoryFactory = func(t *testing.T) store.Store {

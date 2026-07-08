@@ -17,6 +17,7 @@ type MemoryStore struct {
 	sandboxes              map[model.SandboxID]model.Sandbox
 	agentTokens            map[model.AgentTokenID]model.AgentRegistrationToken
 	revokedAgentIdentities map[model.AgentIdentityID]model.RevokedAgentIdentity
+	agentIdentities        map[string]model.AgentIdentity
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -26,6 +27,7 @@ func NewMemoryStore() *MemoryStore {
 		sandboxes:              make(map[model.SandboxID]model.Sandbox),
 		agentTokens:            make(map[model.AgentTokenID]model.AgentRegistrationToken),
 		revokedAgentIdentities: make(map[model.AgentIdentityID]model.RevokedAgentIdentity),
+		agentIdentities:        make(map[string]model.AgentIdentity),
 	}
 }
 
@@ -228,4 +230,24 @@ func (s *MemoryStore) ListRevokedAgentIdentities(_ context.Context) ([]model.Rev
 		out = append(out, rev)
 	}
 	return out, nil
+}
+
+func (s *MemoryStore) PutAgentIdentity(_ context.Context, identity model.AgentIdentity) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if identity.AgentID == "" {
+		return fmt.Errorf("agent id is required")
+	}
+	s.agentIdentities[identity.AgentID] = identity
+	return nil
+}
+
+func (s *MemoryStore) GetAgentIdentity(_ context.Context, agentID string) (model.AgentIdentity, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	identity, ok := s.agentIdentities[agentID]
+	if !ok {
+		return model.AgentIdentity{}, ErrNotFound
+	}
+	return identity, nil
 }
