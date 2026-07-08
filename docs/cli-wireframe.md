@@ -102,14 +102,21 @@ boxy
 │   │   $ boxy sandbox get sb-a1b2c3
 │   │     {"id":"sb-a1b2c3","name":"pentest-lab","status":"ready",...}
 │   │
-│   └── delete <id>                              Delete a sandbox
-│       └── --no-wait                            Return after delete request is accepted
+│   ├── delete <id>                              Delete a sandbox
+│   │   └── --no-wait                            Return after delete request is accepted
+│   │
+│   │   $ boxy sandbox delete sb-a1b2c3
+│   │     deleted sandbox sb-a1b2c3
+│   │
+│   │   $ boxy sandbox delete sb-a1b2c3 --no-wait
+│   │     accepted deletion of sandbox sb-a1b2c3
+│   │
+│   └── extend <id> <duration>                   Push a sandbox's auto-destroy expiry out
+│                                                   (only works if policies.auto_destroy_after
+│                                                    was set at creation; fails with 409 otherwise)
 │
-│       $ boxy sandbox delete sb-a1b2c3
-│         deleted sandbox sb-a1b2c3
-│
-│       $ boxy sandbox delete sb-a1b2c3 --no-wait
-│         accepted deletion of sandbox sb-a1b2c3
+│       $ boxy sandbox extend sb-a1b2c3 15m
+│         extended sandbox sb-a1b2c3, expires at 2026-07-08T14:00:00Z
 │
 │
 ├── skills                                     Install bundled coding-agent skills
@@ -153,7 +160,9 @@ boxy
 │   │       $ boxy debug pool fill win-vm
 │   │         filled pool win-vm
 │   │
-│   └── provider                               Exercise devfactory provider
+│   └── provider                               Exercise devfactory provider (devtools build tag only —
+│       │                                        absent from release binaries; build with
+│       │                                        `-tags devtools` to get this subcommand)
 │       ├── --data-dir <path>                    (default .devfactory/)
 │       ├── --profile container|vm|share         (default container)
 │       ├── create [--label key=value ...]
