@@ -4,13 +4,30 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"time"
 
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/resourcepool"
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
-var ErrSandboxDeleting = errors.New("sandbox is deleting")
+var (
+	ErrSandboxDeleting = errors.New("sandbox is deleting")
+
+	// ErrNoExpiry is returned by RequestExtend when the sandbox has no
+	// Policies.AutoDestroyAfter-derived expiry to extend.
+	ErrNoExpiry = errors.New("sandbox has no expiry to extend (policies.auto_destroy_after not set)")
+)
+
+// Clock abstracts time so expiry computation is deterministic in tests.
+type Clock interface {
+	Now() time.Time
+}
+
+type realClock struct{}
+
+func (realClock) Now() time.Time { return time.Now().UTC() }
 
 // Manager creates sandboxes and consumes resources from pools.
 //
@@ -18,12 +35,44 @@ var ErrSandboxDeleting = errors.New("sandbox is deleting")
 type Manager struct {
 	store     store.Store
 	allocator SandboxAllocator
+	clock     Clock
 }
 
 // New creates a Manager. allocator may be nil — if so, allocation-time hooks
 // are skipped and resource Properties are not updated at allocation time.
 func New(s store.Store, allocator SandboxAllocator) *Manager {
-	return &Manager{store: s, allocator: allocator}
+	return &Manager{store: s, allocator: allocator, clock: realClock{}}
+}
+
+// SetClock overrides the manager's time source. Used by tests.
+func (m *Manager) SetClock(c Clock) {
+	if c != nil {
+		m.clock = c
+	}
+}
+
+func (m *Manager) now() time.Time {
+	if m.clock == nil {
+		return time.Now().UTC()
+	}
+	return m.clock.Now()
+}
+
+// expiresAt computes an absolute expiry from policies.AutoDestroyAfter,
+// relative to now. Returns nil (no expiry) if the policy is unset.
+func (m *Manager) expiresAt(policies model.SandboxPolicies) (*time.Time, error) {
+	if policies.AutoDestroyAfter == "" {
+		return nil, nil
+	}
+	d, err := time.ParseDuration(policies.AutoDestroyAfter)
+	if err != nil {
+		return nil, fmt.Errorf("policies.auto_destroy_after %q: %w", policies.AutoDestroyAfter, err)
+	}
+	if d <= 0 {
+		return nil, fmt.Errorf("policies.auto_destroy_after %q must be positive", policies.AutoDestroyAfter)
+	}
+	t := m.now().Add(d)
+	return &t, nil
 }
 
 // Create creates an empty sandbox request.
@@ -48,12 +97,17 @@ func (m *Manager) CreateRequested(
 	if err != nil {
 		return model.Sandbox{}, fmt.Errorf("new sandbox id: %w", err)
 	}
+	expiresAt, err := m.expiresAt(policies)
+	if err != nil {
+		return model.Sandbox{}, err
+	}
 	sb := model.Sandbox{
-		ID:       sbID,
-		Name:     sbName,
-		Policies: policies,
-		Status:   model.SandboxStatusPending,
-		Requests: append([]model.ResourceRequest(nil), requests...),
+		ID:        sbID,
+		Name:      sbName,
+		Policies:  policies,
+		Status:    model.SandboxStatusPending,
+		Requests:  append([]model.ResourceRequest(nil), requests...),
+		ExpiresAt: expiresAt,
 	}
 	if err := m.store.CreateSandbox(ctx, sb); err != nil {
 		return model.Sandbox{}, fmt.Errorf("create sandbox: %w", err)
@@ -131,9 +185,7 @@ func (m *Manager) AddFromPool(
 				if res.Properties == nil {
 					res.Properties = make(map[string]any)
 				}
-				for k, v := range extra {
-					res.Properties[k] = v
-				}
+				maps.Copy(res.Properties, extra)
 			}
 		}
 		res.State = model.ResourceStateAllocated
@@ -207,6 +259,10 @@ func (m *Manager) CreateFromPool(
 	if err != nil {
 		return model.Sandbox{}, fmt.Errorf("new sandbox id: %w", err)
 	}
+	expiresAt, err := m.expiresAt(policies)
+	if err != nil {
+		return model.Sandbox{}, err
+	}
 
 	sb := model.Sandbox{
 		ID:        sbID,
@@ -214,6 +270,7 @@ func (m *Manager) CreateFromPool(
 		Policies:  policies,
 		Status:    model.SandboxStatusReady,
 		Resources: resourceIDs(selected),
+		ExpiresAt: expiresAt,
 	}
 	if err := m.store.CreateSandbox(ctx, sb); err != nil {
 		return model.Sandbox{}, fmt.Errorf("create sandbox: %w", err)
@@ -236,9 +293,7 @@ func (m *Manager) CreateFromPool(
 				if res.Properties == nil {
 					res.Properties = make(map[string]any)
 				}
-				for k, v := range extra {
-					res.Properties[k] = v
-				}
+				maps.Copy(res.Properties, extra)
 			}
 		}
 		res.State = model.ResourceStateAllocated
@@ -274,6 +329,44 @@ func (m *Manager) RequestDelete(ctx context.Context, sbID model.SandboxID) (mode
 	sb.Error = ""
 	if err := m.store.PutSandbox(ctx, sb); err != nil {
 		return model.Sandbox{}, fmt.Errorf("mark sandbox %q deleting: %w", sb.ID, err)
+	}
+	return sb, nil
+}
+
+// RequestExtend pushes a sandbox's automatic-expiry deadline further out by
+// extension, measured from its current expiry (not from now), so extending
+// twice compounds rather than resetting the clock. Fails if the sandbox has
+// no expiry to extend (Policies.AutoDestroyAfter was never set) or is
+// already being deleted.
+func (m *Manager) RequestExtend(ctx context.Context, sbID model.SandboxID, extension time.Duration) (model.Sandbox, error) {
+	if m == nil {
+		return model.Sandbox{}, fmt.Errorf("sandbox manager is nil")
+	}
+	if m.store == nil {
+		return model.Sandbox{}, fmt.Errorf("store is nil")
+	}
+	if sbID == "" {
+		return model.Sandbox{}, fmt.Errorf("sandbox id is required")
+	}
+	if extension <= 0 {
+		return model.Sandbox{}, fmt.Errorf("extension duration must be positive")
+	}
+
+	sb, err := m.store.GetSandbox(ctx, sbID)
+	if err != nil {
+		return model.Sandbox{}, fmt.Errorf("get sandbox: %w", err)
+	}
+	if sb.Status == model.SandboxStatusDeleting {
+		return model.Sandbox{}, ErrSandboxDeleting
+	}
+	if sb.ExpiresAt == nil {
+		return model.Sandbox{}, ErrNoExpiry
+	}
+
+	newExpiry := sb.ExpiresAt.Add(extension)
+	sb.ExpiresAt = &newExpiry
+	if err := m.store.PutSandbox(ctx, sb); err != nil {
+		return model.Sandbox{}, fmt.Errorf("extend sandbox %q: %w", sb.ID, err)
 	}
 	return sb, nil
 }

@@ -52,6 +52,7 @@ func newSandboxCommand() *cobra.Command {
 	cmd.AddCommand(newSandboxListCommand(serverAddr))
 	cmd.AddCommand(newSandboxGetCommand(serverAddr))
 	cmd.AddCommand(newSandboxDeleteCommand(serverAddr))
+	cmd.AddCommand(newSandboxExtendCommand(serverAddr))
 
 	return cmd
 }

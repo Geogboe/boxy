@@ -22,6 +22,7 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/sandboxes/{id}", s.handleGetSandbox)
 	mux.HandleFunc("POST /api/v1/sandboxes", s.handleCreateSandbox)
 	mux.HandleFunc("DELETE /api/v1/sandboxes/{id}", s.handleDeleteSandbox)
+	mux.HandleFunc("POST /api/v1/sandboxes/{id}/extend", s.handleExtendSandbox)
 }
 
 // handleListPools returns all pools as JSON.

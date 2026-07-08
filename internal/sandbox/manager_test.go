@@ -193,6 +193,156 @@ func TestManager_AddFromPool_RejectsDeletingSandboxBeforeConsumingResource(t *te
 	}
 }
 
+type fixedClock struct{ t time.Time }
+
+func (c fixedClock) Now() time.Time { return c.t }
+
+func TestManager_CreateRequested_ComputesExpiryFromAutoDestroyAfter(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+
+	mgr := New(st, nil)
+	now := time.Unix(1000, 0).UTC()
+	mgr.SetClock(fixedClock{t: now})
+
+	sb, err := mgr.CreateRequested(ctx, "demo", model.SandboxPolicies{AutoDestroyAfter: "30m"}, nil)
+	if err != nil {
+		t.Fatalf("CreateRequested: %v", err)
+	}
+	if sb.ExpiresAt == nil {
+		t.Fatal("expected ExpiresAt to be set")
+	}
+	want := now.Add(30 * time.Minute)
+	if !sb.ExpiresAt.Equal(want) {
+		t.Fatalf("ExpiresAt = %v, want %v", sb.ExpiresAt, want)
+	}
+
+	stored, err := st.GetSandbox(ctx, sb.ID)
+	if err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if stored.ExpiresAt == nil || !stored.ExpiresAt.Equal(want) {
+		t.Fatalf("stored ExpiresAt = %v, want %v", stored.ExpiresAt, want)
+	}
+}
+
+func TestManager_CreateRequested_NoAutoDestroyAfterMeansNoExpiry(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+
+	sb, err := New(st, nil).CreateRequested(ctx, "demo", model.SandboxPolicies{}, nil)
+	if err != nil {
+		t.Fatalf("CreateRequested: %v", err)
+	}
+	if sb.ExpiresAt != nil {
+		t.Fatalf("ExpiresAt = %v, want nil", sb.ExpiresAt)
+	}
+}
+
+func TestManager_CreateRequested_RejectsInvalidAutoDestroyAfter(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+
+	_, err := New(st, nil).CreateRequested(ctx, "demo", model.SandboxPolicies{AutoDestroyAfter: "not-a-duration"}, nil)
+	if err == nil {
+		t.Fatal("expected error for invalid auto_destroy_after")
+	}
+}
+
+func TestManager_CreateRequested_RejectsNonPositiveAutoDestroyAfter(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+
+	_, err := New(st, nil).CreateRequested(ctx, "demo", model.SandboxPolicies{AutoDestroyAfter: "-5m"}, nil)
+	if err == nil {
+		t.Fatal("expected error for non-positive auto_destroy_after")
+	}
+}
+
+func TestManager_RequestExtend_PushesExpiryFromCurrentDeadline(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+
+	mgr := New(st, nil)
+	now := time.Unix(1000, 0).UTC()
+	mgr.SetClock(fixedClock{t: now})
+
+	sb, err := mgr.CreateRequested(ctx, "demo", model.SandboxPolicies{AutoDestroyAfter: "10m"}, nil)
+	if err != nil {
+		t.Fatalf("CreateRequested: %v", err)
+	}
+	originalExpiry := *sb.ExpiresAt
+
+	extended, err := mgr.RequestExtend(ctx, sb.ID, 15*time.Minute)
+	if err != nil {
+		t.Fatalf("RequestExtend: %v", err)
+	}
+	want := originalExpiry.Add(15 * time.Minute)
+	if extended.ExpiresAt == nil || !extended.ExpiresAt.Equal(want) {
+		t.Fatalf("ExpiresAt = %v, want %v", extended.ExpiresAt, want)
+	}
+
+	stored, err := st.GetSandbox(ctx, sb.ID)
+	if err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if stored.ExpiresAt == nil || !stored.ExpiresAt.Equal(want) {
+		t.Fatalf("stored ExpiresAt = %v, want %v", stored.ExpiresAt, want)
+	}
+}
+
+func TestManager_RequestExtend_FailsWithoutExistingExpiry(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+
+	sb, err := New(st, nil).CreateRequested(ctx, "demo", model.SandboxPolicies{}, nil)
+	if err != nil {
+		t.Fatalf("CreateRequested: %v", err)
+	}
+
+	_, err = New(st, nil).RequestExtend(ctx, sb.ID, 10*time.Minute)
+	if err != ErrNoExpiry {
+		t.Fatalf("RequestExtend error = %v, want ErrNoExpiry", err)
+	}
+}
+
+func TestManager_RequestExtend_RejectsDeletingSandbox(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+
+	mgr := New(st, nil)
+	sb, err := mgr.CreateRequested(ctx, "demo", model.SandboxPolicies{AutoDestroyAfter: "10m"}, nil)
+	if err != nil {
+		t.Fatalf("CreateRequested: %v", err)
+	}
+	if _, err := mgr.RequestDelete(ctx, sb.ID); err != nil {
+		t.Fatalf("RequestDelete: %v", err)
+	}
+
+	_, err = mgr.RequestExtend(ctx, sb.ID, 10*time.Minute)
+	if err != ErrSandboxDeleting {
+		t.Fatalf("RequestExtend error = %v, want ErrSandboxDeleting", err)
+	}
+}
+
+func TestManager_RequestExtend_RejectsNonPositiveExtension(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+
+	mgr := New(st, nil)
+	sb, err := mgr.CreateRequested(ctx, "demo", model.SandboxPolicies{AutoDestroyAfter: "10m"}, nil)
+	if err != nil {
+		t.Fatalf("CreateRequested: %v", err)
+	}
+
+	if _, err := mgr.RequestExtend(ctx, sb.ID, 0); err == nil {
+		t.Fatal("expected error for zero extension")
+	}
+	if _, err := mgr.RequestExtend(ctx, sb.ID, -time.Minute); err == nil {
+		t.Fatal("expected error for negative extension")
+	}
+}
+
 func TestManager_RequestDelete_MarksDeletingAndIsIdempotent(t *testing.T) {
 	st := store.NewMemoryStore()
 	ctx := context.Background()

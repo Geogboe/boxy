@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/internal/sandbox"
@@ -483,6 +484,106 @@ func TestAPI_DeleteSandbox_notfound(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", w.Code)
+	}
+}
+
+func TestAPI_ExtendSandbox_pushesExpiryOut(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	original := time.Unix(1000, 0).UTC()
+	_ = st.CreateSandbox(ctx, model.Sandbox{ID: "sb-1", Name: "to-extend", Status: model.SandboxStatusReady, ExpiresAt: &original})
+
+	mux := server.NewTestMux(st, sandbox.New(st, nil), false)
+	body := bytes.NewBufferString(`{"duration":"15m"}`)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/extend", body)
+	r.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var got model.Sandbox
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	want := original.Add(15 * time.Minute)
+	if got.ExpiresAt == nil || !got.ExpiresAt.Equal(want) {
+		t.Fatalf("ExpiresAt = %v, want %v", got.ExpiresAt, want)
+	}
+}
+
+func TestAPI_ExtendSandbox_notFound(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	mux := server.NewTestMux(st, sandbox.New(st, nil), false)
+	body := bytes.NewBufferString(`{"duration":"15m"}`)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/nonexistent/extend", body)
+	r.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAPI_ExtendSandbox_noExpiryIsConflict(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	_ = st.CreateSandbox(ctx, model.Sandbox{ID: "sb-1", Name: "no-expiry", Status: model.SandboxStatusReady})
+
+	mux := server.NewTestMux(st, sandbox.New(st, nil), false)
+	body := bytes.NewBufferString(`{"duration":"15m"}`)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/extend", body)
+	r.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAPI_ExtendSandbox_deletingIsConflict(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	expiry := time.Unix(1000, 0).UTC()
+	_ = st.CreateSandbox(ctx, model.Sandbox{ID: "sb-1", Name: "deleting", Status: model.SandboxStatusDeleting, ExpiresAt: &expiry})
+
+	mux := server.NewTestMux(st, sandbox.New(st, nil), false)
+	body := bytes.NewBufferString(`{"duration":"15m"}`)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/extend", body)
+	r.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAPI_ExtendSandbox_invalidDuration(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	expiry := time.Unix(1000, 0).UTC()
+	_ = st.CreateSandbox(ctx, model.Sandbox{ID: "sb-1", Name: "to-extend", Status: model.SandboxStatusReady, ExpiresAt: &expiry})
+
+	mux := server.NewTestMux(st, sandbox.New(st, nil), false)
+	for _, duration := range []string{"not-a-duration", "-15m", "0m", ""} {
+		body := bytes.NewBufferString(`{"duration":"` + duration + `"}`)
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/extend", body)
+		r.Header.Set("Content-Type", "application/json")
+		mux.ServeHTTP(w, r)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("duration %q: status = %d, want 400; body: %s", duration, w.Code, w.Body.String())
+		}
 	}
 }
 
