@@ -22,9 +22,7 @@ type Config struct {
 	Providers []providersdk.Instance `json:"providers" yaml:"providers"`
 	Pools     []PoolSpec             `json:"pools,omitempty" yaml:"pools,omitempty"`
 
-	Server ServerSpec `json:"server,omitempty" yaml:"server,omitempty"`
-
-	Agents []AgentSpec `json:"agents,omitempty" yaml:"agents,omitempty"`
+	Server ServerSpec `json:"server,omitzero" yaml:"server,omitempty"`
 }
 
 type ServerSpec struct {
@@ -40,11 +38,6 @@ type ServerSpec struct {
 // Returns true when UI is nil (unset) or explicitly true.
 func (s ServerSpec) UIEnabled() bool {
 	return s.UI == nil || *s.UI
-}
-
-type AgentSpec struct {
-	Name      string   `json:"name" yaml:"name"`
-	Providers []string `json:"providers,omitempty" yaml:"providers,omitempty"`
 }
 
 func LoadFile(path string) (Config, error) {
