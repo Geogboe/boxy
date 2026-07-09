@@ -1,0 +1,143 @@
+syntax = "proto3";
+
+package boxyagent.v1;
+
+import "google/protobuf/empty.proto";
+
+option go_package = "github.com/Geogboe/boxy/pkg/agentproto/boxyagentv1;boxyagentv1";
+
+// AgentTransport is the single service a remote boxy agent uses to
+// communicate with a boxy server. The agent dials out and opens exactly one
+// long-lived bidirectional stream per connection (NAT/firewall-friendly);
+// the server pushes Commands down that same stream and reads CommandResults
+// back. See docs/adr/0005-remote-agent-transport-and-registration.md.
+service AgentTransportService {
+  rpc Connect(stream AgentMessage) returns (stream ServerMessage);
+}
+
+// ---- Agent -> Server ----
+
+message AgentMessage {
+  oneof payload {
+    RegisterRequest register = 1;  // sent once, first frame only
+    Heartbeat heartbeat = 2;       // sent periodically
+    CommandResult result = 3;      // sent in response to a pushed Command
+  }
+}
+
+message RegisterRequest {
+  // registration_token is the single-use bootstrap token minted via
+  // `boxy agent token create`. Empty on a cert-based reconnect, where the
+  // mTLS handshake has already authenticated the agent.
+  string registration_token = 1;
+  string agent_name = 2;
+  repeated string provider_types = 3;
+  string agent_version = 4;
+}
+
+message Heartbeat {
+  string agent_id = 1;
+  int64 unix_time = 2;
+  repeated string provider_types = 3;  // re-advertised in case of runtime capability change
+}
+
+message CommandResult {
+  string command_id = 1;  // correlates back to Command.command_id
+  oneof outcome {
+    ResourceResult resource = 2;
+    ResourceStatusResult status = 3;
+    OperationResult operation = 4;
+    google.protobuf.Empty deleted = 5;
+    AllocateResult allocate = 6;
+    AgentError error = 7;
+  }
+}
+
+message AgentError {
+  string message = 1;
+}
+
+// ---- Server -> Agent ----
+
+message ServerMessage {
+  oneof payload {
+    RegisterResponse registered = 1;  // ack for RegisterRequest
+    Command command = 2;
+  }
+}
+
+message RegisterResponse {
+  string agent_id = 1;
+  // client_certificate_pem/client_private_key_pem/ca_certificate_pem are
+  // populated only on a token-based (first-time) registration, not on a
+  // cert-based reconnect. The private key is generated fresh per agent and
+  // sent exactly once here — the server never persists it (see
+  // pki.IssueAgentCert and docs/adr/0005-remote-agent-transport-and-registration.md).
+  bytes client_certificate_pem = 2;
+  bytes client_private_key_pem = 5;
+  bytes ca_certificate_pem = 3;
+  int32 heartbeat_interval_seconds = 4;
+}
+
+message Command {
+  string command_id = 1;  // server-generated correlation id
+  string provider_type = 2;
+  oneof op {
+    CreateCommand create = 3;
+    ReadCommand read = 4;
+    UpdateCommand update = 5;
+    DeleteCommand delete = 6;
+    AllocateCommand allocate = 7;
+  }
+}
+
+// config_json/operation_json carry providersdk.Driver's `cfg any` /
+// `Operation interface{}` across the wire as opaque, already-JSON-encoded
+// bytes rather than typed proto messages, preserving the existing
+// per-driver-opaque-config contract instead of coupling the wire schema to
+// every current and future driver.
+message CreateCommand {
+  bytes config_json = 1;
+}
+
+message ReadCommand {
+  string resource_id = 1;
+}
+
+message UpdateCommand {
+  string resource_id = 1;
+  bytes operation_json = 2;
+}
+
+message DeleteCommand {
+  string resource_id = 1;
+}
+
+message AllocateCommand {
+  string resource_id = 1;
+}
+
+message ResourceResult {
+  string id = 1;
+  map<string, string> connection_info = 2;
+  map<string, string> metadata = 3;
+}
+
+message ResourceStatusResult {
+  string id = 1;
+  string state = 2;
+}
+
+message OperationResult {
+  map<string, string> outputs = 1;
+}
+
+// properties_json carries providersdk.Driver.Allocate's `map[string]any`
+// result as opaque JSON bytes rather than a protobuf map, since a protobuf
+// map requires a single uniform value type and the Allocate contract does
+// not constrain property values to strings (today's drivers happen to only
+// produce strings via GuestAccessDetails, but the interface itself allows
+// any JSON-representable value).
+message AllocateResult {
+  bytes properties_json = 1;
+}

@@ -322,8 +322,8 @@ pkg/
 
 ## Status
 
-Early development. See the GitHub issue tracker for design details on upcoming work — notably #37/#62 (remote agent + auth, not yet built) and #124 (an open design discussion on reframing "sandbox" toward a job/scheduler model for long-running and interactive workloads).
+Early development. See the GitHub issue tracker for design details on upcoming work — notably #124 (an open design discussion on reframing "sandbox" toward a job/scheduler model for long-running and interactive workloads).
 
 ## License
 
-TODO
+[Apache License 2.0](LICENSE)

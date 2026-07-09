@@ -26,6 +26,13 @@ type PoolSpec struct {
 	// Config is provider/pool-type-specific configuration.
 	Config map[string]any `json:"config,omitempty" yaml:"config,omitempty"`
 
+	// Agent optionally pins this pool to a specific agent instance ID
+	// (embedded or remote), for when more than one agent supports the
+	// same provider type. Empty means "resolve by provider type across
+	// all available agents" (the only behavior possible before remote
+	// agents existed).
+	Agent string `json:"agent,omitempty" yaml:"agent,omitempty"`
+
 	// Policy is the pool policy surface in config (examples use `policy:`).
 	Policy PoolPolicySpec `json:"policy,omitempty" yaml:"policy,omitempty"`
 
@@ -193,6 +200,10 @@ func (p *PoolSpec) UnmarshalJSON(b []byte) error {
 			if err := json.Unmarshal(raw, &p.Config); err != nil {
 				return fmt.Errorf("config: %w", err)
 			}
+		case "agent":
+			if err := json.Unmarshal(raw, &p.Agent); err != nil {
+				return fmt.Errorf("agent: %w", err)
+			}
 		case "policy":
 			p.policySet = true
 			if err := json.Unmarshal(raw, &p.Policy); err != nil {
@@ -233,6 +244,10 @@ func (p *PoolSpec) UnmarshalYAML(value *yaml.Node) error {
 		case "config":
 			if err := val.Decode(&p.Config); err != nil {
 				return fmt.Errorf("config: %w", err)
+			}
+		case "agent":
+			if err := val.Decode(&p.Agent); err != nil {
+				return fmt.Errorf("agent: %w", err)
 			}
 		case "policy":
 			p.policySet = true

@@ -23,9 +23,12 @@ type DiskStore struct {
 }
 
 type diskState struct {
-	Pools     map[model.PoolName]model.Pool       `json:"pools"`
-	Resources map[model.ResourceID]model.Resource `json:"resources"`
-	Sandboxes map[model.SandboxID]model.Sandbox   `json:"sandboxes"`
+	Pools                  map[model.PoolName]model.Pool                        `json:"pools"`
+	Resources              map[model.ResourceID]model.Resource                  `json:"resources"`
+	Sandboxes              map[model.SandboxID]model.Sandbox                    `json:"sandboxes"`
+	AgentTokens            map[model.AgentTokenID]model.AgentRegistrationToken  `json:"agent_tokens"`
+	RevokedAgentIdentities map[model.AgentIdentityID]model.RevokedAgentIdentity `json:"revoked_agent_identities"`
+	AgentIdentities        map[string]model.AgentIdentity                       `json:"agent_identities"`
 }
 
 func NewDiskStore(path string) (*DiskStore, error) {
@@ -35,9 +38,12 @@ func NewDiskStore(path string) (*DiskStore, error) {
 	s := &DiskStore{
 		path: path,
 		data: diskState{
-			Pools:     make(map[model.PoolName]model.Pool),
-			Resources: make(map[model.ResourceID]model.Resource),
-			Sandboxes: make(map[model.SandboxID]model.Sandbox),
+			Pools:                  make(map[model.PoolName]model.Pool),
+			Resources:              make(map[model.ResourceID]model.Resource),
+			Sandboxes:              make(map[model.SandboxID]model.Sandbox),
+			AgentTokens:            make(map[model.AgentTokenID]model.AgentRegistrationToken),
+			RevokedAgentIdentities: make(map[model.AgentIdentityID]model.RevokedAgentIdentity),
+			AgentIdentities:        make(map[string]model.AgentIdentity),
 		},
 	}
 	if err := s.load(); err != nil {
@@ -72,6 +78,15 @@ func (s *DiskStore) load() error {
 	}
 	if st.Sandboxes == nil {
 		st.Sandboxes = make(map[model.SandboxID]model.Sandbox)
+	}
+	if st.AgentTokens == nil {
+		st.AgentTokens = make(map[model.AgentTokenID]model.AgentRegistrationToken)
+	}
+	if st.RevokedAgentIdentities == nil {
+		st.RevokedAgentIdentities = make(map[model.AgentIdentityID]model.RevokedAgentIdentity)
+	}
+	if st.AgentIdentities == nil {
+		st.AgentIdentities = make(map[string]model.AgentIdentity)
 	}
 	s.data = st
 	return nil
@@ -226,4 +241,98 @@ func (s *DiskStore) ListSandboxes(_ context.Context) ([]model.Sandbox, error) {
 		out = append(out, sb)
 	}
 	return out, nil
+}
+
+func (s *DiskStore) GetAgentToken(_ context.Context, id model.AgentTokenID) (model.AgentRegistrationToken, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tok, ok := s.data.AgentTokens[id]
+	if !ok {
+		return model.AgentRegistrationToken{}, ErrNotFound
+	}
+	return tok, nil
+}
+
+func (s *DiskStore) PutAgentToken(_ context.Context, tok model.AgentRegistrationToken) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if tok.ID == "" {
+		return fmt.Errorf("agent token id is required")
+	}
+	s.data.AgentTokens[tok.ID] = tok
+	return s.persistLocked()
+}
+
+func (s *DiskStore) DeleteAgentToken(_ context.Context, id model.AgentTokenID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.data.AgentTokens[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.data.AgentTokens, id)
+	return s.persistLocked()
+}
+
+func (s *DiskStore) ListAgentTokens(_ context.Context) ([]model.AgentRegistrationToken, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]model.AgentRegistrationToken, 0, len(s.data.AgentTokens))
+	for _, tok := range s.data.AgentTokens {
+		out = append(out, tok)
+	}
+	return out, nil
+}
+
+func (s *DiskStore) PutRevokedAgentIdentity(_ context.Context, rev model.RevokedAgentIdentity) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rev.ID == "" {
+		return fmt.Errorf("revoked agent identity id is required")
+	}
+	s.data.RevokedAgentIdentities[rev.ID] = rev
+	return s.persistLocked()
+}
+
+// IsAgentIdentityRevoked does a linear scan over revoked identities — an
+// accepted tradeoff at the expected 10s-100s scale, rather than maintaining
+// a secondary index keyed by cert serial.
+func (s *DiskStore) IsAgentIdentityRevoked(_ context.Context, certSerial string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, rev := range s.data.RevokedAgentIdentities {
+		if rev.CertSerial == certSerial {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *DiskStore) ListRevokedAgentIdentities(_ context.Context) ([]model.RevokedAgentIdentity, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]model.RevokedAgentIdentity, 0, len(s.data.RevokedAgentIdentities))
+	for _, rev := range s.data.RevokedAgentIdentities {
+		out = append(out, rev)
+	}
+	return out, nil
+}
+
+func (s *DiskStore) PutAgentIdentity(_ context.Context, identity model.AgentIdentity) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if identity.AgentID == "" {
+		return fmt.Errorf("agent id is required")
+	}
+	s.data.AgentIdentities[identity.AgentID] = identity
+	return s.persistLocked()
+}
+
+func (s *DiskStore) GetAgentIdentity(_ context.Context, agentID string) (model.AgentIdentity, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	identity, ok := s.data.AgentIdentities[agentID]
+	if !ok {
+		return model.AgentIdentity{}, ErrNotFound
+	}
+	return identity, nil
 }

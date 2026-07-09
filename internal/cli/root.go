@@ -38,6 +38,7 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newServeCommand())
 	root.AddCommand(newConfigCommand())
 	root.AddCommand(newSandboxCommand())
+	root.AddCommand(newAgentCommand())
 	root.AddCommand(newDebugCommand())
 	root.AddCommand(newInitCommand())
 	root.AddCommand(newSkillsCommand())

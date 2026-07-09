@@ -41,6 +41,32 @@ func TestPoolSpecUnmarshalJSONTracksPolicyAliasesAndExplicitDrain(t *testing.T) 
 	}
 }
 
+func TestPoolSpecUnmarshalTracksAgentPinning(t *testing.T) {
+	var jsonSpec PoolSpec
+	if err := json.Unmarshal([]byte(`{"name":"win-pool","type":"hyperv","agent":"lab-hypervisor-1"}`), &jsonSpec); err != nil {
+		t.Fatalf("unmarshal json: %v", err)
+	}
+	if jsonSpec.Agent != "lab-hypervisor-1" {
+		t.Fatalf("json Agent = %q, want lab-hypervisor-1", jsonSpec.Agent)
+	}
+
+	var yamlSpec PoolSpec
+	if err := yaml.Unmarshal([]byte("name: win-pool\ntype: hyperv\nagent: lab-hypervisor-1\n"), &yamlSpec); err != nil {
+		t.Fatalf("unmarshal yaml: %v", err)
+	}
+	if yamlSpec.Agent != "lab-hypervisor-1" {
+		t.Fatalf("yaml Agent = %q, want lab-hypervisor-1", yamlSpec.Agent)
+	}
+
+	var unset PoolSpec
+	if err := json.Unmarshal([]byte(`{"name":"web","type":"docker"}`), &unset); err != nil {
+		t.Fatalf("unmarshal json (no agent): %v", err)
+	}
+	if unset.Agent != "" {
+		t.Fatalf("Agent = %q, want empty when not set (resolve by provider type across all agents)", unset.Agent)
+	}
+}
+
 func TestPoolSpecUnmarshalYAMLTracksExplicitPreheatFields(t *testing.T) {
 	var spec PoolSpec
 	if err := yaml.Unmarshal([]byte(`

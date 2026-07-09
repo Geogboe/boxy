@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/store"
@@ -276,6 +277,182 @@ func testStoreResourceFieldsRoundTrip(t *testing.T, newStore storeFactory) {
 	})
 }
 
+// testStoreAgentTokensAndRevocation runs agent-token and revoked-identity
+// tests against any Store implementation.
+func testStoreAgentTokensAndRevocation(t *testing.T, newStore storeFactory) {
+	t.Helper()
+
+	t.Run("AgentToken_lifecycle_unused_to_used", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		s := newStore(t)
+
+		now := time.Now().UTC()
+		tok := model.AgentRegistrationToken{
+			ID:        "tok-1",
+			TokenHash: "deadbeef",
+			CreatedAt: now,
+			ExpiresAt: now.Add(time.Hour),
+			Label:     "lab-hypervisor-1",
+		}
+		if err := s.PutAgentToken(ctx, tok); err != nil {
+			t.Fatalf("PutAgentToken: %v", err)
+		}
+
+		got, err := s.GetAgentToken(ctx, "tok-1")
+		if err != nil {
+			t.Fatalf("GetAgentToken: %v", err)
+		}
+		if got.Used() {
+			t.Fatal("expected a freshly created token to be unused")
+		}
+		if got.Expired(now) {
+			t.Fatal("expected a token with a future expiry to not be expired yet")
+		}
+		if got.TokenHash != "deadbeef" || got.Label != "lab-hypervisor-1" {
+			t.Fatalf("token fields did not round-trip: %+v", got)
+		}
+
+		usedAt := now.Add(time.Minute)
+		got.UsedAt = &usedAt
+		if err := s.PutAgentToken(ctx, got); err != nil {
+			t.Fatalf("PutAgentToken (mark used): %v", err)
+		}
+
+		reread, err := s.GetAgentToken(ctx, "tok-1")
+		if err != nil {
+			t.Fatalf("GetAgentToken after mark-used: %v", err)
+		}
+		if !reread.Used() {
+			t.Fatal("expected token to be marked used after re-reading")
+		}
+	})
+
+	t.Run("AgentToken_expired_still_readable", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		s := newStore(t)
+
+		now := time.Now().UTC()
+		tok := model.AgentRegistrationToken{ID: "tok-2", ExpiresAt: now.Add(-time.Hour)}
+		if err := s.PutAgentToken(ctx, tok); err != nil {
+			t.Fatalf("PutAgentToken: %v", err)
+		}
+
+		got, err := s.GetAgentToken(ctx, "tok-2")
+		if err != nil {
+			t.Fatalf("GetAgentToken: %v", err)
+		}
+		if !got.Expired(now) {
+			t.Fatal("expected the token to report expired")
+		}
+	})
+
+	t.Run("AgentToken_not_found", func(t *testing.T) {
+		t.Parallel()
+		s := newStore(t)
+		if _, err := s.GetAgentToken(context.Background(), "no-such-token"); err != store.ErrNotFound {
+			t.Fatalf("GetAgentToken error = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("AgentToken_delete", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		s := newStore(t)
+		_ = s.PutAgentToken(ctx, model.AgentRegistrationToken{ID: "tok-3"})
+
+		if err := s.DeleteAgentToken(ctx, "tok-3"); err != nil {
+			t.Fatalf("DeleteAgentToken: %v", err)
+		}
+		if _, err := s.GetAgentToken(ctx, "tok-3"); err != store.ErrNotFound {
+			t.Fatalf("GetAgentToken after delete = %v, want ErrNotFound", err)
+		}
+		if err := s.DeleteAgentToken(ctx, "tok-3"); err != store.ErrNotFound {
+			t.Fatalf("DeleteAgentToken (already gone) = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("AgentToken_list_returns_all", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		s := newStore(t)
+		_ = s.PutAgentToken(ctx, model.AgentRegistrationToken{ID: "tok-a"})
+		_ = s.PutAgentToken(ctx, model.AgentRegistrationToken{ID: "tok-b"})
+
+		toks, err := s.ListAgentTokens(ctx)
+		if err != nil {
+			t.Fatalf("ListAgentTokens: %v", err)
+		}
+		if len(toks) != 2 {
+			t.Fatalf("ListAgentTokens len = %d, want 2", len(toks))
+		}
+	})
+
+	t.Run("RevokedAgentIdentity_deny_list", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		s := newStore(t)
+
+		revoked, err := s.IsAgentIdentityRevoked(ctx, "serial-123")
+		if err != nil {
+			t.Fatalf("IsAgentIdentityRevoked: %v", err)
+		}
+		if revoked {
+			t.Fatal("expected an unknown cert serial to not be revoked")
+		}
+
+		if err := s.PutRevokedAgentIdentity(ctx, model.RevokedAgentIdentity{
+			ID:         "rev-1",
+			AgentID:    "agent-a",
+			CertSerial: "serial-123",
+			RevokedAt:  time.Now().UTC(),
+			Reason:     "host decommissioned",
+		}); err != nil {
+			t.Fatalf("PutRevokedAgentIdentity: %v", err)
+		}
+
+		revoked, err = s.IsAgentIdentityRevoked(ctx, "serial-123")
+		if err != nil {
+			t.Fatalf("IsAgentIdentityRevoked: %v", err)
+		}
+		if !revoked {
+			t.Fatal("expected the revoked cert serial to now report revoked")
+		}
+
+		list, err := s.ListRevokedAgentIdentities(ctx)
+		if err != nil {
+			t.Fatalf("ListRevokedAgentIdentities: %v", err)
+		}
+		if len(list) != 1 || list[0].AgentID != "agent-a" {
+			t.Fatalf("ListRevokedAgentIdentities = %+v, want one entry for agent-a", list)
+		}
+	})
+
+	t.Run("AgentIdentity_roundtrip_and_not_found", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		s := newStore(t)
+
+		if _, err := s.GetAgentIdentity(ctx, "agent-a"); err != store.ErrNotFound {
+			t.Fatalf("GetAgentIdentity (unknown) error = %v, want ErrNotFound", err)
+		}
+
+		want := model.AgentIdentity{AgentID: "agent-a", CertSerial: "serial-123", IssuedAt: time.Now().UTC()}
+		if err := s.PutAgentIdentity(ctx, want); err != nil {
+			t.Fatalf("PutAgentIdentity: %v", err)
+		}
+
+		got, err := s.GetAgentIdentity(ctx, "agent-a")
+		if err != nil {
+			t.Fatalf("GetAgentIdentity: %v", err)
+		}
+		if got.CertSerial != "serial-123" {
+			t.Fatalf("CertSerial = %q, want serial-123", got.CertSerial)
+		}
+	})
+}
+
 var memoryFactory = func(t *testing.T) store.Store {
 	return store.NewMemoryStore()
 }
@@ -337,4 +514,52 @@ func TestMemoryStore_ResourceFieldsRoundTrip(t *testing.T) {
 func TestDiskStore_ResourceFieldsRoundTrip(t *testing.T) {
 	t.Parallel()
 	testStoreResourceFieldsRoundTrip(t, diskFactory)
+}
+
+func TestMemoryStore_AgentTokensAndRevocation(t *testing.T) {
+	t.Parallel()
+	testStoreAgentTokensAndRevocation(t, memoryFactory)
+}
+
+func TestDiskStore_AgentTokensAndRevocation(t *testing.T) {
+	t.Parallel()
+	testStoreAgentTokensAndRevocation(t, diskFactory)
+}
+
+func TestDiskStore_AgentTokensAndRevocationPersistAcrossReopen(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	path := t.TempDir() + "/test.json"
+
+	s1, err := store.NewDiskStore(path)
+	if err != nil {
+		t.Fatalf("NewDiskStore: %v", err)
+	}
+	if err := s1.PutAgentToken(ctx, model.AgentRegistrationToken{ID: "tok-1", TokenHash: "abc"}); err != nil {
+		t.Fatalf("PutAgentToken: %v", err)
+	}
+	if err := s1.PutRevokedAgentIdentity(ctx, model.RevokedAgentIdentity{ID: "rev-1", AgentID: "agent-a", CertSerial: "serial-123"}); err != nil {
+		t.Fatalf("PutRevokedAgentIdentity: %v", err)
+	}
+
+	s2, err := store.NewDiskStore(path)
+	if err != nil {
+		t.Fatalf("reopen NewDiskStore: %v", err)
+	}
+
+	tok, err := s2.GetAgentToken(ctx, "tok-1")
+	if err != nil {
+		t.Fatalf("GetAgentToken after reopen: %v", err)
+	}
+	if tok.TokenHash != "abc" {
+		t.Fatalf("token did not survive reopen: %+v", tok)
+	}
+
+	revoked, err := s2.IsAgentIdentityRevoked(ctx, "serial-123")
+	if err != nil {
+		t.Fatalf("IsAgentIdentityRevoked after reopen: %v", err)
+	}
+	if !revoked {
+		t.Fatal("expected the revoked identity to survive reopen")
+	}
 }

@@ -57,6 +57,19 @@ func newMockAgent(providers ...providersdk.Type) *mockAgent {
 	}
 }
 
+// registryWith builds an AgentRegistry with each given agent registered and
+// available, for tests that don't care about registry construction itself.
+func registryWith(t *testing.T, agents ...agentsdk.Agent) *AgentRegistry {
+	t.Helper()
+	r := NewAgentRegistry()
+	for _, a := range agents {
+		if err := r.Register(a); err != nil {
+			t.Fatalf("register agent: %v", err)
+		}
+	}
+	return r
+}
+
 func (m *mockAgent) Info() agentsdk.AgentInfo {
 	return m.info
 }
@@ -102,7 +115,7 @@ func TestAgentProvisioner_Provision(t *testing.T) {
 	now := time.Now().UTC()
 
 	provisioner := &AgentProvisioner{
-		Agent: mockAgent,
+		Registry: registryWith(t, mockAgent),
 		Specs: map[model.PoolName]boxyconfig.PoolSpec{
 			"test-pool": {
 				Name:   "test-pool",
@@ -147,7 +160,7 @@ func TestAgentProvisioner_Destroy(t *testing.T) {
 	mockAgent := newMockAgent(providersdk.Type("docker"))
 
 	provisioner := &AgentProvisioner{
-		Agent: mockAgent,
+		Registry: registryWith(t, mockAgent),
 		Specs: map[model.PoolName]boxyconfig.PoolSpec{
 			"test-pool": {
 				Name: "test-pool",
@@ -158,7 +171,7 @@ func TestAgentProvisioner_Destroy(t *testing.T) {
 	}
 
 	pool := model.Pool{Name: "test-pool"}
-	res := model.Resource{ID: "test-resource-id"}
+	res := model.Resource{ID: "test-resource-id", Provider: model.ProviderRef{AgentID: mockAgent.info.ID}}
 
 	err := provisioner.Destroy(context.Background(), pool, res)
 	if err != nil {
@@ -175,7 +188,7 @@ func TestAgentProvisioner_Destroy(t *testing.T) {
 func TestAgentProvisioner_Destroy_RejectsEmptyIDBeforeAgentCall(t *testing.T) {
 	mockAgent := newMockAgent(providersdk.Type("docker"))
 	provisioner := &AgentProvisioner{
-		Agent: mockAgent,
+		Registry: registryWith(t, mockAgent),
 		Specs: map[model.PoolName]boxyconfig.PoolSpec{
 			"test-pool": {Name: "test-pool", Type: "docker"},
 		},
@@ -195,14 +208,15 @@ func TestAgentProvisioner_Destroy_SurfacesAgentDeleteFailure(t *testing.T) {
 	mockAgent := newMockAgent(providersdk.Type("docker"))
 	mockAgent.deleteErr = errAgentDeleteFailed
 	provisioner := &AgentProvisioner{
-		Agent: mockAgent,
+		Registry: registryWith(t, mockAgent),
 		Specs: map[model.PoolName]boxyconfig.PoolSpec{
 			"test-pool": {Name: "test-pool", Type: "docker"},
 		},
 		Providers: map[string]providersdk.Instance{},
 	}
 
-	err := provisioner.Destroy(context.Background(), model.Pool{Name: "test-pool"}, model.Resource{ID: "test-resource-id"})
+	res := model.Resource{ID: "test-resource-id", Provider: model.ProviderRef{AgentID: mockAgent.info.ID}}
+	err := provisioner.Destroy(context.Background(), model.Pool{Name: "test-pool"}, res)
 	if err == nil {
 		t.Fatal("Destroy error = nil, want agent delete failure")
 	}
@@ -221,7 +235,7 @@ func TestAgentProvisioner_Allocate_PrefersTypedGuestPersonalization(t *testing.T
 	}
 
 	provisioner := &AgentProvisioner{
-		Agent: mockAgent,
+		Registry: registryWith(t, mockAgent),
 		Specs: map[model.PoolName]boxyconfig.PoolSpec{
 			"vm-pool": {
 				Name: "vm-pool",
@@ -231,7 +245,8 @@ func TestAgentProvisioner_Allocate_PrefersTypedGuestPersonalization(t *testing.T
 		Providers: map[string]providersdk.Instance{},
 	}
 
-	got, err := provisioner.Allocate(context.Background(), model.Pool{Name: "vm-pool"}, model.Resource{ID: "vm-1"})
+	res := model.Resource{ID: "vm-1", Provider: model.ProviderRef{AgentID: mockAgent.info.ID}}
+	got, err := provisioner.Allocate(context.Background(), model.Pool{Name: "vm-pool"}, res)
 	if err != nil {
 		t.Fatalf("Allocate: %v", err)
 	}
@@ -247,7 +262,7 @@ func TestAgentProvisioner_Allocate_FallsBackWhenPersonalizationReturnsNil(t *tes
 	mockAgent := newMockAgent(providersdk.Type("hyperv"))
 	mockAgent.allocateResult = map[string]any{"legacy": "path"}
 	provisioner := &AgentProvisioner{
-		Agent: mockAgent,
+		Registry: registryWith(t, mockAgent),
 		Specs: map[model.PoolName]boxyconfig.PoolSpec{
 			"vm-pool": {Name: "vm-pool", Type: "vm", Provider: "hyperv-local"},
 		},
@@ -256,7 +271,8 @@ func TestAgentProvisioner_Allocate_FallsBackWhenPersonalizationReturnsNil(t *tes
 		},
 	}
 
-	got, err := provisioner.Allocate(context.Background(), model.Pool{Name: "vm-pool"}, model.Resource{ID: "vm-1"})
+	res := model.Resource{ID: "vm-1", Provider: model.ProviderRef{AgentID: mockAgent.info.ID}}
+	got, err := provisioner.Allocate(context.Background(), model.Pool{Name: "vm-pool"}, res)
 	if err != nil {
 		t.Fatalf("Allocate: %v", err)
 	}
@@ -272,18 +288,89 @@ func TestAgentProvisioner_Allocate_SurfacesPersonalizationFailure(t *testing.T) 
 	mockAgent := newMockAgent(providersdk.Type("hyperv"))
 	mockAgent.personalizeErr = errPersonalizeFailed
 	provisioner := &AgentProvisioner{
-		Agent: mockAgent,
+		Registry: registryWith(t, mockAgent),
 		Specs: map[model.PoolName]boxyconfig.PoolSpec{
 			"vm-pool": {Name: "vm-pool", Type: "hyperv"},
 		},
 		Providers: map[string]providersdk.Instance{},
 	}
 
-	if _, err := provisioner.Allocate(context.Background(), model.Pool{Name: "vm-pool"}, model.Resource{ID: "vm-1"}); err == nil {
+	res := model.Resource{ID: "vm-1", Provider: model.ProviderRef{AgentID: mockAgent.info.ID}}
+	if _, err := provisioner.Allocate(context.Background(), model.Pool{Name: "vm-pool"}, res); err == nil {
 		t.Fatal("Allocate error = nil, want personalization failure")
 	}
 	if len(mockAgent.allocateCalls) != 0 {
 		t.Fatalf("allocateCalls = %+v, want no fallback after personalization failure", mockAgent.allocateCalls)
+	}
+}
+
+// TestAgentProvisioner_DestroyAndAllocateRouteToCreatingAgent guards against
+// the misrouting bug found during design review: once two agents advertise
+// the same provider type, Destroy/Allocate must go back to the exact agent
+// that created the resource (via Provider.AgentID), never re-resolve by
+// type — which could silently pick the *other*, wrong agent.
+func TestAgentProvisioner_DestroyAndAllocateRouteToCreatingAgent(t *testing.T) {
+	agentA := newMockAgent(providersdk.Type("hyperv"))
+	agentA.info.ID = "agent-a"
+	agentB := newMockAgent(providersdk.Type("hyperv"))
+	agentB.info.ID = "agent-b"
+
+	provisioner := &AgentProvisioner{
+		Registry: registryWith(t, agentA, agentB),
+		Specs: map[model.PoolName]boxyconfig.PoolSpec{
+			"vm-pool": {Name: "vm-pool", Type: "hyperv"},
+		},
+		Providers: map[string]providersdk.Instance{},
+	}
+
+	// The resource was created through agent A.
+	res := model.Resource{ID: "vm-1", Provider: model.ProviderRef{Name: "hyperv", AgentID: agentA.info.ID}}
+
+	if err := provisioner.Destroy(context.Background(), model.Pool{Name: "vm-pool"}, res); err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+	if len(agentA.deleteCalls) != 1 {
+		t.Fatalf("expected agent A (the creator) to receive the delete call, got %d calls", len(agentA.deleteCalls))
+	}
+	if len(agentB.deleteCalls) != 0 {
+		t.Fatalf("agent B (not the creator) must never receive a delete call for this resource, got %d calls", len(agentB.deleteCalls))
+	}
+
+	if _, err := provisioner.Allocate(context.Background(), model.Pool{Name: "vm-pool"}, res); err != nil {
+		t.Fatalf("Allocate: %v", err)
+	}
+	if len(agentA.allocateCalls) != 1 {
+		t.Fatalf("expected agent A (the creator) to receive the allocate call, got %d calls", len(agentA.allocateCalls))
+	}
+	if len(agentB.allocateCalls) != 0 {
+		t.Fatalf("agent B (not the creator) must never receive an allocate call for this resource, got %d calls", len(agentB.allocateCalls))
+	}
+}
+
+// TestAgentProvisioner_DestroyFailsClearlyWhenCreatingAgentGone proves the
+// fix fails loudly rather than silently substituting a different agent
+// when the resource's original agent is no longer registered (e.g.
+// disconnected or revoked).
+func TestAgentProvisioner_DestroyFailsClearlyWhenCreatingAgentGone(t *testing.T) {
+	agentB := newMockAgent(providersdk.Type("hyperv"))
+	agentB.info.ID = "agent-b"
+
+	provisioner := &AgentProvisioner{
+		// Only agent-b is registered; the resource was created by an agent
+		// ("agent-a") that is no longer present.
+		Registry: registryWith(t, agentB),
+		Specs: map[model.PoolName]boxyconfig.PoolSpec{
+			"vm-pool": {Name: "vm-pool", Type: "hyperv"},
+		},
+		Providers: map[string]providersdk.Instance{},
+	}
+
+	res := model.Resource{ID: "vm-1", Provider: model.ProviderRef{Name: "hyperv", AgentID: "agent-a"}}
+	if err := provisioner.Destroy(context.Background(), model.Pool{Name: "vm-pool"}, res); err == nil {
+		t.Fatal("expected Destroy to fail clearly when the creating agent is gone, not silently substitute another agent")
+	}
+	if len(agentB.deleteCalls) != 0 {
+		t.Fatalf("agent-b must never receive a delete call meant for agent-a's resource, got %d calls", len(agentB.deleteCalls))
 	}
 }
 
@@ -364,7 +451,7 @@ func TestAgentProvisioner_DriverTypeForPool_ExplicitProvider(t *testing.T) {
 
 func TestAgentProvisioner_UnknownPool(t *testing.T) {
 	provisioner := &AgentProvisioner{
-		Agent:     newMockAgent(),
+		Registry:  registryWith(t, newMockAgent()),
 		Specs:     map[model.PoolName]boxyconfig.PoolSpec{},
 		Providers: map[string]providersdk.Instance{},
 	}

@@ -23,3 +23,16 @@ func NewTestMux(st store.Store, sm *sandbox.Manager, uiEnabled bool, pm ...PoolM
 	s.registerRoutes(mux)
 	return mux
 }
+
+// NewTestMuxWithAgentAdmin is NewTestMux plus an AgentAdmin, for testing
+// the /api/v1/agents endpoints.
+func NewTestMuxWithAgentAdmin(st store.Store, sm *sandbox.Manager, aa AgentAdmin) *http.ServeMux {
+	s := &Server{
+		store:      st,
+		sandboxMgr: sm,
+		agentAdmin: aa,
+	}
+	mux := http.NewServeMux()
+	s.registerRoutes(mux)
+	return mux
+}

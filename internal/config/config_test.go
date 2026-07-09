@@ -4,9 +4,84 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/Geogboe/boxy/pkg/model"
 )
+
+func TestServerSpec_AgentTransportFields(t *testing.T) {
+	t.Parallel()
+
+	t.Run("round_trip_yaml", func(t *testing.T) {
+		dir := t.TempDir()
+		p := filepath.Join(dir, "boxy.yaml")
+		if err := os.WriteFile(p, []byte(`
+server:
+  listen: ":9090"
+  grpc_listen: ":9095"
+  agent_heartbeat_interval: 30s
+`), 0o644); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+		cfg, err := LoadFile(p)
+		if err != nil {
+			t.Fatalf("LoadFile: %v", err)
+		}
+		if cfg.Server.GRPCListen != ":9095" {
+			t.Fatalf("GRPCListen = %q, want :9095", cfg.Server.GRPCListen)
+		}
+		d, err := cfg.Server.EffectiveAgentHeartbeatInterval()
+		if err != nil {
+			t.Fatalf("EffectiveAgentHeartbeatInterval: %v", err)
+		}
+		if d != 30*time.Second {
+			t.Fatalf("interval = %v, want 30s", d)
+		}
+	})
+
+	t.Run("unset_interval_defaults", func(t *testing.T) {
+		d, err := ServerSpec{}.EffectiveAgentHeartbeatInterval()
+		if err != nil {
+			t.Fatalf("EffectiveAgentHeartbeatInterval: %v", err)
+		}
+		if d != DefaultAgentHeartbeatInterval {
+			t.Fatalf("interval = %v, want default %v", d, DefaultAgentHeartbeatInterval)
+		}
+	})
+
+	t.Run("invalid_interval_fails_validate", func(t *testing.T) {
+		cfg := Config{Server: ServerSpec{AgentHeartbeatInterval: "not-a-duration"}}
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("Validate: expected error for an unparseable heartbeat interval")
+		}
+	})
+
+	t.Run("negative_interval_fails_validate", func(t *testing.T) {
+		cfg := Config{Server: ServerSpec{AgentHeartbeatInterval: "-5s"}}
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("Validate: expected error for a negative heartbeat interval")
+		}
+	})
+
+	t.Run("unknown_server_field_rejected", func(t *testing.T) {
+		// Regression guard: KnownFields(true) must reject unknown keys in
+		// nested structs like ServerSpec, not just at the top level — this
+		// is what lets new fields skip a hand-written whitelist unmarshaler
+		// (unlike PoolSpec, which has one).
+		dir := t.TempDir()
+		p := filepath.Join(dir, "boxy.yaml")
+		if err := os.WriteFile(p, []byte(`
+server:
+  listen: ":9090"
+  insecure: true
+`), 0o644); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+		if _, err := LoadFile(p); err == nil {
+			t.Fatal("LoadFile: expected an unknown-field error for server.insecure (deliberately flag-only, never config)")
+		}
+	})
+}
 
 func TestLoadFile_YAML_HappyPath(t *testing.T) {
 	t.Parallel()
