@@ -39,7 +39,7 @@ operates in three modes: daemon server, CLI client, and distributed agent.
 │                                                                  │
 │   ┌─────────────┐   ┌────────────────────┐   ┌──────────────┐  │
 │   │  REST API +  │   │  gRPC Server        │   │PolicyControl-│  │
-│   │  web UI      │   │  (agents, planned)  │   │ler (reconcile│  │
+│   │  web UI      │   │  (agents, mTLS)     │   │ler (reconcile│  │
 │   └──────┬───────┘   └───────┬────────────┘   └────────┬─────┘  │
 │          │                   │                     │             │
 │   ┌──────▼───────────────────▼─────────────────────▼──────────┐ │
@@ -481,7 +481,7 @@ graph TB
 
     subgraph "Execution"
         EmbAgent["Embedded Agent"]
-        RemAgent["Remote Agents (planned, #37/#62 — not yet implemented)"]
+        RemAgent["Remote Agents (boxy agent serve, gRPC/mTLS)"]
         Drivers["Provider Drivers<br/>(Docker, Hyper-V, ...)"]
     end
 
@@ -558,9 +558,11 @@ graph LR
 
 Boxy is in **early development**. The domain model, policy controller, provider
 SDK, pool/sandbox managers, and REST API are implemented and are the primary
-way to operate Boxy today. gRPC transport and remote agent support are on the
-roadmap (#37/#62) but do not exist in the codebase yet — the only agent today
-is the embedded, in-process one inside `boxy serve`.
+way to operate Boxy today. Remote agent support (#37/#62) is implemented: `boxy
+agent serve` dials the daemon's gRPC listener over mTLS (private CA, single-use
+token bootstrap — see [ADR-0005](adr/0005-remote-agent-transport-and-registration.md)),
+and the pool manager routes provisioning across the embedded agent and any
+connected remote agents (with optional per-pool `agent:` pinning).
 
 ---
 
