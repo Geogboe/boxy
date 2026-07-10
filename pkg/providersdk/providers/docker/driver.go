@@ -16,6 +16,7 @@ import (
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	imagetypes "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
@@ -27,6 +28,15 @@ import (
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
+// managedLabel/managedLabelValue tag every container this driver creates so
+// List can distinguish boxy-managed containers from unrelated ones on the
+// same docker host. Stamped unconditionally at Create time — not
+// user-overridable via config.Labels.
+const (
+	managedLabel      = "boxy.managed"
+	managedLabelValue = "true"
+)
+
 // dockerClient is the minimal Docker API surface used by this driver.
 // *client.Client satisfies this interface; tests inject a mock.
 type dockerClient interface {
@@ -35,6 +45,7 @@ type dockerClient interface {
 	ContainerCreate(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, platform *ocispec.Platform, containerName string) (container.CreateResponse, error)
 	ContainerStart(ctx context.Context, containerID string, options container.StartOptions) error
 	ContainerInspect(ctx context.Context, containerID string) (container.InspectResponse, error)
+	ContainerList(ctx context.Context, options container.ListOptions) ([]container.Summary, error)
 	ContainerLogs(ctx context.Context, containerID string, options container.LogsOptions) (io.ReadCloser, error)
 	ContainerExecCreate(ctx context.Context, containerID string, options container.ExecOptions) (container.ExecCreateResponse, error)
 	ContainerExecAttach(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error)
@@ -114,11 +125,17 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 		}
 	}
 
+	labels := make(map[string]string, len(cc.Labels)+1)
+	for k, v := range cc.Labels {
+		labels[k] = v
+	}
+	labels[managedLabel] = managedLabelValue
+
 	containerCfg := &container.Config{
 		Image:        cc.Image,
 		Cmd:          command,
 		Env:          envList,
-		Labels:       cc.Labels,
+		Labels:       labels,
 		ExposedPorts: exposedPorts,
 		AttachStdin:  needsInteractive,
 		OpenStdin:    needsInteractive,
@@ -196,6 +213,23 @@ func (d *Driver) Read(ctx context.Context, id string) (*providersdk.ResourceStat
 		ID:    id,
 		State: info.State.Status,
 	}, nil
+}
+
+// List returns every container this driver created, identified by
+// managedLabel. It satisfies providersdk.ResourceLister.
+func (d *Driver) List(ctx context.Context) ([]providersdk.ResourceStatus, error) {
+	summaries, err := d.cli.ContainerList(ctx, container.ListOptions{
+		All:     true,
+		Filters: filters.NewArgs(filters.Arg("label", managedLabel+"="+managedLabelValue)),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("docker ContainerList: %w", err)
+	}
+	statuses := make([]providersdk.ResourceStatus, 0, len(summaries))
+	for _, c := range summaries {
+		statuses = append(statuses, providersdk.ResourceStatus{ID: c.ID, State: c.State})
+	}
+	return statuses, nil
 }
 
 func (d *Driver) Update(ctx context.Context, id string, op providersdk.Operation) (*providersdk.Result, error) {

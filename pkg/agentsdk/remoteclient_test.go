@@ -54,6 +54,20 @@ func (d *fakeDriver) Allocate(ctx context.Context, id string) (map[string]any, e
 	return d.allocateRes, d.allocateErr
 }
 
+// fakeListingDriver adds providersdk.ResourceLister on top of fakeDriver, so
+// tests can exercise both the "driver supports List" and "driver doesn't"
+// paths through executeCommand — the latter using plain *fakeDriver, which
+// deliberately has no List method.
+type fakeListingDriver struct {
+	*fakeDriver
+	listErr error
+	listRes []providersdk.ResourceStatus
+}
+
+func (d *fakeListingDriver) List(ctx context.Context) ([]providersdk.ResourceStatus, error) {
+	return d.listRes, d.listErr
+}
+
 func TestExecuteCommand(t *testing.T) {
 	drivers := DriverSet{
 		"docker": &fakeDriver{
@@ -134,6 +148,41 @@ func TestExecuteCommand(t *testing.T) {
 		}
 		if props["port"] != float64(2222) {
 			t.Fatalf("expected numeric property to round-trip, got %#v", props["port"])
+		}
+	})
+
+	t.Run("list success", func(t *testing.T) {
+		drivers := DriverSet{"docker": &fakeListingDriver{
+			fakeDriver: &fakeDriver{providerType: "docker"},
+			listRes: []providersdk.ResourceStatus{
+				{ID: "c1", State: "running"},
+				{ID: "c2", State: "exited"},
+			},
+		}}
+		cmd := &boxyagentv1.Command{
+			CommandId:    "cmd-8",
+			ProviderType: "docker",
+			Op:           &boxyagentv1.Command_List{List: &boxyagentv1.ListCommand{}},
+		}
+		res := executeCommand(context.Background(), drivers, cmd)
+		if res.GetError() != nil {
+			t.Fatalf("unexpected error: %s", res.GetError().GetMessage())
+		}
+		got := res.GetList().GetResources()
+		if len(got) != 2 || got[0].GetId() != "c1" || got[1].GetId() != "c2" {
+			t.Fatalf("unexpected list result: %#v", got)
+		}
+	})
+
+	t.Run("list unsupported by driver errors", func(t *testing.T) {
+		cmd := &boxyagentv1.Command{
+			CommandId:    "cmd-9",
+			ProviderType: "docker",
+			Op:           &boxyagentv1.Command_List{List: &boxyagentv1.ListCommand{}},
+		}
+		res := executeCommand(context.Background(), drivers, cmd)
+		if res.GetError() == nil {
+			t.Fatal("expected an error result for a driver without ResourceLister")
 		}
 	})
 

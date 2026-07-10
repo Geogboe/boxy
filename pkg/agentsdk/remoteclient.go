@@ -285,6 +285,24 @@ func executeCommand(ctx context.Context, drivers DriverSet, cmd *boxyagentv1.Com
 			Outcome:   &boxyagentv1.CommandResult_Deleted{Deleted: &emptypb.Empty{}},
 		}
 
+	case *boxyagentv1.Command_List:
+		lister, ok := d.(providersdk.ResourceLister)
+		if !ok {
+			return errorResult(cmd.GetCommandId(), fmt.Sprintf("list not supported by driver %q", cmd.GetProviderType()))
+		}
+		statuses, err := lister.List(ctx)
+		if err != nil {
+			return errorResult(cmd.GetCommandId(), err.Error())
+		}
+		resources := make([]*boxyagentv1.ResourceStatusResult, 0, len(statuses))
+		for _, st := range statuses {
+			resources = append(resources, &boxyagentv1.ResourceStatusResult{Id: st.ID, State: st.State})
+		}
+		return &boxyagentv1.CommandResult{
+			CommandId: cmd.GetCommandId(),
+			Outcome:   &boxyagentv1.CommandResult_List{List: &boxyagentv1.ListResult{Resources: resources}},
+		}
+
 	case *boxyagentv1.Command_Allocate:
 		props, err := d.Allocate(ctx, op.Allocate.GetResourceId())
 		if err != nil {

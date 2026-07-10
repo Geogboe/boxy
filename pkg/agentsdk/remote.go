@@ -243,6 +243,34 @@ func (a *RemoteAgent) Delete(ctx context.Context, provider providersdk.Type, id 
 	return nil
 }
 
+// List satisfies ResourceListingAgent by sending a ListCommand. The remote
+// agent's executeCommand returns an AgentError if its driver doesn't
+// implement providersdk.ResourceLister — same error path as any other
+// command failure, deliberately not distinguished from a transient failure
+// (see docs/adr/0005-remote-agent-transport-and-registration.md's
+// discussion of #133).
+func (a *RemoteAgent) List(ctx context.Context, provider providersdk.Type) ([]providersdk.ResourceStatus, error) {
+	res, err := a.call(ctx, &boxyagentv1.Command{
+		ProviderType: string(provider),
+		Op:           &boxyagentv1.Command_List{List: &boxyagentv1.ListCommand{}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if agentErr := res.GetError(); agentErr != nil {
+		return nil, fmt.Errorf("agent %q: %s", a.info.ID, agentErr.GetMessage())
+	}
+	lr := res.GetList()
+	if lr == nil {
+		return nil, fmt.Errorf("agent %q: unexpected result for list", a.info.ID)
+	}
+	statuses := make([]providersdk.ResourceStatus, 0, len(lr.GetResources()))
+	for _, r := range lr.GetResources() {
+		statuses = append(statuses, providersdk.ResourceStatus{ID: r.GetId(), State: r.GetState()})
+	}
+	return statuses, nil
+}
+
 // Allocate does not implement GuestPersonalizingAgent: the transport's
 // AllocateCommand/AllocateResult only carries generic JSON properties, not
 // providersdk.GuestAccessDetails' richer typed shape. A remote driver that

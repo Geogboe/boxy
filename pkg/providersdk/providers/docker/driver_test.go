@@ -28,6 +28,7 @@ type mockDockerClient struct {
 	containerCreate      func(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, platform *ocispec.Platform, containerName string) (container.CreateResponse, error)
 	containerStart       func(ctx context.Context, containerID string, options container.StartOptions) error
 	containerInspect     func(ctx context.Context, containerID string) (container.InspectResponse, error)
+	containerList        func(ctx context.Context, options container.ListOptions) ([]container.Summary, error)
 	containerLogs        func(ctx context.Context, containerID string, options container.LogsOptions) (io.ReadCloser, error)
 	containerExecCreate  func(ctx context.Context, containerID string, options container.ExecOptions) (container.ExecCreateResponse, error)
 	containerExecAttach  func(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error)
@@ -55,6 +56,12 @@ func (m *mockDockerClient) ContainerStart(ctx context.Context, id string, opts c
 }
 func (m *mockDockerClient) ContainerInspect(ctx context.Context, id string) (container.InspectResponse, error) {
 	return m.containerInspect(ctx, id)
+}
+func (m *mockDockerClient) ContainerList(ctx context.Context, opts container.ListOptions) ([]container.Summary, error) {
+	if m.containerList != nil {
+		return m.containerList(ctx, opts)
+	}
+	return nil, nil
 }
 func (m *mockDockerClient) ContainerLogs(ctx context.Context, id string, opts container.LogsOptions) (io.ReadCloser, error) {
 	if m.containerLogs != nil {
@@ -353,6 +360,71 @@ func TestDriver_Read_Error(t *testing.T) {
 	}
 	d := &Driver{cli: mock}
 	_, err := d.Read(context.Background(), "nonexistent")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+// --- List ---
+
+func TestDriver_List_FiltersByManagedLabel(t *testing.T) {
+	mock := &mockDockerClient{
+		containerList: func(_ context.Context, opts container.ListOptions) ([]container.Summary, error) {
+			if !opts.All {
+				t.Errorf("expected All=true so stopped containers are included")
+			}
+			if opts.Filters.Len() != 1 {
+				t.Fatalf("expected exactly one filter, got %d", opts.Filters.Len())
+			}
+			if !opts.Filters.ExactMatch("label", managedLabel+"="+managedLabelValue) {
+				t.Errorf("expected label filter %s=%s", managedLabel, managedLabelValue)
+			}
+			return []container.Summary{
+				{ID: "abc", State: "running"},
+				{ID: "def", State: "exited"},
+			}, nil
+		},
+	}
+	d := &Driver{cli: mock}
+	statuses, err := d.List(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(statuses) != 2 {
+		t.Fatalf("got %d statuses, want 2", len(statuses))
+	}
+	if statuses[0].ID != "abc" || statuses[0].State != "running" {
+		t.Errorf("unexpected first status: %+v", statuses[0])
+	}
+	if statuses[1].ID != "def" || statuses[1].State != "exited" {
+		t.Errorf("unexpected second status: %+v", statuses[1])
+	}
+}
+
+func TestDriver_List_Empty(t *testing.T) {
+	mock := &mockDockerClient{
+		containerList: func(_ context.Context, _ container.ListOptions) ([]container.Summary, error) {
+			return nil, nil
+		},
+	}
+	d := &Driver{cli: mock}
+	statuses, err := d.List(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(statuses) != 0 {
+		t.Errorf("got %d statuses, want 0", len(statuses))
+	}
+}
+
+func TestDriver_List_Error(t *testing.T) {
+	mock := &mockDockerClient{
+		containerList: func(_ context.Context, _ container.ListOptions) ([]container.Summary, error) {
+			return nil, fmt.Errorf("docker daemon unreachable")
+		},
+	}
+	d := &Driver{cli: mock}
+	_, err := d.List(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
 	}
