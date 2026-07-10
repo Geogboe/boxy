@@ -229,3 +229,6 @@ vite.config.ts.timestamp-*
 *.env
 
 .codex
+
+# Local scratch/temp files
+.scratch/
