@@ -123,6 +123,83 @@ func TestConnect_TokenRegistrationHappyPath(t *testing.T) {
 	}
 }
 
+// TestConnect_TriggersReconciliationSweep verifies the #133 wiring end to
+// end: a successful registration must cause the server to send a
+// ListCommand down the stream (pool.ReconcileAgent auditing this agent),
+// and a resource the agent reports that the store never tracked must be
+// adopted.
+func TestConnect_TriggersReconciliationSweep(t *testing.T) {
+	_, st, client, cleanup := newTestServer(t)
+	defer cleanup()
+	mintToken(t, st, "tok-good", time.Hour)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	if err := stream.Send(&boxyagentv1.AgentMessage{
+		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{
+			RegistrationToken: "tok-good",
+			AgentName:         "test-agent",
+			ProviderTypes:     []string{"docker"},
+		}},
+	}); err != nil {
+		t.Fatalf("send register request: %v", err)
+	}
+
+	msg, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("recv register response: %v", err)
+	}
+	agentID := msg.GetRegistered().GetAgentId()
+	if agentID == "" {
+		t.Fatal("expected a non-empty agent id")
+	}
+
+	// The reconciliation sweep starts once Serve() is pumping the stream
+	// (see server.go's Connect), so the next frame in is the ListCommand
+	// it issues, not anything test-driven.
+	cmdMsg, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("recv reconciliation command: %v", err)
+	}
+	cmd := cmdMsg.GetCommand()
+	if cmd == nil || cmd.GetList() == nil {
+		t.Fatalf("expected the server to issue a ListCommand for reconciliation, got %#v", cmdMsg)
+	}
+
+	if err := stream.Send(&boxyagentv1.AgentMessage{
+		Payload: &boxyagentv1.AgentMessage_Result{Result: &boxyagentv1.CommandResult{
+			CommandId: cmd.GetCommandId(),
+			Outcome: &boxyagentv1.CommandResult_List{List: &boxyagentv1.ListResult{
+				Resources: []*boxyagentv1.ResourceStatusResult{
+					{Id: "orphan-container", State: "running"},
+				},
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("send list result: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		res, err := st.GetResource(context.Background(), "orphan-container")
+		if err == nil {
+			if res.Provider.AgentID != agentID {
+				t.Fatalf("adopted resource has AgentID %q, want %q", res.Provider.AgentID, agentID)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("orphan-container was never adopted into the store: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestConnect_UnknownTokenRejected(t *testing.T) {
 	_, _, client, cleanup := newTestServer(t)
 	defer cleanup()
