@@ -33,6 +33,11 @@ import (
 // intervals mark an agent unavailable for new provisioning.
 const DefaultMissedHeartbeatLimit = 3
 
+// reconciliationTimeout bounds the #133 post-registration reconciliation
+// sweep so a slow or hung List call can't hold resources indefinitely; the
+// sweep is best-effort and logs rather than fails the connection either way.
+const reconciliationTimeout = 30 * time.Second
+
 // Server implements the generated AgentTransportServiceServer.
 type Server struct {
 	boxyagentv1.UnimplementedAgentTransportServiceServer
@@ -184,6 +189,20 @@ func (s *Server) Connect(stream boxyagentv1.AgentTransportService_ConnectServer)
 	// too (its own Close() is idempotent, guarded by sync.Once).
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- remote.Serve() }()
+
+	// The #133 reconciliation sweep needs Serve() already pumping the
+	// stream (List is itself a command sent down it), so it can only start
+	// here, not before. Runs on every successful registration, not just
+	// reconnects — see pool.ReconcileAgent's doc comment. Bounded and
+	// logged-only: reconciliation trouble must never take down agent
+	// connectivity.
+	go func() {
+		rctx, cancel := context.WithTimeout(ctx, reconciliationTimeout)
+		defer cancel()
+		if err := pool.ReconcileAgent(rctx, s.store, s.registry, agentID, s.log()); err != nil {
+			s.log().Warn("post-registration reconciliation failed", "agent_id", agentID, "error", err)
+		}
+	}()
 
 	select {
 	case err := <-serveDone:
