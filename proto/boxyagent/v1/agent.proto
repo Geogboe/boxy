@@ -50,6 +50,7 @@ message CommandResult {
     google.protobuf.Empty deleted = 5;
     AllocateResult allocate = 6;
     AgentError error = 7;
+    ListResult list = 8;
   }
 }
 
@@ -88,6 +89,7 @@ message Command {
     UpdateCommand update = 5;
     DeleteCommand delete = 6;
     AllocateCommand allocate = 7;
+    ListCommand list = 8;
   }
 }
 
@@ -117,6 +119,11 @@ message AllocateCommand {
   string resource_id = 1;
 }
 
+// ListCommand requests every resource the driver currently manages for
+// provider_type. It carries no fields of its own — enumeration is
+// unconditional, unlike the other commands which target one resource_id.
+message ListCommand {}
+
 message ResourceResult {
   string id = 1;
   map<string, string> connection_info = 2;
@@ -140,4 +147,8 @@ message OperationResult {
 // any JSON-representable value).
 message AllocateResult {
   bytes properties_json = 1;
+}
+
+message ListResult {
+  repeated ResourceStatusResult resources = 1;
 }
