@@ -79,3 +79,12 @@ type Result struct {
 	// (e.g. generated credentials, captured stdout).
 	Outputs map[string]string
 }
+
+// ResourceLister is an optional provider capability for enumerating every
+// resource the driver currently manages, independent of any single resource
+// ID. Not every driver can support this (see docker's implementation for the
+// managed-resource tagging convention this depends on) — callers must type-
+// assert for it rather than relying on it being part of Driver.
+type ResourceLister interface {
+	List(ctx context.Context) ([]ResourceStatus, error)
+}
