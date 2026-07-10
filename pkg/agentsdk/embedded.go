@@ -83,6 +83,23 @@ func (a *EmbeddedAgent) Allocate(ctx context.Context, provider providersdk.Type,
 	return d.Allocate(ctx, id)
 }
 
+// List satisfies ResourceListingAgent for drivers that implement
+// providersdk.ResourceLister. Returns an error for drivers that don't —
+// callers must treat "list not supported" and "list failed" the same way
+// (see docs/adr/0005-remote-agent-transport-and-registration.md's
+// discussion of #133).
+func (a *EmbeddedAgent) List(ctx context.Context, provider providersdk.Type) ([]providersdk.ResourceStatus, error) {
+	d, err := a.driver(provider)
+	if err != nil {
+		return nil, err
+	}
+	lister, ok := d.(providersdk.ResourceLister)
+	if !ok {
+		return nil, fmt.Errorf("agent %q: provider %q does not support listing", a.info.ID, provider)
+	}
+	return lister.List(ctx)
+}
+
 func (a *EmbeddedAgent) PersonalizeGuest(ctx context.Context, provider providersdk.Type, id string) (*providersdk.GuestPersonalizationResult, error) {
 	d, err := a.driver(provider)
 	if err != nil {

@@ -128,6 +128,82 @@ func TestRemoteAgent_CreateRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRemoteAgent_ListRoundTrip(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)
+	go func() { _ = a.Serve() }()
+
+	type result struct {
+		statuses []providersdk.ResourceStatus
+		err      error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		statuses, err := a.List(context.Background(), "docker")
+		resultCh <- result{statuses, err}
+	}()
+
+	cmd := recvCommand(t, stream.sentCh)
+	if cmd.GetList() == nil {
+		t.Fatalf("expected a ListCommand, got %#v", cmd)
+	}
+
+	stream.feedResult(&boxyagentv1.CommandResult{
+		CommandId: cmd.GetCommandId(),
+		Outcome: &boxyagentv1.CommandResult_List{List: &boxyagentv1.ListResult{
+			Resources: []*boxyagentv1.ResourceStatusResult{
+				{Id: "container-1", State: "running"},
+				{Id: "container-2", State: "exited"},
+			},
+		}},
+	})
+
+	select {
+	case r := <-resultCh:
+		if r.err != nil {
+			t.Fatalf("List returned error: %v", r.err)
+		}
+		if len(r.statuses) != 2 {
+			t.Fatalf("expected 2 statuses, got %d", len(r.statuses))
+		}
+		if r.statuses[0].ID != "container-1" || r.statuses[0].State != "running" {
+			t.Fatalf("unexpected first status: %+v", r.statuses[0])
+		}
+		if r.statuses[1].ID != "container-2" || r.statuses[1].State != "exited" {
+			t.Fatalf("unexpected second status: %+v", r.statuses[1])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for List to return")
+	}
+}
+
+func TestRemoteAgent_ListErrorPropagates(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)
+	go func() { _ = a.Serve() }()
+
+	resultCh := make(chan error, 1)
+	go func() {
+		_, err := a.List(context.Background(), "hyperv")
+		resultCh <- err
+	}()
+
+	cmd := recvCommand(t, stream.sentCh)
+	stream.feedResult(&boxyagentv1.CommandResult{
+		CommandId: cmd.GetCommandId(),
+		Outcome:   &boxyagentv1.CommandResult_Error{Error: &boxyagentv1.AgentError{Message: "list not supported by driver \"hyperv\""}},
+	})
+
+	select {
+	case err := <-resultCh:
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for List to return")
+	}
+}
+
 func TestRemoteAgent_ConcurrentCallsResolveDistinctWaiters(t *testing.T) {
 	stream := newFakeServerStream()
 	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)

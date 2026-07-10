@@ -110,6 +110,23 @@ func TestEmbeddedAgent_UnknownProviderForEveryLifecycleMethod(t *testing.T) {
 	if result, err := agent.PersonalizeGuest(ctx, missing, "res-1"); err == nil || result != nil {
 		t.Fatalf("PersonalizeGuest unknown provider result=%v err=%v, want error", result, err)
 	}
+	if _, err := agent.List(ctx, missing); err == nil {
+		t.Fatal("List unknown provider error = nil")
+	}
+}
+
+// TestEmbeddedAgent_ListReturnsErrorForDriverWithoutCapability verifies that
+// an unsupported List returns an error rather than an empty slice — an empty
+// slice would be indistinguishable from "confirmed nothing exists," which
+// the #133 reconciliation sweep must never assume for a driver that simply
+// can't enumerate.
+func TestEmbeddedAgent_ListReturnsErrorForDriverWithoutCapability(t *testing.T) {
+	agent := newTestAgent(t)
+
+	statuses, err := agent.List(context.Background(), devfactory.ProviderType)
+	if err == nil {
+		t.Fatalf("List result = %+v, err = nil; want error for driver without ResourceLister", statuses)
+	}
 }
 
 func TestEmbeddedAgent_PersonalizeGuestReturnsNilForDriverWithoutCapability(t *testing.T) {

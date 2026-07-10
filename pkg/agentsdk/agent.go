@@ -51,6 +51,14 @@ type GuestPersonalizingAgent interface {
 	PersonalizeGuest(ctx context.Context, provider providersdk.Type, id string) (*providersdk.GuestPersonalizationResult, error)
 }
 
+// ResourceListingAgent is an optional agent capability for providers whose
+// underlying driver implements providersdk.ResourceLister. Not every driver
+// supports enumeration, so callers must type-assert for this rather than
+// relying on it being part of Agent.
+type ResourceListingAgent interface {
+	List(ctx context.Context, provider providersdk.Type) ([]providersdk.ResourceStatus, error)
+}
+
 // AgentInfo describes an agent and the providers it hosts.
 type AgentInfo struct {
 	// ID is a unique identifier for this agent instance.
