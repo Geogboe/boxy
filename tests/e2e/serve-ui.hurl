@@ -92,16 +92,16 @@ bytes count > 1000
 GET {{base_url}}/
 HTTP 200
 [Asserts]
-body contains "<a href=\"/\" class=\"active\">Home</a>"
+body contains "<a href=\"/\" class=\"active\" aria-current=\"page\">Home</a>"
 
 # Pools page has active on Pools link
 GET {{base_url}}/ui/pools
 HTTP 200
 [Asserts]
-body contains "<a href=\"/ui/pools\" class=\"active\">Pools</a>"
+body contains "<a href=\"/ui/pools\" class=\"active\" aria-current=\"page\">Pools</a>"
 
 # Sandboxes page has active on Sandboxes link
 GET {{base_url}}/ui/sandboxes
 HTTP 200
 [Asserts]
-body contains "<a href=\"/ui/sandboxes\" class=\"active\">Sandboxes</a>"
+body contains "<a href=\"/ui/sandboxes\" class=\"active\" aria-current=\"page\">Sandboxes</a>"
