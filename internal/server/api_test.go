@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -258,6 +259,88 @@ func TestAPI_GetResource_found(t *testing.T) {
 	}
 	if res.ID != "res-1" {
 		t.Fatalf("resource id = %q, want %q", res.ID, "res-1")
+	}
+}
+
+// blockingProvisioner is a pool.Provisioner whose Destroy blocks until the
+// test signals it to proceed, letting a test observe store state while a
+// destroy is genuinely in flight (not just before/after it).
+type blockingProvisioner struct {
+	started chan struct{}
+	proceed chan struct{}
+}
+
+func (p *blockingProvisioner) Provision(ctx context.Context, pool model.Pool) (model.Resource, error) {
+	return model.Resource{}, fmt.Errorf("not implemented")
+}
+
+func (p *blockingProvisioner) Destroy(ctx context.Context, pool model.Pool, res model.Resource) error {
+	close(p.started)
+	<-p.proceed
+	return nil
+}
+
+// TestAPI_GetResource_ShowsRecyclingStateWhileDestroyInFlight is the
+// acceptance proof for the recycling/destroying observability feature: the
+// REST API must show the transient state while a destroy is genuinely in
+// flight, not just infer it from before/after snapshots.
+func TestAPI_GetResource_ShowsRecyclingStateWhileDestroyInFlight(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+
+	res := model.Resource{
+		ID:         "res-1",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		OriginPool: "web",
+		State:      model.ResourceStateAllocated,
+	}
+	if err := st.PutResource(ctx, res); err != nil {
+		t.Fatalf("put resource: %v", err)
+	}
+	if err := st.PutPool(ctx, model.Pool{
+		Name: "web",
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: model.ResourceProfileDefault,
+			Resources:       []model.Resource{res},
+		},
+	}); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &blockingProvisioner{started: make(chan struct{}), proceed: make(chan struct{})}
+	mgr := pool.New(st, prov)
+
+	destroyErrCh := make(chan error, 1)
+	go func() { destroyErrCh <- mgr.DestroyResource(ctx, res) }()
+
+	select {
+	case <-prov.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for destroy to start")
+	}
+
+	mux := server.NewTestMux(st, sandbox.New(st, nil), false)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/resources/res-1", nil)
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var got model.Resource
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.State != model.ResourceStateDestroying {
+		t.Fatalf("state while destroy in flight = %q, want %q", got.State, model.ResourceStateDestroying)
+	}
+
+	close(prov.proceed)
+	if err := <-destroyErrCh; err != nil {
+		t.Fatalf("DestroyResource: %v", err)
 	}
 }
 

@@ -62,6 +62,7 @@ docs/adr/             # Architecture Decision Records
 - Docker pool provisioning auto-pulls a configured image when it is missing locally; first-run Docker pools should not require a manual `docker pull`.
 - `model.Resource.OriginPool` is immutable provenance: it records which pool provisioned the resource, and `pool.preheat.max_total` is enforced against all non-destroyed resources with that origin, not just current ready inventory.
 - The daemon reconcile loop runs pool reconciliation both before and after sandbox fulfillment so preheat targets are restored in the same tick after allocations drain a pool.
+- Resource destroy paths (recycle-by-max-age, drain, sandbox-triggered `DestroyResource`) persist a transient state (`recycling` or `destroying`) *before* calling the provisioner, so a resource mid-teardown is observable via the REST API/CLI/`.boxy/state.json` instead of just vanishing once the destroy completes. An orphan sweep in `internal/pool/manager.go` recovers resources left stuck in a transient state by a crash — see ADR-0006 for why the two sweep sites (stale/recycle vs. drain) intentionally scope different state sets, and why that's safe given every driver's `Delete` is idempotent on an already-gone resource.
 
 ### Sandboxes
 

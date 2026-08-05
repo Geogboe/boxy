@@ -267,6 +267,13 @@ func (m *Manager) DestroyResource(ctx context.Context, res model.Resource) error
 		return fmt.Errorf("get origin pool %q for resource %q: %w", res.OriginPool, res.ID, err)
 	}
 
+	if !isTransientDestroyState(res.State) {
+		res.State = model.ResourceStateDestroying
+		res.UpdatedAt = m.clock.Now()
+		if err := m.store.PutResource(ctx, res); err != nil {
+			return fmt.Errorf("mark resource %q destroying: %w", res.ID, err)
+		}
+	}
 	if err := m.provisioner.Destroy(ctx, p, res); err != nil {
 		return fmt.Errorf("destroy resource %q in pool %q: %w", res.ID, p.Name, err)
 	}
@@ -283,6 +290,14 @@ func (m *Manager) DestroyResource(ctx context.Context, res model.Resource) error
 		return fmt.Errorf("delete resource %q: %w", res.ID, err)
 	}
 	return nil
+}
+
+// isTransientDestroyState reports whether a resource is already mid-teardown
+// (recycling or destroying), so a caller that's about to retry a destroy
+// (e.g. the orphan sweep) doesn't need to re-persist the same transient
+// state before calling the provisioner again.
+func isTransientDestroyState(s model.ResourceState) bool {
+	return s == model.ResourceStateRecycling || s == model.ResourceStateDestroying
 }
 
 func (m *Manager) lockPool(poolName model.PoolName) func() {
@@ -351,6 +366,15 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 			}
 			p = rebuilt
 
+			// Resources left mid-teardown by a reconcile pass that crashed
+			// before the destroy completed drop out of p.Inventory.Resources
+			// on rebuild (it only re-admits Ready resources), so neither
+			// computeStale nor the drain path below would ever see them
+			// again without an explicit sweep — they'd zombie forever, still
+			// counted against MaxTotal, with their backing provider resource
+			// possibly never torn down.
+			inInventory := resourceIDSet(p.Inventory.Resources)
+
 			if p.EffectivelyDrained() {
 				if requireMinReady {
 					return policycontroller.Decision[plan]{}, &DrainedPoolError{
@@ -358,8 +382,12 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 						RequestedReady: minReadyOverride,
 					}
 				}
+				// Drain has no other retry mechanism for a resource it left
+				// mid-teardown, so it sweeps both transient states.
+				orphans := orphanedTransientResources(p.Name, obs.resources, inInventory, model.ResourceStateRecycling, model.ResourceStateDestroying)
 				toDrain := append([]model.Resource(nil), p.Inventory.Resources...)
-				reason := fmt.Sprintf("drain inventory_rebuilt=%t ready=%d", rebuildReport.Changed, len(toDrain))
+				toDrain = append(toDrain, orphans...)
+				reason := fmt.Sprintf("drain inventory_rebuilt=%t ready=%d orphans=%d", rebuildReport.Changed, len(p.Inventory.Resources), len(orphans))
 				return policycontroller.Decision[plan]{
 					ShouldAct: rebuildReport.Changed || len(toDrain) > 0,
 					Plan: plan{
@@ -374,10 +402,17 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 				}, nil
 			}
 
+			// Only sweep "recycling" here: a "destroying" orphan is a failed
+			// sandbox-triggered DestroyResource, already retried
+			// independently by sandbox.DeletionReconciler (see
+			// orphanedTransientResources' doc comment).
+			orphans := orphanedTransientResources(p.Name, obs.resources, inInventory, model.ResourceStateRecycling)
+
 			stale, kept, err := computeStale(p, obs.now)
 			if err != nil {
 				return policycontroller.Decision[plan]{}, err
 			}
+			stale = append(stale, orphans...)
 			p.Inventory.Resources = kept
 
 			readyCount := countReadyResources(p.Inventory.Resources)
@@ -431,6 +466,13 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 			}
 
 			for _, res := range pl.stale {
+				if !isTransientDestroyState(res.State) {
+					res.State = model.ResourceStateRecycling
+					res.UpdatedAt = pl.now
+					if err := m.store.PutResource(ctx, res); err != nil {
+						return fmt.Errorf("mark stale resource %q recycling: %w", res.ID, err)
+					}
+				}
 				if err := m.provisioner.Destroy(ctx, p, res); err != nil {
 					return fmt.Errorf("destroy stale resource %q in pool %q: %w", res.ID, p.Name, err)
 				}
@@ -490,6 +532,12 @@ func (m *Manager) applyDrain(ctx context.Context, p model.Pool, resources []mode
 	}
 
 	for _, res := range resources {
+		if !isTransientDestroyState(res.State) {
+			res.State = model.ResourceStateDestroying
+			if err := m.store.PutResource(ctx, res); err != nil {
+				return fmt.Errorf("mark drained resource %q destroying: %w", res.ID, err)
+			}
+		}
 		if err := m.provisioner.Destroy(ctx, p, res); err != nil {
 			return fmt.Errorf("destroy drained resource %q in pool %q: %w", res.ID, p.Name, err)
 		}
@@ -544,6 +592,43 @@ func computeStale(p model.Pool, now time.Time) (stale []model.Resource, kept []m
 		func(res model.Resource) time.Time { return res.UpdatedAt },
 	)
 	return stale, kept, nil
+}
+
+// orphanedTransientResources finds resources originating from poolName that
+// are already mid-teardown in one of wantStates but are absent from the
+// pool's rebuilt ready inventory — the signature of a reconcile pass that
+// crashed between marking a resource transient and the destroy completing.
+// Callers fold the result into the same tick's stale/drain list so the
+// destroy gets retried instead of the resource zombying forever.
+//
+// wantStates matters: a resource left "destroying" by a failed
+// sandbox-triggered DestroyResource is already retried independently by
+// sandbox.DeletionReconciler (it re-scans each deleting sandbox's own
+// resource list every tick, regardless of pool inventory) — the stale/recycle
+// path must only sweep "recycling" (its own state, with no other retry
+// mechanism) so the two retry loops don't both act on the same resource. The
+// drain path has no such competing mechanism, so it sweeps both.
+func orphanedTransientResources(poolName model.PoolName, resources []model.Resource, inInventory map[model.ResourceID]struct{}, wantStates ...model.ResourceState) []model.Resource {
+	var orphans []model.Resource
+	for _, res := range resources {
+		if res.OriginPool != poolName || !stateIn(res.State, wantStates) {
+			continue
+		}
+		if _, ok := inInventory[res.ID]; ok {
+			continue
+		}
+		orphans = append(orphans, res)
+	}
+	return orphans
+}
+
+func stateIn(s model.ResourceState, states []model.ResourceState) bool {
+	for _, want := range states {
+		if s == want {
+			return true
+		}
+	}
+	return false
 }
 
 func computeToProvision(p model.Pool, minReady int, totalCount int) int {

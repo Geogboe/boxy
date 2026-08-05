@@ -26,9 +26,17 @@ const (
 	ResourceStateReady        ResourceState = "ready"
 	ResourceStateAllocated    ResourceState = "allocated"
 	ResourceStateReleased     ResourceState = "released"
-	ResourceStateDestroying   ResourceState = "destroying"
-	ResourceStateDestroyed    ResourceState = "destroyed"
-	ResourceStateError        ResourceState = "error"
+	// ResourceStateRecycling marks a resource being torn down by pool-level
+	// max-age recycling (see RecyclePolicy) specifically, distinct from
+	// ResourceStateDestroying (drain and explicit sandbox-triggered destroy).
+	// It exists purely for observability: without it, a resource mid-teardown
+	// looks identical to a healthy one (via the REST API, CLI, or persisted
+	// state) until it suddenly disappears, which is indistinguishable from a
+	// stalled/hung backend.
+	ResourceStateRecycling  ResourceState = "recycling"
+	ResourceStateDestroying ResourceState = "destroying"
+	ResourceStateDestroyed  ResourceState = "destroyed"
+	ResourceStateError      ResourceState = "error"
 )
 
 // Resource is a provisioned instance tracked by Boxy.
