@@ -27,10 +27,15 @@ func newSandboxGetCommand(serverAddr func() string) *cobra.Command {
 		Short: "Get a sandbox by ID",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := validatePathID("sandbox id", args[0])
+			if err != nil {
+				return err
+			}
+
 			client := defaultAPIClient()
 			base := apiBaseURL(serverAddr())
 
-			sb, err := fetchJSON[model.Sandbox](cmd.Context(), client, base+"/api/v1/sandboxes/"+args[0])
+			sb, err := fetchJSON[model.Sandbox](cmd.Context(), client, base+"/api/v1/sandboxes/"+id)
 			if err != nil {
 				var apiErr *apiError
 				if errors.As(err, &apiErr) && apiErr.StatusCode == 404 {
@@ -39,17 +44,9 @@ func newSandboxGetCommand(serverAddr func() string) *cobra.Command {
 				return fmt.Errorf("get sandbox %q: %w", args[0], err)
 			}
 
-			resources := make([]model.Resource, 0, len(sb.Resources))
-			for _, rid := range sb.Resources {
-				res, err := fetchJSON[model.Resource](cmd.Context(), client, base+"/api/v1/resources/"+string(rid))
-				if err != nil {
-					var apiErr *apiError
-					if errors.As(err, &apiErr) && apiErr.StatusCode == 404 {
-						continue
-					}
-					continue // skip resources that can't be found
-				}
-				resources = append(resources, res)
+			resources, err := hydrateSandboxResources(cmd.Context(), client, base, sb)
+			if err != nil {
+				return err
 			}
 
 			return printJSON(sandboxGetOutput{

@@ -92,6 +92,11 @@ func TestRunStatus_Unhealthy(t *testing.T) {
 	if got := stderr.String(); !strings.Contains(got, "unhealthy") {
 		t.Fatalf("expected stderr to contain unhealthy, got %q", got)
 	}
+	// runStatus already explained the failure on stderr above — main.go's
+	// top-level sink must not print the same error a second time.
+	if !IsReported(err) {
+		t.Fatal("expected the unhealthy error to be marked reported, to avoid a duplicate print in main.go")
+	}
 }
 
 func captureCommandOutput(cmd *cobra.Command) (*bytes.Buffer, *bytes.Buffer) {

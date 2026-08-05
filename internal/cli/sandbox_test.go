@@ -207,6 +207,24 @@ func TestSandboxList_with_sandboxes(t *testing.T) {
 	}
 }
 
+func TestSandboxList_unknownFormatRejected(t *testing.T) {
+	srv := newSandboxTestServer(t, []model.Sandbox{
+		{ID: "sb-1", Name: "one", Status: model.SandboxStatusPending, Resources: []model.ResourceID{"res-1"}},
+	})
+	defer srv.Close()
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"sandbox", "--server", srv.URL, "list", "--format", "yaml"})
+
+	err := cmd.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatal("expected error for an unrecognized --format value")
+	}
+	if !strings.Contains(err.Error(), "yaml") {
+		t.Fatalf("error = %v, want it to mention the rejected format", err)
+	}
+}
+
 func TestSandboxGet_found(t *testing.T) {
 	srv := newSandboxTestServer(t, []model.Sandbox{
 		{ID: "sb-1", Name: "one", Status: model.SandboxStatusPending, Resources: []model.ResourceID{"res-1"}},
@@ -246,6 +264,101 @@ func TestSandboxGet_not_found(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `sandbox "no-such-id" not found`) {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestSandboxGet_resourceFetchErrorPropagates(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/sandboxes/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if err := printJSONTo(w, model.Sandbox{
+			ID:        "sb-1",
+			Name:      "one",
+			Status:    model.SandboxStatusReady,
+			Resources: []model.ResourceID{"res-1"},
+		}); err != nil {
+			t.Fatalf("encode sandbox: %v", err)
+		}
+	})
+	mux.HandleFunc("GET /api/v1/resources/{id}", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"resource store unavailable"}`, http.StatusInternalServerError)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"sandbox", "--server", srv.URL, "get", "sb-1"})
+
+	err := cmd.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatal("expected error when a resource fetch fails with a non-404 error, got nil")
+	}
+	if !strings.Contains(err.Error(), "resource store unavailable") {
+		t.Fatalf("error = %v, want it to mention the underlying resource-fetch failure", err)
+	}
+}
+
+func TestSandboxList_daemonDownGivesFriendlyError(t *testing.T) {
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"sandbox", "--server", "127.0.0.1:1", "list"})
+
+	err := cmd.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatal("expected error when the daemon is unreachable")
+	}
+	if !strings.Contains(err.Error(), "boxy serve") {
+		t.Fatalf("error = %v, want a friendly `boxy serve` hint (not a raw dial error)", err)
+	}
+}
+
+func TestSandboxGet_whitespaceIDRejectedBeforeRequest(t *testing.T) {
+	hit := false
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { hit = true })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"sandbox", "--server", srv.URL, "get", "   "})
+	if err := cmd.ExecuteContext(context.Background()); err == nil {
+		t.Fatal("expected error for whitespace-only sandbox id")
+	}
+	if hit {
+		t.Fatal("expected no HTTP request for an invalid sandbox id")
+	}
+}
+
+func TestSandboxDelete_whitespaceIDRejectedBeforeRequest(t *testing.T) {
+	hit := false
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { hit = true })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"sandbox", "--server", srv.URL, "delete", "   "})
+	if err := cmd.ExecuteContext(context.Background()); err == nil {
+		t.Fatal("expected error for whitespace-only sandbox id")
+	}
+	if hit {
+		t.Fatal("expected no HTTP request for an invalid sandbox id")
+	}
+}
+
+func TestSandboxExtend_whitespaceIDRejectedBeforeRequest(t *testing.T) {
+	hit := false
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { hit = true })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"sandbox", "--server", srv.URL, "extend", "   ", "1h"})
+	if err := cmd.ExecuteContext(context.Background()); err == nil {
+		t.Fatal("expected error for whitespace-only sandbox id")
+	}
+	if hit {
+		t.Fatal("expected no HTTP request for an invalid sandbox id")
 	}
 }
 

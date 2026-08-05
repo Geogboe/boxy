@@ -140,6 +140,23 @@ func TestAgentTokenRevoke(t *testing.T) {
 	}
 }
 
+func TestAgentTokenRevoke_whitespaceIDRejectedBeforeRequest(t *testing.T) {
+	hit := false
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { hit = true })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"agent", "--server", srv.URL, "token", "revoke", "   "})
+	if err := cmd.ExecuteContext(context.Background()); err == nil {
+		t.Fatal("expected error for whitespace-only token id")
+	}
+	if hit {
+		t.Fatal("expected no HTTP request for an invalid token id")
+	}
+}
+
 func TestAgentTokenRevoke_NotFound(t *testing.T) {
 	srv, _ := newAgentTestServer(t)
 	defer srv.Close()
@@ -189,5 +206,22 @@ func TestAgentRevoke(t *testing.T) {
 	}
 	if state.revokedAgent != "agent-a" || state.revokeReason != "host decommissioned" {
 		t.Fatalf("revoked = %q reason = %q, want agent-a / host decommissioned", state.revokedAgent, state.revokeReason)
+	}
+}
+
+func TestAgentRevoke_whitespaceIDRejectedBeforeRequest(t *testing.T) {
+	hit := false
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { hit = true })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"agent", "--server", srv.URL, "revoke", "   "})
+	if err := cmd.ExecuteContext(context.Background()); err == nil {
+		t.Fatal("expected error for whitespace-only agent id")
+	}
+	if hit {
+		t.Fatal("expected no HTTP request for an invalid agent id")
 	}
 }

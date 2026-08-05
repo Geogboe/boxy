@@ -29,10 +29,14 @@ func newDebugPoolDrainCommand(serverAddr func() string) *cobra.Command {
 		Short: "Drain unused ready inventory from a pool",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			name, err := validatePathID("pool name", args[0])
+			if err != nil {
+				return err
+			}
 			pool, err := postJSON[map[string]any, model.Pool](
 				cmd.Context(),
 				maintenanceAPIClient(),
-				apiBaseURL(serverAddr())+"/api/v1/pools/"+args[0]+"/drain",
+				apiBaseURL(serverAddr())+"/api/v1/pools/"+name+"/drain",
 				map[string]any{},
 			)
 			if err != nil {
@@ -50,10 +54,14 @@ func newDebugPoolFillCommand(serverAddr func() string) *cobra.Command {
 		Short: "Fill a pool to its configured min_ready",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			name, err := validatePathID("pool name", args[0])
+			if err != nil {
+				return err
+			}
 			pool, err := postJSON[map[string]any, model.Pool](
 				cmd.Context(),
 				maintenanceAPIClient(),
-				apiBaseURL(serverAddr())+"/api/v1/pools/"+args[0]+"/fill",
+				apiBaseURL(serverAddr())+"/api/v1/pools/"+name+"/fill",
 				map[string]any{},
 			)
 			if err != nil {

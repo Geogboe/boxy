@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -68,7 +71,7 @@ func doJSON[T any](client *http.Client, req *http.Request) (T, error) {
 
 	resp, err := client.Do(req) //nolint:gosec // CLI requests intentionally target the user-configured Boxy server.
 	if err != nil {
-		return zero, err
+		return zero, wrapConnError(err, req.URL.Host)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -103,6 +106,33 @@ func decodeAPIError(resp *http.Response, url string) error {
 	return apiErr
 }
 
+// wrapConnError classifies err as a daemon-unreachable condition (connection
+// refused, dial failure, DNS failure, etc.) at addr and, if so, wraps it with
+// a hint that `boxy serve` may not be running. Errors that aren't connection
+// failures (HTTP-level errors, decode errors, etc.) are returned unchanged.
+func wrapConnError(err error, addr string) error {
+	if err == nil {
+		return nil
+	}
+	var opErr *net.OpError
+	if !errors.As(err, &opErr) {
+		return err
+	}
+	return fmt.Errorf("cannot reach server at %s (is `boxy serve` running?): %w", addr, err)
+}
+
+// validatePathID trims raw, rejects an empty/whitespace-only value with an
+// error naming what was empty, and returns it escaped for safe inclusion as
+// a single URL path segment (so a stray "/", "?", or "#" in a hand-typed ID
+// can't reroute or reinterpret the request).
+func validatePathID(kind, raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", fmt.Errorf("%s must not be empty", kind)
+	}
+	return url.PathEscape(trimmed), nil
+}
+
 func apiBaseURL(server string) string {
 	server = strings.TrimSpace(server)
 	server = strings.TrimRight(server, "/")
@@ -120,5 +150,8 @@ func defaultAPIClient() *http.Client {
 }
 
 func maintenanceAPIClient() *http.Client {
-	return &http.Client{}
+	// Drain/fill operations can legitimately take longer than a status check
+	// (provisioning/destroying real resources), but a hung daemon still must
+	// not block the command forever.
+	return &http.Client{Timeout: 30 * time.Second}
 }

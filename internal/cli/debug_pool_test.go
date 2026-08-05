@@ -94,6 +94,23 @@ func TestDebugPoolDrain_error(t *testing.T) {
 	}
 }
 
+func TestDebugPoolDrain_whitespacePoolRejectedBeforeRequest(t *testing.T) {
+	hit := false
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { hit = true })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"debug", "pool", "--server", srv.URL, "drain", "   "})
+	if err := cmd.ExecuteContext(context.Background()); err == nil {
+		t.Fatal("expected error for whitespace-only pool name")
+	}
+	if hit {
+		t.Fatal("expected no HTTP request for an invalid pool name")
+	}
+}
+
 func TestDebugPoolFill_configDeclaredDrain(t *testing.T) {
 	srv := newDebugPoolTestServer(t)
 	defer srv.Close()

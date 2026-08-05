@@ -20,7 +20,11 @@ func newSandboxExtendCommand(serverAddr func() string) *cobra.Command {
 		Short: "Push a sandbox's auto-destroy expiry further out",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id, durationArg := args[0], args[1]
+			rawID, durationArg := args[0], args[1]
+			id, err := validatePathID("sandbox id", rawID)
+			if err != nil {
+				return err
+			}
 			if _, err := time.ParseDuration(durationArg); err != nil {
 				return fmt.Errorf("invalid duration %q: %w", durationArg, err)
 			}
@@ -39,12 +43,12 @@ func newSandboxExtendCommand(serverAddr func() string) *cobra.Command {
 				if errors.As(err, &apiErr) {
 					switch apiErr.StatusCode {
 					case http.StatusNotFound:
-						return fmt.Errorf("sandbox %q not found", id)
+						return fmt.Errorf("sandbox %q not found", rawID)
 					case http.StatusConflict:
-						return fmt.Errorf("extend sandbox %q: %s", id, apiErr.Message)
+						return fmt.Errorf("extend sandbox %q: %s", rawID, apiErr.Message)
 					}
 				}
-				return fmt.Errorf("extend sandbox %q: %w", id, err)
+				return fmt.Errorf("extend sandbox %q: %w", rawID, err)
 			}
 
 			expiry := "no expiry"

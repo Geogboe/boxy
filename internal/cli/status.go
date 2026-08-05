@@ -43,12 +43,12 @@ func runStatus(ctx context.Context, opts statusOpts, cmd *cobra.Command) error {
 		errw := cmd.ErrOrStderr()
 		_, _ = fmt.Fprintf(errw, "  Error: cannot reach server at %s\n", addr)
 		_, _ = fmt.Fprintf(errw, "  Is `boxy serve` running?\n")
-		return err
+		return MarkReported(err)
 	}
 
 	if !healthy {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "  Error: server at %s is unhealthy\n", addr)
-		return fmt.Errorf("server at %s is unhealthy", addr)
+		return MarkReported(fmt.Errorf("server at %s is unhealthy", addr))
 	}
 
 	out := cmd.OutOrStdout()
@@ -100,7 +100,7 @@ func checkHealth(ctx context.Context, client *http.Client, base string) (bool, e
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, err
+		return false, wrapConnError(err, req.URL.Host)
 	}
 	_ = resp.Body.Close()
 	return resp.StatusCode == http.StatusOK, nil

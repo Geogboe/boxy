@@ -18,17 +18,21 @@ func newSandboxDeleteCommand(serverAddr func() string) *cobra.Command {
 		Short: "Delete a sandbox by ID",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := validatePathID("sandbox id", args[0])
+			if err != nil {
+				return err
+			}
+
 			client := defaultAPIClient()
 			base := apiBaseURL(serverAddr())
-			id := args[0]
 
 			sb, err := deleteJSON[model.Sandbox](cmd.Context(), client, base+"/api/v1/sandboxes/"+id)
 			if err != nil {
 				var apiErr *apiError
 				if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
-					return fmt.Errorf("sandbox %q not found", id)
+					return fmt.Errorf("sandbox %q not found", args[0])
 				}
-				return fmt.Errorf("delete sandbox %q: %w", id, err)
+				return fmt.Errorf("delete sandbox %q: %w", args[0], err)
 			}
 			if noWait {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "accepted deletion of sandbox %s\n", sb.ID)
