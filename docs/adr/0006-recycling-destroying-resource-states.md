@@ -31,13 +31,16 @@ existing transient-state transition sequence to extend.
   `isTransientDestroyState` so a resource already mid-teardown (see orphan
   sweep below) isn't redundantly re-marked. The existing post-destroy
   `destroyed` write is unchanged.
-- No REST/CLI/UI surface changes were needed for observability:
+- No REST/UI surface changes were needed for observability (see the
+  Non-goals section below for CLI):
   `GET /api/v1/resources`, `/api/v1/resources/{id}`, `GET /api/v1/pools`,
   and `.boxy/state.json` already round-trip `Resource.State` as a plain
   string. The acceptance proof is `internal/server`'s
-  `TestAPI_GetResource_ShowsRecyclingStateWhileDestroyInFlight`, which blocks
-  a fake provisioner's `Destroy` mid-call and confirms the REST API shows
-  `"recycling"` while it's blocked.
+  `TestAPI_GetResource_ShowsDestroyingStateWhileDestroyInFlight` (drives
+  `DestroyResource`, blocking a fake provisioner's `Destroy` mid-call to
+  confirm the REST API shows `"destroying"` while genuinely in flight) and
+  `TestAPI_GetResource_ShowsRecyclingStateWhileStaleDestroyInFlight` (the
+  same proof for the max-age recycle path, confirming `"recycling"`).
 
 ### Orphan sweep (crash recovery)
 
@@ -53,27 +56,32 @@ resource with a matching `OriginPool`), with its backing provider resource
 possibly never torn down.
 
 `orphanedTransientResources` scans all resources for a matching `OriginPool`
-in one of the caller-specified transient states, absent from the rebuilt
-inventory, and folds the result into that tick's stale/drain list so the
-destroy gets retried.
+in either transient state, absent from the rebuilt inventory, and folds the
+result into that tick's stale/drain list so the destroy gets retried.
 
-**The two sweep sites intentionally scope different state sets:**
+**Both sweep sites (stale/recycle and drain) sweep both `recycling` and
+`destroying`.** An earlier version of this design tried to split scope —
+stale/recycle sweeps only `recycling`, reasoning that a `destroying` orphan
+is always a failed sandbox-triggered `DestroyResource` call already retried
+independently by `sandbox.DeletionReconciler` (it re-scans each deleting
+sandbox's own resource list every tick, with no dependency on pool
+inventory). That assumption is false: `applyDrain` also uses `destroying`,
+for pool-owned resources with no sandbox involved at all. If `applyDrain`
+crashes mid-teardown and the operator later clears the drain (`debug pool
+fill`), the resource is orphaned outside a drain — at that point only the
+stale/recycle path ever runs for that pool again, and the narrower design
+left it permanently unrecoverable (verified with a reconcile test seeding
+exactly this state: zero `Destroy` calls, state unchanged, forever). Sweeping
+both states from both sites fixes this, at the cost of occasionally retrying
+a genuinely sandbox-owned `destroying` resource redundantly alongside
+`sandbox.DeletionReconciler`'s own retry of it.
 
-- The stale/recycle path sweeps only `recycling`. A `destroying` orphan
-  there is a failed sandbox-triggered `DestroyResource` call, which is
-  *already* retried independently by `sandbox.DeletionReconciler` — it
-  re-scans each deleting sandbox's own resource list every tick, with no
-  dependency on pool inventory at all. Sweeping it from the pool side too
-  would just be a second, redundant retry loop racing the first.
-- The drain path sweeps both `recycling` and `destroying`, because drain has
-  no other retry mechanism for a resource it left mid-teardown.
-
-This relies on an existing, unchanged invariant: every driver's `Delete`
-(devfactory, docker, hyperv) is idempotent — deleting an already-gone
-resource returns `nil` rather than erroring. That's what makes any residual
-overlap between the two retry paths (e.g. a resource that changes hands
-between "pool-owned" and "sandbox-owned" framing across a crash) safe rather
-than a hard failure.
+That redundancy is safe, not just tolerated, because of an existing,
+unchanged invariant: every driver's `Delete` (devfactory, docker, hyperv) is
+idempotent — deleting an already-gone resource returns `nil` rather than
+erroring. The overlap window is also self-closing: as soon as either retry
+path succeeds, the resource record is deleted from the store, so the other
+path stops seeing it on its next scan.
 
 ## Non-goals / explicitly out of scope
 

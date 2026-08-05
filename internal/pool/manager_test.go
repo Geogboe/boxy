@@ -814,19 +814,21 @@ func TestManager_Reconcile_DrainDeleteFailureMarksDestroyedForRetry(t *testing.T
 	}
 }
 
-func TestManager_Reconcile_RecycleStale_DoesNotSweepSandboxOwnedDestroyingOrphan(t *testing.T) {
-	// A resource left "destroying" by a failed sandbox-triggered
-	// DestroyResource call is already retried independently by
-	// sandbox.DeletionReconciler (it re-scans each deleting sandbox's own
-	// resource list every tick, with no dependency on pool inventory). The
-	// pool's own stale/recycle sweep must not also retry it — that would be
-	// two independent retry loops racing on the same resource for no
-	// benefit. Only "recycling" (the pool's own in-flight state, which has
-	// no other retry mechanism) belongs to this sweep.
+func TestManager_Reconcile_RecycleStale_SweepsDestroyingOrphanRegardlessOfOwner(t *testing.T) {
+	// The stale/recycle path sweeps both transient states, not just
+	// "recycling" — see orphanedTransientResources' doc comment for why a
+	// "destroying" orphan can't be assumed to always be sandbox-owned (a
+	// drain-orphaned resource needs this path to recover it once the pool
+	// is un-drained). A resource that happens to be genuinely sandbox-owned
+	// may occasionally get retried redundantly alongside
+	// sandbox.DeletionReconciler's own retry; that's safe because every
+	// driver's Delete is idempotent on an already-gone resource, so this
+	// test asserts the sweep DOES act (the opposite of the old, narrower
+	// design) rather than asserting it stays away.
 	st := store.NewMemoryStore()
 	ctx := context.Background()
 	orphan := model.Resource{
-		ID:         "res_sandbox_owned",
+		ID:         "res_destroying_orphan",
 		Type:       model.ResourceTypeContainer,
 		Profile:    model.ResourceProfileDefault,
 		OriginPool: "p1",
@@ -853,15 +855,15 @@ func TestManager_Reconcile_RecycleStale_DoesNotSweepSandboxOwnedDestroyingOrphan
 		t.Fatalf("reconcile: %v", err)
 	}
 
-	if len(prov.destroyed) != 0 {
-		t.Fatalf("destroyed = %v, want the pool reconciler to leave a sandbox-owned destroying resource alone", prov.destroyed)
+	if len(prov.destroyed) != 1 || prov.destroyed[0] != orphan.ID {
+		t.Fatalf("destroyed = %v, want the destroying orphan %q retried", prov.destroyed, orphan.ID)
 	}
 	final, err := st.GetResource(ctx, orphan.ID)
 	if err != nil {
 		t.Fatalf("get resource: %v", err)
 	}
-	if final.State != model.ResourceStateDestroying {
-		t.Fatalf("state = %q, want unchanged %q", final.State, model.ResourceStateDestroying)
+	if final.State != model.ResourceStateDestroyed {
+		t.Fatalf("state = %q, want %q", final.State, model.ResourceStateDestroyed)
 	}
 }
 
@@ -909,6 +911,50 @@ func TestManager_Reconcile_Drain_SweepsDestroyingOrphan(t *testing.T) {
 	}
 }
 
+func TestManager_Reconcile_RecycleStale_SweepsOrphanFromEarlierDrainAttempt(t *testing.T) {
+	// A resource marked "destroying" by a crashed applyDrain, then left
+	// behind after the operator clears the drain (fill), must still be
+	// retried by the stale/recycle path: the drain branch won't run again
+	// once the pool isn't drained, and this resource was never owned by a
+	// sandbox, so sandbox.DeletionReconciler has no idea it exists. Without
+	// this, the resource zombies forever — exactly what this feature exists
+	// to prevent.
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	orphan := model.Resource{
+		ID:         "res_drain_then_filled",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		OriginPool: "p1",
+		Provider:   model.ProviderRef{Name: "prov_1"},
+		State:      model.ResourceStateDestroying,
+		CreatedAt:  time.Unix(0, 0).UTC(),
+	}
+	pool := model.Pool{
+		Name:      "p1",
+		Drain:     model.PoolDrainState{Operator: false}, // drain has been cleared (fill)
+		Policies:  model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 0, MaxTotal: 5}},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+	if err := st.PutResource(ctx, orphan); err != nil {
+		t.Fatalf("put resource: %v", err)
+	}
+
+	prov := &fakeProvisioner{}
+	mgr := New(st, prov)
+
+	if err := mgr.Reconcile(ctx, "p1"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if len(prov.destroyed) != 1 || prov.destroyed[0] != orphan.ID {
+		t.Fatalf("destroyed = %v, want the drain-orphaned resource %q retried after the pool was un-drained", prov.destroyed, orphan.ID)
+	}
+}
+
 func TestManager_Reconcile_Drain_MarksDestroyingBeforeDestroy(t *testing.T) {
 	st := store.NewMemoryStore()
 	ctx := context.Background()
@@ -950,6 +996,58 @@ func TestManager_Reconcile_Drain_MarksDestroyingBeforeDestroy(t *testing.T) {
 
 	if stateAtDestroy != model.ResourceStateDestroying {
 		t.Fatalf("state observed at Destroy time = %q, want %q", stateAtDestroy, model.ResourceStateDestroying)
+	}
+}
+
+func TestManager_Reconcile_Drain_SetsUpdatedAtBeforeDestroy(t *testing.T) {
+	// DestroyResource and the stale/recycle path both stamp UpdatedAt when
+	// persisting the transient state; applyDrain must match, or a resource
+	// stuck mid-drain-teardown won't show when it actually entered that
+	// state via .boxy/state.json — the exact observability gap this PR
+	// exists to close, and one previously flagged (PR #119) for this
+	// function's destroyed-marking path and never fixed.
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	ready := model.Resource{
+		ID:         "res_ready",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		OriginPool: "p1",
+		State:      model.ResourceStateReady,
+	}
+	if err := st.PutResource(ctx, ready); err != nil {
+		t.Fatalf("put ready resource: %v", err)
+	}
+	if err := st.PutPool(ctx, model.Pool{
+		Name:  "p1",
+		Drain: model.PoolDrainState{Operator: true},
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: model.ResourceProfileDefault,
+			Resources:       []model.Resource{ready},
+		},
+	}); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	fixedTime := time.Unix(5000, 0).UTC()
+	var updatedAtAtDestroy time.Time
+	prov := &fakeProvisioner{}
+	prov.onDestroy = func(id model.ResourceID) {
+		res, getErr := st.GetResource(ctx, id)
+		if getErr != nil {
+			t.Fatalf("get resource during destroy: %v", getErr)
+		}
+		updatedAtAtDestroy = res.UpdatedAt
+	}
+	mgr := New(st, prov)
+	mgr.SetClock(fixedClock{t: fixedTime})
+	if err := mgr.Reconcile(ctx, "p1"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if !updatedAtAtDestroy.Equal(fixedTime) {
+		t.Fatalf("UpdatedAt at destroy time = %v, want %v (drain must stamp UpdatedAt like the other two destroy paths)", updatedAtAtDestroy, fixedTime)
 	}
 }
 

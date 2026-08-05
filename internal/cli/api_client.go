@@ -150,8 +150,13 @@ func defaultAPIClient() *http.Client {
 }
 
 func maintenanceAPIClient() *http.Client {
-	// Drain/fill operations can legitimately take longer than a status check
-	// (provisioning/destroying real resources), but a hung daemon still must
-	// not block the command forever.
-	return &http.Client{Timeout: 30 * time.Second}
+	// Drain/fill operations can legitimately take a while (provisioning or
+	// destroying real resources), but a hung daemon still must not block the
+	// command forever. 5 minutes matches this codebase's existing "long but
+	// bounded" precedent (ADR-0004's provisioning-backoff cap) and comfortably
+	// survives a serial multi-VM drain even with Hyper-V's per-VM teardown
+	// wait (up to 30s each, see ADR-0004) — a shorter bound risked the CLI
+	// reporting a false-negative timeout while the server-side drain was
+	// still legitimately in progress.
+	return &http.Client{Timeout: 5 * time.Minute}
 }
