@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	boxyconfig "github.com/Geogboe/boxy/internal/config"
-	"github.com/Geogboe/boxy/internal/pki"
 	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/pki"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/store"
 )
@@ -121,6 +122,83 @@ func TestResolveServeOptionsPreferFlagsThenConfigDefaults(t *testing.T) {
 	}
 	if got := resolveUIEnabled(serveOpts{}, cmd, boxyconfig.Config{}); !got {
 		t.Fatal("resolveUIEnabled default = false, want true")
+	}
+}
+
+func TestResolveGRPCCertSANs(t *testing.T) {
+	cfg := boxyconfig.Config{
+		Server: boxyconfig.ServerSpec{GRPCCertSANs: []string{"cfg-a.example.test", "cfg-b.example.test"}},
+	}
+
+	cmd := newServeCommand()
+	got := resolveGRPCCertSANs(serveOpts{}, cmd, cfg)
+	want := []string{"cfg-a.example.test", "cfg-b.example.test"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("resolveGRPCCertSANs config = %v, want %v", got, want)
+	}
+
+	cmd = newServeCommand()
+	if err := cmd.Flags().Set("grpc-cert-san", "flag-a.example.test"); err != nil {
+		t.Fatalf("set grpc-cert-san: %v", err)
+	}
+	if err := cmd.Flags().Set("grpc-cert-san", "flag-b.example.test"); err != nil {
+		t.Fatalf("set grpc-cert-san: %v", err)
+	}
+	got = resolveGRPCCertSANs(serveOpts{grpcCertSANs: []string{"flag-a.example.test", "flag-b.example.test"}}, cmd, cfg)
+	want = []string{"flag-a.example.test", "flag-b.example.test"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("resolveGRPCCertSANs flag = %v, want %v (should fully replace config, not merge)", got, want)
+	}
+
+	cmd = newServeCommand()
+	if got := resolveGRPCCertSANs(serveOpts{}, cmd, boxyconfig.Config{}); got != nil {
+		t.Fatalf("resolveGRPCCertSANs default = %v, want nil", got)
+	}
+}
+
+func TestAgentCertSANs(t *testing.T) {
+	cases := []struct {
+		name       string
+		listenAddr string
+		extra      []string
+		want       []string
+	}{
+		{
+			name:       "wildcard_listen_no_extra",
+			listenAddr: ":9091",
+			want:       []string{"localhost", "127.0.0.1"},
+		},
+		{
+			name:       "explicit_wildcard_host_excluded",
+			listenAddr: "0.0.0.0:9091",
+			want:       []string{"localhost", "127.0.0.1"},
+		},
+		{
+			name:       "literal_host_included",
+			listenAddr: "agent.example.test:9091",
+			want:       []string{"localhost", "127.0.0.1", "agent.example.test"},
+		},
+		{
+			name:       "extra_trimmed_deduped_blanks_dropped",
+			listenAddr: ":9091",
+			extra:      []string{"foo.example.test", "  ", "", "foo.example.test"},
+			want:       []string{"localhost", "127.0.0.1", "foo.example.test"},
+		},
+		{
+			name:       "extra_duplicating_auto_derived_entry_not_repeated",
+			listenAddr: ":9091",
+			extra:      []string{"localhost"},
+			want:       []string{"localhost", "127.0.0.1"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := agentCertSANs(tc.listenAddr, tc.extra)
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("agentCertSANs(%q, %v) = %v, want %v", tc.listenAddr, tc.extra, got, tc.want)
+			}
+		})
 	}
 }
 

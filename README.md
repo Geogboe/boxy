@@ -172,7 +172,8 @@ server:
 
 pools:
   - name: win2022-base
-    type: hyperv
+    type: vm
+    provider: hyperv-local
     config: &win2022
       template: "Windows Server 2022 Standard"
       generation: 2
@@ -200,7 +201,8 @@ pools:
 
 **Key design decisions:**
 - `server.providers` declares what the embedded local agent handles. Drivers auto-discover connection details (socket paths, PowerShell, etc.) — no connection config needed.
-- Pool `type` is the provider type (`docker`, `hyperv`, `podman`, `vmware`). It maps directly to a driver and determines routing. The abstract resource category (container, VM) is derived from the driver's capabilities.
+- `server.grpc_cert_sans` (repeatable CLI flag equivalent: `--grpc-cert-san`) adds extra DNS names/IPs to the agent gRPC server certificate's SANs, on top of the always-included `localhost`/`127.0.0.1`/listen-host entries — needed when remote agents connect through a passthrough route or load balancer using an external DNS name. The flag fully overrides the config value when passed (does not merge). Changing this takes effect automatically on the next `boxy serve` start — see [ADR-0005](docs/adr/0005-remote-agent-transport-and-registration.md) for the full gRPC transport/TLS design.
+- Pool `type` is the abstract resource category boxy provisions: `container`, `vm`, or `share` (`""`/`container`/`docker` all resolve to a container pool — see `ResolvePoolExpectedType`). `provider` picks which driver instance actually fulfills it (e.g. `hyperv-local`, `docker-local`) — omit it and boxy resolves by provider type across all available agents.
 - Pool `config:` is an opaque blob interpreted by the driver. Different providers expose different config options.
 - Specs/blueprints are NOT a separate entity. The pool owns its provisioning config inline.
 - Config is stateless and declarative and is read once on startup. Runtime state (resources, sandboxes) lives in the state store — see [State Store](#state-store) below.

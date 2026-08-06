@@ -76,6 +76,10 @@ bin/
 .archive/pkg/*
 !.archive/pkg/poolpolicy/
 !.archive/pkg/poolpolicy/*
+!.archive/internal/
+.archive/internal/*
+!.archive/internal/pki/
+!.archive/internal/pki/*
 
 # Logs
 logs

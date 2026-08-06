@@ -20,11 +20,11 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 
-	"github.com/Geogboe/boxy/internal/pki"
 	"github.com/Geogboe/boxy/internal/pool"
 	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
 	"github.com/Geogboe/boxy/pkg/agentsdk"
 	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/pki"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/store"
 )
