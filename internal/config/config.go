@@ -45,6 +45,18 @@ type ServerSpec struct {
 	// only, never a config field, so a stale or copy-pasted config file
 	// can't silently disable mTLS in a real deployment.
 	AgentHeartbeatInterval string `json:"agent_heartbeat_interval,omitempty" yaml:"agent_heartbeat_interval,omitempty"`
+
+	// GRPCCertSANs are extra DNS names/IPs to include in the agent gRPC
+	// server certificate's Subject Alternative Names, on top of the
+	// always-included localhost/127.0.0.1/listen-host entries. Needed when
+	// remote agents connect through a passthrough route or load balancer
+	// using an external DNS name that doesn't match the literal
+	// --grpc-listen host. Unlike --insecure above, this is safe to expose
+	// as a config field: adding a SAN never weakens TLS/mTLS verification,
+	// it only widens which hostname a client may present. Equivalent
+	// repeatable CLI flag: --grpc-cert-san (fully overrides this value
+	// when passed, does not merge with it).
+	GRPCCertSANs []string `json:"grpc_cert_sans,omitempty" yaml:"grpc_cert_sans,omitempty"`
 }
 
 // UIEnabled reports whether the web UI should be served.
@@ -133,6 +145,11 @@ func ensureJSONEOF(dec *json.Decoder) error {
 func (c Config) Validate() error {
 	if _, err := c.Server.EffectiveAgentHeartbeatInterval(); err != nil {
 		return fmt.Errorf("server: %w", err)
+	}
+	for i, san := range c.Server.GRPCCertSANs {
+		if strings.TrimSpace(san) == "" {
+			return fmt.Errorf("server: grpc_cert_sans[%d] must not be empty", i)
+		}
 	}
 	for _, pool := range c.Pools {
 		if _, err := ResolvePoolExpectedType(pool.Type); err != nil {

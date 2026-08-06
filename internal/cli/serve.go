@@ -16,13 +16,13 @@ import (
 
 	"github.com/Geogboe/boxy/internal/agentserver"
 	boxyconfig "github.com/Geogboe/boxy/internal/config"
-	"github.com/Geogboe/boxy/internal/pki"
 	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/internal/sandbox"
 	"github.com/Geogboe/boxy/internal/server"
 	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
 	"github.com/Geogboe/boxy/pkg/agentsdk"
 	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/pki"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/providersdk/builtins"
 	"github.com/Geogboe/boxy/pkg/store"
@@ -39,11 +39,12 @@ const (
 )
 
 type serveOpts struct {
-	configPath string
-	listen     string
-	ui         bool
-	grpcListen string
-	insecure   bool
+	configPath   string
+	listen       string
+	ui           bool
+	grpcListen   string
+	grpcCertSANs []string
+	insecure     bool
 }
 
 func newServeCommand() *cobra.Command {
@@ -61,6 +62,7 @@ func newServeCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opts.listen, "listen", "", "HTTP listen address (default :9090)")
 	cmd.Flags().BoolVar(&opts.ui, "ui", true, "enable web dashboard UI")
 	cmd.Flags().StringVar(&opts.grpcListen, "grpc-listen", "", "agent gRPC listen address (default :9091)")
+	cmd.Flags().StringArrayVar(&opts.grpcCertSANs, "grpc-cert-san", nil, "extra DNS name or IP to include in the agent gRPC server certificate SANs (repeatable)")
 	// Deliberately a flag only — never a boxy.yaml field — so a stale or
 	// copy-pasted config can't silently disable mTLS in a real deployment.
 	cmd.Flags().BoolVar(&opts.insecure, "insecure", false, "serve agent gRPC without TLS/mTLS (local development only)")
@@ -180,6 +182,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	uiEnabled := resolveUIEnabled(opts, cmd, cfg)
 
 	grpcListenAddr := resolveGRPCListenAddr(opts, cmd, cfg)
+	grpcCertSANs := resolveGRPCCertSANs(opts, cmd, cfg)
 	heartbeatInterval, err := cfg.Server.EffectiveAgentHeartbeatInterval()
 	if err != nil {
 		return err
@@ -187,7 +190,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 
 	// Agent transport: private CA + mTLS gRPC listener (ADR-0005).
 	doneTLS, failTLS := ui.step("Setting up agent CA/TLS")
-	grpcSrv, agentSrv, err := buildAgentGRPCServer(st, agentRegistry, filepath.Dir(statePath), grpcListenAddr, heartbeatInterval, opts.insecure)
+	grpcSrv, agentSrv, err := buildAgentGRPCServer(st, agentRegistry, filepath.Dir(statePath), grpcListenAddr, heartbeatInterval, opts.insecure, grpcCertSANs)
 	if err != nil {
 		failTLS(err.Error())
 		return err
@@ -220,6 +223,36 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	return g.Wait()
 }
 
+// agentCertSANs assembles the full SAN list for the agent gRPC server
+// certificate: the always-present localhost/127.0.0.1 entries, the host
+// parsed from listenAddr (skipped for a wildcard/empty bind — there's no
+// single literal hostname to add), and any operator-configured extra SANs
+// (trimmed, with empty entries dropped and exact-string-match duplicates
+// removed — case-sensitive dedup only, not full DNS-case-insensitive
+// normalization).
+func agentCertSANs(listenAddr string, extra []string) []string {
+	sans := []string{"localhost", "127.0.0.1"}
+	if host, _, splitErr := net.SplitHostPort(listenAddr); splitErr == nil && host != "" && host != "0.0.0.0" && host != "::" {
+		sans = append(sans, host)
+	}
+	seen := make(map[string]struct{}, len(sans))
+	for _, s := range sans {
+		seen[s] = struct{}{}
+	}
+	for _, e := range extra {
+		e = strings.TrimSpace(e)
+		if e == "" {
+			continue
+		}
+		if _, dup := seen[e]; dup {
+			continue
+		}
+		seen[e] = struct{}{}
+		sans = append(sans, e)
+	}
+	return sans
+}
+
 // buildAgentGRPCServer bootstraps the private CA and server cert under the
 // same .boxy/ directory that holds state.json, and constructs the gRPC
 // server hosting the AgentTransport service. TLS uses
@@ -228,7 +261,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 // single-use token instead, and receives its cert in the response), while
 // any presented cert must chain to boxy's own CA. The handler enforces
 // that a connection without a verified cert must carry a valid token.
-func buildAgentGRPCServer(st store.Store, registry *pool.AgentRegistry, boxyDir, listenAddr string, heartbeatInterval time.Duration, insecureMode bool) (*grpc.Server, *agentserver.Server, error) {
+func buildAgentGRPCServer(st store.Store, registry *pool.AgentRegistry, boxyDir, listenAddr string, heartbeatInterval time.Duration, insecureMode bool, extraCertSANs []string) (*grpc.Server, *agentserver.Server, error) {
 	ca, err := pki.EnsureCA(boxyDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("ensure CA: %w", err)
@@ -240,10 +273,7 @@ func buildAgentGRPCServer(st store.Store, registry *pool.AgentRegistry, boxyDir,
 	if insecureMode {
 		slog.Warn("agent gRPC transport running WITHOUT TLS (--insecure); never use this outside local development")
 	} else {
-		sans := []string{"localhost", "127.0.0.1"}
-		if host, _, splitErr := net.SplitHostPort(listenAddr); splitErr == nil && host != "" && host != "0.0.0.0" && host != "::" {
-			sans = append(sans, host)
-		}
+		sans := agentCertSANs(listenAddr, extraCertSANs)
 		serverCert, err := pki.IssueServerCert(ca, boxyDir, sans)
 		if err != nil {
 			return nil, nil, fmt.Errorf("issue server cert: %w", err)
@@ -310,6 +340,16 @@ func resolveGRPCListenAddr(opts serveOpts, cmd *cobra.Command, cfg boxyconfig.Co
 		return cfg.Server.GRPCListen
 	}
 	return defaultGRPCListenAddr
+}
+
+// resolveGRPCCertSANs picks the extra SAN list for the agent gRPC server
+// certificate with precedence: explicit --grpc-cert-san flag(s) (fully
+// replace, not merge with, config) > config server.grpc_cert_sans > none.
+func resolveGRPCCertSANs(opts serveOpts, cmd *cobra.Command, cfg boxyconfig.Config) []string {
+	if cmd.Flags().Changed("grpc-cert-san") {
+		return opts.grpcCertSANs
+	}
+	return cfg.Server.GRPCCertSANs
 }
 
 func seedConfiguredPools(ctx context.Context, st store.Store, specs []boxyconfig.PoolSpec) ([]model.PoolName, error) {

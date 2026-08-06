@@ -5,6 +5,11 @@
 // out-of-scope concern reserved for the web dashboard. Boxy mints its own
 // CA so agent<->server traffic gets real TLS encryption and full mutual
 // authentication without depending on any external certificate authority.
+//
+// This package is public (moved from internal/pki, see issue #138): it is
+// stdlib-only with zero dependencies on the rest of boxy, so it's a clean
+// seam for reuse outside this module. Its API is not yet stable — boxy is
+// prerelease and this package may still change shape without notice.
 package pki
 
 import (
@@ -15,10 +20,13 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"log/slog"
+	"maps"
 	"math/big"
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 )
 
@@ -149,22 +157,37 @@ func parseCA(certPEM, keyPEM []byte) (*CA, error) {
 }
 
 // IssueServerCert loads dir/server.crt and dir/server.key if both are
-// present, or issues a new leaf certificate (signed by ca, valid for the
-// given SANs) and writes them if not. To rotate SANs (e.g. after changing
-// the configured listen address), delete both files and call again.
+// present and their SANs already match sans (compared as an
+// order-independent set of DNS names/IPs), or (re)issues a new leaf
+// certificate — signed by ca, valid for sans — and writes/overwrites both
+// files otherwise. This means changing the configured SANs (e.g. via a new
+// --grpc-cert-san / server.grpc_cert_sans entry) takes effect automatically
+// on the next call — no manual deletion required. dir/server.crt and
+// dir/server.key are entirely boxy-managed (see
+// docs/adr/0005-remote-agent-transport-and-registration.md); if the
+// existing cert can't be parsed, IssueServerCert fails rather than
+// silently overwriting it — delete both files by hand and call again to
+// recover.
 func IssueServerCert(ca *CA, dir string, sans []string) (*ServerCert, error) {
 	certPath := filepath.Join(dir, serverCertFileName)
 	keyPath := filepath.Join(dir, serverKeyFileName)
 
 	certPEM, certErr := os.ReadFile(certPath)
 	keyPEM, keyErr := os.ReadFile(keyPath)
-	if certErr == nil && keyErr == nil {
-		return &ServerCert{CertPEM: certPEM, KeyPEM: keyPEM}, nil
-	}
-	if !os.IsNotExist(certErr) && certErr != nil {
+	switch {
+	case certErr == nil && keyErr == nil:
+		reused, err := reuseServerCertIfSANsMatch(certPath, certPEM, keyPEM, sans)
+		if err != nil {
+			return nil, err
+		}
+		if reused != nil {
+			return reused, nil
+		}
+		// SANs changed since the cert on disk was issued: fall through and
+		// regenerate below.
+	case !os.IsNotExist(certErr) && certErr != nil:
 		return nil, fmt.Errorf("read server cert %q: %w", certPath, certErr)
-	}
-	if !os.IsNotExist(keyErr) && keyErr != nil {
+	case !os.IsNotExist(keyErr) && keyErr != nil:
 		return nil, fmt.Errorf("read server key %q: %w", keyPath, keyErr)
 	}
 
@@ -213,6 +236,79 @@ func IssueServerCert(ca *CA, dir string, sans []string) (*ServerCert, error) {
 	}
 
 	return sc, nil
+}
+
+// reuseServerCertIfSANsMatch parses the server cert already on disk
+// (certPEM) and compares its SANs against sans as an order-independent
+// set. If they match, it returns the existing cert/key pair unchanged
+// (preserving IssueServerCert's idempotent, no-churn behavior across
+// restarts with unchanged config). If they differ, it returns (nil, nil) —
+// the caller should regenerate. If certPEM can't be parsed as a
+// certificate, it returns an error rather than treating that as "differs":
+// a corrupt/unparseable file is exactly the situation where the caller
+// knows least about what's on disk, so IssueServerCert fails loudly
+// instead of silently overwriting it.
+func reuseServerCertIfSANsMatch(certPath string, certPEM, keyPEM []byte, sans []string) (*ServerCert, error) {
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return nil, fmt.Errorf("existing server certificate %q is invalid: no PEM block found (delete %q and its .key file and call again to regenerate)", certPath, certPath)
+	}
+	existing, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("existing server certificate %q is invalid: %w (delete %q and its .key file and call again to regenerate)", certPath, err, certPath)
+	}
+
+	wantDNS, wantIPs := sanSets(sans)
+	haveDNS, haveIPs := certSANSets(existing)
+	if maps.Equal(wantDNS, haveDNS) && maps.Equal(wantIPs, haveIPs) {
+		return &ServerCert{CertPEM: certPEM, KeyPEM: keyPEM}, nil
+	}
+
+	slog.Info("regenerating agent gRPC server certificate: SANs changed",
+		"path", certPath,
+		"old_dns", slices.Sorted(maps.Keys(haveDNS)),
+		"old_ips", slices.Sorted(maps.Keys(haveIPs)),
+		"new_dns", slices.Sorted(maps.Keys(wantDNS)),
+		"new_ips", slices.Sorted(maps.Keys(wantIPs)),
+	)
+	return nil, nil
+}
+
+// sanSets splits sans the same way applySANs does, returning comparable
+// sets keyed by normalized string form. IPs are normalized via
+// net.IP.String() rather than compared as raw bytes/strings — required so
+// they compare equal to the sets certSANSets extracts from an already
+// round-tripped x509 certificate (see certSANSets).
+func sanSets(sans []string) (dns map[string]struct{}, ips map[string]struct{}) {
+	dns = make(map[string]struct{})
+	ips = make(map[string]struct{})
+	for _, san := range sans {
+		if ip := net.ParseIP(san); ip != nil {
+			ips[ip.String()] = struct{}{}
+		} else {
+			dns[san] = struct{}{}
+		}
+	}
+	return dns, ips
+}
+
+// certSANSets extracts the same comparable sets from an already-parsed
+// certificate's DNSNames/IPAddresses. IPs are normalized via
+// net.IP.String(): x509.ParseCertificate narrows IPv4 addresses to their
+// 4-byte form on round-trip, so comparing raw net.IP byte slices (or
+// net.ParseIP's 16-byte output) against cert.IPAddresses would spuriously
+// report "changed" on every restart even when the configured SANs haven't
+// changed — String() sidesteps the encoding difference entirely.
+func certSANSets(cert *x509.Certificate) (dns map[string]struct{}, ips map[string]struct{}) {
+	dns = make(map[string]struct{})
+	for _, name := range cert.DNSNames {
+		dns[name] = struct{}{}
+	}
+	ips = make(map[string]struct{})
+	for _, ip := range cert.IPAddresses {
+		ips[ip.String()] = struct{}{}
+	}
+	return dns, ips
 }
 
 // IssueAgentCert mints a fresh client certificate for a newly registered

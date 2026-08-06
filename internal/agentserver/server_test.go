@@ -15,17 +15,17 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/test/bufconn"
 
-	"github.com/Geogboe/boxy/internal/pki"
 	"github.com/Geogboe/boxy/internal/pool"
 	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
 	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/pki"
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
 // newTestServer wires up a Server against fresh in-memory dependencies and
 // starts it listening on an in-process bufconn — no real network socket,
 // no TLS (registration-logic tests only; mTLS enforcement itself is
-// covered by internal/pki's real cert-chain-verification tests).
+// covered by pkg/pki's real cert-chain-verification tests).
 func newTestServer(t *testing.T) (*Server, store.Store, boxyagentv1.AgentTransportServiceClient, func()) {
 	t.Helper()
 

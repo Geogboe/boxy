@@ -2,10 +2,128 @@
   "$id": "boxy://schemas/boxy.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
+    "pools": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "agent": {
+            "description": "Optional agent instance ID this pool is pinned to.",
+            "type": "string"
+          },
+          "config": {
+            "description": "Provider/pool-type-specific configuration.",
+            "type": "object"
+          },
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "policies": {
+            "additionalProperties": false,
+            "description": "\"policy\" and \"policies\" are aliases for the same setting and are mutually exclusive — set only one.",
+            "properties": {
+              "preheat": {
+                "additionalProperties": false,
+                "properties": {
+                  "max_total": {
+                    "description": "Maximum total resources for this pool. 0 is a deliberate, valid value meaning \"drain\" (stop preheating and let the pool empty), not an omission.",
+                    "type": "integer"
+                  },
+                  "min_ready": {
+                    "description": "Minimum number of pre-provisioned ready resources to maintain.",
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "recycle": {
+                "additionalProperties": false,
+                "properties": {
+                  "max_age": {
+                    "description": "Maximum resource age before recycling, as a Go duration string (e.g. \"1h\").",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "type": "object"
+          },
+          "policy": {
+            "additionalProperties": false,
+            "description": "\"policy\" and \"policies\" are aliases for the same setting and are mutually exclusive — set only one.",
+            "properties": {
+              "preheat": {
+                "additionalProperties": false,
+                "properties": {
+                  "max_total": {
+                    "description": "Maximum total resources for this pool. 0 is a deliberate, valid value meaning \"drain\" (stop preheating and let the pool empty), not an omission.",
+                    "type": "integer"
+                  },
+                  "min_ready": {
+                    "description": "Minimum number of pre-provisioned ready resources to maintain.",
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "recycle": {
+                "additionalProperties": false,
+                "properties": {
+                  "max_age": {
+                    "description": "Maximum resource age before recycling, as a Go duration string (e.g. \"1h\").",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "type": "object"
+          },
+          "provider": {
+            "description": "Optional provider instance name. Some pool types (like \"docker\") may imply a default provider.",
+            "type": "string"
+          },
+          "type": {
+            "description": "Pool kind. \"\" and \"container\" and \"docker\" all resolve to a container pool.",
+            "enum": [
+              "",
+              "container",
+              "docker",
+              "vm",
+              "share"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
     "providers": {
       "items": {
         "additionalProperties": false,
         "allOf": [
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "devfactory"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "config": {
+                  "$ref": "providers/devfactory.config.schema.json"
+                }
+              }
+            }
+          },
           {
             "if": {
               "properties": {
@@ -37,22 +155,6 @@
                 }
               }
             }
-          },
-          {
-            "if": {
-              "properties": {
-                "type": {
-                  "const": "process"
-                }
-              }
-            },
-            "then": {
-              "properties": {
-                "config": {
-                  "$ref": "providers/process.config.schema.json"
-                }
-              }
-            }
           }
         ],
         "properties": {
@@ -60,8 +162,10 @@
             "type": "object"
           },
           "labels": {
-            "type": "object",
-            "additionalProperties": { "type": "string" }
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
           },
           "name": {
             "minLength": 1,
@@ -69,9 +173,9 @@
           },
           "type": {
             "enum": [
+              "devfactory",
               "docker",
-              "hyperv",
-              "process"
+              "hyperv"
             ],
             "type": "string"
           }
@@ -83,6 +187,42 @@
         "type": "object"
       },
       "type": "array"
+    },
+    "server": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_heartbeat_interval": {
+          "description": "How often connected remote agents send heartbeats, as a Go duration string (e.g. \"15s\"). Empty means the default (15s).",
+          "type": "string"
+        },
+        "grpc_cert_sans": {
+          "description": "Extra DNS names/IPs to include in the agent gRPC server certificate's SANs, on top of the always-included localhost/127.0.0.1/listen-host entries. Needed when remote agents connect through a passthrough route or load balancer using an external DNS name. Equivalent repeatable CLI flag: --grpc-cert-san (fully overrides this value when passed).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "grpc_listen": {
+          "description": "Agent-transport gRPC listen address (see docs/adr/0005-remote-agent-transport-and-registration.md). Empty means the default (:9091).",
+          "type": "string"
+        },
+        "listen": {
+          "description": "HTTP API listen address. Empty means the default (:9090).",
+          "type": "string"
+        },
+        "providers": {
+          "description": "Provider instance names to expose via the API/UI (subset of the top-level providers list).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "ui": {
+          "description": "Whether the web dashboard is served alongside the API. Default: true.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
     }
   },
   "title": "Boxy Configuration",

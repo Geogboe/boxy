@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "boxy://schemas/providers/devfactory.config.schema.json",
+  "title": "Devfactory Provider Config",
+  "description": "Schema for Provider.Config when Provider.Type is \"devfactory\". Devfactory is a reference/simulation provider — no real infrastructure required — used for end-to-end testing and as a template for provider authors.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "data_dir": {
+      "description": "Directory where devfactory.json is stored. If empty, a temporary directory is created automatically.",
+      "type": "string"
+    },
+    "profile": {
+      "description": "What kind of resource this provider simulates. Default: \"container\".",
+      "type": "string",
+      "enum": ["container", "vm", "share"]
+    },
+    "latency": {
+      "description": "Simulated provisioning delay before a resource transitions from creating to running. Zero/omitted uses the profile default. Accepts a human-readable duration string (e.g. \"800ms\", \"1.5s\") or a number of nanoseconds.",
+      "type": ["string", "integer"]
+    },
+    "fail_create": {
+      "description": "If true, Create returns an error. Useful for testing error handling paths.",
+      "type": "boolean",
+      "default": false
+    },
+    "fail_update": {
+      "description": "If true, Update returns an error.",
+      "type": "boolean",
+      "default": false
+    },
+    "fail_delete": {
+      "description": "If true, Delete returns an error.",
+      "type": "boolean",
+      "default": false
+    },
+    "labels": {
+      "description": "Labels passed through to resource metadata.",
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    }
+  }
+}

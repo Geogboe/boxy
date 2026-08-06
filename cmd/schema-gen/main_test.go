@@ -52,6 +52,35 @@ func TestBuildTopLevelSchemaIncludesProviderTypeRefs(t *testing.T) {
 	}
 }
 
+// TestBuildTopLevelSchemaMatchesCommittedFile is a drift guard: nothing
+// else in this repo fails if internal/config/schema/boxy.schema.json goes
+// stale relative to what buildTopLevelSchema() actually produces — this is
+// literally how issue #136 arose (server.grpc_listen/
+// agent_heartbeat_interval were added to ServerSpec in v0.1.28 with
+// nothing catching that the committed schema wasn't updated). If this test
+// fails, run `go generate ./internal/config/schema/...` and commit the
+// result.
+func TestBuildTopLevelSchemaMatchesCommittedFile(t *testing.T) {
+	schema, err := buildTopLevelSchema()
+	if err != nil {
+		t.Fatalf("buildTopLevelSchema: %v", err)
+	}
+	got, err := renderSchema(schema)
+	if err != nil {
+		t.Fatalf("renderSchema: %v", err)
+	}
+
+	committedPath := filepath.Join("..", "..", "internal", "config", "schema", "boxy.schema.json")
+	want, err := os.ReadFile(committedPath)
+	if err != nil {
+		t.Fatalf("read committed schema %q: %v", committedPath, err)
+	}
+
+	if string(got) != string(want) {
+		t.Fatalf("buildTopLevelSchema() output does not match committed %s — run `go generate ./internal/config/schema/...` and commit the result", committedPath)
+	}
+}
+
 func TestMainWritesSchemaFile(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "schemas", "boxy.schema.json")
 	oldArgs := os.Args
