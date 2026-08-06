@@ -67,19 +67,7 @@ bin/
 
 .env
 .envrc
-.archive/*
-!.archive/ROADMAP.md
-!.archive/cli/
-.archive/cli/*
-!.archive/cli/legacy-sandbox-create.md
-!.archive/pkg/
-.archive/pkg/*
-!.archive/pkg/poolpolicy/
-!.archive/pkg/poolpolicy/*
-!.archive/internal/
-.archive/internal/*
-!.archive/internal/pki/
-!.archive/internal/pki/*
+.archive/
 
 # Logs
 logs
