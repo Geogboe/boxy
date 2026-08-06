@@ -142,6 +142,15 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   Docs describing "planned" work should say so explicitly and get corrected
   once work actually lands (or is found to be dead/unbuilt) — don't assume
   existing docs are accurate; verify against code before trusting them.
+- **Merging a stack of dependent PRs**: when PR B's base branch is PR A's
+  feature branch (not `main`), merge A first, then retarget B with
+  `gh pr edit <B> --base main` before merging B — `delete_branch_on_merge`
+  is `false` in this repo, so GitHub does *not* auto-retarget B onto `main`
+  the way it would if A's branch were deleted on merge.
+- **Closing issues via merged PRs**: a PR body must say `Closes #N` (or
+  `Fixes`/`Resolves`) for GitHub to auto-close the issue on merge. Referencing
+  `#N` alone (e.g. "part of #133") does not trigger auto-close — check and
+  close manually if it was missed.
 
 ## ADRs
 
@@ -199,6 +208,13 @@ Wrap repeated commands in `Taskfile.yml`. If a command is run more than once, ad
 - Linux installer prints PATH update instructions instead of editing shell startup files automatically.
 
 ## CI / CD Workflow Notes
+
+### Merging PRs
+
+- `main` has no branch protection (`gh api repos/Geogboe/boxy/branches/main/protection` → 404). Merges are gated by convention and green CI, not by GitHub-enforced required checks.
+- History uses merge commits, not squash, for every PR including release-please PRs — use `gh pr merge --merge`.
+- release-please PRs reliably show their `CI` check as `action_required` with zero jobs run (seen for 0.1.27 and 0.1.29). This is a known, harmless quirk of that workflow's trigger conditions, not a real gate — safe to merge through.
+- Merging a release-please PR triggers `release.yml` on push to `main`, which tags and runs GoReleaser (5 platforms + SBOMs + checksums, ~3 min). Wait for that `Release` workflow run to complete before treating the release as published.
 
 ### GitHub Actions Node 24 migration — done
 
