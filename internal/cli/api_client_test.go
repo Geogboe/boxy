@@ -45,6 +45,22 @@ func TestWrapConnError_Nil(t *testing.T) {
 	}
 }
 
+func TestDoNoContent_WrapsDialFailure(t *testing.T) {
+	client := &http.Client{Timeout: 2 * time.Second}
+	req, err := http.NewRequest(http.MethodDelete, "http://127.0.0.1:1/api/v1/agent-tokens/token-1", nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+
+	err = doNoContent(client, req)
+	if err == nil {
+		t.Fatal("expected a dial error connecting to 127.0.0.1:1")
+	}
+	if !strings.Contains(err.Error(), "boxy serve") {
+		t.Fatalf("error = %v, want a friendly `boxy serve` hint", err)
+	}
+}
+
 func TestValidatePathID_RejectsEmpty(t *testing.T) {
 	if _, err := validatePathID("sandbox id", ""); err == nil {
 		t.Fatal("expected error for empty id")

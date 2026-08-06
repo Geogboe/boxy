@@ -496,6 +496,50 @@ func TestManager_Reconcile_RecycleStale_OrphanSweepRetriesStuckResource(t *testi
 	}
 }
 
+func TestManager_Reconcile_RecycleStale_SweepsLegacyOrphanWithoutOriginPool(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	// Older state files can have resources embedded in pool inventory without
+	// OriginPool. If teardown persisted the transient state before a crash, the
+	// old inventory entry is the only durable ownership signal left.
+	orphan := model.Resource{
+		ID:        "res_legacy_orphan",
+		Type:      model.ResourceTypeContainer,
+		Profile:   model.ResourceProfileDefault,
+		Provider:  model.ProviderRef{Name: "prov_1"},
+		State:     model.ResourceStateDestroying,
+		CreatedAt: time.Unix(0, 0).UTC(),
+	}
+	p := model.Pool{
+		Name: "p1",
+		Policies: model.PoolPolicies{
+			Preheat: model.PreheatPolicy{MinReady: 0, MaxTotal: 5},
+		},
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: model.ResourceProfileDefault,
+			Resources:       []model.Resource{orphan},
+		},
+	}
+	if err := st.PutPool(ctx, p); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+	if err := st.PutResource(ctx, orphan); err != nil {
+		t.Fatalf("put resource: %v", err)
+	}
+
+	prov := &fakeProvisioner{}
+	mgr := New(st, prov)
+
+	if err := mgr.Reconcile(ctx, p.Name); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if len(prov.destroyed) != 1 || prov.destroyed[0] != orphan.ID {
+		t.Fatalf("destroyed = %v, want legacy orphan %q retried", prov.destroyed, orphan.ID)
+	}
+}
+
 func TestManager_EnsureReady_RespectsMaxTotalAcrossAllocatedResources(t *testing.T) {
 	st := store.NewMemoryStore()
 	ctx := context.Background()
