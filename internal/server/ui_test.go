@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,25 @@ import (
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/store"
 )
+
+// listErrStore wraps a store.Store and fails every List* call, letting tests
+// exercise the UI's data-loader-error paths without a real backend outage.
+type listErrStore struct {
+	store.Store
+	err error
+}
+
+func (s *listErrStore) ListPools(ctx context.Context) ([]model.Pool, error) {
+	return nil, s.err
+}
+
+func (s *listErrStore) ListSandboxes(ctx context.Context) ([]model.Sandbox, error) {
+	return nil, s.err
+}
+
+func (s *listErrStore) ListResources(ctx context.Context) ([]model.Resource, error) {
+	return nil, s.err
+}
 
 func TestUI_home_renders(t *testing.T) {
 	t.Parallel()
@@ -55,7 +75,7 @@ func TestUI_pools_renders(t *testing.T) {
 func TestUI_sandboxes_renders(t *testing.T) {
 	t.Parallel()
 	st := store.NewMemoryStore()
-	_ = st.CreateSandbox(context.Background(), model.Sandbox{ID: "sb-test", Name: "my-sandbox"})
+	_ = st.CreateSandbox(context.Background(), model.Sandbox{ID: "sb-test", Name: "my-sandbox", Status: model.SandboxStatusReady})
 
 	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
 	w := httptest.NewRecorder()
@@ -68,6 +88,9 @@ func TestUI_sandboxes_renders(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, "my-sandbox") {
 		t.Fatal("sandboxes page missing sandbox name")
+	}
+	if !strings.Contains(body, `class="badge badge-ready"`) {
+		t.Fatalf("sandboxes page missing status badge, body = %q", body)
 	}
 }
 
@@ -104,6 +127,47 @@ func TestUI_fragment_pools_table(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, "No pools configured") {
 		t.Fatal("empty pools fragment missing empty state")
+	}
+}
+
+func TestUI_fragment_dataError_returns200WithBanner(t *testing.T) {
+	t.Parallel()
+	failing := &listErrStore{Store: store.NewMemoryStore(), err: errors.New("store unavailable")}
+	mux := server.NewTestMux(failing, sandbox.New(store.NewMemoryStore(), nil), true)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/ui/fragments/sandboxes-table", nil)
+	mux.ServeHTTP(w, r)
+
+	// HTMX only swaps 2xx responses by default; a non-2xx status here means
+	// a failing 5s poll goes silently unnoticed with no visible indication
+	// anything is wrong.
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (HTMX won't swap a non-2xx fragment response)", w.Code, http.StatusOK)
+	}
+	if !strings.Contains(w.Body.String(), "error") {
+		t.Fatalf("body = %q, want an error banner", w.Body.String())
+	}
+}
+
+func TestUI_page_dataError_returns500Branded(t *testing.T) {
+	t.Parallel()
+	failing := &listErrStore{Store: store.NewMemoryStore(), err: errors.New("store unavailable")}
+	mux := server.NewTestMux(failing, sandbox.New(store.NewMemoryStore(), nil), true)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/ui/sandboxes", nil)
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Boxy") {
+		t.Fatalf("body = %q, want branded HTML (layout), not a plain-text error", body)
+	}
+	if !strings.Contains(body, "error") {
+		t.Fatalf("body = %q, want it to mention an error", body)
 	}
 }
 

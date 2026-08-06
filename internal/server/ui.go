@@ -66,7 +66,11 @@ func (s *Server) uiHandler(tmpl *template.Template, nav string, data dataFn) htt
 		d, err := data(r)
 		if err != nil {
 			slog.Error("ui data", "err", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusInternalServerError)
+			if err := tmpl.ExecuteTemplate(w, "error_page", nil); err != nil {
+				slog.Error("ui error page render", "err", err)
+			}
 			return
 		}
 		d.Nav = nav
@@ -85,7 +89,14 @@ func (s *Server) fragmentHandler(tmpl *template.Template, fragment string, data 
 		d, err := data(r)
 		if err != nil {
 			slog.Error("ui fragment data", "err", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
+			// HTMX only swaps 2xx responses by default, so returning an
+			// error status here (as this used to) means a failing 5s poll
+			// does nothing visible — the page just goes stale silently.
+			// Returning 200 with a banner keeps the failure visible.
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			if err := tmpl.ExecuteTemplate(w, "error_banner", nil); err != nil {
+				slog.Error("ui fragment error banner render", "err", err)
+			}
 			return
 		}
 

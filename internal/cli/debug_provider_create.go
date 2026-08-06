@@ -14,6 +14,7 @@ func newDebugProviderCreateCommand(opts *debugProviderOpts) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create",
 		Short: "Create a new resource",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			d := newDebugProviderDriver(opts)
 
@@ -32,7 +33,7 @@ func newDebugProviderCreateCommand(opts *debugProviderOpts) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringArrayVar(&labels, "label", nil, "label in key=value format (repeatable)")
+	cmd.Flags().StringArrayVar(&labels, "label", nil, "label in key=value format (repeatable); informational only, not yet applied by the driver")
 	return cmd
 }
 

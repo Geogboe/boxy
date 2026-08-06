@@ -267,13 +267,8 @@ func (m *Manager) DestroyResource(ctx context.Context, res model.Resource) error
 		return fmt.Errorf("get origin pool %q for resource %q: %w", res.OriginPool, res.ID, err)
 	}
 
-	if err := m.provisioner.Destroy(ctx, p, res); err != nil {
-		return fmt.Errorf("destroy resource %q in pool %q: %w", res.ID, p.Name, err)
-	}
-	res.State = model.ResourceStateDestroyed
-	res.UpdatedAt = m.clock.Now()
-	if err := m.store.PutResource(ctx, res); err != nil {
-		return fmt.Errorf("mark resource %q destroyed: %w", res.ID, err)
+	if err := m.destroyAndMark(ctx, p, res, model.ResourceStateDestroying, m.clock.Now()); err != nil {
+		return err
 	}
 	p.Inventory.Resources = removeInventoryResource(p.Inventory.Resources, res.ID)
 	if err := m.store.PutPool(ctx, p); err != nil {
@@ -281,6 +276,41 @@ func (m *Manager) DestroyResource(ctx context.Context, res model.Resource) error
 	}
 	if err := m.store.DeleteResource(ctx, res.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
 		return fmt.Errorf("delete resource %q: %w", res.ID, err)
+	}
+	return nil
+}
+
+// isTransientDestroyState reports whether a resource is already mid-teardown
+// (recycling or destroying), so a caller that's about to retry a destroy
+// (e.g. the orphan sweep) doesn't need to re-persist the same transient
+// state before calling the provisioner again.
+func isTransientDestroyState(s model.ResourceState) bool {
+	return s == model.ResourceStateRecycling || s == model.ResourceStateDestroying
+}
+
+// destroyAndMark is the shared "mark transient (if not already), call the
+// provisioner, mark destroyed" sequence used by DestroyResource, the
+// stale/recycle loop, and applyDrain — the three destroy call sites that all
+// need the same pre-destroy observability write. Extracted after the three
+// hand-written copies drifted (applyDrain's copy was missing the UpdatedAt
+// stamp the other two had). now is the timestamp for both writes; callers
+// mid-reconcile-tick should pass a single consistent value (e.g. pl.now)
+// rather than re-querying the clock per resource.
+func (m *Manager) destroyAndMark(ctx context.Context, p model.Pool, res model.Resource, transient model.ResourceState, now time.Time) error {
+	if !isTransientDestroyState(res.State) {
+		res.State = transient
+		res.UpdatedAt = now
+		if err := m.store.PutResource(ctx, res); err != nil {
+			return fmt.Errorf("mark resource %q %s: %w", res.ID, transient, err)
+		}
+	}
+	if err := m.provisioner.Destroy(ctx, p, res); err != nil {
+		return fmt.Errorf("destroy resource %q in pool %q: %w", res.ID, p.Name, err)
+	}
+	res.State = model.ResourceStateDestroyed
+	res.UpdatedAt = now
+	if err := m.store.PutResource(ctx, res); err != nil {
+		return fmt.Errorf("mark resource %q destroyed: %w", res.ID, err)
 	}
 	return nil
 }
@@ -351,6 +381,29 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 			}
 			p = rebuilt
 
+			// Resources left mid-teardown by a reconcile pass that crashed
+			// before the destroy completed drop out of p.Inventory.Resources
+			// on rebuild (it only re-admits Ready resources), so neither
+			// computeStale nor the drain path below would ever see them
+			// again without an explicit sweep — they'd zombie forever, still
+			// counted against MaxTotal, with their backing provider resource
+			// possibly never torn down.
+			//
+			// Both branches sweep both transient states. A resource marked
+			// "destroying" is not always sandbox-owned: applyDrain uses the
+			// same state for pool-owned resources, and a pool can be
+			// un-drained (fill) after a crashed drain leaves one orphaned —
+			// at that point only this stale/recycle path ever runs again for
+			// that pool, so it must be able to recover it too. This does
+			// mean a sandbox-owned "destroying" orphan could occasionally be
+			// retried redundantly alongside sandbox.DeletionReconciler's own
+			// retry of the same resource; that's safe (not just tolerated)
+			// because every driver's Delete (devfactory/docker/hyperv) is
+			// idempotent on an already-gone resource, and the window closes
+			// as soon as either retry succeeds and deletes the record.
+			inInventory := resourceIDSet(p.Inventory.Resources)
+			orphans := orphanedTransientResources(p.Name, obs.resources, inInventory)
+
 			if p.EffectivelyDrained() {
 				if requireMinReady {
 					return policycontroller.Decision[plan]{}, &DrainedPoolError{
@@ -359,7 +412,8 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 					}
 				}
 				toDrain := append([]model.Resource(nil), p.Inventory.Resources...)
-				reason := fmt.Sprintf("drain inventory_rebuilt=%t ready=%d", rebuildReport.Changed, len(toDrain))
+				toDrain = append(toDrain, orphans...)
+				reason := fmt.Sprintf("drain inventory_rebuilt=%t ready=%d orphans=%d", rebuildReport.Changed, len(p.Inventory.Resources), len(orphans))
 				return policycontroller.Decision[plan]{
 					ShouldAct: rebuildReport.Changed || len(toDrain) > 0,
 					Plan: plan{
@@ -378,6 +432,7 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 			if err != nil {
 				return policycontroller.Decision[plan]{}, err
 			}
+			stale = append(stale, orphans...)
 			p.Inventory.Resources = kept
 
 			readyCount := countReadyResources(p.Inventory.Resources)
@@ -427,17 +482,12 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 		Actuator: policycontroller.ActuatorFunc[plan](func(ctx context.Context, pl plan) error {
 			p := pl.pool
 			if pl.drain {
-				return m.applyDrain(ctx, p, pl.drainResources)
+				return m.applyDrain(ctx, p, pl.drainResources, pl.now)
 			}
 
 			for _, res := range pl.stale {
-				if err := m.provisioner.Destroy(ctx, p, res); err != nil {
-					return fmt.Errorf("destroy stale resource %q in pool %q: %w", res.ID, p.Name, err)
-				}
-				res.State = model.ResourceStateDestroyed
-				res.UpdatedAt = pl.now
-				if err := m.store.PutResource(ctx, res); err != nil {
-					return fmt.Errorf("mark stale resource %q destroyed: %w", res.ID, err)
+				if err := m.destroyAndMark(ctx, p, res, model.ResourceStateRecycling, pl.now); err != nil {
+					return err
 				}
 			}
 
@@ -480,7 +530,7 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 	return err
 }
 
-func (m *Manager) applyDrain(ctx context.Context, p model.Pool, resources []model.Resource) error {
+func (m *Manager) applyDrain(ctx context.Context, p model.Pool, resources []model.Resource, now time.Time) error {
 	if len(resources) == 0 {
 		p.Inventory.Resources = nil
 		if err := m.store.PutPool(ctx, p); err != nil {
@@ -490,12 +540,8 @@ func (m *Manager) applyDrain(ctx context.Context, p model.Pool, resources []mode
 	}
 
 	for _, res := range resources {
-		if err := m.provisioner.Destroy(ctx, p, res); err != nil {
-			return fmt.Errorf("destroy drained resource %q in pool %q: %w", res.ID, p.Name, err)
-		}
-		res.State = model.ResourceStateDestroyed
-		if err := m.store.PutResource(ctx, res); err != nil {
-			return fmt.Errorf("mark drained resource %q destroyed: %w", res.ID, err)
+		if err := m.destroyAndMark(ctx, p, res, model.ResourceStateDestroying, now); err != nil {
+			return err
 		}
 		p.Inventory.Resources = removeInventoryResource(p.Inventory.Resources, res.ID)
 		if err := m.store.PutPool(ctx, p); err != nil {
@@ -544,6 +590,40 @@ func computeStale(p model.Pool, now time.Time) (stale []model.Resource, kept []m
 		func(res model.Resource) time.Time { return res.UpdatedAt },
 	)
 	return stale, kept, nil
+}
+
+// orphanedTransientResources finds resources originating from poolName that
+// are already mid-teardown (recycling or destroying) but are absent from the
+// pool's rebuilt ready inventory — the signature of a reconcile pass that
+// crashed between marking a resource transient and the destroy completing.
+// Callers fold the result into the same tick's stale/drain list so the
+// destroy gets retried instead of the resource zombying forever.
+//
+// Both transient states are always swept, from both the stale/recycle and
+// drain branches. A "destroying" resource isn't always sandbox-owned:
+// applyDrain uses the same state for pool-owned resources, and a pool can be
+// un-drained (fill) after a crashed drain leaves one orphaned — at that
+// point only the stale/recycle branch ever runs for that pool again, so it
+// must be able to recover a drain-orphaned resource too. This can mean a
+// sandbox-owned "destroying" orphan is occasionally retried redundantly
+// alongside sandbox.DeletionReconciler's own independent retry of the same
+// resource (it re-scans each deleting sandbox's own resource list every
+// tick, regardless of pool inventory) — that overlap is safe, not just
+// tolerated, because every driver's Delete (devfactory/docker/hyperv) is
+// idempotent on an already-gone resource, and the window closes as soon as
+// either retry succeeds and deletes the record.
+func orphanedTransientResources(poolName model.PoolName, resources []model.Resource, inInventory map[model.ResourceID]struct{}) []model.Resource {
+	var orphans []model.Resource
+	for _, res := range resources {
+		if res.OriginPool != poolName || !isTransientDestroyState(res.State) {
+			continue
+		}
+		if _, ok := inInventory[res.ID]; ok {
+			continue
+		}
+		orphans = append(orphans, res)
+	}
+	return orphans
 }
 
 func computeToProvision(p model.Pool, minReady int, totalCount int) int {

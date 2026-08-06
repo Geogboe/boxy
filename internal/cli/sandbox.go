@@ -34,6 +34,7 @@ func newSandboxCommand() *cobra.Command {
 	create := &cobra.Command{
 		Use:   "create",
 		Short: "Create a sandbox from a spec file",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSandboxCreate(cmd.Context(), sandboxCreateOpts{
 				file:      file,

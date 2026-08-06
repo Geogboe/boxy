@@ -17,10 +17,10 @@
 <table>
   <thead>
     <tr>
-      <th>ID</th>
-      <th>Name</th>
-      <th>Status</th>
-      <th>Resources</th>
+      <th scope="col">ID</th>
+      <th scope="col">Name</th>
+      <th scope="col">Status</th>
+      <th scope="col">Resources</th>
     </tr>
   </thead>
   <tbody>
@@ -28,7 +28,7 @@
     <tr>
       <td><code>{{.ID}}</code></td>
       <td>{{.Name}}</td>
-      <td>{{.Status}}</td>
+      <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
       <td>{{len .Resources}}</td>
     </tr>
     {{end}}

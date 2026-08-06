@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	boxyconfig "github.com/Geogboe/boxy/internal/config"
+	"github.com/Geogboe/boxy/internal/pki"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/store"
@@ -155,6 +156,28 @@ func TestLoadConfigReturnsDefaultsWhenNoConfigFileExists(t *testing.T) {
 	}
 	if len(cfg.Providers) != 0 || len(cfg.Pools) != 0 {
 		t.Fatalf("cfg = %+v, want zero-value config", cfg)
+	}
+}
+
+func TestBuildClientCAPool_RejectsInvalidPEM(t *testing.T) {
+	_, err := buildClientCAPool([]byte("not a valid certificate"))
+	if err == nil {
+		t.Fatal("expected an error for a CA cert PEM with no valid certificates")
+	}
+}
+
+func TestBuildClientCAPool_AcceptsValidPEM(t *testing.T) {
+	ca, err := pki.EnsureCA(t.TempDir())
+	if err != nil {
+		t.Fatalf("ensure CA: %v", err)
+	}
+
+	pool, err := buildClientCAPool(ca.CertPEM)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pool == nil {
+		t.Fatal("expected a non-nil cert pool for a valid CA cert")
 	}
 }
 

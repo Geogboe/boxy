@@ -260,6 +260,27 @@ func TestSandboxCreate_UnknownPool(t *testing.T) {
 	}
 }
 
+func TestSandboxCreate_RejectsStrayPositionalArgs(t *testing.T) {
+	srv := newSandboxCreateTestServer(t)
+	defer srv.Close()
+
+	specPath := writeSandboxSpec(t, "name: lab\nresources:\n  - pool: web\n    count: 1\n")
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"sandbox", "--server", srv.server.URL, "create", "-f", specPath, "unexpected-arg"})
+
+	err := cmd.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatal("expected error for a stray positional argument to `sandbox create`")
+	}
+
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	if srv.createCalls != 0 {
+		t.Fatalf("createCalls = %d, want 0 (stray arg should be rejected before any request)", srv.createCalls)
+	}
+}
+
 // TestSandboxCreate_InvalidSpec verifies that early spec-validation failures
 // produce the "✗  <step>  —  <error>" output pattern rather than leaving the
 // spinner spinning until after the error message has been printed.

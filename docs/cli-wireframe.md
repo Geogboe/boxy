@@ -91,11 +91,15 @@ boxy
 │   │       status: pending
 │   │
 │   ├── list                                     List all sandboxes
+│   │   └── --format <json|table>                  Output format (default table)
 │   │
 │   │   $ boxy sandbox list
 │   │     ID         NAME         STATUS       RESOURCES
 │   │     sb-a1b2c3  pentest-lab  ready        3
 │   │     sb-d4e5f6  warmup-lab   pending      0
+│   │
+│   │   $ boxy sandbox list --format json
+│   │     [{"id":"sb-a1b2c3","name":"pentest-lab","status":"ready",...}]
 │   │
 │   ├── get <id>                                 Get sandbox details
 │   │

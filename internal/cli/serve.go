@@ -252,8 +252,10 @@ func buildAgentGRPCServer(st store.Store, registry *pool.AgentRegistry, boxyDir,
 		if err != nil {
 			return nil, nil, fmt.Errorf("load server key pair: %w", err)
 		}
-		clientCAs := x509.NewCertPool()
-		clientCAs.AppendCertsFromPEM(ca.CertPEM)
+		clientCAs, err := buildClientCAPool(ca.CertPEM)
+		if err != nil {
+			return nil, nil, fmt.Errorf("build client CA pool: %w", err)
+		}
 		serverOpts = append(serverOpts, grpc.Creds(credentials.NewTLS(&tls.Config{
 			Certificates: []tls.Certificate{tlsCert},
 			ClientAuth:   tls.VerifyClientCertIfGiven,
@@ -265,6 +267,19 @@ func buildAgentGRPCServer(st store.Store, registry *pool.AgentRegistry, boxyDir,
 	grpcSrv := grpc.NewServer(serverOpts...)
 	boxyagentv1.RegisterAgentTransportServiceServer(grpcSrv, agentSrv)
 	return grpcSrv, agentSrv, nil
+}
+
+// buildClientCAPool parses caPEM into a cert pool for verifying client
+// certificates presented over the agent gRPC transport. Mirrors the
+// equivalent CA-parsing check on the agent side (agent_serve.go's dial
+// credentials) so a corrupt/empty CA cert fails loudly instead of silently
+// coming up with a non-functional (empty) client trust store.
+func buildClientCAPool(caPEM []byte) (*x509.CertPool, error) {
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("no valid certificates found in CA cert")
+	}
+	return pool, nil
 }
 
 // serveAgentGRPC runs the agent gRPC listener with the same

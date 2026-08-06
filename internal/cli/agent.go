@@ -77,7 +77,11 @@ func newAgentRevokeCommand(serverAddr func() string) *cobra.Command {
 		Short: "Revoke an agent's identity and tear down its connection",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id := args[0]
+			rawID := args[0]
+			id, err := validatePathID("agent id", rawID)
+			if err != nil {
+				return err
+			}
 			client := defaultAPIClient()
 			base := apiBaseURL(serverAddr())
 			body := struct {
@@ -86,7 +90,7 @@ func newAgentRevokeCommand(serverAddr func() string) *cobra.Command {
 			if err := deleteNoContentWithBody(cmd.Context(), client, base+"/api/v1/agents/"+id, body); err != nil {
 				return err
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "revoked agent %s\n", id)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "revoked agent %s\n", rawID)
 			return nil
 		},
 	}

@@ -16,6 +16,10 @@ func newSandboxListCommand(serverAddr func() string) *cobra.Command {
 		Short: "List all sandboxes",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "" && format != "json" && format != "table" {
+				return fmt.Errorf("unknown --format %q: want json or table", format)
+			}
+
 			client := defaultAPIClient()
 			base := apiBaseURL(serverAddr())
 
@@ -42,6 +46,6 @@ func newSandboxListCommand(serverAddr func() string) *cobra.Command {
 			return pterm.DefaultTable.WithHasHeader().WithData(rows).Render()
 		},
 	}
-	cmd.Flags().StringVar(&format, "format", "", "output format: json")
+	cmd.Flags().StringVar(&format, "format", "", "output format: json or table (default table)")
 	return cmd
 }

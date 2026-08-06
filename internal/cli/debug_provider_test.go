@@ -67,6 +67,16 @@ func TestDebugProvider_lifecycle(t *testing.T) {
 	}
 }
 
+func TestDebugProviderCreate_RejectsStrayPositionalArgs(t *testing.T) {
+	dataDir := t.TempDir()
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"debug", "provider", "create", "--data-dir", dataDir, "unexpected-arg"})
+	if err := cmd.ExecuteContext(context.Background()); err == nil {
+		t.Fatal("expected error for a stray positional argument to `debug provider create`")
+	}
+}
+
 // firstResourceID reads the devfactory store and returns the first resource ID.
 func firstResourceID(t *testing.T, dataDir string) string {
 	t.Helper()
