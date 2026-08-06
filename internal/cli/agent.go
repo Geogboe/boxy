@@ -125,7 +125,7 @@ func deleteNoContentWithBody[T any](ctx context.Context, client *http.Client, ur
 func doNoContent(client *http.Client, req *http.Request) error {
 	resp, err := client.Do(req) //nolint:gosec // CLI requests intentionally target the user-configured Boxy server.
 	if err != nil {
-		return err
+		return wrapConnError(err, req.URL.Host)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {

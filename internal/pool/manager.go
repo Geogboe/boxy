@@ -375,6 +375,7 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 		Evaluator: policycontroller.EvaluatorFunc[observed, plan](func(ctx context.Context, obs observed) (policycontroller.Decision[plan], error) {
 			_ = ctx
 			p := obs.pool
+			fallbackInventoryIDs := resourceIDSet(p.Inventory.Resources)
 			rebuilt, rebuildReport, err := RebuildReadyInventory(p, obs.resources, p.Inventory.Resources)
 			if err != nil {
 				return policycontroller.Decision[plan]{}, err
@@ -402,7 +403,7 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 			// idempotent on an already-gone resource, and the window closes
 			// as soon as either retry succeeds and deletes the record.
 			inInventory := resourceIDSet(p.Inventory.Resources)
-			orphans := orphanedTransientResources(p.Name, obs.resources, inInventory)
+			orphans := orphanedTransientResources(p.Name, obs.resources, inInventory, fallbackInventoryIDs)
 
 			if p.EffectivelyDrained() {
 				if requireMinReady {
@@ -596,6 +597,9 @@ func computeStale(p model.Pool, now time.Time) (stale []model.Resource, kept []m
 // are already mid-teardown (recycling or destroying) but are absent from the
 // pool's rebuilt ready inventory — the signature of a reconcile pass that
 // crashed between marking a resource transient and the destroy completing.
+// For older state files that predate OriginPool, fallbackInventoryIDs retains
+// the pool ownership signal from the embedded inventory that was used during
+// the rebuild.
 // Callers fold the result into the same tick's stale/drain list so the
 // destroy gets retried instead of the resource zombying forever.
 //
@@ -612,11 +616,24 @@ func computeStale(p model.Pool, now time.Time) (stale []model.Resource, kept []m
 // tolerated, because every driver's Delete (devfactory/docker/hyperv) is
 // idempotent on an already-gone resource, and the window closes as soon as
 // either retry succeeds and deletes the record.
-func orphanedTransientResources(poolName model.PoolName, resources []model.Resource, inInventory map[model.ResourceID]struct{}) []model.Resource {
+func orphanedTransientResources(
+	poolName model.PoolName,
+	resources []model.Resource,
+	inInventory map[model.ResourceID]struct{},
+	fallbackInventoryIDs map[model.ResourceID]struct{},
+) []model.Resource {
 	var orphans []model.Resource
 	for _, res := range resources {
-		if res.OriginPool != poolName || !isTransientDestroyState(res.State) {
+		if !isTransientDestroyState(res.State) {
 			continue
+		}
+		if res.OriginPool != poolName {
+			if res.OriginPool != "" {
+				continue
+			}
+			if _, legacyOwned := fallbackInventoryIDs[res.ID]; !legacyOwned {
+				continue
+			}
 		}
 		if _, ok := inInventory[res.ID]; ok {
 			continue
