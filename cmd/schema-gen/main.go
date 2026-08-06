@@ -203,7 +203,14 @@ func buildPoolsSchema() map[string]any {
 	poolItem := map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
-		"required":             []string{"name", "type"},
+		// "type" is deliberately NOT required here, unlike the provider
+		// item above: config loading treats an omitted type the same as
+		// an explicitly empty string, and ResolvePoolExpectedType maps ""
+		// to a container pool (see config.go's ResolvePoolExpectedType and
+		// the "enum" below, which includes ""). Requiring the key would
+		// make this schema stricter than the runtime actually is and flag
+		// otherwise-valid configs as invalid.
+		"required": []string{"name"},
 		"properties": map[string]any{
 			"name": map[string]any{"type": "string", "minLength": 1},
 			"type": map[string]any{

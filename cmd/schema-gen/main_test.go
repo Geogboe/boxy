@@ -52,6 +52,40 @@ func TestBuildTopLevelSchemaIncludesProviderTypeRefs(t *testing.T) {
 	}
 }
 
+// TestBuildTopLevelSchemaPoolTypeNotRequired guards a real bug caught in
+// review: config.ResolvePoolExpectedType treats an omitted pool "type" the
+// same as an explicit empty string (both resolve to a container pool), so
+// the schema must not require "type" on pool entries — only "name" — or it
+// would reject otherwise-valid configs that omit "type" (the schema being
+// stricter than the runtime it's meant to describe).
+func TestBuildTopLevelSchemaPoolTypeNotRequired(t *testing.T) {
+	schema, err := buildTopLevelSchema()
+	if err != nil {
+		t.Fatalf("buildTopLevelSchema: %v", err)
+	}
+	properties := schema["properties"].(map[string]any)
+	pools, ok := properties["pools"].(map[string]any)
+	if !ok {
+		t.Fatalf("pools = %#v, want map", properties["pools"])
+	}
+	item, ok := pools["items"].(map[string]any)
+	if !ok {
+		t.Fatalf("pool item = %#v, want map", pools["items"])
+	}
+	required, ok := item["required"].([]string)
+	if !ok {
+		t.Fatalf("pool item required = %#v, want []string", item["required"])
+	}
+	for _, r := range required {
+		if r == "type" {
+			t.Fatal(`pool item requires "type", but an omitted type is valid config (resolves to "container") — required must be ["name"] only`)
+		}
+	}
+	if len(required) != 1 || required[0] != "name" {
+		t.Fatalf("pool item required = %v, want [\"name\"]", required)
+	}
+}
+
 // TestBuildTopLevelSchemaMatchesCommittedFile is a drift guard: nothing
 // else in this repo fails if internal/config/schema/boxy.schema.json goes
 // stale relative to what buildTopLevelSchema() actually produces — this is

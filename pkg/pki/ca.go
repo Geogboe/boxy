@@ -176,7 +176,7 @@ func IssueServerCert(ca *CA, dir string, sans []string) (*ServerCert, error) {
 	keyPEM, keyErr := os.ReadFile(keyPath)
 	switch {
 	case certErr == nil && keyErr == nil:
-		reused, err := reuseServerCertIfSANsMatch(certPath, certPEM, keyPEM, sans)
+		reused, err := reuseServerCertIfSANsMatch(certPath, keyPath, certPEM, keyPEM, sans)
 		if err != nil {
 			return nil, err
 		}
@@ -248,14 +248,14 @@ func IssueServerCert(ca *CA, dir string, sans []string) (*ServerCert, error) {
 // a corrupt/unparseable file is exactly the situation where the caller
 // knows least about what's on disk, so IssueServerCert fails loudly
 // instead of silently overwriting it.
-func reuseServerCertIfSANsMatch(certPath string, certPEM, keyPEM []byte, sans []string) (*ServerCert, error) {
+func reuseServerCertIfSANsMatch(certPath, keyPath string, certPEM, keyPEM []byte, sans []string) (*ServerCert, error) {
 	block, _ := pem.Decode(certPEM)
 	if block == nil {
-		return nil, fmt.Errorf("existing server certificate %q is invalid: no PEM block found (delete %q and its .key file and call again to regenerate)", certPath, certPath)
+		return nil, fmt.Errorf("existing server certificate %q is invalid: no PEM block found (delete %q and %q and call again to regenerate)", certPath, certPath, keyPath)
 	}
 	existing, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("existing server certificate %q is invalid: %w (delete %q and its .key file and call again to regenerate)", certPath, err, certPath)
+		return nil, fmt.Errorf("existing server certificate %q is invalid: %w (delete %q and %q and call again to regenerate)", certPath, err, certPath, keyPath)
 	}
 
 	wantDNS, wantIPs := sanSets(sans)
