@@ -72,6 +72,7 @@ func newAgentListCommand(serverAddr func() string) *cobra.Command {
 
 func newAgentRevokeCommand(serverAddr func() string) *cobra.Command {
 	var reason string
+	var forceOrphanResources bool
 	cmd := &cobra.Command{
 		Use:   "revoke <id>",
 		Short: "Revoke an agent's identity and tear down its connection",
@@ -85,16 +86,22 @@ func newAgentRevokeCommand(serverAddr func() string) *cobra.Command {
 			client := defaultAPIClient()
 			base := apiBaseURL(serverAddr())
 			body := struct {
-				Reason string `json:"reason,omitempty"`
-			}{Reason: reason}
+				Reason               string `json:"reason,omitempty"`
+				ForceOrphanResources bool   `json:"force_orphan_resources,omitempty"`
+			}{Reason: reason, ForceOrphanResources: forceOrphanResources}
 			if err := deleteNoContentWithBody(cmd.Context(), client, base+"/api/v1/agents/"+id, body); err != nil {
 				return err
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "revoked agent %s\n", rawID)
+			msg := fmt.Sprintf("revoked agent %s", rawID)
+			if forceOrphanResources {
+				msg += " (resources force-orphaned)"
+			}
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), msg)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&reason, "reason", "", "optional reason recorded with the revocation")
+	cmd.Flags().BoolVar(&forceOrphanResources, "force-orphan-resources", false, "force-orphan resources still attributed to this agent (never contacts the agent; use only when it is permanently gone)")
 	return cmd
 }
 

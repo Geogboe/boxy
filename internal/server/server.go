@@ -32,7 +32,7 @@ type PoolMaintenance interface {
 // internal/agentserver.Server.
 type AgentAdmin interface {
 	ListAgents() []pool.AgentSummary
-	Revoke(ctx context.Context, agentID, reason string) error
+	Revoke(ctx context.Context, agentID, reason string, forceOrphanResources bool) error
 }
 
 // Server is the HTTP server for the Boxy REST API and optional web UI.

@@ -54,11 +54,13 @@ func newAgentTestServer(t *testing.T) (*httptest.Server, *agentTestState) {
 	})
 	mux.HandleFunc("DELETE /api/v1/agents/{id}", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Reason string `json:"reason"`
+			Reason               string `json:"reason"`
+			ForceOrphanResources bool   `json:"force_orphan_resources"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		state.revokedAgent = r.PathValue("id")
 		state.revokeReason = req.Reason
+		state.revokeForceOrphanResources = req.ForceOrphanResources
 		w.WriteHeader(http.StatusNoContent)
 	})
 
@@ -66,10 +68,11 @@ func newAgentTestServer(t *testing.T) (*httptest.Server, *agentTestState) {
 }
 
 type agentTestState struct {
-	createdLabel string
-	deletedToken string
-	revokedAgent string
-	revokeReason string
+	createdLabel               string
+	deletedToken               string
+	revokedAgent               string
+	revokeReason               string
+	revokeForceOrphanResources bool
 }
 
 func TestAgentTokenCreate(t *testing.T) {
@@ -206,6 +209,27 @@ func TestAgentRevoke(t *testing.T) {
 	}
 	if state.revokedAgent != "agent-a" || state.revokeReason != "host decommissioned" {
 		t.Fatalf("revoked = %q reason = %q, want agent-a / host decommissioned", state.revokedAgent, state.revokeReason)
+	}
+}
+
+func TestAgentRevoke_ForceOrphanResources(t *testing.T) {
+	srv, state := newAgentTestServer(t)
+	defer srv.Close()
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"agent", "--server", srv.URL, "revoke", "agent-a", "--force-orphan-resources"})
+
+	output, err := captureSandboxStdout(t, func() error {
+		return cmd.ExecuteContext(context.Background())
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !state.revokeForceOrphanResources {
+		t.Fatal("expected force_orphan_resources to reach the request body")
+	}
+	if !strings.Contains(output, "revoked agent agent-a") || !strings.Contains(output, "force-orphaned") {
+		t.Fatalf("output = %q, want revoke confirmation mentioning the force-orphan sweep", output)
 	}
 }
 

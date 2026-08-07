@@ -123,6 +123,24 @@ func (ap *AgentProvisioner) Destroy(ctx context.Context, pool model.Pool, res mo
 	return nil
 }
 
+// ForceOrphaner is implemented by provisioners that support force-orphaning
+// a resource whose owning agent is permanently gone. It never contacts the
+// agent — that's the whole point.
+type ForceOrphaner interface {
+	ForceOrphan(ctx context.Context, res model.Resource) error
+}
+
+// ForceOrphan detaches res from its (verified-gone) agent without any agent
+// call. Refuses if the agent is still registered — see the precondition
+// note on Manager.ForceOrphanResource.
+func (ap *AgentProvisioner) ForceOrphan(ctx context.Context, res model.Resource) error {
+	_ = ctx
+	if _, ok := ap.Registry.Get(res.Provider.AgentID); ok {
+		return fmt.Errorf("agent %q is still registered; force-orphan refused — deregister it first (`boxy agent revoke`) or use normal destroy", res.Provider.AgentID)
+	}
+	return nil
+}
+
 // agentForResource resolves the exact agent instance that created res, via
 // its recorded AgentID — never by re-resolving the provider type, which
 // could pick a different agent than the one that actually owns the

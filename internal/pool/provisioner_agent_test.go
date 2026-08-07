@@ -637,6 +637,50 @@ func TestAgentProvisioner_DriverTypeForPool_ExplicitProvider(t *testing.T) {
 	}
 }
 
+// TestAgentProvisioner_ForceOrphan_SucceedsWhenAgentGone proves ForceOrphan
+// succeeds (never contacts any agent) once the owning agent is entirely
+// absent from the registry — the state Revoke leaves behind after
+// Deregister.
+func TestAgentProvisioner_ForceOrphan_SucceedsWhenAgentGone(t *testing.T) {
+	other := newMockAgent(providersdk.Type("hyperv"))
+	other.info.ID = "agent-b"
+
+	provisioner := &AgentProvisioner{
+		// Only agent-b is registered; the resource belongs to "agent-a",
+		// which has already been deregistered (e.g. via Revoke).
+		Registry: registryWith(t, other),
+	}
+
+	res := model.Resource{ID: "vm-1", Provider: model.ProviderRef{Name: "hyperv", AgentID: "agent-a"}}
+	if err := provisioner.ForceOrphan(context.Background(), res); err != nil {
+		t.Fatalf("ForceOrphan: %v", err)
+	}
+	if len(other.deleteCalls) != 0 {
+		t.Fatalf("deleteCalls = %v, want none — ForceOrphan must never contact any agent", other.deleteCalls)
+	}
+}
+
+// TestAgentProvisioner_ForceOrphan_RefusedWhenAgentStillRegistered is the
+// safety-critical case: an agent that's merely unavailable (heartbeat-miss
+// marked, but not deregistered) must still refuse force-orphan, since it may
+// reconnect and the resource may still be alive on it.
+func TestAgentProvisioner_ForceOrphan_RefusedWhenAgentStillRegistered(t *testing.T) {
+	agent := newMockAgent(providersdk.Type("hyperv"))
+	agent.info.ID = "agent-a"
+	registry := registryWith(t, agent)
+	registry.SetAvailable("agent-a", false)
+
+	provisioner := &AgentProvisioner{Registry: registry}
+
+	res := model.Resource{ID: "vm-1", Provider: model.ProviderRef{Name: "hyperv", AgentID: "agent-a"}}
+	if err := provisioner.ForceOrphan(context.Background(), res); err == nil {
+		t.Fatal("ForceOrphan error = nil, want refusal because the agent is still registered")
+	}
+	if len(agent.deleteCalls) != 0 {
+		t.Fatalf("deleteCalls = %v, want none — ForceOrphan must never contact the agent even when refusing", agent.deleteCalls)
+	}
+}
+
 func TestAgentProvisioner_UnknownPool(t *testing.T) {
 	provisioner := &AgentProvisioner{
 		Registry:  registryWith(t, newMockAgent()),

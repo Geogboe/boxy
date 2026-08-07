@@ -190,7 +190,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 
 	// Agent transport: private CA + mTLS gRPC listener (ADR-0005).
 	doneTLS, failTLS := ui.step("Setting up agent CA/TLS")
-	grpcSrv, agentSrv, err := buildAgentGRPCServer(st, agentRegistry, filepath.Dir(statePath), grpcListenAddr, heartbeatInterval, opts.insecure, grpcCertSANs)
+	grpcSrv, agentSrv, err := buildAgentGRPCServer(st, agentRegistry, poolMgr, filepath.Dir(statePath), grpcListenAddr, heartbeatInterval, opts.insecure, grpcCertSANs)
 	if err != nil {
 		failTLS(err.Error())
 		return err
@@ -261,13 +261,13 @@ func agentCertSANs(listenAddr string, extra []string) []string {
 // single-use token instead, and receives its cert in the response), while
 // any presented cert must chain to boxy's own CA. The handler enforces
 // that a connection without a verified cert must carry a valid token.
-func buildAgentGRPCServer(st store.Store, registry *pool.AgentRegistry, boxyDir, listenAddr string, heartbeatInterval time.Duration, insecureMode bool, extraCertSANs []string) (*grpc.Server, *agentserver.Server, error) {
+func buildAgentGRPCServer(st store.Store, registry *pool.AgentRegistry, forceOrphaner agentserver.ResourceForceOrphaner, boxyDir, listenAddr string, heartbeatInterval time.Duration, insecureMode bool, extraCertSANs []string) (*grpc.Server, *agentserver.Server, error) {
 	ca, err := pki.EnsureCA(boxyDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("ensure CA: %w", err)
 	}
 
-	agentSrv := agentserver.New(st, registry, ca, heartbeatInterval)
+	agentSrv := agentserver.New(st, registry, ca, heartbeatInterval, forceOrphaner)
 
 	var serverOpts []grpc.ServerOption
 	if insecureMode {

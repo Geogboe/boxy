@@ -24,7 +24,7 @@ func startAgentTestDaemon(t *testing.T, st store.Store, registry *pool.AgentRegi
 		t.Fatalf("listen: %v", err)
 	}
 
-	grpcSrv, _, err := buildAgentGRPCServer(st, registry, serverDir, ln.Addr().String(), time.Second, false, nil)
+	grpcSrv, _, err := buildAgentGRPCServer(st, registry, nil, serverDir, ln.Addr().String(), time.Second, false, nil)
 	if err != nil {
 		t.Fatalf("buildAgentGRPCServer: %v", err)
 	}

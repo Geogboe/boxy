@@ -19,14 +19,16 @@ import (
 
 // fakeAgentAdmin is a test double for the server.AgentAdmin seam.
 type fakeAgentAdmin struct {
-	agents  []pool.AgentSummary
-	revoked []string
+	agents               []pool.AgentSummary
+	revoked              []string
+	forceOrphanResources []bool
 }
 
 func (f *fakeAgentAdmin) ListAgents() []pool.AgentSummary { return f.agents }
 
-func (f *fakeAgentAdmin) Revoke(_ context.Context, agentID, _ string) error {
+func (f *fakeAgentAdmin) Revoke(_ context.Context, agentID, _ string, forceOrphanResources bool) error {
 	f.revoked = append(f.revoked, agentID)
+	f.forceOrphanResources = append(f.forceOrphanResources, forceOrphanResources)
 	return nil
 }
 
@@ -137,6 +139,32 @@ func TestAgentEndpoints(t *testing.T) {
 	}
 	if len(admin.revoked) != 1 || admin.revoked[0] != "agent-a" {
 		t.Fatalf("revoked = %v, want [agent-a]", admin.revoked)
+	}
+	if len(admin.forceOrphanResources) != 1 || admin.forceOrphanResources[0] != false {
+		t.Fatalf("forceOrphanResources = %v, want [false] (omitted from the request body)", admin.forceOrphanResources)
+	}
+}
+
+// TestRevokeAgent_ForceOrphanResourcesReachesAgentAdmin proves
+// force_orphan_resources in the DELETE body reaches AgentAdmin.Revoke with
+// the flag set to true.
+func TestRevokeAgent_ForceOrphanResourcesReachesAgentAdmin(t *testing.T) {
+	t.Parallel()
+
+	st := store.NewMemoryStore()
+	admin := &fakeAgentAdmin{}
+	mux := server.NewTestMuxWithAgentAdmin(st, sandbox.New(st, nil), admin)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/api/v1/agents/agent-gone", strings.NewReader(`{"reason":"host decommissioned","force_orphan_resources":true}`)))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("revoke status = %d, want %d (body: %s)", w.Code, http.StatusNoContent, w.Body.String())
+	}
+	if len(admin.revoked) != 1 || admin.revoked[0] != "agent-gone" {
+		t.Fatalf("revoked = %v, want [agent-gone]", admin.revoked)
+	}
+	if len(admin.forceOrphanResources) != 1 || admin.forceOrphanResources[0] != true {
+		t.Fatalf("forceOrphanResources = %v, want [true]", admin.forceOrphanResources)
 	}
 }
 

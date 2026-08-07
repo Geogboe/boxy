@@ -297,6 +297,143 @@ func TestManager_DestroyResource_ValidatesInputsBeforeProviderDelete(t *testing.
 	}
 }
 
+// forceOrphanProvisioner is a fakeProvisioner that also implements
+// ForceOrphaner, recording ForceOrphan calls. Its embedded Destroy panics if
+// invoked — ForceOrphanResource must never reach it.
+type forceOrphanProvisioner struct {
+	fakeProvisioner
+	forceOrphaned  []model.ResourceID
+	forceOrphanErr error
+}
+
+func (p *forceOrphanProvisioner) Destroy(ctx context.Context, pool model.Pool, res model.Resource) error {
+	panic("Destroy must never be called during force-orphan")
+}
+
+func (p *forceOrphanProvisioner) ForceOrphan(ctx context.Context, res model.Resource) error {
+	_ = ctx
+	p.forceOrphaned = append(p.forceOrphaned, res.ID)
+	return p.forceOrphanErr
+}
+
+func TestManager_ForceOrphanResource_RemovesFromInventoryAndStoreWithoutDestroy(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	res := model.Resource{
+		ID:         "res-orphan",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		OriginPool: "web",
+		State:      model.ResourceStateAllocated,
+		Provider:   model.ProviderRef{AgentID: "agent-gone"},
+	}
+	if err := st.PutResource(ctx, res); err != nil {
+		t.Fatalf("put resource: %v", err)
+	}
+	if err := st.PutPool(ctx, model.Pool{
+		Name: "web",
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: model.ResourceProfileDefault,
+			Resources:       []model.Resource{res},
+		},
+	}); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &forceOrphanProvisioner{}
+	mgr := New(st, prov)
+	if err := mgr.ForceOrphanResource(ctx, res, "host decommissioned"); err != nil {
+		t.Fatalf("ForceOrphanResource: %v", err)
+	}
+
+	if len(prov.forceOrphaned) != 1 || prov.forceOrphaned[0] != res.ID {
+		t.Fatalf("forceOrphaned = %v, want [%s]", prov.forceOrphaned, res.ID)
+	}
+	if _, err := st.GetResource(ctx, res.ID); err != store.ErrNotFound {
+		t.Fatalf("resource after force-orphan err = %v, want ErrNotFound", err)
+	}
+	p, err := st.GetPool(ctx, "web")
+	if err != nil {
+		t.Fatalf("get pool: %v", err)
+	}
+	if len(p.Inventory.Resources) != 0 {
+		t.Fatalf("inventory resources = %+v, want empty", p.Inventory.Resources)
+	}
+}
+
+func TestManager_ForceOrphanResource_ProvisionerWithoutForceOrphanerSupportFails(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	res := model.Resource{ID: "res-1", OriginPool: "web"}
+	if err := st.PutPool(ctx, model.Pool{Name: "web"}); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	mgr := New(st, &fakeProvisioner{})
+	if err := mgr.ForceOrphanResource(ctx, res, "reason"); err == nil {
+		t.Fatal("ForceOrphanResource error = nil, want error because provisioner does not implement ForceOrphaner")
+	}
+}
+
+func TestManager_ForceOrphanAgentResources_SweepsOnlyMatchingAgent(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+
+	mk := func(id model.ResourceID, agentID string) model.Resource {
+		return model.Resource{
+			ID:         id,
+			Type:       model.ResourceTypeContainer,
+			Profile:    model.ResourceProfileDefault,
+			OriginPool: "web",
+			State:      model.ResourceStateAllocated,
+			Provider:   model.ProviderRef{AgentID: agentID},
+		}
+	}
+	gone1 := mk("res-gone-1", "agent-gone")
+	gone2 := mk("res-gone-2", "agent-gone")
+	other := mk("res-other", "agent-other")
+
+	for _, res := range []model.Resource{gone1, gone2, other} {
+		if err := st.PutResource(ctx, res); err != nil {
+			t.Fatalf("put resource %q: %v", res.ID, err)
+		}
+	}
+	if err := st.PutPool(ctx, model.Pool{
+		Name: "web",
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: model.ResourceProfileDefault,
+			Resources:       []model.Resource{gone1, gone2, other},
+		},
+	}); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &forceOrphanProvisioner{}
+	mgr := New(st, prov)
+	n, err := mgr.ForceOrphanAgentResources(ctx, "agent-gone", "host decommissioned")
+	if err != nil {
+		t.Fatalf("ForceOrphanAgentResources: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("swept count = %d, want 2", n)
+	}
+	if len(prov.forceOrphaned) != 2 {
+		t.Fatalf("forceOrphaned = %v, want 2 entries", prov.forceOrphaned)
+	}
+
+	if _, err := st.GetResource(ctx, gone1.ID); err != store.ErrNotFound {
+		t.Fatalf("gone1 after sweep err = %v, want ErrNotFound", err)
+	}
+	if _, err := st.GetResource(ctx, gone2.ID); err != store.ErrNotFound {
+		t.Fatalf("gone2 after sweep err = %v, want ErrNotFound", err)
+	}
+	if _, err := st.GetResource(ctx, other.ID); err != nil {
+		t.Fatalf("res belonging to a different agent must be untouched: %v", err)
+	}
+}
+
 func TestManager_Reconcile_RecycleStale(t *testing.T) {
 	st := store.NewMemoryStore()
 	old := model.Resource{
