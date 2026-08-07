@@ -194,6 +194,132 @@ func TestAgentRegistry_List(t *testing.T) {
 	}
 }
 
+func TestAgentRegistry_ResolveRoundRobinsAcrossSameTypeAgents(t *testing.T) {
+	r := NewAgentRegistry()
+	agentA := newMockAgent(providersdk.Type("docker"))
+	agentA.info.ID = "agent-a"
+	agentB := newMockAgent(providersdk.Type("docker"))
+	agentB.info.ID = "agent-b"
+	agentC := newMockAgent(providersdk.Type("docker"))
+	agentC.info.ID = "agent-c"
+	if err := r.Register(agentA); err != nil {
+		t.Fatalf("Register agentA: %v", err)
+	}
+	if err := r.Register(agentB); err != nil {
+		t.Fatalf("Register agentB: %v", err)
+	}
+	if err := r.Register(agentC); err != nil {
+		t.Fatalf("Register agentC: %v", err)
+	}
+
+	seen := make(map[string]int)
+	const calls = 9
+	for i := 0; i < calls; i++ {
+		got, err := r.Resolve("docker", "")
+		if err != nil {
+			t.Fatalf("Resolve call %d: %v", i, err)
+		}
+		seen[got.Info().ID]++
+	}
+
+	if len(seen) != 3 {
+		t.Fatalf("expected all 3 agents to be returned across %d calls, got %+v", calls, seen)
+	}
+	for _, id := range []string{"agent-a", "agent-b", "agent-c"} {
+		if seen[id] != calls/3 {
+			t.Fatalf("expected agent %q to be returned %d times, got %d (%+v)", id, calls/3, seen[id], seen)
+		}
+	}
+}
+
+func TestAgentRegistry_ResolveSkipsUnavailableAgent(t *testing.T) {
+	r := NewAgentRegistry()
+	agentA := newMockAgent(providersdk.Type("docker"))
+	agentA.info.ID = "agent-a"
+	agentB := newMockAgent(providersdk.Type("docker"))
+	agentB.info.ID = "agent-b"
+	agentC := newMockAgent(providersdk.Type("docker"))
+	agentC.info.ID = "agent-c"
+	if err := r.Register(agentA); err != nil {
+		t.Fatalf("Register agentA: %v", err)
+	}
+	if err := r.Register(agentB); err != nil {
+		t.Fatalf("Register agentB: %v", err)
+	}
+	if err := r.Register(agentC); err != nil {
+		t.Fatalf("Register agentC: %v", err)
+	}
+	r.SetAvailable("agent-b", false)
+
+	seen := make(map[string]int)
+	for i := 0; i < 6; i++ {
+		got, err := r.Resolve("docker", "")
+		if err != nil {
+			t.Fatalf("Resolve call %d: %v", i, err)
+		}
+		if got.Info().ID == "agent-b" {
+			t.Fatalf("expected agent-b to be skipped while unavailable, got it on call %d", i)
+		}
+		seen[got.Info().ID]++
+	}
+
+	if len(seen) != 2 {
+		t.Fatalf("expected both available agents (agent-a, agent-c) to be returned across %d calls, got %+v", 6, seen)
+	}
+}
+
+func TestAgentRegistry_ResolveSurvivesDeregisterAtCursor(t *testing.T) {
+	r := NewAgentRegistry()
+	agentA := newMockAgent(providersdk.Type("docker"))
+	agentA.info.ID = "agent-a"
+	agentB := newMockAgent(providersdk.Type("docker"))
+	agentB.info.ID = "agent-b"
+	agentC := newMockAgent(providersdk.Type("docker"))
+	agentC.info.ID = "agent-c"
+	if err := r.Register(agentA); err != nil {
+		t.Fatalf("Register agentA: %v", err)
+	}
+	if err := r.Register(agentB); err != nil {
+		t.Fatalf("Register agentB: %v", err)
+	}
+	if err := r.Register(agentC); err != nil {
+		t.Fatalf("Register agentC: %v", err)
+	}
+
+	// Resolve twice to establish the rotation order (agent-a then
+	// agent-b) and thereby predict that agent-c — the last entry in the
+	// 3-element byType slice — is next up.
+	first, err := r.Resolve("docker", "")
+	if err != nil {
+		t.Fatalf("Resolve first: %v", err)
+	}
+	if first.Info().ID != "agent-a" {
+		t.Fatalf("expected first resolve to return agent-a, got %q", first.Info().ID)
+	}
+	second, err := r.Resolve("docker", "")
+	if err != nil {
+		t.Fatalf("Resolve second: %v", err)
+	}
+	if second.Info().ID != "agent-b" {
+		t.Fatalf("expected second resolve to return agent-b, got %q", second.Info().ID)
+	}
+
+	// Deregister agent-c: the cursor is about to return it next (index 2
+	// of the current 3-element slice). A stored raw index of 2 would go
+	// out of range once agent-c's removal shrinks the slice to length 2
+	// — indexing ids[2] on a len-2 slice panics. The counter design must
+	// instead re-derive a valid index via modulo on the shrunk slice.
+	r.Deregister("agent-c")
+
+	got, err := r.Resolve("docker", "")
+	if err != nil {
+		t.Fatalf("Resolve after deregistering cursor target: %v", err)
+	}
+	if got.Info().ID != "agent-a" && got.Info().ID != "agent-b" {
+		t.Fatalf("expected a valid remaining agent (agent-a or agent-b), got %q", got.Info().ID)
+	}
+}
+
 func TestAgentRegistry_RegisterRejectsNilOrEmptyID(t *testing.T) {
 	r := NewAgentRegistry()
 	if err := r.Register(nil); err == nil {
