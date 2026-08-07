@@ -340,25 +340,32 @@ func (m *Manager) ForceOrphanResource(ctx context.Context, res model.Resource, r
 // ForceOrphanAgentResources force-orphans every resource currently
 // attributed to agentID. Intended to run immediately after the agent has
 // been deregistered (see internal/agentserver.Server.Revoke). Returns the
-// count force-orphaned; a failure partway through returns that error
-// alongside how many succeeded before it, so the caller can log/report
-// partial progress rather than losing it silently.
+// count force-orphaned. A per-resource failure (e.g. a resource adopted by
+// pool.ReconcileAgent with no OriginPool — see #133 — which
+// ForceOrphanResource, like DestroyResource, cannot act on) does not abort
+// the sweep: every other resource still gets a chance, since one
+// problem resource must never block cleanup of every other resource this
+// permanently-gone agent left behind. All per-resource errors are joined
+// and returned alongside the count that did succeed, so the caller can
+// log/report partial progress rather than losing it silently.
 func (m *Manager) ForceOrphanAgentResources(ctx context.Context, agentID, reason string) (int, error) {
 	all, err := m.store.ListResources(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("list resources: %w", err)
 	}
 	var n int
+	var errs []error
 	for _, res := range all {
 		if res.Provider.AgentID != agentID {
 			continue
 		}
 		if err := m.ForceOrphanResource(ctx, res, reason); err != nil {
-			return n, fmt.Errorf("force-orphan resource %q: %w", res.ID, err)
+			errs = append(errs, fmt.Errorf("force-orphan resource %q: %w", res.ID, err))
+			continue
 		}
 		n++
 	}
-	return n, nil
+	return n, errors.Join(errs...)
 }
 
 // isTransientDestroyState reports whether a resource is already mid-teardown

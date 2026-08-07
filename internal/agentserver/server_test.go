@@ -387,23 +387,23 @@ func (a *stubAgent) Allocate(ctx context.Context, provider providersdk.Type, id 
 }
 
 // fakeForceOrphaner is a test double for the ResourceForceOrphaner seam. If
-// registry is set, it asserts — at the moment it's invoked — that the agent
-// is already absent from the registry, proving Revoke's sweep runs after
-// Deregister (the precondition pool.AgentProvisioner.ForceOrphan depends
-// on).
+// registry is set, it records — at the moment it's invoked, in
+// stillRegisteredAtSweep — whether the agent was still present in the
+// registry. Revoke discards any error this returns (best-effort sweep), so
+// a test verifying the Deregister-before-sweep ordering must assert this
+// recorded state directly rather than relying on a returned error.
 type fakeForceOrphaner struct {
-	registry *pool.AgentRegistry
-	calls    []struct{ agentID, reason string }
-	n        int
-	err      error
+	registry               *pool.AgentRegistry
+	calls                  []struct{ agentID, reason string }
+	stillRegisteredAtSweep bool
+	n                      int
+	err                    error
 }
 
 func (f *fakeForceOrphaner) ForceOrphanAgentResources(ctx context.Context, agentID, reason string) (int, error) {
 	f.calls = append(f.calls, struct{ agentID, reason string }{agentID, reason})
 	if f.registry != nil {
-		if _, ok := f.registry.Get(agentID); ok {
-			return 0, fmt.Errorf("agent %q still registered when force-orphan sweep ran", agentID)
-		}
+		_, f.stillRegisteredAtSweep = f.registry.Get(agentID)
 	}
 	return f.n, f.err
 }
@@ -422,6 +422,12 @@ func TestRevoke_ForceOrphanResourcesTrue_SweepsAfterDeregister(t *testing.T) {
 
 	if len(fo.calls) != 1 || fo.calls[0].agentID != "agent-gone" || fo.calls[0].reason != "host decommissioned" {
 		t.Fatalf("calls = %+v, want one call for agent-gone/host decommissioned", fo.calls)
+	}
+	// The safety-critical assertion: by the time the sweep ran, Deregister
+	// must already have removed the agent from the registry — this is the
+	// precondition pool.AgentProvisioner.ForceOrphan depends on.
+	if fo.stillRegisteredAtSweep {
+		t.Fatal("sweep observed the agent still registered — it must run after registry.Deregister")
 	}
 }
 

@@ -434,6 +434,62 @@ func TestManager_ForceOrphanAgentResources_SweepsOnlyMatchingAgent(t *testing.T)
 	}
 }
 
+// TestManager_ForceOrphanAgentResources_ContinuesPastPerResourceFailure
+// guards against one bad resource blocking cleanup of every other resource
+// a permanently-gone agent left behind. A resource with no OriginPool set
+// (e.g. one adopted by pool.ReconcileAgent, see #133 — ForceOrphanResource
+// requires OriginPool, same as DestroyResource) must not abort the sweep
+// for resources that do have one.
+func TestManager_ForceOrphanAgentResources_ContinuesPastPerResourceFailure(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+
+	noOriginPool := model.Resource{
+		ID:       "res-no-origin-pool",
+		State:    model.ResourceStateUnknown,
+		Provider: model.ProviderRef{AgentID: "agent-gone"},
+	}
+	sweepable := model.Resource{
+		ID:         "res-sweepable",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		OriginPool: "web",
+		State:      model.ResourceStateAllocated,
+		Provider:   model.ProviderRef{AgentID: "agent-gone"},
+	}
+	for _, res := range []model.Resource{noOriginPool, sweepable} {
+		if err := st.PutResource(ctx, res); err != nil {
+			t.Fatalf("put resource %q: %v", res.ID, err)
+		}
+	}
+	if err := st.PutPool(ctx, model.Pool{
+		Name: "web",
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: model.ResourceProfileDefault,
+			Resources:       []model.Resource{sweepable},
+		},
+	}); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &forceOrphanProvisioner{}
+	mgr := New(st, prov)
+	n, err := mgr.ForceOrphanAgentResources(ctx, "agent-gone", "host decommissioned")
+	if err == nil {
+		t.Fatal("ForceOrphanAgentResources error = nil, want an error reporting the res-no-origin-pool failure")
+	}
+	if n != 1 {
+		t.Fatalf("swept count = %d, want 1 (the resource without OriginPool must not block the other)", n)
+	}
+	if _, err := st.GetResource(ctx, sweepable.ID); err != store.ErrNotFound {
+		t.Fatalf("sweepable resource err = %v, want ErrNotFound — it must still be force-orphaned despite the other resource's failure", err)
+	}
+	if _, err := st.GetResource(ctx, noOriginPool.ID); err != nil {
+		t.Fatalf("resource without OriginPool should still exist (it could not be force-orphaned): %v", err)
+	}
+}
+
 func TestManager_Reconcile_RecycleStale(t *testing.T) {
 	st := store.NewMemoryStore()
 	old := model.Resource{
