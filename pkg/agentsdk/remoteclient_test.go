@@ -32,6 +32,21 @@ type fakeDriver struct {
 	allocateRes map[string]any
 }
 
+// fakePersonalizingDriver adds providersdk.GuestPersonalizer on top of
+// fakeDriver, so tests can exercise both the "driver supports
+// PersonalizeGuest" and "driver doesn't" paths through executeCommand — the
+// latter using plain *fakeDriver, which deliberately has no
+// PersonalizeGuest method.
+type fakePersonalizingDriver struct {
+	*fakeDriver
+	personalizeErr error
+	personalizeRes *providersdk.GuestPersonalizationResult
+}
+
+func (d *fakePersonalizingDriver) PersonalizeGuest(ctx context.Context, id string) (*providersdk.GuestPersonalizationResult, error) {
+	return d.personalizeRes, d.personalizeErr
+}
+
 func (d *fakeDriver) Type() providersdk.Type { return d.providerType }
 
 func (d *fakeDriver) Create(ctx context.Context, cfg any) (*providersdk.Resource, error) {
@@ -183,6 +198,85 @@ func TestExecuteCommand(t *testing.T) {
 		res := executeCommand(context.Background(), drivers, cmd)
 		if res.GetError() == nil {
 			t.Fatal("expected an error result for a driver without ResourceLister")
+		}
+	})
+
+	t.Run("personalize guest success round-trips typed properties", func(t *testing.T) {
+		drivers := DriverSet{"hyperv": &fakePersonalizingDriver{
+			fakeDriver: &fakeDriver{providerType: "hyperv"},
+			personalizeRes: &providersdk.GuestPersonalizationResult{
+				AccessDetails: providersdk.GuestAccessDetails{Properties: map[string]string{"access": "ssh", "host": "10.0.0.9"}},
+			},
+		}}
+		cmd := &boxyagentv1.Command{
+			CommandId:    "cmd-10",
+			ProviderType: "hyperv",
+			Op:           &boxyagentv1.Command_PersonalizeGuest{PersonalizeGuest: &boxyagentv1.PersonalizeGuestCommand{ResourceId: "vm-1"}},
+		}
+		res := executeCommand(context.Background(), drivers, cmd)
+		if res.GetError() != nil {
+			t.Fatalf("unexpected error: %s", res.GetError().GetMessage())
+		}
+		got := res.GetPersonalizeGuest().GetProperties()
+		if got["access"] != "ssh" || got["host"] != "10.0.0.9" {
+			t.Fatalf("expected typed properties to round-trip, got %#v", got)
+		}
+	})
+
+	t.Run("personalize guest unsupported by driver returns non-error empty result", func(t *testing.T) {
+		// This is the regression the whole design depends on: a driver that
+		// doesn't implement providersdk.GuestPersonalizer must not produce
+		// an AgentError, or internal/pool's fallback-to-Allocate path never
+		// runs and every remote pool with a non-personalizing driver turns
+		// a previously-successful allocation into a hard failure.
+		cmd := &boxyagentv1.Command{
+			CommandId:    "cmd-11",
+			ProviderType: "docker",
+			Op:           &boxyagentv1.Command_PersonalizeGuest{PersonalizeGuest: &boxyagentv1.PersonalizeGuestCommand{ResourceId: "c1"}},
+		}
+		res := executeCommand(context.Background(), drivers, cmd)
+		if res.GetError() != nil {
+			t.Fatalf("expected no error for an unsupported driver, got %s", res.GetError().GetMessage())
+		}
+		pg := res.GetPersonalizeGuest()
+		if pg == nil {
+			t.Fatal("expected a non-nil PersonalizeGuestResult outcome")
+		}
+		if len(pg.GetProperties()) != 0 {
+			t.Fatalf("expected zero-length properties, got %#v", pg.GetProperties())
+		}
+	})
+
+	t.Run("personalize guest driver returns nil result yields non-error empty result", func(t *testing.T) {
+		drivers := DriverSet{"hyperv": &fakePersonalizingDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}}}
+		cmd := &boxyagentv1.Command{
+			CommandId:    "cmd-12",
+			ProviderType: "hyperv",
+			Op:           &boxyagentv1.Command_PersonalizeGuest{PersonalizeGuest: &boxyagentv1.PersonalizeGuestCommand{ResourceId: "vm-1"}},
+		}
+		res := executeCommand(context.Background(), drivers, cmd)
+		if res.GetError() != nil {
+			t.Fatalf("unexpected error: %s", res.GetError().GetMessage())
+		}
+		pg := res.GetPersonalizeGuest()
+		if pg == nil || len(pg.GetProperties()) != 0 {
+			t.Fatalf("expected non-nil, zero-length PersonalizeGuestResult, got %#v", pg)
+		}
+	})
+
+	t.Run("personalize guest driver error is surfaced as AgentError", func(t *testing.T) {
+		drivers := DriverSet{"hyperv": &fakePersonalizingDriver{
+			fakeDriver:     &fakeDriver{providerType: "hyperv"},
+			personalizeErr: errors.New("boom"),
+		}}
+		cmd := &boxyagentv1.Command{
+			CommandId:    "cmd-13",
+			ProviderType: "hyperv",
+			Op:           &boxyagentv1.Command_PersonalizeGuest{PersonalizeGuest: &boxyagentv1.PersonalizeGuestCommand{ResourceId: "vm-1"}},
+		}
+		res := executeCommand(context.Background(), drivers, cmd)
+		if res.GetError() == nil || res.GetError().GetMessage() != "boom" {
+			t.Fatalf("expected AgentError{boom}, got %#v", res.GetOutcome())
 		}
 	})
 
