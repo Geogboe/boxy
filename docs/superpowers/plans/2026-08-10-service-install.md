@@ -504,8 +504,6 @@ func renderUnit(spec Spec) string {
 	fmt.Fprintf(&b, "Restart=on-failure\n")
 	fmt.Fprintf(&b, "RestartSec=5\n\n")
 	fmt.Fprintf(&b, "[Install]\n")
-	if strings.Contains(spec.Description, "user") { // placeholder never reached; WantedBy is set by caller below
-	}
 	return b.String()
 }
 
@@ -625,26 +623,7 @@ func (m *systemdManager) Status(name string) (Status, error) {
 }
 ```
 
-Note: `renderUnit` above has a dead `if` branch left from drafting — remove it in this step (it must not ship); the version actually written to the file must be:
-
-```go
-func renderUnit(spec Spec) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "[Unit]\n")
-	fmt.Fprintf(&b, "Description=%s\n", spec.Description)
-	fmt.Fprintf(&b, "After=network-online.target\n")
-	fmt.Fprintf(&b, "Wants=network-online.target\n\n")
-	fmt.Fprintf(&b, "[Service]\n")
-	fmt.Fprintf(&b, "Type=simple\n")
-	fmt.Fprintf(&b, "ExecStart=%s\n", strings.Join(append([]string{spec.ExecPath}, spec.Args...), " "))
-	fmt.Fprintf(&b, "Restart=on-failure\n")
-	fmt.Fprintf(&b, "RestartSec=5\n\n")
-	fmt.Fprintf(&b, "[Install]\n")
-	return b.String()
-}
-```
-
-Also add `"os/exec"` to the import block (used by the default `runCommand`).
+Add `"os/exec"` to the import block (used by the default `runCommand`).
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -797,11 +776,9 @@ Expected: FAIL — `taskSchedulerManager`, `renderTaskXML`, `runCommand` undefin
 package svcmgr
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
-	"os/user"
 	"strings"
 )
 
@@ -975,12 +952,7 @@ func utf16LEWithBOM(s string) ([]byte, error) {
 	}
 	return out, nil
 }
-
-var _ = errors.Is // silence unused import if errors ends up only used in tests
-var _ = user.Current
 ```
-
-Remove the two trailing `var _ =` lines — they're placeholders from drafting and must not ship; `errors` and `os/user` are not actually needed in this file (Status's not-installed path doesn't need `errors.Is`, and the logon trigger doesn't need the current username). Trim the import block to exactly `"fmt"`, `"os"`, `"os/exec"`, `"strings"`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1167,7 +1139,6 @@ Expected: FAIL — `scmManager`, `scmAPI`, `scmService`, `connectSCM` undefined.
 package svcmgr
 
 import (
-	"errors"
 	"fmt"
 
 	"golang.org/x/sys/windows/svc"
@@ -1328,11 +1299,7 @@ func (m *scmManager) Status(name string) (Status, error) {
 	}
 	return Status{Installed: true, Running: st.State == svc.Running, Mode: "system-service"}, nil
 }
-
-var _ = errors.Is // referenced by callers of this package, not this file directly; keep import used
 ```
-
-Remove the trailing `var _ = errors.Is` placeholder line and the now-unused `"errors"` import — this file doesn't call `errors.Is` itself (only its test does). Final import block: `"fmt"`, `golang.org/x/sys/windows/svc`, `golang.org/x/sys/windows/svc/mgr`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1940,7 +1907,9 @@ git commit -m "feat(cli): isElevated privilege detection for service install" -m
 package cli
 
 import (
+	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -1979,7 +1948,7 @@ func TestAgentServiceConfig_TokenIsNotStoredAsPlaintextOnDisk(t *testing.T) {
 		t.Fatalf("saveAgentServiceConfig: %v", err)
 	}
 
-	raw, err := osReadFile(path)
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read file: %v", err)
 	}
@@ -2031,7 +2000,10 @@ func TestServeServiceConfig_SaveLoadRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadServeServiceConfig: %v", err)
 	}
-	if got != cfg {
+	// serveServiceConfig has a []string field (GRPCCertSANs), so it isn't
+	// comparable with == / != — use reflect.DeepEqual instead (add
+	// "reflect" to this file's imports).
+	if !reflect.DeepEqual(got, cfg) {
 		t.Fatalf("round-tripped config = %+v, want %+v", got, cfg)
 	}
 }
@@ -2057,7 +2029,6 @@ func TestResolveAbs_EmptyStringStaysEmpty(t *testing.T) {
 }
 ```
 
-(`osReadFile` here is just `os.ReadFile` — add `"os"` to the test file's imports and call `os.ReadFile` directly instead of a wrapper; there's no need for an indirection.)
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -2436,13 +2407,15 @@ func TestResolveServeOpts_NoServiceConfig_ReturnsOptsUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveServeOpts: %v", err)
 	}
-	if got != given {
+	// serveOpts has a []string field (grpcCertSANs), so it isn't
+	// comparable with == / != — use reflect.DeepEqual instead (add
+	// "reflect" to this file's imports if serve_test.go doesn't already
+	// have it).
+	if !reflect.DeepEqual(got, given) {
 		t.Fatalf("resolveServeOpts(%+v) = %+v, want unchanged", given, got)
 	}
 }
 ```
-
-(If `serveOpts` isn't directly `==`-comparable due to a slice field like `grpcCertSANs`, compare the specific fields checked above instead of the whole struct — verify `serveOpts`'s field set from `internal/cli/serve.go:41-48` before writing the comparison, and adjust the equality check accordingly if needed.)
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -2559,7 +2532,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Geogboe/boxy/internal/svcmgr"
@@ -2704,7 +2679,7 @@ func TestAgentServiceUninstall_NotPurge_KeepsDataDir(t *testing.T) {
 	if err := runAgentServiceUninstall(newTestCmd(&bytes.Buffer{}), false, dataDir); err != nil {
 		t.Fatalf("runAgentServiceUninstall: %v", err)
 	}
-	if _, err := osStat(dataDir); err != nil {
+	if _, err := os.Stat(dataDir); err != nil {
 		t.Fatalf("data dir should still exist: %v", err)
 	}
 }
@@ -2717,7 +2692,7 @@ func TestAgentServiceUninstall_Purge_RemovesDataDir(t *testing.T) {
 	if err := runAgentServiceUninstall(newTestCmd(&bytes.Buffer{}), true, dataDir); err != nil {
 		t.Fatalf("runAgentServiceUninstall: %v", err)
 	}
-	if _, err := osStat(dataDir); err == nil {
+	if _, err := os.Stat(dataDir); err == nil {
 		t.Fatal("data dir should have been removed by --purge")
 	}
 }
@@ -2731,13 +2706,11 @@ func TestAgentServiceStatus_PrintsInstalledState(t *testing.T) {
 		t.Fatalf("runAgentServiceStatus: %v", err)
 	}
 	got := out.String()
-	if !contains(got, "running") || !contains(got, "system-service") {
+	if !strings.Contains(got, "running") || !strings.Contains(got, "system-service") {
 		t.Fatalf("status output = %q, expected to mention running and system-service", got)
 	}
 }
 ```
-
-(`osStat` is just `os.Stat` and `contains` is `strings.Contains` — add `"os"` and `"strings"` to the test file's imports and call them directly rather than through indirections; the snippets above use short names purely for readability in this plan.)
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -2753,7 +2726,6 @@ First, expose `isElevated` as an overridable var (Task 9 defined it as a plain f
 package cli
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -3012,11 +2984,7 @@ func runAgentServiceStatus(cmd *cobra.Command) error {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "boxy-agent: %s (%s)\n", state, st.Mode)
 	return nil
 }
-
-var _ = context.Background // referenced only by this file's future use; remove if unused after Step 4
 ```
-
-Remove the trailing `var _ = context.Background` placeholder and the `"context"` import — this file doesn't need it (unlike `agent_serve.go`/`serve.go`, no `RunAsWindowsService` call happens here).
 
 Now wire it into `agent.go`:
 
@@ -3061,6 +3029,7 @@ package cli
 import (
 	"bytes"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Geogboe/boxy/internal/svcmgr"
@@ -3121,7 +3090,7 @@ func TestServeServiceStatus_ReportsNotInstalled(t *testing.T) {
 	if err := runServeServiceStatus(newTestCmd(&out)); err != nil {
 		t.Fatalf("runServeServiceStatus: %v", err)
 	}
-	if !contains(out.String(), "not installed") {
+	if !strings.Contains(out.String(), "not installed") {
 		t.Fatalf("status output = %q, expected to mention not installed", out.String())
 	}
 }
