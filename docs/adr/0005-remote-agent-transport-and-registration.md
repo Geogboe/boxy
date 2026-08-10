@@ -217,3 +217,35 @@ state is in-memory only and resets on daemon restart.
    alongside `DiskStore` for a collection expected to stay in the
    10s-100s, when `DiskStore`'s own existing rationale is explicitly to
    avoid exactly this kind of premature dependency addition.
+
+## Update (2026-08-10)
+
+Three follow-ups called out as explicitly out of scope above are now
+resolved:
+
+- **Agent identity churn / permanently-gone agent (#134).** The manual
+  escape hatch this ADR deferred now exists:
+  `boxy agent revoke <id> --force-orphan-resources` sweeps every resource
+  still stamped with that agent's ID out of pool inventory and the store
+  (`pool.Manager.ForceOrphanResource`/`ForceOrphanAgentResources`) without
+  contacting the agent. `pool.AgentProvisioner.ForceOrphan` refuses unless
+  the agent has already been deregistered, so the sweep can only run after
+  a normal revoke — it is not a way to force-destroy a still-connected
+  agent's resources. The remote side may leak; this is documented as
+  intentional, not solved.
+- **Same-provider-type agent selection (#135).** `AgentRegistry.Resolve`
+  previously picked the first available agent offering a requested provider
+  type. It now round-robins across all available agents of that type,
+  spreading new provisioning instead of concentrating it on whichever agent
+  happened to register first. Explicit `agent:` pinning on a pool still
+  bypasses this entirely, as before.
+- **Typed guest personalization over the wire (#137).** `RemoteAgent` now
+  implements `GuestPersonalizingAgent`; the agent transport proto
+  (`proto/boxyagent/v1/agent.proto`) carries typed personalization payloads
+  end-to-end, so drivers running behind a remote agent get the same typed
+  personalization path as the embedded agent instead of falling back to
+  generic `Allocate` properties.
+
+Not resolved by this update: #101 (a distinct, broader provider
+guest-personalization *contract* for VM bootstrap/credential rotation) is a
+separate ask and remains open.

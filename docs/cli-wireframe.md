@@ -225,9 +225,14 @@ boxy
     └── revoke <id>                              Revoke an agent's identity (deny-lists its mTLS cert
         │                                          and tears down any live connection)
         ├── --reason <text>                        Optional reason recorded with the revocation
+        ├── --force-orphan-resources                Force-orphan resources still attributed to this
+        │                                          agent (never contacts the agent; use only when it
+        │                                          is permanently gone — see ADR-0005)
         │
         $ boxy agent revoke 0d9a… --reason "host decommissioned"
           revoked agent 0d9a…
+        $ boxy agent revoke 0d9a… --reason "host decommissioned" --force-orphan-resources
+          revoked agent 0d9a… (resources force-orphaned)
 
 
 Global flags (on root command):
