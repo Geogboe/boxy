@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -278,6 +279,93 @@ func (m *Manager) DestroyResource(ctx context.Context, res model.Resource) error
 		return fmt.Errorf("delete resource %q: %w", res.ID, err)
 	}
 	return nil
+}
+
+// ForceOrphanResource detaches res from Boxy's bookkeeping (pool inventory +
+// store) without ever contacting res's owning agent. Unlike DestroyResource,
+// it never transitions the resource through a Destroying state and never
+// calls m.provisioner.Destroy — the whole point is that the owning agent is
+// permanently gone and cannot be reached. The provisioner must implement
+// ForceOrphaner, which itself refuses unless the agent has already been
+// deregistered (see AgentProvisioner.ForceOrphan) — callers should only
+// reach this after an explicit `boxy agent revoke`.
+func (m *Manager) ForceOrphanResource(ctx context.Context, res model.Resource, reason string) error {
+	if m == nil {
+		return fmt.Errorf("pool manager is nil")
+	}
+	if m.store == nil {
+		return fmt.Errorf("store is nil")
+	}
+	if m.provisioner == nil {
+		return fmt.Errorf("provisioner is nil")
+	}
+	if res.ID == "" {
+		return fmt.Errorf("resource id is required")
+	}
+	if res.OriginPool == "" {
+		return fmt.Errorf("resource %q has no origin pool", res.ID)
+	}
+
+	fo, ok := m.provisioner.(ForceOrphaner)
+	if !ok {
+		return fmt.Errorf("provisioner does not support force-orphan")
+	}
+
+	unlock := m.lockPool(res.OriginPool)
+	defer unlock()
+
+	p, err := m.store.GetPool(ctx, res.OriginPool)
+	if errors.Is(err, store.ErrNotFound) {
+		return fmt.Errorf("origin pool %q for resource %q not found", res.OriginPool, res.ID)
+	}
+	if err != nil {
+		return fmt.Errorf("get origin pool %q for resource %q: %w", res.OriginPool, res.ID, err)
+	}
+
+	if err := fo.ForceOrphan(ctx, res); err != nil {
+		return err
+	}
+	slog.Warn("resource force-orphaned", "resource_id", res.ID, "agent_id", res.Provider.AgentID, "origin_pool", res.OriginPool, "reason", reason)
+
+	p.Inventory.Resources = removeInventoryResource(p.Inventory.Resources, res.ID)
+	if err := m.store.PutPool(ctx, p); err != nil {
+		return fmt.Errorf("put pool %q after force-orphaning resource %q: %w", p.Name, res.ID, err)
+	}
+	if err := m.store.DeleteResource(ctx, res.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+		return fmt.Errorf("delete resource %q: %w", res.ID, err)
+	}
+	return nil
+}
+
+// ForceOrphanAgentResources force-orphans every resource currently
+// attributed to agentID. Intended to run immediately after the agent has
+// been deregistered (see internal/agentserver.Server.Revoke). Returns the
+// count force-orphaned. A per-resource failure (e.g. a resource adopted by
+// pool.ReconcileAgent with no OriginPool — see #133 — which
+// ForceOrphanResource, like DestroyResource, cannot act on) does not abort
+// the sweep: every other resource still gets a chance, since one
+// problem resource must never block cleanup of every other resource this
+// permanently-gone agent left behind. All per-resource errors are joined
+// and returned alongside the count that did succeed, so the caller can
+// log/report partial progress rather than losing it silently.
+func (m *Manager) ForceOrphanAgentResources(ctx context.Context, agentID, reason string) (int, error) {
+	all, err := m.store.ListResources(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("list resources: %w", err)
+	}
+	var n int
+	var errs []error
+	for _, res := range all {
+		if res.Provider.AgentID != agentID {
+			continue
+		}
+		if err := m.ForceOrphanResource(ctx, res, reason); err != nil {
+			errs = append(errs, fmt.Errorf("force-orphan resource %q: %w", res.ID, err))
+			continue
+		}
+		n++
+	}
+	return n, errors.Join(errs...)
 }
 
 // isTransientDestroyState reports whether a resource is already mid-teardown

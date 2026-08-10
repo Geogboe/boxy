@@ -45,6 +45,8 @@ type RemoteAgent struct {
 	closeOnce sync.Once
 }
 
+var _ GuestPersonalizingAgent = (*RemoteAgent)(nil)
+
 // NewRemoteAgent wraps a server-side stream handle for one connected agent.
 // The caller must run Serve in its own goroutine to pump incoming frames.
 func NewRemoteAgent(info AgentInfo, stream boxyagentv1.AgentTransportService_ConnectServer) *RemoteAgent {
@@ -271,13 +273,10 @@ func (a *RemoteAgent) List(ctx context.Context, provider providersdk.Type) ([]pr
 	return statuses, nil
 }
 
-// Allocate does not implement GuestPersonalizingAgent: the transport's
-// AllocateCommand/AllocateResult only carries generic JSON properties, not
-// providersdk.GuestAccessDetails' richer typed shape. A remote driver that
-// implements providersdk.GuestPersonalizer still works through this
-// baseline path (properties still convey credentials/connection info) but
-// loses the typed richness embedded-agent pools get. Tracked as a known
-// gap, not solved in this pass.
+// Allocate carries only generic JSON properties over the wire. Callers that
+// want typed guest personalization should prefer PersonalizeGuest (below)
+// via a GuestPersonalizingAgent type-assertion, falling back to Allocate
+// when the remote driver doesn't implement providersdk.GuestPersonalizer.
 func (a *RemoteAgent) Allocate(ctx context.Context, provider providersdk.Type, id string) (map[string]any, error) {
 	res, err := a.call(ctx, &boxyagentv1.Command{
 		ProviderType: string(provider),
@@ -298,4 +297,31 @@ func (a *RemoteAgent) Allocate(ctx context.Context, provider providersdk.Type, i
 		return nil, fmt.Errorf("agent %q: unmarshal allocate properties: %w", a.info.ID, err)
 	}
 	return props, nil
+}
+
+// PersonalizeGuest satisfies GuestPersonalizingAgent by sending a
+// PersonalizeGuestCommand. An empty PersonalizeGuestResult (zero properties)
+// means either the remote driver doesn't implement
+// providersdk.GuestPersonalizer or it does but had nothing to report — both
+// collapse to nil, nil here so callers fall back to the generic Allocate
+// path exactly as EmbeddedAgent's callers do (see
+// internal/pool/provisioner_agent.go's AgentProvisioner.Allocate).
+func (a *RemoteAgent) PersonalizeGuest(ctx context.Context, provider providersdk.Type, id string) (*providersdk.GuestPersonalizationResult, error) {
+	res, err := a.call(ctx, &boxyagentv1.Command{
+		ProviderType: string(provider),
+		Op:           &boxyagentv1.Command_PersonalizeGuest{PersonalizeGuest: &boxyagentv1.PersonalizeGuestCommand{ResourceId: id}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if agentErr := res.GetError(); agentErr != nil {
+		return nil, fmt.Errorf("agent %q: %s", a.info.ID, agentErr.GetMessage())
+	}
+	pg := res.GetPersonalizeGuest()
+	if pg == nil || len(pg.GetProperties()) == 0 {
+		return nil, nil
+	}
+	return &providersdk.GuestPersonalizationResult{
+		AccessDetails: providersdk.GuestAccessDetails{Properties: pg.GetProperties()},
+	}, nil
 }

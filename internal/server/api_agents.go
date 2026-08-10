@@ -115,7 +115,8 @@ func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 // revokeAgentRequest is the optional request body for
 // DELETE /api/v1/agents/{id}.
 type revokeAgentRequest struct {
-	Reason string `json:"reason,omitempty"`
+	Reason               string `json:"reason,omitempty"`
+	ForceOrphanResources bool   `json:"force_orphan_resources,omitempty"`
 }
 
 func (s *Server) handleRevokeAgent(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +133,7 @@ func (s *Server) handleRevokeAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := s.agentAdmin.Revoke(r.Context(), r.PathValue("id"), req.Reason); err != nil {
+	if err := s.agentAdmin.Revoke(r.Context(), r.PathValue("id"), req.Reason, req.ForceOrphanResources); err != nil {
 		httpjson.Error(w, http.StatusInternalServerError, "failed to revoke agent")
 		return
 	}

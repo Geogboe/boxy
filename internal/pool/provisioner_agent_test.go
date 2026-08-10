@@ -2,11 +2,16 @@ package pool
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/metadata"
+
 	boxyconfig "github.com/Geogboe/boxy/internal/config"
+	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
 	"github.com/Geogboe/boxy/pkg/agentsdk"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
@@ -108,6 +113,189 @@ func (m *mockAgent) PersonalizeGuest(ctx context.Context, provider providersdk.T
 		return nil, m.personalizeErr
 	}
 	return m.personalized, nil
+}
+
+// fakeAgentStream is a minimal, no-network implementation of
+// boxyagentv1.AgentTransportService_ConnectServer, used to drive a real
+// agentsdk.RemoteAgent through its wire path (rather than a mockAgent
+// double) in the tests below.
+type fakeAgentStream struct {
+	ctx    context.Context
+	recvCh chan *boxyagentv1.AgentMessage
+	sentCh chan *boxyagentv1.ServerMessage
+}
+
+func newFakeAgentStream() *fakeAgentStream {
+	return &fakeAgentStream{
+		ctx:    context.Background(),
+		recvCh: make(chan *boxyagentv1.AgentMessage, 16),
+		sentCh: make(chan *boxyagentv1.ServerMessage, 16),
+	}
+}
+
+func (f *fakeAgentStream) Send(m *boxyagentv1.ServerMessage) error {
+	f.sentCh <- m
+	return nil
+}
+
+func (f *fakeAgentStream) Recv() (*boxyagentv1.AgentMessage, error) {
+	m, ok := <-f.recvCh
+	if !ok {
+		return nil, io.EOF
+	}
+	return m, nil
+}
+
+func (f *fakeAgentStream) SetHeader(metadata.MD) error  { return nil }
+func (f *fakeAgentStream) SendHeader(metadata.MD) error { return nil }
+func (f *fakeAgentStream) SetTrailer(metadata.MD)       {}
+func (f *fakeAgentStream) Context() context.Context     { return f.ctx }
+func (f *fakeAgentStream) SendMsg(m any) error          { return nil }
+func (f *fakeAgentStream) RecvMsg(m any) error          { return nil }
+
+func (f *fakeAgentStream) feedResult(res *boxyagentv1.CommandResult) {
+	f.recvCh <- &boxyagentv1.AgentMessage{Payload: &boxyagentv1.AgentMessage_Result{Result: res}}
+}
+
+// recvCommand waits for the next ServerMessage carrying a Command and
+// returns it, failing the test if none arrives within the timeout.
+func recvCommand(t *testing.T, sentCh <-chan *boxyagentv1.ServerMessage) *boxyagentv1.Command {
+	t.Helper()
+	select {
+	case msg := <-sentCh:
+		cmd := msg.GetCommand()
+		if cmd == nil {
+			t.Fatalf("expected a Command, got %#v", msg)
+		}
+		return cmd
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for a Command to be sent")
+		return nil
+	}
+}
+
+// TestAgentProvisioner_Allocate_RemoteAgentPrefersTypedGuestPersonalization
+// exercises the same "typed personalization preferred" behavior as
+// TestAgentProvisioner_Allocate_PrefersTypedGuestPersonalization, but end to
+// end through a real agentsdk.RemoteAgent wired to a fake gRPC stream,
+// rather than through mockAgent, proving the wire path (proto
+// Command_PersonalizeGuest / CommandResult_PersonalizeGuest) actually
+// carries typed properties through to AgentProvisioner.Allocate.
+func TestAgentProvisioner_Allocate_RemoteAgentPrefersTypedGuestPersonalization(t *testing.T) {
+	stream := newFakeAgentStream()
+	remote := agentsdk.NewRemoteAgent(agentsdk.AgentInfo{ID: "remote-1", Providers: []providersdk.Type{"hyperv"}}, stream)
+	go func() { _ = remote.Serve() }()
+
+	provisioner := &AgentProvisioner{
+		Registry: registryWith(t, remote),
+		Specs: map[model.PoolName]boxyconfig.PoolSpec{
+			"vm-pool": {Name: "vm-pool", Type: "hyperv"},
+		},
+		Providers: map[string]providersdk.Instance{},
+	}
+
+	res := model.Resource{ID: "vm-1", Provider: model.ProviderRef{AgentID: "remote-1"}}
+
+	type allocResult struct {
+		props map[string]any
+		err   error
+	}
+	resultCh := make(chan allocResult, 1)
+	go func() {
+		props, err := provisioner.Allocate(context.Background(), model.Pool{Name: "vm-pool"}, res)
+		resultCh <- allocResult{props, err}
+	}()
+
+	cmd := recvCommand(t, stream.sentCh)
+	if cmd.GetPersonalizeGuest() == nil {
+		t.Fatalf("expected a PersonalizeGuestCommand, got %#v", cmd)
+	}
+	stream.feedResult(&boxyagentv1.CommandResult{
+		CommandId: cmd.GetCommandId(),
+		Outcome: &boxyagentv1.CommandResult_PersonalizeGuest{PersonalizeGuest: &boxyagentv1.PersonalizeGuestResult{
+			Properties: map[string]string{"access": "winrm", "host": "10.0.0.5"},
+		}},
+	})
+
+	select {
+	case r := <-resultCh:
+		if r.err != nil {
+			t.Fatalf("Allocate: %v", r.err)
+		}
+		if r.props["access"] != "winrm" || r.props["host"] != "10.0.0.5" {
+			t.Fatalf("Allocate result = %+v, want typed personalization properties", r.props)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for Allocate to return")
+	}
+}
+
+// TestAgentProvisioner_Allocate_RemoteAgentFallsBackWhenPersonalizationUnsupported
+// exercises the same "falls back to generic Allocate" behavior as
+// TestAgentProvisioner_Allocate_FallsBackWhenPersonalizationReturnsNil, but
+// through a real agentsdk.RemoteAgent: the remote driver's executeCommand
+// answers PersonalizeGuest with an empty (non-error) PersonalizeGuestResult,
+// proving that collapses to nil, nil at the RemoteAgent boundary and
+// AgentProvisioner.Allocate falls all the way back to a real wire-path
+// AllocateCommand/AllocateResult round trip.
+func TestAgentProvisioner_Allocate_RemoteAgentFallsBackWhenPersonalizationUnsupported(t *testing.T) {
+	stream := newFakeAgentStream()
+	remote := agentsdk.NewRemoteAgent(agentsdk.AgentInfo{ID: "remote-1", Providers: []providersdk.Type{"hyperv"}}, stream)
+	go func() { _ = remote.Serve() }()
+
+	provisioner := &AgentProvisioner{
+		Registry: registryWith(t, remote),
+		Specs: map[model.PoolName]boxyconfig.PoolSpec{
+			"vm-pool": {Name: "vm-pool", Type: "hyperv"},
+		},
+		Providers: map[string]providersdk.Instance{},
+	}
+
+	res := model.Resource{ID: "vm-1", Provider: model.ProviderRef{AgentID: "remote-1"}}
+
+	type allocResult struct {
+		props map[string]any
+		err   error
+	}
+	resultCh := make(chan allocResult, 1)
+	go func() {
+		props, err := provisioner.Allocate(context.Background(), model.Pool{Name: "vm-pool"}, res)
+		resultCh <- allocResult{props, err}
+	}()
+
+	personalizeCmd := recvCommand(t, stream.sentCh)
+	if personalizeCmd.GetPersonalizeGuest() == nil {
+		t.Fatalf("expected a PersonalizeGuestCommand, got %#v", personalizeCmd)
+	}
+	stream.feedResult(&boxyagentv1.CommandResult{
+		CommandId: personalizeCmd.GetCommandId(),
+		Outcome:   &boxyagentv1.CommandResult_PersonalizeGuest{PersonalizeGuest: &boxyagentv1.PersonalizeGuestResult{}},
+	})
+
+	allocateCmd := recvCommand(t, stream.sentCh)
+	if allocateCmd.GetAllocate() == nil {
+		t.Fatalf("expected a fallback AllocateCommand, got %#v", allocateCmd)
+	}
+	propsJSON, err := json.Marshal(map[string]any{"legacy": "path"})
+	if err != nil {
+		t.Fatalf("marshal fallback properties: %v", err)
+	}
+	stream.feedResult(&boxyagentv1.CommandResult{
+		CommandId: allocateCmd.GetCommandId(),
+		Outcome:   &boxyagentv1.CommandResult_Allocate{Allocate: &boxyagentv1.AllocateResult{PropertiesJson: propsJSON}},
+	})
+
+	select {
+	case r := <-resultCh:
+		if r.err != nil {
+			t.Fatalf("Allocate: %v", r.err)
+		}
+		if r.props["legacy"] != "path" {
+			t.Fatalf("Allocate result = %+v, want legacy fallback result", r.props)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for Allocate to return")
+	}
 }
 
 func TestAgentProvisioner_Provision(t *testing.T) {
@@ -446,6 +634,50 @@ func TestAgentProvisioner_DriverTypeForPool_ExplicitProvider(t *testing.T) {
 	got2 := provisioner.driverTypeForPool(spec2)
 	if got2 != "hyperv" {
 		t.Errorf("expected hyperv, got %q", got2)
+	}
+}
+
+// TestAgentProvisioner_ForceOrphan_SucceedsWhenAgentGone proves ForceOrphan
+// succeeds (never contacts any agent) once the owning agent is entirely
+// absent from the registry — the state Revoke leaves behind after
+// Deregister.
+func TestAgentProvisioner_ForceOrphan_SucceedsWhenAgentGone(t *testing.T) {
+	other := newMockAgent(providersdk.Type("hyperv"))
+	other.info.ID = "agent-b"
+
+	provisioner := &AgentProvisioner{
+		// Only agent-b is registered; the resource belongs to "agent-a",
+		// which has already been deregistered (e.g. via Revoke).
+		Registry: registryWith(t, other),
+	}
+
+	res := model.Resource{ID: "vm-1", Provider: model.ProviderRef{Name: "hyperv", AgentID: "agent-a"}}
+	if err := provisioner.ForceOrphan(context.Background(), res); err != nil {
+		t.Fatalf("ForceOrphan: %v", err)
+	}
+	if len(other.deleteCalls) != 0 {
+		t.Fatalf("deleteCalls = %v, want none — ForceOrphan must never contact any agent", other.deleteCalls)
+	}
+}
+
+// TestAgentProvisioner_ForceOrphan_RefusedWhenAgentStillRegistered is the
+// safety-critical case: an agent that's merely unavailable (heartbeat-miss
+// marked, but not deregistered) must still refuse force-orphan, since it may
+// reconnect and the resource may still be alive on it.
+func TestAgentProvisioner_ForceOrphan_RefusedWhenAgentStillRegistered(t *testing.T) {
+	agent := newMockAgent(providersdk.Type("hyperv"))
+	agent.info.ID = "agent-a"
+	registry := registryWith(t, agent)
+	registry.SetAvailable("agent-a", false)
+
+	provisioner := &AgentProvisioner{Registry: registry}
+
+	res := model.Resource{ID: "vm-1", Provider: model.ProviderRef{Name: "hyperv", AgentID: "agent-a"}}
+	if err := provisioner.ForceOrphan(context.Background(), res); err == nil {
+		t.Fatal("ForceOrphan error = nil, want refusal because the agent is still registered")
+	}
+	if len(agent.deleteCalls) != 0 {
+		t.Fatalf("deleteCalls = %v, want none — ForceOrphan must never contact the agent even when refusing", agent.deleteCalls)
 	}
 }
 

@@ -321,6 +321,31 @@ func executeCommand(ctx context.Context, drivers DriverSet, cmd *boxyagentv1.Com
 			Outcome:   &boxyagentv1.CommandResult_Allocate{Allocate: &boxyagentv1.AllocateResult{PropertiesJson: propsJSON}},
 		}
 
+	case *boxyagentv1.Command_PersonalizeGuest:
+		gp, ok := d.(providersdk.GuestPersonalizer)
+		if !ok {
+			return &boxyagentv1.CommandResult{
+				CommandId: cmd.GetCommandId(),
+				Outcome:   &boxyagentv1.CommandResult_PersonalizeGuest{PersonalizeGuest: &boxyagentv1.PersonalizeGuestResult{}},
+			}
+		}
+		result, err := gp.PersonalizeGuest(ctx, op.PersonalizeGuest.GetResourceId())
+		if err != nil {
+			return errorResult(cmd.GetCommandId(), err.Error())
+		}
+		if result == nil {
+			return &boxyagentv1.CommandResult{
+				CommandId: cmd.GetCommandId(),
+				Outcome:   &boxyagentv1.CommandResult_PersonalizeGuest{PersonalizeGuest: &boxyagentv1.PersonalizeGuestResult{}},
+			}
+		}
+		return &boxyagentv1.CommandResult{
+			CommandId: cmd.GetCommandId(),
+			Outcome: &boxyagentv1.CommandResult_PersonalizeGuest{PersonalizeGuest: &boxyagentv1.PersonalizeGuestResult{
+				Properties: result.AccessDetails.Properties,
+			}},
+		}
+
 	default:
 		return errorResult(cmd.GetCommandId(), "unknown command op")
 	}

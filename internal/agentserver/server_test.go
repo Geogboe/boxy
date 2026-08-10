@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -17,8 +18,10 @@ import (
 
 	"github.com/Geogboe/boxy/internal/pool"
 	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
+	"github.com/Geogboe/boxy/pkg/agentsdk"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/pki"
+	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
@@ -28,6 +31,14 @@ import (
 // covered by pkg/pki's real cert-chain-verification tests).
 func newTestServer(t *testing.T) (*Server, store.Store, boxyagentv1.AgentTransportServiceClient, func()) {
 	t.Helper()
+	return newTestServerWithForceOrphaner(t, nil)
+}
+
+// newTestServerWithForceOrphaner is newTestServer plus an explicit
+// ResourceForceOrphaner, for tests exercising Revoke's
+// --force-orphan-resources sweep.
+func newTestServerWithForceOrphaner(t *testing.T, fo ResourceForceOrphaner) (*Server, store.Store, boxyagentv1.AgentTransportServiceClient, func()) {
+	t.Helper()
 
 	st := store.NewMemoryStore()
 	registry := pool.NewAgentRegistry()
@@ -35,7 +46,7 @@ func newTestServer(t *testing.T) (*Server, store.Store, boxyagentv1.AgentTranspo
 	if err != nil {
 		t.Fatalf("EnsureCA: %v", err)
 	}
-	srv := New(st, registry, ca, 50*time.Millisecond)
+	srv := New(st, registry, ca, 50*time.Millisecond, fo)
 
 	const bufSize = 1024 * 1024
 	lis := bufconn.Listen(bufSize)
@@ -351,6 +362,109 @@ func TestConnect_HeartbeatMarksAvailability(t *testing.T) {
 	}
 }
 
+// stubAgent is a minimal agentsdk.Agent implementation used only to
+// populate the registry for Revoke tests — none of its CRUD methods are
+// exercised.
+type stubAgent struct {
+	id string
+}
+
+func (a *stubAgent) Info() agentsdk.AgentInfo { return agentsdk.AgentInfo{ID: a.id} }
+func (a *stubAgent) Create(ctx context.Context, provider providersdk.Type, cfg any) (*providersdk.Resource, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (a *stubAgent) Read(ctx context.Context, provider providersdk.Type, id string) (*providersdk.ResourceStatus, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (a *stubAgent) Update(ctx context.Context, provider providersdk.Type, id string, op providersdk.Operation) (*providersdk.Result, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (a *stubAgent) Delete(ctx context.Context, provider providersdk.Type, id string) error {
+	return fmt.Errorf("not implemented")
+}
+func (a *stubAgent) Allocate(ctx context.Context, provider providersdk.Type, id string) (map[string]any, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+// fakeForceOrphaner is a test double for the ResourceForceOrphaner seam. If
+// registry is set, it records — at the moment it's invoked, in
+// stillRegisteredAtSweep — whether the agent was still present in the
+// registry. Revoke discards any error this returns (best-effort sweep), so
+// a test verifying the Deregister-before-sweep ordering must assert this
+// recorded state directly rather than relying on a returned error.
+type fakeForceOrphaner struct {
+	registry               *pool.AgentRegistry
+	calls                  []struct{ agentID, reason string }
+	stillRegisteredAtSweep bool
+	n                      int
+	err                    error
+}
+
+func (f *fakeForceOrphaner) ForceOrphanAgentResources(ctx context.Context, agentID, reason string) (int, error) {
+	f.calls = append(f.calls, struct{ agentID, reason string }{agentID, reason})
+	if f.registry != nil {
+		_, f.stillRegisteredAtSweep = f.registry.Get(agentID)
+	}
+	return f.n, f.err
+}
+
+func TestRevoke_ForceOrphanResourcesTrue_SweepsAfterDeregister(t *testing.T) {
+	registry := pool.NewAgentRegistry()
+	if err := registry.Register(&stubAgent{id: "agent-gone"}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	fo := &fakeForceOrphaner{registry: registry, n: 2}
+
+	srv := New(store.NewMemoryStore(), registry, mustTestCA(t), time.Second, fo)
+	if err := srv.Revoke(context.Background(), "agent-gone", "host decommissioned", true); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+
+	if len(fo.calls) != 1 || fo.calls[0].agentID != "agent-gone" || fo.calls[0].reason != "host decommissioned" {
+		t.Fatalf("calls = %+v, want one call for agent-gone/host decommissioned", fo.calls)
+	}
+	// The safety-critical assertion: by the time the sweep ran, Deregister
+	// must already have removed the agent from the registry — this is the
+	// precondition pool.AgentProvisioner.ForceOrphan depends on.
+	if fo.stillRegisteredAtSweep {
+		t.Fatal("sweep observed the agent still registered — it must run after registry.Deregister")
+	}
+}
+
+func TestRevoke_ForceOrphanResourcesFalse_DoesNotSweep(t *testing.T) {
+	registry := pool.NewAgentRegistry()
+	if err := registry.Register(&stubAgent{id: "agent-gone"}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	fo := &fakeForceOrphaner{registry: registry}
+
+	srv := New(store.NewMemoryStore(), registry, mustTestCA(t), time.Second, fo)
+	if err := srv.Revoke(context.Background(), "agent-gone", "reason", false); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+
+	if len(fo.calls) != 0 {
+		t.Fatalf("calls = %+v, want none when forceOrphanResources is false", fo.calls)
+	}
+}
+
+func TestRevoke_ForceOrphanResourcesTrue_NilForceOrphanerLogsAndSucceeds(t *testing.T) {
+	registry := pool.NewAgentRegistry()
+	srv := New(store.NewMemoryStore(), registry, mustTestCA(t), time.Second, nil)
+	if err := srv.Revoke(context.Background(), "agent-gone", "reason", true); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+}
+
+func mustTestCA(t *testing.T) *pki.CA {
+	t.Helper()
+	ca, err := pki.EnsureCA(t.TempDir())
+	if err != nil {
+		t.Fatalf("EnsureCA: %v", err)
+	}
+	return ca
+}
+
 func TestAuthenticateWithCert_RejectsRevokedIdentity(t *testing.T) {
 	dir := t.TempDir()
 	ca, err := pki.EnsureCA(dir)
@@ -364,7 +478,7 @@ func TestAuthenticateWithCert_RejectsRevokedIdentity(t *testing.T) {
 	cert := parseTestCert(t, certPEM)
 
 	st := store.NewMemoryStore()
-	srv := New(st, pool.NewAgentRegistry(), ca, time.Second)
+	srv := New(st, pool.NewAgentRegistry(), ca, time.Second, nil)
 
 	ctx := contextWithPeerCert(cert)
 
@@ -398,7 +512,7 @@ func TestAuthenticateWithCert_UsesCommonNameAsAgentID(t *testing.T) {
 	}
 	cert := parseTestCert(t, certPEM)
 
-	srv := New(store.NewMemoryStore(), pool.NewAgentRegistry(), ca, time.Second)
+	srv := New(store.NewMemoryStore(), pool.NewAgentRegistry(), ca, time.Second, nil)
 	agentID, certOut, keyOut, err := srv.authenticateWithCert(contextWithPeerCert(cert))
 	if err != nil {
 		t.Fatalf("authenticateWithCert: %v", err)

@@ -128,6 +128,94 @@ func TestRemoteAgent_CreateRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRemoteAgent_PersonalizeGuestRoundTrip(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)
+	go func() { _ = a.Serve() }()
+
+	type result struct {
+		res *providersdk.GuestPersonalizationResult
+		err error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		res, err := a.PersonalizeGuest(context.Background(), "hyperv", "vm-1")
+		resultCh <- result{res, err}
+	}()
+
+	cmd := recvCommand(t, stream.sentCh)
+	personalize := cmd.GetPersonalizeGuest()
+	if personalize == nil {
+		t.Fatalf("expected a PersonalizeGuestCommand, got %#v", cmd)
+	}
+	if personalize.GetResourceId() != "vm-1" {
+		t.Fatalf("expected resource id vm-1, got %q", personalize.GetResourceId())
+	}
+
+	stream.feedResult(&boxyagentv1.CommandResult{
+		CommandId: cmd.GetCommandId(),
+		Outcome: &boxyagentv1.CommandResult_PersonalizeGuest{PersonalizeGuest: &boxyagentv1.PersonalizeGuestResult{
+			Properties: map[string]string{"access": "ssh", "host": "10.0.0.5"},
+		}},
+	})
+
+	select {
+	case r := <-resultCh:
+		if r.err != nil {
+			t.Fatalf("PersonalizeGuest returned error: %v", r.err)
+		}
+		if r.res == nil {
+			t.Fatal("expected a non-nil GuestPersonalizationResult")
+		}
+		if r.res.AccessDetails.Properties["access"] != "ssh" || r.res.AccessDetails.Properties["host"] != "10.0.0.5" {
+			t.Fatalf("expected typed properties to round-trip, got %#v", r.res.AccessDetails.Properties)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for PersonalizeGuest to return")
+	}
+}
+
+// TestRemoteAgent_PersonalizeGuestUnsupportedReturnsNilNotError proves the
+// empty-PersonalizeGuestResult-means-nil convention holds through
+// RemoteAgent: a driver that doesn't implement providersdk.GuestPersonalizer
+// produces an empty result on the wire (see executeCommand), which must
+// collapse to nil, nil here — never an error — so
+// internal/pool.AgentProvisioner.Allocate falls back to the generic
+// Allocate path instead of failing the whole allocation.
+func TestRemoteAgent_PersonalizeGuestUnsupportedReturnsNilNotError(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)
+	go func() { _ = a.Serve() }()
+
+	type result struct {
+		res *providersdk.GuestPersonalizationResult
+		err error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		res, err := a.PersonalizeGuest(context.Background(), "docker", "c1")
+		resultCh <- result{res, err}
+	}()
+
+	cmd := recvCommand(t, stream.sentCh)
+	stream.feedResult(&boxyagentv1.CommandResult{
+		CommandId: cmd.GetCommandId(),
+		Outcome:   &boxyagentv1.CommandResult_PersonalizeGuest{PersonalizeGuest: &boxyagentv1.PersonalizeGuestResult{}},
+	})
+
+	select {
+	case r := <-resultCh:
+		if r.err != nil {
+			t.Fatalf("expected no error for an unsupported driver, got %v", r.err)
+		}
+		if r.res != nil {
+			t.Fatalf("expected a nil result for an unsupported driver, got %#v", r.res)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for PersonalizeGuest to return")
+	}
+}
+
 func TestRemoteAgent_ListRoundTrip(t *testing.T) {
 	stream := newFakeServerStream()
 	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)

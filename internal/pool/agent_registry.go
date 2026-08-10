@@ -22,6 +22,7 @@ type AgentRegistry struct {
 	agents map[string]agentsdk.Agent
 	byType map[providersdk.Type][]string // provider type -> agent IDs, insertion order
 	avail  map[string]bool               // agent ID -> available for new provisioning
+	cursor map[providersdk.Type]uint64   // provider type -> monotonic rotation counter
 }
 
 // NewAgentRegistry creates an empty registry.
@@ -30,6 +31,7 @@ func NewAgentRegistry() *AgentRegistry {
 		agents: make(map[string]agentsdk.Agent),
 		byType: make(map[providersdk.Type][]string),
 		avail:  make(map[string]bool),
+		cursor: make(map[providersdk.Type]uint64),
 	}
 }
 
@@ -114,13 +116,18 @@ func (r *AgentRegistry) Get(agentID string) (agentsdk.Agent, bool) {
 // provider type. If pinnedAgentID is non-empty, it must name a registered,
 // currently-available agent that supports the provider type — pinning to
 // the wrong, nonexistent, or unavailable agent is a fail-fast config/state
-// error, never a silent fallback to a different agent. Otherwise, the
-// first available agent (by registration order) offering the provider
-// type is returned. Load-balancing across multiple available agents
-// offering the same type is out of scope for now.
+// error, never a silent fallback to a different agent. Otherwise, an
+// available agent offering the provider type is returned via round-robin
+// rotation across all agents registered for that type, so load spreads
+// across peers rather than always landing on the earliest-registered one.
 func (r *AgentRegistry) Resolve(provider providersdk.Type, pinnedAgentID string) (agentsdk.Agent, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	// The non-pinned branch advances r.cursor[provider], which is a write,
+	// so the whole function takes the write lock (matching Register's
+	// locking style) rather than splitting the pinned path onto a read
+	// lock — Resolve isn't a hot enough path to justify the extra
+	// complexity of read/write lock splitting.
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
 	if pinnedAgentID != "" {
 		a, ok := r.agents[pinnedAgentID]
@@ -139,8 +146,17 @@ func (r *AgentRegistry) Resolve(provider providersdk.Type, pinnedAgentID string)
 		return a, nil
 	}
 
-	for _, id := range r.byType[provider] {
+	ids := r.byType[provider]
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("no available agent for provider %q", provider)
+	}
+
+	start := int(r.cursor[provider] % uint64(len(ids))) //nolint:gosec // G115: result is always < len(ids), an int-bounded slice length
+	for i := 0; i < len(ids); i++ {
+		idx := (start + i) % len(ids)
+		id := ids[idx]
 		if r.avail[id] {
+			r.cursor[provider]++
 			return r.agents[id], nil
 		}
 	}

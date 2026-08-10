@@ -51,6 +51,7 @@ message CommandResult {
     AllocateResult allocate = 6;
     AgentError error = 7;
     ListResult list = 8;
+    PersonalizeGuestResult personalize_guest = 9;
   }
 }
 
@@ -90,6 +91,7 @@ message Command {
     DeleteCommand delete = 6;
     AllocateCommand allocate = 7;
     ListCommand list = 8;
+    PersonalizeGuestCommand personalize_guest = 9;
   }
 }
 
@@ -124,6 +126,10 @@ message AllocateCommand {
 // unconditional, unlike the other commands which target one resource_id.
 message ListCommand {}
 
+message PersonalizeGuestCommand {
+  string resource_id = 1;
+}
+
 message ResourceResult {
   string id = 1;
   map<string, string> connection_info = 2;
@@ -151,4 +157,13 @@ message AllocateResult {
 
 message ListResult {
   repeated ResourceStatusResult resources = 1;
+}
+
+// Empty message (zero-length properties map) means either "driver doesn't
+// support guest personalization" or "supported, nothing to report" — both
+// collapse to nil client-side, mirroring AllocateResult's existing
+// empty-means-nil convention. This is a deliberate, confirmed design choice
+// — do not add a "supported" bool.
+message PersonalizeGuestResult {
+  map<string, string> properties = 1;
 }

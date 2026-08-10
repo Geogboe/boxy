@@ -38,13 +38,21 @@ const DefaultMissedHeartbeatLimit = 3
 // sweep is best-effort and logs rather than fails the connection either way.
 const reconciliationTimeout = 30 * time.Second
 
+// ResourceForceOrphaner force-orphans every resource attributed to a
+// permanently-gone agent. Implemented by pool.Manager. A narrow seam so
+// agentserver does not need pool.Manager's full surface.
+type ResourceForceOrphaner interface {
+	ForceOrphanAgentResources(ctx context.Context, agentID, reason string) (int, error)
+}
+
 // Server implements the generated AgentTransportServiceServer.
 type Server struct {
 	boxyagentv1.UnimplementedAgentTransportServiceServer
 
-	store    store.Store
-	registry *pool.AgentRegistry
-	ca       *pki.CA
+	store         store.Store
+	registry      *pool.AgentRegistry
+	ca            *pki.CA
+	forceOrphaner ResourceForceOrphaner
 
 	heartbeatInterval    time.Duration
 	missedHeartbeatLimit int
@@ -58,12 +66,15 @@ type Server struct {
 }
 
 // New constructs a Server. heartbeatInterval should match the value handed
-// to connecting agents in RegisterResponse.
-func New(st store.Store, registry *pool.AgentRegistry, ca *pki.CA, heartbeatInterval time.Duration) *Server {
+// to connecting agents in RegisterResponse. forceOrphaner may be nil (e.g.
+// in tests that don't exercise `boxy agent revoke --force-orphan-resources`);
+// Revoke logs and skips the sweep in that case rather than panicking.
+func New(st store.Store, registry *pool.AgentRegistry, ca *pki.CA, heartbeatInterval time.Duration, forceOrphaner ResourceForceOrphaner) *Server {
 	return &Server{
 		store:                st,
 		registry:             registry,
 		ca:                   ca,
+		forceOrphaner:        forceOrphaner,
 		heartbeatInterval:    heartbeatInterval,
 		missedHeartbeatLimit: DefaultMissedHeartbeatLimit,
 		now:                  time.Now,
@@ -225,9 +236,13 @@ func (s *Server) cleanupConnection(agentID string, remote *agentsdk.RemoteAgent)
 // Revoke deregisters agentID, records a deny-list entry keyed by its
 // current certificate serial (looked up even if the agent is currently
 // disconnected), and — if it has a live connection — actively tears down
-// that connection rather than merely removing the registry entry. Used by
-// `boxy agent revoke <id>`.
-func (s *Server) Revoke(ctx context.Context, agentID, reason string) error {
+// that connection rather than merely removing the registry entry. If
+// forceOrphanResources is set, it also sweeps every resource still
+// attributed to agentID out of Boxy's bookkeeping once deregistration has
+// made the agent verifiably absent from the registry — see
+// pool.AgentProvisioner.ForceOrphan's precondition. Used by
+// `boxy agent revoke <id> [--force-orphan-resources]`.
+func (s *Server) Revoke(ctx context.Context, agentID, reason string, forceOrphanResources bool) error {
 	identity, err := s.store.GetAgentIdentity(ctx, agentID)
 	switch {
 	case err == nil:
@@ -258,6 +273,28 @@ func (s *Server) Revoke(ctx context.Context, agentID, reason string) error {
 		delete(s.forceStop, agentID)
 	}
 	s.mu.Unlock()
+
+	// forceOrphanResources sweeps only after Deregister above has run, so
+	// Registry.Get(agentID) already returns false by the time
+	// AgentProvisioner.ForceOrphan checks it — that ordering is what makes
+	// the precondition hold. A sweep failure is logged, not returned:
+	// revocation itself already succeeded (the agent is deregistered and
+	// disconnected), and the sweep is best-effort cleanup that can be
+	// retried by re-running the command — mirroring this file's existing
+	// "best-effort, logs rather than fails" precedent for the #133
+	// reconciliation sweep (see reconciliationTimeout's doc comment).
+	if forceOrphanResources {
+		if s.forceOrphaner == nil {
+			s.log().Warn("force-orphan-resources requested but not configured; no resources swept", "agent_id", agentID)
+		} else {
+			n, err := s.forceOrphaner.ForceOrphanAgentResources(ctx, agentID, reason)
+			if err != nil {
+				s.log().Warn("force-orphan resources incomplete", "agent_id", agentID, "orphaned", n, "error", err)
+			} else {
+				s.log().Warn("force-orphaned agent resources", "agent_id", agentID, "count", n)
+			}
+		}
+	}
 
 	s.log().Warn("agent revoked", "agent_id", agentID, "reason", reason)
 	return nil
