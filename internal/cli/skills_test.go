@@ -198,7 +198,7 @@ func assertManagedSkillTarget(t *testing.T, canonical, target string) {
 		if err != nil {
 			t.Fatalf("EvalSymlinks %q: %v", target, err)
 		}
-		if filepath.Clean(resolved) != filepath.Clean(canonical) {
+		if !sameTestPath(resolved, canonical) {
 			t.Fatalf("resolved target = %q, want %q", resolved, canonical)
 		}
 		return
@@ -207,10 +207,25 @@ func assertManagedSkillTarget(t *testing.T, canonical, target string) {
 	if err != nil {
 		t.Fatalf("ReadFile source marker: %v", err)
 	}
-	if strings.TrimSpace(string(marker)) != canonical {
+	if !sameTestPath(strings.TrimSpace(string(marker)), canonical) {
 		t.Fatalf("source marker = %q, want %q", strings.TrimSpace(string(marker)), canonical)
 	}
 	if runtime.GOOS != "windows" {
 		t.Fatal("managed copy fallback should only happen on Windows")
 	}
+}
+
+func sameTestPath(a, b string) bool {
+	cleanA := filepath.Clean(a)
+	cleanB := filepath.Clean(b)
+	if strings.EqualFold(cleanA, cleanB) {
+		return true
+	}
+	if resolved, err := filepath.EvalSymlinks(cleanA); err == nil {
+		cleanA = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(cleanB); err == nil {
+		cleanB = resolved
+	}
+	return strings.EqualFold(cleanA, cleanB)
 }
