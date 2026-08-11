@@ -106,6 +106,12 @@ Environment variables:
 |----------|-------------|
 | `BOXY_GITHUB_TOKEN` | GitHub API token to avoid rate limits. |
 
+## Run as a background service
+
+To have `boxy agent serve` or `boxy serve` start automatically and
+survive reboot/logout instead of running in a foreground terminal, see
+[Install boxy agent / boxy serve as a background service](service-install.md).
+
 ## Verify
 
 After install:
