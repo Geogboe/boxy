@@ -84,6 +84,19 @@ func newServeCommand() *cobra.Command {
 // resolveAgentServeOpts, serve has no required flags to validate here — its
 // flags are all optional with defaults already applied downstream by
 // resolveListenAddr/resolveUIEnabled/resolveGRPCListenAddr/resolveGRPCCertSANs.
+//
+// Those four resolve funcs normally gate on cmd.Flags().Changed(...), which
+// is always false for a --service-config invocation (the individual flags
+// were never set on this process's cmdline — only --service-config was).
+// So the opts this function returns must already be the final, concrete
+// values: listen/grpcListen fall back to the same defaults
+// resolveListenAddr/resolveGRPCListenAddr would apply, since `serve service
+// install` persists the raw --listen/--grpc-listen flag value (which is ""
+// when the operator didn't pass one) rather than a pre-resolved default.
+// The resolve funcs are still given an extra `opts.serviceConfigPath != ""`
+// gate (alongside Changed()) so they return these values instead of
+// falling through to boxy.yaml's server config, which a service install
+// deliberately bypasses in favor of its own persisted snapshot.
 func resolveServeOpts(opts serveOpts) (serveOpts, error) {
 	if opts.serviceConfigPath == "" {
 		return opts, nil
@@ -92,11 +105,19 @@ func resolveServeOpts(opts serveOpts) (serveOpts, error) {
 	if err != nil {
 		return serveOpts{}, fmt.Errorf("load --service-config %q: %w", opts.serviceConfigPath, err)
 	}
+	listen := cfg.Listen
+	if listen == "" {
+		listen = defaultListenAddr
+	}
+	grpcListen := cfg.GRPCListen
+	if grpcListen == "" {
+		grpcListen = defaultGRPCListenAddr
+	}
 	return serveOpts{
 		configPath:        cfg.ConfigPath,
-		listen:            cfg.Listen,
+		listen:            listen,
 		ui:                cfg.UI,
-		grpcListen:        cfg.GRPCListen,
+		grpcListen:        grpcListen,
 		grpcCertSANs:      cfg.GRPCCertSANs,
 		insecure:          cfg.Insecure,
 		serviceConfigPath: opts.serviceConfigPath,
@@ -371,7 +392,7 @@ func serveAgentGRPC(ctx context.Context, grpcSrv *grpc.Server, addr string) erro
 // precedence: explicit --grpc-listen flag > config server.grpc_listen >
 // default :9091.
 func resolveGRPCListenAddr(opts serveOpts, cmd *cobra.Command, cfg boxyconfig.Config) string {
-	if cmd.Flags().Changed("grpc-listen") {
+	if cmd.Flags().Changed("grpc-listen") || opts.serviceConfigPath != "" {
 		return opts.grpcListen
 	}
 	if cfg.Server.GRPCListen != "" {
@@ -384,7 +405,7 @@ func resolveGRPCListenAddr(opts serveOpts, cmd *cobra.Command, cfg boxyconfig.Co
 // certificate with precedence: explicit --grpc-cert-san flag(s) (fully
 // replace, not merge with, config) > config server.grpc_cert_sans > none.
 func resolveGRPCCertSANs(opts serveOpts, cmd *cobra.Command, cfg boxyconfig.Config) []string {
-	if cmd.Flags().Changed("grpc-cert-san") {
+	if cmd.Flags().Changed("grpc-cert-san") || opts.serviceConfigPath != "" {
 		return opts.grpcCertSANs
 	}
 	return cfg.Server.GRPCCertSANs
@@ -437,7 +458,7 @@ func seedConfiguredPools(ctx context.Context, st store.Store, specs []boxyconfig
 // resolveListenAddr picks the listen address with precedence:
 // explicit --listen flag > config server.listen > default :9090
 func resolveListenAddr(opts serveOpts, cmd *cobra.Command, cfg boxyconfig.Config) string {
-	if cmd.Flags().Changed("listen") {
+	if cmd.Flags().Changed("listen") || opts.serviceConfigPath != "" {
 		return opts.listen
 	}
 	if cfg.Server.Listen != "" {
@@ -449,7 +470,7 @@ func resolveListenAddr(opts serveOpts, cmd *cobra.Command, cfg boxyconfig.Config
 // resolveUIEnabled picks the UI toggle with precedence:
 // explicit --ui flag > config server.ui > default true
 func resolveUIEnabled(opts serveOpts, cmd *cobra.Command, cfg boxyconfig.Config) bool {
-	if cmd.Flags().Changed("ui") {
+	if cmd.Flags().Changed("ui") || opts.serviceConfigPath != "" {
 		return opts.ui
 	}
 	return cfg.Server.UIEnabled()

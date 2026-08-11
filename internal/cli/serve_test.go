@@ -645,6 +645,73 @@ func TestResolveServeOpts_ServiceConfig_LoadsFromFile(t *testing.T) {
 	}
 }
 
+func TestResolveServeOpts_ServiceConfig_WinsOverBoxyYAMLConfig(t *testing.T) {
+	// Regression for the gap the ledger flagged in Task 12: resolveServeOpts
+	// alone returning the right value proves nothing if the downstream
+	// resolveListenAddr/resolveUIEnabled/resolveGRPCListenAddr/
+	// resolveGRPCCertSANs still discard it because --listen/--ui/etc were
+	// never Set() on cmd (only --service-config was). Give boxy.yaml a
+	// deliberately different value so a silent fall-through to it is
+	// caught instead of passing vacuously.
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "service.yaml")
+	if err := saveServeServiceConfig(cfgPath, serveServiceConfig{
+		Listen:       ":19090",
+		UI:           false,
+		GRPCListen:   ":19091",
+		GRPCCertSANs: []string{"svc-cfg.example.test"},
+		LogFile:      filepath.Join(dir, "service.log"),
+	}); err != nil {
+		t.Fatalf("saveServeServiceConfig: %v", err)
+	}
+
+	opts, err := resolveServeOpts(serveOpts{serviceConfigPath: cfgPath})
+	if err != nil {
+		t.Fatalf("resolveServeOpts: %v", err)
+	}
+
+	cfg := boxyconfig.Config{
+		Server: boxyconfig.ServerSpec{Listen: ":8080", GRPCListen: ":8081", GRPCCertSANs: []string{"boxy-yaml.example.test"}},
+	}
+	cmd := newServeCommand() // --listen/--ui/--grpc-listen/--grpc-cert-san never Set()
+
+	if got := resolveListenAddr(opts, cmd, cfg); got != ":19090" {
+		t.Fatalf("resolveListenAddr = %q, want service-config value :19090 (not boxy.yaml's :8080)", got)
+	}
+	if got := resolveUIEnabled(opts, cmd, cfg); got {
+		t.Fatal("resolveUIEnabled = true, want service-config value false")
+	}
+	if got := resolveGRPCListenAddr(opts, cmd, cfg); got != ":19091" {
+		t.Fatalf("resolveGRPCListenAddr = %q, want service-config value :19091 (not boxy.yaml's :8081)", got)
+	}
+	if got := resolveGRPCCertSANs(opts, cmd, cfg); !slices.Equal(got, []string{"svc-cfg.example.test"}) {
+		t.Fatalf("resolveGRPCCertSANs = %v, want service-config value", got)
+	}
+}
+
+func TestResolveServeOpts_ServiceConfig_EmptyListenFieldsFallBackToDefaults(t *testing.T) {
+	// `serve service install` persists the raw --listen/--grpc-listen flag
+	// value, which is "" when the operator didn't pass one — resolveServeOpts
+	// must apply the same defaults resolveListenAddr/resolveGRPCListenAddr
+	// would, not persist/return an empty bind address.
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "service.yaml")
+	if err := saveServeServiceConfig(cfgPath, serveServiceConfig{LogFile: filepath.Join(dir, "service.log")}); err != nil {
+		t.Fatalf("saveServeServiceConfig: %v", err)
+	}
+
+	opts, err := resolveServeOpts(serveOpts{serviceConfigPath: cfgPath})
+	if err != nil {
+		t.Fatalf("resolveServeOpts: %v", err)
+	}
+	if opts.listen != defaultListenAddr {
+		t.Fatalf("opts.listen = %q, want default %q", opts.listen, defaultListenAddr)
+	}
+	if opts.grpcListen != defaultGRPCListenAddr {
+		t.Fatalf("opts.grpcListen = %q, want default %q", opts.grpcListen, defaultGRPCListenAddr)
+	}
+}
+
 func TestResolveServeOpts_NoServiceConfig_ReturnsOptsUnchanged(t *testing.T) {
 	given := serveOpts{listen: ":9090", ui: true}
 	got, err := resolveServeOpts(given)
