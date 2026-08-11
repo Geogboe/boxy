@@ -56,7 +56,14 @@ func (h *winServiceHandler) Execute(_ []string, r <-chan svc.ChangeRequest, s ch
 		case <-done:
 			s <- svc.Status{State: svc.Stopped}
 			return false, 0
-		case req := <-r:
+		case req, ok := <-r:
+			if !ok {
+				s <- svc.Status{State: svc.StopPending}
+				cancel()
+				<-done
+				s <- svc.Status{State: svc.Stopped}
+				return false, 0
+			}
 			switch req.Cmd {
 			case svc.Interrogate:
 				s <- req.CurrentStatus
