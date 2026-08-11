@@ -90,6 +90,12 @@ func resolveAgentServeOpts(opts agentServeOpts) (agentServeOpts, error) {
 	if err != nil {
 		return agentServeOpts{}, fmt.Errorf("load --service-config %q: %w", opts.serviceConfigPath, err)
 	}
+	if cfg.Server == "" {
+		return agentServeOpts{}, fmt.Errorf("invalid --service-config %q: missing server", opts.serviceConfigPath)
+	}
+	if len(cfg.Providers) == 0 {
+		return agentServeOpts{}, fmt.Errorf("invalid --service-config %q: missing providers", opts.serviceConfigPath)
+	}
 	return agentServeOpts{
 		server:            cfg.Server,
 		providers:         cfg.Providers,
