@@ -111,6 +111,13 @@ func writeYAMLFile(path string, v any) error {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("write %q: %w", path, err)
 	}
+	// os.WriteFile only honors the mode argument if the file does not exist.
+	// On rewrite of a pre-existing file, the existing permissions are retained.
+	// Explicitly enforce 0o600 to ensure the token file is never left with
+	// loosened permissions (critical on Linux where 0o600 is the only protection).
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("chmod %q to 0600: %w", path, err)
+	}
 	return nil
 }
 

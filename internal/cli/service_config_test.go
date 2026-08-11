@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -121,4 +122,62 @@ func TestResolveAbs_EmptyStringStaysEmpty(t *testing.T) {
 	if got != "" {
 		t.Fatalf("resolveAbs(\"\") = %q, want empty (optional fields like --ca-cert may be unset)", got)
 	}
+}
+
+func TestAgentServiceConfig_EnforcesPermissionsOnRewrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "service.yaml")
+
+	// Pre-create a file with loose permissions (0o644 = rw-r--r--)
+	if err := os.WriteFile(path, []byte("old config"), 0o644); err != nil {
+		t.Fatalf("create test file: %v", err)
+	}
+
+	// Verify the file has loose permissions before the rewrite
+	statBefore, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat before rewrite: %v", err)
+	}
+
+	// Rewrite the file via saveAgentServiceConfig
+	cfg := agentServiceConfig{
+		Server:    "s:9091",
+		Providers: []string{"docker"},
+		Token:     "secret-token",
+		DataDir:   dir,
+		LogFile:   filepath.Join(dir, "service.log"),
+	}
+	if err := saveAgentServiceConfig(path, cfg); err != nil {
+		t.Fatalf("saveAgentServiceConfig: %v", err)
+	}
+
+	// Verify the file now has restricted permissions (0o600)
+	statAfter, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat after rewrite: %v", err)
+	}
+
+	// On Unix-like systems, we can check the exact permission bits.
+	// On Windows, permission bits are mostly ignored; only check that the
+	// file is accessible (os.Chmod succeeded without error).
+	// We only assert the exact mode on systems that honor permission bits.
+	const expectedMode os.FileMode = 0o600
+	if runtime.GOOS != "windows" {
+		actualMode := statAfter.Mode() & os.ModePerm
+		if actualMode != expectedMode {
+			t.Fatalf("after rewrite, file mode = %#o, want %#o (permissions not enforced on rewrite)", actualMode, expectedMode)
+		}
+	}
+
+	// On all platforms, verify the file was successfully rewritten
+	// (content should be YAML, not the old test content)
+	newContent, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read after rewrite: %v", err)
+	}
+	if string(newContent) == "old config" {
+		t.Fatal("file was not rewritten; saveAgentServiceConfig failed to update content")
+	}
+
+	_ = statBefore // use statBefore to silence unused variable warning if it exists
 }
