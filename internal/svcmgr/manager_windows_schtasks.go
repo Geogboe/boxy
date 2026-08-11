@@ -3,6 +3,7 @@
 package svcmgr
 
 import (
+	"encoding/xml"
 	"fmt"
 	"os"
 	"os/exec"
@@ -128,7 +129,7 @@ func renderTaskXML(spec Spec) string {
 	b.WriteString(`<?xml version="1.0" encoding="UTF-16"?>` + "\n")
 	b.WriteString(`<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">` + "\n")
 	b.WriteString("  <RegistrationInfo>\n")
-	fmt.Fprintf(&b, "    <Description>%s</Description>\n", spec.Description)
+	fmt.Fprintf(&b, "    <Description>%s</Description>\n", xmlEscape(spec.Description))
 	b.WriteString("  </RegistrationInfo>\n")
 	b.WriteString("  <Triggers>\n")
 	b.WriteString("    <LogonTrigger>\n")
@@ -153,11 +154,72 @@ func renderTaskXML(spec Spec) string {
 	b.WriteString("  </Settings>\n")
 	b.WriteString("  <Actions>\n")
 	b.WriteString("    <Exec>\n")
-	fmt.Fprintf(&b, "      <Command>%s</Command>\n", spec.ExecPath)
-	fmt.Fprintf(&b, "      <Arguments>%s</Arguments>\n", strings.Join(spec.Args, " "))
+	fmt.Fprintf(&b, "      <Command>%s</Command>\n", xmlEscape(spec.ExecPath))
+	quotedArgs := make([]string, len(spec.Args))
+	for i, a := range spec.Args {
+		quotedArgs[i] = quoteWindowsArg(a)
+	}
+	fmt.Fprintf(&b, "      <Arguments>%s</Arguments>\n", xmlEscape(strings.Join(quotedArgs, " ")))
 	b.WriteString("    </Exec>\n")
 	b.WriteString("  </Actions>\n")
 	b.WriteString("</Task>\n")
+	return b.String()
+}
+
+// quoteWindowsArg quotes s, if necessary, so that it survives Task
+// Scheduler's parsing of <Arguments> as a Windows command line and comes
+// back out as a single argument (the same rules CommandLineToArgvW uses:
+// wrap in double quotes when the value contains whitespace or a quote,
+// doubling any backslashes that immediately precede a literal double quote
+// and escaping the quote itself as \"). Arguments with no whitespace or
+// quote characters are returned unchanged to keep the common case
+// readable.
+func quoteWindowsArg(s string) string {
+	if s == "" {
+		return `""`
+	}
+	if !strings.ContainsAny(s, " \t\n\v\"") {
+		return s
+	}
+
+	var b strings.Builder
+	b.WriteByte('"')
+	slashes := 0
+	for _, r := range s {
+		switch r {
+		case '\\':
+			slashes++
+			b.WriteByte('\\')
+		case '"':
+			// Escaping a literal quote requires doubling every preceding
+			// backslash (so they still mean literal backslashes) plus one
+			// more backslash to escape the quote itself.
+			for ; slashes > 0; slashes-- {
+				b.WriteByte('\\')
+			}
+			b.WriteString(`\"`)
+		default:
+			slashes = 0
+			b.WriteRune(r)
+		}
+	}
+	// Backslashes immediately preceding the closing quote must be doubled
+	// so they aren't mistaken for escaping it.
+	for ; slashes > 0; slashes-- {
+		b.WriteByte('\\')
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+// xmlEscape escapes s for safe inclusion as XML character data, so that
+// values containing '&', '<', '>', or '"' (plausible in a real Windows
+// path or a user-supplied description) don't produce malformed XML that
+// schtasks /create /xml fails to parse.
+func xmlEscape(s string) string {
+	var b strings.Builder
+	// strings.Builder's Write never returns an error, so this can't fail.
+	_ = xml.EscapeText(&b, []byte(s))
 	return b.String()
 }
 
