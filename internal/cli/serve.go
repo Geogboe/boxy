@@ -19,6 +19,7 @@ import (
 	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/internal/sandbox"
 	"github.com/Geogboe/boxy/internal/server"
+	"github.com/Geogboe/boxy/internal/svcmgr"
 	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
 	"github.com/Geogboe/boxy/pkg/agentsdk"
 	"github.com/Geogboe/boxy/pkg/model"
@@ -39,12 +40,13 @@ const (
 )
 
 type serveOpts struct {
-	configPath   string
-	listen       string
-	ui           bool
-	grpcListen   string
-	grpcCertSANs []string
-	insecure     bool
+	configPath        string
+	listen            string
+	ui                bool
+	grpcListen        string
+	grpcCertSANs      []string
+	insecure          bool
+	serviceConfigPath string
 }
 
 func newServeCommand() *cobra.Command {
@@ -54,6 +56,12 @@ func newServeCommand() *cobra.Command {
 		Use:   "serve",
 		Short: "Start the Boxy daemon (API server + reconcile loop)",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			handled, err := svcmgr.RunAsWindowsService("boxy-serve", func(ctx context.Context) error {
+				return runServe(ctx, opts, cmd)
+			})
+			if handled {
+				return err
+			}
 			return runServe(cmd.Context(), opts, cmd)
 		},
 	}
@@ -66,11 +74,41 @@ func newServeCommand() *cobra.Command {
 	// Deliberately a flag only — never a boxy.yaml field — so a stale or
 	// copy-pasted config can't silently disable mTLS in a real deployment.
 	cmd.Flags().BoolVar(&opts.insecure, "insecure", false, "serve agent gRPC without TLS/mTLS (local development only)")
+	cmd.Flags().StringVar(&opts.serviceConfigPath, "service-config", "", "load flags from a service config file written by `boxy serve service install` instead of the flags above")
 
 	return cmd
 }
 
+// resolveServeOpts returns the effective opts to run with: loaded entirely
+// from --service-config's file when set, otherwise opts unchanged. Unlike
+// resolveAgentServeOpts, serve has no required flags to validate here — its
+// flags are all optional with defaults already applied downstream by
+// resolveListenAddr/resolveUIEnabled/resolveGRPCListenAddr/resolveGRPCCertSANs.
+func resolveServeOpts(opts serveOpts) (serveOpts, error) {
+	if opts.serviceConfigPath == "" {
+		return opts, nil
+	}
+	cfg, err := loadServeServiceConfig(opts.serviceConfigPath)
+	if err != nil {
+		return serveOpts{}, fmt.Errorf("load --service-config %q: %w", opts.serviceConfigPath, err)
+	}
+	return serveOpts{
+		configPath:        cfg.ConfigPath,
+		listen:            cfg.Listen,
+		ui:                cfg.UI,
+		grpcListen:        cfg.GRPCListen,
+		grpcCertSANs:      cfg.GRPCCertSANs,
+		insecure:          cfg.Insecure,
+		serviceConfigPath: opts.serviceConfigPath,
+	}, nil
+}
+
 func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
+	opts, err := resolveServeOpts(opts)
+	if err != nil {
+		return err
+	}
+
 	logFile, _ := cmd.Root().PersistentFlags().GetString("log-file")
 	ui := newServeUI(logFile == "")
 	if logFile == "" {

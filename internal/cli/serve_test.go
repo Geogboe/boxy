@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -619,5 +620,42 @@ pools:
 	}
 	if capped.Policies.Preheat.MaxTotal != 2 || capped.EffectivelyDrained() {
 		t.Fatalf("capped pool max_total=%d drained=%t, want finite cap and not drained", capped.Policies.Preheat.MaxTotal, capped.EffectivelyDrained())
+	}
+}
+
+func TestResolveServeOpts_ServiceConfig_LoadsFromFile(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "service.yaml")
+
+	if err := saveServeServiceConfig(cfgPath, serveServiceConfig{
+		Listen:     ":19090",
+		UI:         false,
+		GRPCListen: ":19091",
+		LogFile:    filepath.Join(dir, "service.log"),
+	}); err != nil {
+		t.Fatalf("saveServeServiceConfig: %v", err)
+	}
+
+	opts, err := resolveServeOpts(serveOpts{serviceConfigPath: cfgPath})
+	if err != nil {
+		t.Fatalf("resolveServeOpts: %v", err)
+	}
+	if opts.listen != ":19090" || opts.ui != false || opts.grpcListen != ":19091" {
+		t.Fatalf("resolved opts = %+v, unexpected", opts)
+	}
+}
+
+func TestResolveServeOpts_NoServiceConfig_ReturnsOptsUnchanged(t *testing.T) {
+	given := serveOpts{listen: ":9090", ui: true}
+	got, err := resolveServeOpts(given)
+	if err != nil {
+		t.Fatalf("resolveServeOpts: %v", err)
+	}
+	// serveOpts has a []string field (grpcCertSANs), so it isn't
+	// comparable with == / != — use reflect.DeepEqual instead (add
+	// "reflect" to this file's imports if serve_test.go doesn't already
+	// have it).
+	if !reflect.DeepEqual(got, given) {
+		t.Fatalf("resolveServeOpts(%+v) = %+v, want unchanged", given, got)
 	}
 }
