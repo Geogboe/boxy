@@ -132,13 +132,23 @@ func TestAgentServiceConfig_EnforcesPermissionsOnRewrite(t *testing.T) {
 	if err := os.WriteFile(path, []byte("old config"), 0o644); err != nil {
 		t.Fatalf("create test file: %v", err)
 	}
+	// Ensure the file is actually loose even under a restrictive umask.
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(path, 0o644); err != nil {
+			t.Fatalf("chmod before rewrite: %v", err)
+		}
+	}
 
 	// Verify the file has loose permissions before the rewrite
 	statBefore, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("stat before rewrite: %v", err)
 	}
-
+	if runtime.GOOS != "windows" {
+		if got := statBefore.Mode() & os.ModePerm; got != 0o644 {
+			t.Fatalf("before rewrite, file mode = %#o, want %#o", got, 0o644)
+		}
+	}
 	// Rewrite the file via saveAgentServiceConfig
 	cfg := agentServiceConfig{
 		Server:    "s:9091",
