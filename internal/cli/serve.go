@@ -76,6 +76,8 @@ func newServeCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.insecure, "insecure", false, "serve agent gRPC without TLS/mTLS (local development only)")
 	cmd.Flags().StringVar(&opts.serviceConfigPath, "service-config", "", "load flags from a service config file written by `boxy serve service install` instead of the flags above")
 
+	cmd.AddCommand(newServeServiceCommand())
+
 	return cmd
 }
 
