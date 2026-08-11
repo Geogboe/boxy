@@ -208,6 +208,13 @@ func ensureTargetAvailable(targetPath, canonicalPath string, force bool) (bool, 
 			return true, nil
 		}
 	}
+	if info.IsDir() {
+		markerPath := filepath.Join(targetPath, SourceFileName)
+		marker, err := os.ReadFile(markerPath)
+		if err == nil && samePath(strings.TrimSpace(string(marker)), canonicalPath) {
+			return true, nil
+		}
+	}
 	if !force {
 		return false, fmt.Errorf("target %q already exists (use --force to replace it)", targetPath)
 	}
@@ -223,5 +230,14 @@ func samePath(a, b string) bool {
 	}
 	cleanA := filepath.Clean(a)
 	cleanB := filepath.Clean(b)
+	if strings.EqualFold(cleanA, cleanB) {
+		return true
+	}
+	if resolved, err := filepath.EvalSymlinks(cleanA); err == nil {
+		cleanA = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(cleanB); err == nil {
+		cleanB = resolved
+	}
 	return strings.EqualFold(cleanA, cleanB)
 }

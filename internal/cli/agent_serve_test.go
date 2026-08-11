@@ -159,3 +159,33 @@ func TestAgentServe_RequiresCACertForFirstConnection(t *testing.T) {
 		t.Fatal("expected an error when --ca-cert is missing for a token-based first connection")
 	}
 }
+
+func TestRunAgentServe_ServiceConfig_LoadsOptsFromFile(t *testing.T) {
+	dir := t.TempDir()
+	agentDir := filepath.Join(dir, ".boxy-agent")
+	cfgPath := filepath.Join(dir, "service.yaml")
+
+	if err := saveAgentServiceConfig(cfgPath, agentServiceConfig{
+		Server:    "127.0.0.1:1", // deliberately unreachable — this test only checks opts resolution, not a real connection
+		Providers: []string{"docker"},
+		DataDir:   agentDir,
+		Insecure:  true,
+	}); err != nil {
+		t.Fatalf("saveAgentServiceConfig: %v", err)
+	}
+
+	opts, err := resolveAgentServeOpts(agentServeOpts{serviceConfigPath: cfgPath})
+	if err != nil {
+		t.Fatalf("resolveAgentServeOpts: %v", err)
+	}
+	if opts.server != "127.0.0.1:1" || len(opts.providers) != 1 || opts.providers[0] != "docker" || opts.dataDir != agentDir || !opts.insecure {
+		t.Fatalf("resolved opts = %+v, unexpected", opts)
+	}
+}
+
+func TestRunAgentServe_NoServiceConfigAndNoServer_ErrorsClearly(t *testing.T) {
+	_, err := resolveAgentServeOpts(agentServeOpts{})
+	if err == nil {
+		t.Fatal("expected an error when neither --server nor --service-config is given")
+	}
+}
