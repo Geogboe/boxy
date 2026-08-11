@@ -83,11 +83,46 @@ var currentUsername = func() string {
 	return os.Getenv("USER")
 }
 
+// quoteSystemdArg quotes s per systemd's unit-file command-line syntax
+// (systemd.syntax(7) / systemd.service(5) "Command lines") when it contains
+// a space, tab, or other syntax-significant character (an embedded double
+// quote, single quote, or backslash), so that systemd's own word-splitting
+// of the ExecStart= value does not silently break the argument apart or
+// misinterpret an embedded quote character. Simple tokens are returned
+// unquoted so rendered unit files still read like ordinary, hand-written
+// ones instead of being gratuitously quoted everywhere.
+func quoteSystemdArg(s string) string {
+	if s == "" {
+		return `""`
+	}
+	if !strings.ContainsAny(s, " \t\"'\\") {
+		return s
+	}
+	// Iterate bytes, not runes: Linux paths are arbitrary byte sequences
+	// and only ASCII '"' and '\\' are ever escaped here, so a byte loop
+	// avoids WriteRune silently mangling invalid UTF-8 into U+FFFD.
+	var b strings.Builder
+	b.WriteByte('"')
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '"' || c == '\\' {
+			b.WriteByte('\\')
+		}
+		b.WriteByte(c)
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
 // renderUnit builds the systemd unit file content for spec. Restart=
 // on-failure with a 5s backoff is the boot-time-resilience story called
 // for by the spec; the actual command line (spec.Args, already carrying
 // --service-config) is what makes the unit reproduce the exact invocation
-// captured at install time.
+// captured at install time. Each token is passed through quoteSystemdArg
+// before joining, since spec.Args elements are user-controlled paths
+// (data-dir, config, ca-cert, ...) that may legitimately contain spaces —
+// a naive space-join would let systemd's own ExecStart= word-splitting
+// silently corrupt such values.
 func renderUnit(spec Spec) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "[Unit]\n")
@@ -96,7 +131,12 @@ func renderUnit(spec Spec) string {
 	fmt.Fprintf(&b, "Wants=network-online.target\n\n")
 	fmt.Fprintf(&b, "[Service]\n")
 	fmt.Fprintf(&b, "Type=simple\n")
-	fmt.Fprintf(&b, "ExecStart=%s\n", strings.Join(append([]string{spec.ExecPath}, spec.Args...), " "))
+	execParts := make([]string, 0, len(spec.Args)+1)
+	execParts = append(execParts, quoteSystemdArg(spec.ExecPath))
+	for _, a := range spec.Args {
+		execParts = append(execParts, quoteSystemdArg(a))
+	}
+	fmt.Fprintf(&b, "ExecStart=%s\n", strings.Join(execParts, " "))
 	fmt.Fprintf(&b, "Restart=on-failure\n")
 	fmt.Fprintf(&b, "RestartSec=5\n\n")
 	fmt.Fprintf(&b, "[Install]\n")

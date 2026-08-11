@@ -65,6 +65,56 @@ func TestRenderUnit_ContainsExecStartAndRestart(t *testing.T) {
 	}
 }
 
+// TestRenderUnit_QuotesArgsWithSpaces covers the reopened review finding:
+// spec.Args elements are user-controlled paths (--data-dir, --config,
+// --ca-cert, ...) that may contain spaces. systemd parses ExecStart= with
+// its own word-splitting rules, so an unquoted spaced value would be
+// silently split into extra tokens; renderUnit must quote it so it reads
+// back as a single word.
+func TestRenderUnit_QuotesArgsWithSpaces(t *testing.T) {
+	spec := Spec{
+		Name:        "boxy-agent",
+		DisplayName: "Boxy Agent",
+		Description: "Boxy remote agent",
+		ExecPath:    "/usr/local/bin/boxy",
+		Args:        []string{"agent", "serve", "--data-dir", "/opt/my boxy/data"},
+	}
+	unit := renderUnit(spec)
+	want := `ExecStart=/usr/local/bin/boxy agent serve --data-dir "/opt/my boxy/data"`
+	if !strings.Contains(unit, want) {
+		t.Errorf("rendered unit missing quoted ExecStart line %q; got:\n%s", want, unit)
+	}
+}
+
+// TestQuoteSystemdArg exercises quoteSystemdArg directly across the cases
+// that matter for systemd's unit-file command-line syntax: simple tokens
+// stay unquoted (no gratuitous quoting), and space/tab/quote/backslash
+// bytes trigger quoting with backslash-escaped embedded " and \.
+func TestQuoteSystemdArg(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"simple token", "agent", "agent"},
+		{"absolute path no spaces", "/usr/local/bin/boxy", "/usr/local/bin/boxy"},
+		{"flag token", "--data-dir", "--data-dir"},
+		{"space", "/opt/my boxy/data", `"/opt/my boxy/data"`},
+		{"tab", "a\tb", "\"a\tb\""},
+		{"embedded double quote", `has"quote`, `"has\"quote"`},
+		{"embedded backslash", `back\slash`, `"back\\slash"`},
+		{"empty string", "", `""`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := quoteSystemdArg(tc.in)
+			if got != tc.want {
+				t.Errorf("quoteSystemdArg(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSystemdManager_Install_SystemMode_RunsExpectedCommands(t *testing.T) {
 	f := withFakeRunner(t)
 	dir := t.TempDir()
