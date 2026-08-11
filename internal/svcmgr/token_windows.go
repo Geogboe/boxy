@@ -32,8 +32,8 @@ func EncryptToken(plaintext []byte) ([]byte, error) {
 	}
 	defer func() { _, _ = windows.LocalFree(windows.Handle(uintptr(unsafe.Pointer(out.Data)))) }() //nolint:gosec // G103: unsafe pointer required for Windows DPAPI API
 
-	result := make([]byte, out.Size)
-	copy(result, unsafe.Slice(out.Data, out.Size)) //nolint:gosec // G103: unsafe.Slice required to read DPAPI-allocated buffer
+	result := make([]byte, int(out.Size))
+	copy(result, unsafe.Slice(out.Data, int(out.Size))) //nolint:gosec // G103: unsafe.Slice required to read DPAPI-allocated buffer
 	return result, nil
 }
 
