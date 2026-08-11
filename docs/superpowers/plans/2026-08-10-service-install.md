@@ -249,6 +249,13 @@ git commit -m "feat(svcmgr): explicit unsupported error on darwin" -m "" -m "Co-
 
 ### Task 3: `internal/svcmgr` Linux systemd Manager
 
+> **Post-hoc amendment (reopened after Task 4's review):** the code below
+> reflects a corrected `renderUnit`/new `quoteSystemdArg` — the original
+> version naive-joined `spec.Args` into `ExecStart=` with no quoting, which
+> let systemd's own unit-file word-splitting silently corrupt any argument
+> containing a space (e.g. a user-supplied `--data-dir "/opt/my boxy/data"`).
+> Fixed in commit `d5fabc0`; see the SDD ledger for detail.
+
 **Files:**
 - Create: `internal/svcmgr/manager_linux.go`
 - Test: `internal/svcmgr/manager_linux_test.go`
@@ -487,11 +494,46 @@ func (m *systemdManager) mode() string {
 	return "system-unit"
 }
 
+// quoteSystemdArg quotes s per systemd's unit-file command-line syntax
+// (systemd.syntax(7) / systemd.service(5) "Command lines") when it contains
+// a space, tab, or other syntax-significant character (an embedded double
+// quote, single quote, or backslash), so that systemd's own word-splitting
+// of the ExecStart= value does not silently break the argument apart or
+// misinterpret an embedded quote character. Simple tokens are returned
+// unquoted so rendered unit files still read like ordinary, hand-written
+// ones instead of being gratuitously quoted everywhere.
+func quoteSystemdArg(s string) string {
+	if s == "" {
+		return `""`
+	}
+	if !strings.ContainsAny(s, " \t\"'\\") {
+		return s
+	}
+	// Iterate bytes, not runes: Linux paths are arbitrary byte sequences
+	// and only ASCII '"' and '\\' are ever escaped here, so a byte loop
+	// avoids WriteRune silently mangling invalid UTF-8 into U+FFFD.
+	var b strings.Builder
+	b.WriteByte('"')
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '"' || c == '\\' {
+			b.WriteByte('\\')
+		}
+		b.WriteByte(c)
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
 // renderUnit builds the systemd unit file content for spec. Restart=
 // on-failure with a 5s backoff is the boot-time-resilience story called
 // for by the spec; the actual command line (spec.Args, already carrying
 // --service-config) is what makes the unit reproduce the exact invocation
-// captured at install time.
+// captured at install time. Each token is passed through quoteSystemdArg
+// before joining, since spec.Args elements are user-controlled paths
+// (data-dir, config, ca-cert, ...) that may legitimately contain spaces —
+// a naive space-join would let systemd's own ExecStart= word-splitting
+// silently corrupt such values.
 func renderUnit(spec Spec) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "[Unit]\n")
@@ -500,7 +542,12 @@ func renderUnit(spec Spec) string {
 	fmt.Fprintf(&b, "Wants=network-online.target\n\n")
 	fmt.Fprintf(&b, "[Service]\n")
 	fmt.Fprintf(&b, "Type=simple\n")
-	fmt.Fprintf(&b, "ExecStart=%s\n", strings.Join(append([]string{spec.ExecPath}, spec.Args...), " "))
+	quotedTokens := make([]string, 0, len(spec.Args)+1)
+	quotedTokens = append(quotedTokens, quoteSystemdArg(spec.ExecPath))
+	for _, a := range spec.Args {
+		quotedTokens = append(quotedTokens, quoteSystemdArg(a))
+	}
+	fmt.Fprintf(&b, "ExecStart=%s\n", strings.Join(quotedTokens, " "))
 	fmt.Fprintf(&b, "Restart=on-failure\n")
 	fmt.Fprintf(&b, "RestartSec=5\n\n")
 	fmt.Fprintf(&b, "[Install]\n")
@@ -641,6 +688,14 @@ git commit -m "feat(svcmgr): Linux systemd system/user unit manager" -m "" -m "C
 
 ### Task 4: `internal/svcmgr` Windows Task Scheduler Manager (unprivileged fallback)
 
+> **Post-hoc amendment:** the code below reflects a corrected
+> `renderTaskXML` plus new `quoteWindowsArg`/`xmlEscape` helpers — the
+> original version joined `spec.Args` into `<Arguments>` with no quoting
+> (silently split by Task Scheduler's command-line parser on any spaced
+> path) and interpolated `Description`/`ExecPath`/`Args` into the XML with
+> no escaping (malformed XML on `&`/`<`/`>`/`"`). Fixed in commit
+> `4f624f0`; see the SDD ledger for detail.
+
 **Files:**
 - Create: `internal/svcmgr/manager_windows_schtasks.go`
 - Test: `internal/svcmgr/manager_windows_schtasks_test.go`
@@ -776,6 +831,7 @@ Expected: FAIL — `taskSchedulerManager`, `renderTaskXML`, `runCommand` undefin
 package svcmgr
 
 import (
+	"encoding/xml"
 	"fmt"
 	"os"
 	"os/exec"
@@ -809,7 +865,7 @@ func (m *taskSchedulerManager) Install(spec Spec) error {
 	if err != nil {
 		return fmt.Errorf("create temp task definition: %w", err)
 	}
-	defer os.Remove(xmlPath.Name())
+	defer func() { _ = os.Remove(xmlPath.Name()) }()
 
 	// Task Scheduler's XML importer expects UTF-16LE with a byte-order
 	// mark, matching what the Task Scheduler UI itself exports.
@@ -880,10 +936,13 @@ func (m *taskSchedulerManager) Stop(name string) error {
 
 func (m *taskSchedulerManager) Status(name string) (Status, error) {
 	out, err := runCommand("schtasks", "/query", "/tn", name)
-	if err != nil {
+	if err != nil || strings.TrimSpace(string(out)) == "" {
 		// schtasks exits non-zero with "cannot find the file specified"
-		// (or similar) when the task doesn't exist — treated as
-		// not-installed rather than a hard error.
+		// (or similar) when the task doesn't exist. An empty result with
+		// no error is treated the same way — neither indicates a
+		// registered task — rather than as a hard error. (An unconditional
+		// err == nil check here would misreport a fake/unconfigured
+		// runner's zero-value (nil, nil) response as "installed".)
 		return Status{}, nil
 	}
 	running := strings.Contains(string(out), "Running")
@@ -895,12 +954,19 @@ func (m *taskSchedulerManager) Status(name string) (Status, error) {
 // own session starts the agent), a hidden, least-privilege action, and a
 // restart-on-failure policy (3 attempts, 1 minute apart) as the
 // unprivileged-mode substitute for a real service's SCM recovery actions.
+// Every interpolated field is XML-escaped, and spec.Args is quoted before
+// joining into <Arguments>, since spec.ExecPath/spec.Args are
+// user-controlled paths (data-dir, config, ca-cert, ...) that may
+// legitimately contain spaces or XML-significant characters (a naive
+// space-join or unescaped %s would let Task Scheduler's own <Arguments>
+// command-line parsing silently corrupt such values, or produce XML that
+// schtasks /create /xml fails to parse).
 func renderTaskXML(spec Spec) string {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="UTF-16"?>` + "\n")
 	b.WriteString(`<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">` + "\n")
 	b.WriteString("  <RegistrationInfo>\n")
-	fmt.Fprintf(&b, "    <Description>%s</Description>\n", spec.Description)
+	fmt.Fprintf(&b, "    <Description>%s</Description>\n", xmlEscape(spec.Description))
 	b.WriteString("  </RegistrationInfo>\n")
 	b.WriteString("  <Triggers>\n")
 	b.WriteString("    <LogonTrigger>\n")
@@ -925,11 +991,72 @@ func renderTaskXML(spec Spec) string {
 	b.WriteString("  </Settings>\n")
 	b.WriteString("  <Actions>\n")
 	b.WriteString("    <Exec>\n")
-	fmt.Fprintf(&b, "      <Command>%s</Command>\n", spec.ExecPath)
-	fmt.Fprintf(&b, "      <Arguments>%s</Arguments>\n", strings.Join(spec.Args, " "))
+	fmt.Fprintf(&b, "      <Command>%s</Command>\n", xmlEscape(spec.ExecPath))
+	quotedArgs := make([]string, len(spec.Args))
+	for i, a := range spec.Args {
+		quotedArgs[i] = quoteWindowsArg(a)
+	}
+	fmt.Fprintf(&b, "      <Arguments>%s</Arguments>\n", xmlEscape(strings.Join(quotedArgs, " ")))
 	b.WriteString("    </Exec>\n")
 	b.WriteString("  </Actions>\n")
 	b.WriteString("</Task>\n")
+	return b.String()
+}
+
+// quoteWindowsArg quotes s, if necessary, so that it survives Task
+// Scheduler's parsing of <Arguments> as a Windows command line and comes
+// back out as a single argument (the same rules CommandLineToArgvW uses:
+// wrap in double quotes when the value contains whitespace or a quote,
+// doubling any backslashes that immediately precede a literal double quote
+// and escaping the quote itself as \"). Arguments with no whitespace or
+// quote characters are returned unchanged to keep the common case
+// readable.
+func quoteWindowsArg(s string) string {
+	if s == "" {
+		return `""`
+	}
+	if !strings.ContainsAny(s, " \t\n\v\"") {
+		return s
+	}
+
+	var b strings.Builder
+	b.WriteByte('"')
+	slashes := 0
+	for _, r := range s {
+		switch r {
+		case '\\':
+			slashes++
+			b.WriteByte('\\')
+		case '"':
+			// Escaping a literal quote requires doubling every preceding
+			// backslash (so they still mean literal backslashes) plus one
+			// more backslash to escape the quote itself.
+			for ; slashes > 0; slashes-- {
+				b.WriteByte('\\')
+			}
+			b.WriteString(`\"`)
+		default:
+			slashes = 0
+			b.WriteRune(r)
+		}
+	}
+	// Backslashes immediately preceding the closing quote must be doubled
+	// so they aren't mistaken for escaping it.
+	for ; slashes > 0; slashes-- {
+		b.WriteByte('\\')
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+// xmlEscape escapes s for safe inclusion as XML character data, so that
+// values containing '&', '<', '>', or '"' (plausible in a real Windows
+// path or a user-supplied description) don't produce malformed XML that
+// schtasks /create /xml fails to parse.
+func xmlEscape(s string) string {
+	var b strings.Builder
+	// strings.Builder's Write never returns an error, so this can't fail.
+	_ = xml.EscapeText(&b, []byte(s))
 	return b.String()
 }
 
