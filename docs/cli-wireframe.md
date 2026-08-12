@@ -52,6 +52,54 @@ boxy
 │
 │   (with --ui=false, Dashboard line is omitted)
 │
+│   └── service                                 Install boxy serve as an OS-managed background service
+│       │                                         (real service by default — Windows SCM / Linux systemd
+│       │                                         system unit, requires an elevated process; --user for an
+│       │                                         unprivileged Task Scheduler/systemd-user fallback)
+│       ├── install                                Install and start the service
+│       │   ├── --user                               Install the unprivileged fallback instead
+│       │   ├── --instance-name <name>                Named instance -> boxy-serve-<name>, .boxy-<name>/
+│       │   ├── --config <path>                       Config file for the service to run against
+│       │   ├── --listen <addr>                       HTTP listen address (default :9090)
+│       │   ├── --ui true|false                       Enable web dashboard (default true)
+│       │   ├── --grpc-listen <addr>                  Agent gRPC listen address (default :9091)
+│       │   ├── --grpc-cert-san <name>                 Extra SAN for the agent gRPC cert (repeatable)
+│       │   └── --insecure                            Serve agent gRPC without TLS/mTLS (dev only)
+│       │
+│       │   $ boxy serve service install --config boxy.yaml
+│       │     ✓ boxy-serve installed and started (config: .boxy/service.yaml, log: .boxy/service.log)
+│       │
+│       │   $ boxy serve service install --instance-name test1 --user --config test1.yaml
+│       │     ✓ boxy-serve-test1 installed and started (config: .boxy-test1/service.yaml, log: .boxy-test1/service.log)
+│       │
+│       ├── uninstall                              Remove the installed service
+│       │   ├── --instance-name <name>                Target a named instance (default: the unnamed instance)
+│       │   ├── --user                                Target the --user instance (must match how it was installed)
+│       │   ├── --purge                               Also remove the .boxy[-<name>]/ state directory
+│       │   └── --boxy-dir <path>                     State dir to purge (default: resolved like `boxy serve`)
+│       │
+│       │   (--purge refuses to delete a directory that has no service.yaml in it — a mismatched
+│       │    --instance-name/--boxy-dir fails loudly instead of silently deleting the wrong instance's state)
+│       │
+│       ├── start                                  Start the installed service
+│       │   ├── --instance-name <name>
+│       │   └── --user
+│       │
+│       ├── stop                                   Stop the installed service
+│       │   ├── --instance-name <name>
+│       │   └── --user
+│       │
+│       └── status                                 Show the installed service's status
+│           ├── --instance-name <name>
+│           └── --user
+│
+│           $ boxy serve service status
+│             boxy-serve: running (system-service)
+│           (Mode is system-service/user-task on Windows, system-unit/user-unit on Linux)
+│
+│           $ boxy serve service status --instance-name test1 --user
+│             boxy-serve-test1: running (user-task)
+│
 │
 ├── status                                     Check server health and summary
 │   ├── --server <addr>                          Server address (default 127.0.0.1:9090)
@@ -235,6 +283,51 @@ boxy
 │   │     (runs until stopped; reconnects with backoff; after the first
 │   │      registration the issued mTLS client cert in .boxy-agent/ is used
 │   │      and --token is no longer needed)
+│   │
+│   ├── service                                  Install boxy agent as an OS-managed background service
+│   │   │                                          (real service by default — Windows SCM / Linux systemd
+│   │   │                                          system unit, requires an elevated process; --user for an
+│   │   │                                          unprivileged Task Scheduler/systemd-user fallback)
+│   │   ├── install                                Install and start the service
+│   │   │   ├── --user                               Install the unprivileged fallback instead
+│   │   │   ├── --instance-name <name>                Named instance -> boxy-agent-<name>, .boxy-agent-<name>/
+│   │   │   ├── --server, --providers, --token,
+│   │   │   │   --name, --ca-cert, --data-dir,
+│   │   │   │   --insecure                            Same as `boxy agent serve` (above)
+│   │   │
+│   │   │   $ boxy agent service install --server s:9091 --providers docker
+│   │   │     ✓ boxy-agent installed and started (config: .boxy-agent/service.yaml, log: .boxy-agent/service.log)
+│   │   │
+│   │   │   $ boxy agent service install --instance-name test1 --user --server s:9091 --providers docker
+│   │   │     ✓ boxy-agent-test1 installed and started (config: .boxy-agent-test1/service.yaml, log: .boxy-agent-test1/service.log)
+│   │   │
+│   │   ├── uninstall                              Remove the installed service
+│   │   │   ├── --instance-name <name>                Target a named instance (default: the unnamed instance)
+│   │   │   ├── --user                                Target the --user instance (must match how it was installed)
+│   │   │   ├── --purge                               Also remove the .boxy-agent[-<name>]/ data directory
+│   │   │   └── --data-dir <path>                     Data dir to purge (default: .boxy-agent[-<name>] in cwd)
+│   │   │
+│   │   │   (--purge refuses to delete a directory that has no service.yaml in it — a mismatched
+│   │   │    --instance-name/--data-dir fails loudly instead of silently deleting the wrong instance's data)
+│   │   │
+│   │   ├── start                                  Start the installed service
+│   │   │   ├── --instance-name <name>
+│   │   │   └── --user
+│   │   │
+│   │   ├── stop                                   Stop the installed service
+│   │   │   ├── --instance-name <name>
+│   │   │   └── --user
+│   │   │
+│   │   └── status                                 Show the installed service's status
+│   │       ├── --instance-name <name>
+│   │       └── --user
+│   │
+│   │       $ boxy agent service status
+│   │         boxy-agent: running (system-service)
+│   │       (Mode is system-service/user-task on Windows, system-unit/user-unit on Linux)
+│   │
+│   │       $ boxy agent service status --instance-name test1 --user
+│   │         boxy-agent-test1: running (user-task)
 │   │
 │   ├── token                                    Manage single-use registration tokens
 │   │   ├── create                                 Mint a token (raw value shown once, never stored)
