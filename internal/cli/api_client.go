@@ -243,3 +243,24 @@ func maintenanceAPIClient() *http.Client {
 	// still legitimately in progress.
 	return &http.Client{Timeout: 5 * time.Minute}
 }
+
+func execAPIClientForServer(server string) *http.Client {
+	client := apiClientForServer(server)
+	client.Timeout = 5 * time.Minute
+	return client
+}
+
+func execAPIClient() *http.Client {
+	// http.Client.Timeout bounds the entire request, including reading the
+	// response body — for `sandbox exec --stream` that means it bounds the
+	// whole live NDJSON stream, not just establishing the connection. The
+	// server accepts a per-request `timeout` up to maxExecTimeout (5m, see
+	// internal/server/api_exec.go) and defaults to 30s, both comfortably
+	// past the 5s default client timeout; without this override, any
+	// command running longer than 5s — the common case, not an edge case —
+	// would have the client abort the request (or truncate the stream)
+	// before the server's own bounded timeout ever had a chance to fire.
+	// 5m matches the server's hard cap exactly, so this is always a safe
+	// upper bound regardless of what --timeout the caller requested.
+	return &http.Client{Timeout: 5 * time.Minute}
+}

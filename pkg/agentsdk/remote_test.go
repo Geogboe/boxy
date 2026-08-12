@@ -547,16 +547,16 @@ func TestRemoteAgent_CloseDoesNotPanicSendOnStreamChannel(t *testing.T) {
 	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)
 
 	const cmdID = "cmd-1"
-	ch := make(chan *boxyagentv1.CommandResult, 32)
+	waiter := &streamWaiter{ch: make(chan *boxyagentv1.CommandResult, 32), done: make(chan struct{})}
 	a.mu.Lock()
-	a.streamPending[cmdID] = ch
+	a.streamPending[cmdID] = waiter
 	a.mu.Unlock()
 
-	// Mirrors deliver()'s read of the channel reference for a non-terminal
+	// Mirrors deliver()'s read of the waiter reference for a non-terminal
 	// event: the entry stays in streamPending because only Complete/Error
 	// events delete it.
 	a.mu.Lock()
-	streamCh, ok := a.streamPending[cmdID]
+	got, ok := a.streamPending[cmdID]
 	a.mu.Unlock()
 	if !ok {
 		t.Fatal("expected streamPending entry to still be present")
@@ -572,7 +572,7 @@ func TestRemoteAgent_CloseDoesNotPanicSendOnStreamChannel(t *testing.T) {
 			t.Fatalf("Close() left the stream channel in a state where a late send panics: %v", r)
 		}
 	}()
-	streamCh <- &boxyagentv1.CommandResult{CommandId: cmdID}
+	got.ch <- &boxyagentv1.CommandResult{CommandId: cmdID}
 }
 
 // TestRemoteAgent_CloseUnblocksLiveUpdateStreamWaiter proves the behavioral
@@ -630,13 +630,13 @@ func TestRemoteAgent_DeliverStreamSendDoesNotBlockForeverOnFullBufferAfterClosed
 	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)
 
 	const cmdID = "cmd-1"
-	ch := make(chan *boxyagentv1.CommandResult, 1)
+	waiter := &streamWaiter{ch: make(chan *boxyagentv1.CommandResult, 1), done: make(chan struct{})}
 	a.mu.Lock()
-	a.streamPending[cmdID] = ch
+	a.streamPending[cmdID] = waiter
 	a.mu.Unlock()
-	ch <- &boxyagentv1.CommandResult{CommandId: cmdID} // fill the buffer: nothing will ever drain it
+	waiter.ch <- &boxyagentv1.CommandResult{CommandId: cmdID} // fill the buffer: nothing will ever drain it
 
-	close(a.closed) // the waiter already gave up via `case <-a.closed`
+	close(a.closed) // the waiter already gave up via `case <-a.closed`; waiter.done is deliberately left open here
 
 	done := make(chan struct{})
 	go func() {
@@ -654,5 +654,52 @@ func TestRemoteAgent_DeliverStreamSendDoesNotBlockForeverOnFullBufferAfterClosed
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("deliver() blocked forever sending to a full streamPending channel whose waiter already gave up")
+	}
+}
+
+// TestRemoteAgent_DeliverStreamSendDoesNotBlockForeverWhenWaiterDoneClosesWithConnectionHealthy
+// guards the gap the code review on this PR caught in the fix above: a.closed
+// only covers the whole *connection* closing. A single UpdateStream call can
+// also give up on its own — its exec context expires (default 30s, max 5m,
+// see internal/server/api_exec.go) or its sink errors — entirely
+// independently of connection health, and a.closed is never closed in that
+// case. Before streamWaiter.done existed, deliver() had no way to observe
+// that and could block forever on a full buffer even though the connection
+// was perfectly healthy — wedging Serve()'s single receive loop (and every
+// other command routed to that agent) with no automatic recovery, only an
+// operator-issued `boxy agent revoke`. Confirmed to actually hang against
+// the pre-fix code (a plain `select { case ch<-: case <-a.closed: }`) before
+// this test was written.
+func TestRemoteAgent_DeliverStreamSendDoesNotBlockForeverWhenWaiterDoneClosesWithConnectionHealthy(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)
+
+	const cmdID = "cmd-1"
+	waiter := &streamWaiter{ch: make(chan *boxyagentv1.CommandResult, 1), done: make(chan struct{})}
+	a.mu.Lock()
+	a.streamPending[cmdID] = waiter
+	a.mu.Unlock()
+	waiter.ch <- &boxyagentv1.CommandResult{CommandId: cmdID} // fill the buffer: nothing will ever drain it
+
+	// This specific call gives up — e.g. its exec context expired — but the
+	// connection itself stays up: a.closed is deliberately left open.
+	close(waiter.done)
+
+	done := make(chan struct{})
+	go func() {
+		a.deliver(&boxyagentv1.CommandResult{
+			CommandId: cmdID,
+			Outcome: &boxyagentv1.CommandResult_OperationStream{OperationStream: &boxyagentv1.OperationStreamEvent{
+				Channel: "stdout",
+				Data:    []byte("x"),
+			}},
+		})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("deliver() blocked forever sending to a full streamPending channel whose specific waiter gave up, even though the connection stayed healthy")
 	}
 }

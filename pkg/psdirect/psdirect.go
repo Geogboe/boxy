@@ -91,7 +91,10 @@ func (e *Exec) Exec(ctx context.Context, cmd string, args ...string) (*vmsdk.Exe
 
 // ExecStream runs cmd through PowerShell Direct and forwards PSRP output as it
 // arrives. PowerShell's merged native output is represented on stdout; PSRP
-// error records are represented on stderr.
+// error, warning, verbose, debug, progress, and information records are all
+// merged onto stderr — none of those are exclusively "errors", so a caller
+// deciding whether a command failed should rely on the exit code, not on
+// whether anything arrived on the stderr channel.
 func (e *Exec) ExecStream(ctx context.Context, cmd string, args []string, sink eventstream.Sink) (*vmsdk.ExecResult, error) {
 	if sink == nil {
 		return nil, fmt.Errorf("psdirect: stream sink is required")

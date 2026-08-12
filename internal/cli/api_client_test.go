@@ -164,3 +164,23 @@ func TestMaintenanceAPIClientHasABoundedTimeout(t *testing.T) {
 		t.Fatalf("maintenance client timeout = %v, want at least 5m to survive a multi-VM serial drain", maintenanceAPIClient().Timeout)
 	}
 }
+
+// TestExecAPIClientHasABoundedTimeout guards against the default client's 5s
+// http.Client.Timeout being used for `sandbox exec`: that timeout bounds the
+// entire request, including reading the response body, so it would bound a
+// `--stream` NDJSON response too — not just connection setup. The server
+// accepts a per-request timeout up to 5 minutes (internal/server/api_exec.go's
+// maxExecTimeout) and defaults to 30s, both well past the default client's
+// 5s, so exec needs its own longer-timeout client the same way drain/fill
+// already does via maintenanceAPIClient.
+func TestExecAPIClientHasABoundedTimeout(t *testing.T) {
+	if execAPIClient().Timeout == 0 {
+		t.Fatal("exec client timeout = 0, want a bounded timeout")
+	}
+	if execAPIClient().Timeout <= defaultAPIClient().Timeout {
+		t.Fatalf("exec client timeout = %v, want it longer than the default client's %v", execAPIClient().Timeout, defaultAPIClient().Timeout)
+	}
+	if execAPIClient().Timeout < 5*time.Minute {
+		t.Fatalf("exec client timeout = %v, want at least 5m to match the server's maxExecTimeout", execAPIClient().Timeout)
+	}
+}

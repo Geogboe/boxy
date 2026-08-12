@@ -25,7 +25,7 @@ See [docs/install.md](docs/install.md) for supported platforms, version pinning,
 ```bash
 task test             # Run the full Go test suite
 task lint             # Run CI-equivalent Go linting
-go generate ./...     # Regenerate schemas, installers, and API documentation
+task generate         # Regenerate schemas, installers, and API documentation
 ```
 
 Use `gopls format -w <files>` and `gopls check <file>` while editing Go. User-facing

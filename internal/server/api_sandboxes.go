@@ -13,7 +13,9 @@ import (
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
-// handleListSandboxes returns all sandboxes as JSON.
+// handleListSandboxes returns the sandboxes visible to the caller as JSON:
+// all of them for auditor/admin roles, only owned ones for an authenticated
+// user role.
 func (s *Server) handleListSandboxes(w http.ResponseWriter, r *http.Request) {
 	if !s.requireRole(w, r, model.APIKeyRoleUser, model.APIKeyRoleAuditor, model.APIKeyRoleAdmin) {
 		return

@@ -46,8 +46,6 @@ type Agent interface {
 	Allocate(ctx context.Context, provider providersdk.Type, id string) (map[string]any, error)
 }
 
-// GuestPersonalizingAgent is an optional agent capability for providers that
-// expose the typed guest-personalization contract.
 // StreamingAgent is an optional capability for agents that can carry live
 // provider events back to the server.
 type StreamingAgent interface {

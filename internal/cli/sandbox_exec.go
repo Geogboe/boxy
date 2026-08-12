@@ -78,7 +78,11 @@ func newSandboxExecCommand(serverAddr func() string) *cobra.Command {
 func runSandboxExec(ctx context.Context, opts sandboxExecOptions, id string, command []string, out, errOut io.Writer) error {
 	base := apiBaseURL(opts.server)
 	request := sandboxExecRequest{Command: command, ResourceID: opts.resourceID, Timeout: opts.timeout}
-	client := apiClientForServer(opts.server)
+	// The default client's 5s http.Client.Timeout bounds the whole request
+	// (including reading a --stream response body), but the server accepts
+	// exec timeouts up to 5 minutes — see execAPIClientForServer's doc
+	// comment.
+	client := execAPIClientForServer(opts.server)
 	if !opts.stream {
 		response, err := postJSON[sandboxExecRequest, sandboxExecResponse](ctx, client, base+"/api/v1/sandboxes/"+id+"/exec", request)
 		if err != nil {

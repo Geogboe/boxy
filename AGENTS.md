@@ -278,7 +278,7 @@ it's no longer needed. See #100.
   rewrite-in-place case to fix there.
 - REST handlers are currently hand-wired under `internal/server/api_*.go`.
   Keep the route catalog, generated `docs/api.md`, CLI wireframe, and bundled
-  skill synchronized when adding routes or commands; use `go generate ./...`.
+  skill synchronized when adding routes or commands; use `task generate`.
 - API keys are hashed in the daemon store and raw values belong only in the OS
   keyring. The first admin key is loopback-bootstrap-only; TLS uses the Boxy CA
   by default, `--ca-cert` for custom trust, and explicit insecure overrides.

@@ -71,3 +71,29 @@ bounded JSON convenience for scripts.
   `complete` event carrying the error instead. See
   `internal/server/api_exec.go`'s `writeExecError` and
   `pkg/agentsdk/remote.go`'s `Close`/`deliver`.
+- **2026-08-12**: Code review on the PR that landed the above two entries
+  surfaced two further real bugs before merge:
+  - `boxy sandbox exec` used the default CLI HTTP client, whose
+    `http.Client.Timeout` (5s) bounds the *entire* request including
+    reading the response body — so any exec running longer than 5s (the
+    common case, given the server's own default is 30s and its max is 5m)
+    would have the client abort the request, or truncate a `--stream`
+    response mid-output. Fixed with a dedicated `execAPIClientForServer`
+    (5m, matching the server's `maxExecTimeout`), the same pattern already
+    used for `debug pool drain/fill`'s `maintenanceAPIClientForServer`.
+  - The prior TOCTOU fix's `deliver()` only raced its send against
+    `a.closed` (whole-connection teardown), but a single `UpdateStream`
+    call can give up on its own — its exec context expires, or its sink
+    errors — entirely independently of connection health. With `a.closed`
+    never closing in that case, `deliver()` could still block forever on a
+    full `streamPending` buffer even though the connection was healthy,
+    wedging `Serve()`'s single receive loop (and every other command
+    routed to that agent) with no automatic recovery short of an operator
+    running `boxy agent revoke`. Fixed by giving each `UpdateStream` call
+    its own `streamWaiter{ch, done}`, with `done` closed by that call's
+    deferred cleanup on every exit path; `deliver()` now races its send
+    against `a.closed`, `waiter.done`, and the send itself — matching the
+    three-way parity its removed comment incorrectly claimed it already
+    had. See `pkg/agentsdk/remote.go`'s `streamWaiter`/`deliver`/
+    `UpdateStream` and `internal/cli/api_client.go`'s
+    `execAPIClientForServer`.
