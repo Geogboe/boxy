@@ -19,6 +19,17 @@ configuration or runtime state.
 - CLI clients trust public/enterprise certificates through the system trust
   store. `--ca-cert` supplies a Boxy or other custom CA. Client `--insecure`
   keeps HTTPS but skips certificate verification and is never the default.
+- A schemeless `--server host:port` address defaults to `https://`,
+  matching the daemon's TLS-by-default posture — this is the single most
+  natural way to point the CLI at a remote server, so it must resolve the
+  same way the (secure, default) empty-address case does. Only an explicit
+  `http://` prefix opts into plain HTTP, which only makes sense paired with
+  `boxy serve --insecure`. `internal/cli/api_client.go`'s `apiBaseURL`
+  (builds the connection) and `internal/credentials/credentials.go`'s
+  `normalizeServerURL` (builds the keyring lookup key for the same address)
+  must default identically — if they diverge, `boxy login --server
+  host:port` and a later command's `--server host:port` compute different
+  keyring keys and the stored credential appears to silently vanish.
 - Operator credentials are bearer API keys. Only a SHA-256 hash and metadata are
   persisted; the raw value is returned once at creation and is never logged or
   written to Boxy config/state files.
@@ -47,3 +58,18 @@ configuration or runtime state.
 - API additions must update the route catalog, generated API reference,
   `docs/cli-wireframe.md`, and the bundled `boxy-cli` skill when they change the
   user-facing CLI.
+
+## Change notes
+
+- **2026-08-12**: A GitHub Copilot review on the PR implementing this ADR
+  (#162) caught that the bare-address decision above wasn't actually
+  implemented that way: `apiBaseURL` and `normalizeServerURL` both defaulted
+  a schemeless `--server` address to `http://`, contradicting the
+  TLS-by-default posture this ADR establishes — the single most natural way
+  to point the CLI at a remote host (`--server myhost:9090`, no scheme)
+  silently built a plaintext request against what's actually a TLS-only
+  listener by default, and just failed to connect. Fixed by defaulting bare
+  addresses to `https://` in both functions; two `internal/cli/status_test.go`
+  cases that pointed a bare address at a plain-HTTP `httptest.Server` were
+  updated to use the server's `srv.URL` (which already carries the correct
+  explicit `http://`) instead, matching every other test in the package.

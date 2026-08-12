@@ -49,6 +49,18 @@ bounded JSON convenience for scripts.
   streaming interface; other providers may opt in later.
 - REST, CLI, bundled skill, API catalog, generated API docs, and tests must be
   updated together. This is intentionally larger than a single handler change.
+- `pkg/psdirect`'s `Exec.ExecStream` is uncovered by tests, deliberately, and
+  the gap is specific to PSRP's API shape rather than a broader streaming
+  blind spot: SSH (`pkg/vmsdk`), Docker, and devfactory streaming all have
+  real `ExecStream`/`UpdateStream` test coverage. `psrpStreamExecutor
+  .ExecuteStream` returns a concrete `*psrpclient.StreamResult` (not an
+  interface) whose `Wait()`/`Cancel()` are methods on that struct with
+  unexported fields (`pipeline`, `cleanup`) that panic on a nil receiver —
+  there is no way to construct a working test double for it from outside
+  the `go-psrp/client` package. Covering it would require introducing a
+  local interface in `psdirect.go` that wraps `Wait`/`Cancel` so a mock can
+  implement it — a production seam change, not a test addition, and
+  deliberately not made during the 2026-08 exec-streaming hardening pass.
 
 ## Change notes
 
@@ -97,3 +109,21 @@ bounded JSON convenience for scripts.
     had. See `pkg/agentsdk/remote.go`'s `streamWaiter`/`deliver`/
     `UpdateStream` and `internal/cli/api_client.go`'s
     `execAPIClientForServer`.
+- **2026-08-12**: A GitHub Copilot review on the same PR (#162) caught a
+  third gap: `pkg/agentsdk/remoteclient.go`'s `remoteStreamSink` — the
+  agent-side `eventstream.Sink` that forwards a driver's stream events back
+  to the server — read and wrote its `completed bool` with no
+  synchronization, including a direct field read from
+  `executeStreamingCommand` that bypassed even the type's own `Send`/
+  `complete` methods. No concrete driver in this codebase calls `Send`
+  concurrently (every one funnels through a single consumer goroutine even
+  when it fans work out to producer goroutines internally, e.g.
+  `pkg/vmsdk/ssh.go`'s independent stdout/stderr readers), so this was
+  never reachable via code actually wired up here — but
+  `providersdk.StreamingDriver` is a public interface, and nothing in
+  `eventstream.Sink`'s contract promises `Send` is single-goroutine-only.
+  Fixed with a mutex guarding `completed` and a synchronized `isCompleted()`
+  accessor for the one external read; covered by
+  `TestRemoteStreamSink_ConcurrentSendDoesNotRaceOrDoubleComplete`, which
+  drives concurrent `Send` calls and is checked under `-race` in CI (not
+  available on windows/arm64 dev hosts).

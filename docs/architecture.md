@@ -1,6 +1,9 @@
 # Boxy — Architecture Overview
 
-> **Last updated:** 2026-03-15
+> **Last updated:** 2026-08-12 (targeted correction pass: remote agent
+> transport, REST auth, and streaming exec sections updated to match
+> ADR-0005/0007/0008; other sections not re-verified in this pass — see
+> AGENTS.md's Lessons Learned on doc drift)
 >
 > Boxy is a resource pooling and sandbox orchestration tool. It pre-provisions
 > pools of VMs, containers, and other resources, then assembles them into
@@ -316,7 +319,7 @@ graph TB
         LocalDrivers["Local Drivers<br/>(Docker, Hyper-V)"]
     end
 
-    subgraph "Remote Agent (future)"
+    subgraph "Remote Agent"
         RemoteAgent["RemoteAgent<br/>──────────<br/>gRPC client proxy<br/>Serializes ops"]
         RemoteHost["Remote Host<br/>gRPC → drivers"]
     end
@@ -549,9 +552,10 @@ graph LR
 | CLI Framework | **Cobra** (`spf13/cobra`) | Command-line interface |
 | Config Format | **YAML** (`gopkg.in/yaml.v3`) | Configuration files |
 | State Store | **DiskStore (JSON file)** / Memory (current); bbolt (possible future) | Runtime state persistence |
-| Server-Agent RPC | **gRPC over mTLS** (planned, see [ADR-0005](adr/0005-remote-agent-transport-and-registration.md)) | Future agent-server communication |
-| Client-Server API | **REST/HTTP** (implemented) | CLI-server communication, primary interaction layer |
-| Auth | **Single-use bootstrap token + mTLS client certificate** (planned, see [ADR-0005](adr/0005-remote-agent-transport-and-registration.md)) | Future agent registration; no ongoing JWT — a private CA issues a client cert at registration, used for all subsequent reconnects |
+| Server-Agent RPC | **gRPC over mTLS** (see [ADR-0005](adr/0005-remote-agent-transport-and-registration.md)) | Remote agent-server communication (bidirectional streaming, agent dials server) |
+| Client-Server API | **REST/HTTPS** | CLI-server communication, primary interaction layer; TLS + bearer API-key auth on by default (see [ADR-0007](adr/0007-secure-rest-api-and-cli-authentication.md)) |
+| Agent registration | **Single-use bootstrap token + mTLS client certificate** (see [ADR-0005](adr/0005-remote-agent-transport-and-registration.md)) | No ongoing JWT — a private CA issues a client cert at registration, used for all subsequent reconnects |
+| CLI/API auth | **Bearer API keys** (`user`/`auditor`/`admin` roles), OS-keyring credential storage (see [ADR-0007](adr/0007-secure-rest-api-and-cli-authentication.md)) | Only a SHA-256 hash is persisted server-side; the raw key is shown once and stored client-side in the OS keyring |
 | Task Runner | **Taskfile** (`Taskfile.yml`) | Build and development tasks |
 
 ### Project Status
@@ -562,7 +566,11 @@ way to operate Boxy today. Remote agent support (#37/#62) is implemented: `boxy
 agent serve` dials the daemon's gRPC listener over mTLS (private CA, single-use
 token bootstrap — see [ADR-0005](adr/0005-remote-agent-transport-and-registration.md)),
 and the pool manager routes provisioning across the embedded agent and any
-connected remote agents (with optional per-pool `agent:` pinning).
+connected remote agents (with optional per-pool `agent:` pinning). The REST API
+is authenticated (bearer API keys, roles, TLS by default — see
+[ADR-0007](adr/0007-secure-rest-api-and-cli-authentication.md)) and sandboxes
+support non-interactive command execution with live output streaming (see
+[ADR-0008](adr/0008-streaming-command-execution.md)).
 
 ---
 
@@ -573,3 +581,7 @@ connected remote agents (with optional per-pool `agent:` pinning).
 - [ADR-0003: Sandbox Auto-Expiry and Extension Semantics](adr/0003-sandbox-auto-expiry-and-extension.md) — `ExpiresAt` computed at creation, extend compounds from current deadline, reuses the existing deletion reconciler
 - [ADR-0004: Hyper-V Teardown Guard and Provisioning Backoff](adr/0004-hyperv-teardown-guard-and-provisioning-backoff.md) — Never force-remove a transitioning VM; capped backoff for a repeatedly-failing pool's background reconcile
 - [ADR-0005: Remote Agent Transport and Registration](adr/0005-remote-agent-transport-and-registration.md) — gRPC bidirectional streaming (agent dials server), private CA + full mTLS, single-use bootstrap token issuing a client cert, per-resource agent provenance to prevent misrouted Destroy/Allocate calls across multiple agents
+- [ADR-0006: Recycling/Destroying Resource States](adr/0006-recycling-destroying-resource-states.md) — transient states persisted before provisioner calls so mid-teardown resources are observable instead of vanishing
+- [ADR-0007: Secure REST API and CLI Authentication](adr/0007-secure-rest-api-and-cli-authentication.md) — bearer API keys with `user`/`auditor`/`admin` roles, sandbox ownership, TLS by default, OS-keyring credential storage
+- [ADR-0008: Streaming Sandbox Command Execution](adr/0008-streaming-command-execution.md) — `pkg/eventstream` primitives, provider/agent streaming capability, bounded buffered-or-NDJSON REST exec
+- [ADR-0009: File-Permission Hardening on Rewrite](adr/0009-file-permission-hardening-on-rewrite.md) — explicit `os.Chmod` after `os.WriteFile` wherever a path may already exist
