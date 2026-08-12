@@ -12,17 +12,19 @@ import (
 
 	"github.com/Geogboe/boxy/internal/buildcfg"
 	boxyskills "github.com/Geogboe/boxy/internal/skills"
+	"github.com/Geogboe/boxy/internal/svcmgr"
 	"github.com/Geogboe/rog/pkg/selfupdate"
 	"github.com/spf13/cobra"
 )
 
 // updateOptions holds the resolved configuration for a single update invocation.
 type updateOptions struct {
-	pinnedVersion string
-	proxyURL      string
-	token         string
-	checkOnly     bool
-	prerelease    bool
+	pinnedVersion      string
+	proxyURL           string
+	token              string
+	checkOnly          bool
+	prerelease         bool
+	skipServiceRestart bool
 }
 
 // updaterIface is the narrow interface used by runUpdate, enabling injection in tests.
@@ -97,10 +99,11 @@ func updateProxyFunc(proxyURL string) func(*http.Request) (*url.URL, error) {
 
 func newUpdateCommand() *cobra.Command {
 	var (
-		checkOnly     bool
-		pinnedVersion string
-		proxyURL      string
-		prerelease    bool
+		checkOnly          bool
+		pinnedVersion      string
+		proxyURL           string
+		prerelease         bool
+		skipServiceRestart bool
 	)
 
 	cmd := &cobra.Command{
@@ -112,16 +115,24 @@ By default, only a stable (non-prerelease, non-draft) release is considered
 "latest". Pass --prerelease to update to the newest release regardless of
 its prerelease/draft status, e.g. when no stable release has been published yet.
 
+After a successful update, boxy checks whether the default-named boxy-agent
+and boxy-serve services (privileged or --user) are installed and currently
+running, and restarts each one so it doesn't keep running the pre-update
+binary in memory. Named instances (installed with --instance-name) are not
+covered — restart those manually. Pass --skip-service-restart to disable
+this check entirely.
+
 Environment variables:
   BOXY_GITHUB_TOKEN   GitHub API token to avoid rate limits`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runUpdate(cmd, updateOptions{
-				pinnedVersion: pinnedVersion,
-				proxyURL:      proxyURL,
-				token:         os.Getenv("BOXY_GITHUB_TOKEN"),
-				checkOnly:     checkOnly,
-				prerelease:    prerelease,
+				pinnedVersion:      pinnedVersion,
+				proxyURL:           proxyURL,
+				token:              os.Getenv("BOXY_GITHUB_TOKEN"),
+				checkOnly:          checkOnly,
+				prerelease:         prerelease,
+				skipServiceRestart: skipServiceRestart,
 			})
 		},
 	}
@@ -130,6 +141,7 @@ Environment variables:
 	cmd.Flags().StringVar(&pinnedVersion, "version", "", "Install a specific version (e.g. v0.1.9)")
 	cmd.Flags().StringVar(&proxyURL, "proxy", "", "HTTP proxy URL (overrides HTTPS_PROXY env var)")
 	cmd.Flags().BoolVar(&prerelease, "prerelease", false, "Consider prerelease/draft releases when checking for the latest version")
+	cmd.Flags().BoolVar(&skipServiceRestart, "skip-service-restart", false, "Don't check for or restart an installed boxy-agent/boxy-serve service after updating")
 
 	return cmd
 }
@@ -178,6 +190,9 @@ func runUpdate(cmd *cobra.Command, opts updateOptions) error {
 	if _, err := boxyskills.InstallCanonical(true, latest); err != nil {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not refresh bundled skills: %v\n", err)
 	}
+	if !opts.skipServiceRestart {
+		restartInstalledDefaultServices(cmd)
+	}
 
 	installDir := filepath.Dir(exePath)
 	if msg := selfupdate.PathWarningMessage(installDir); msg != "" {
@@ -185,6 +200,57 @@ func runUpdate(cmd *cobra.Command, opts updateOptions) error {
 	}
 
 	return nil
+}
+
+// restartInstalledDefaultServices checks whether the default-named
+// boxy-agent/boxy-serve services — privileged or --user — are installed
+// and currently running, and restarts (stop then start) each one that is,
+// so an update doesn't leave a service running the pre-update binary in
+// memory. A service that's installed but not currently running is left
+// alone: that's a deliberate operator choice, not something update should
+// override.
+//
+// Named instances (installed with --instance-name, see #156) are not
+// covered — svcmgr.Manager has no way to enumerate them, only to query a
+// name the caller already knows. Restarting those is the operator's job.
+//
+// Failures here are reported as warnings, not returned as errors: the
+// binary update itself already succeeded by the time this runs, and a
+// service that can't be restarted (e.g. a permission issue) shouldn't make
+// `boxy update` look like it failed.
+func restartInstalledDefaultServices(cmd *cobra.Command) {
+	targets := []struct {
+		name     string
+		userMode bool
+	}{
+		{agentServiceName, false},
+		{agentServiceName, true},
+		{serveServiceName, false},
+		{serveServiceName, true},
+	}
+	for _, target := range targets {
+		mgr, err := svcmgrNewManager(svcmgr.ManagerOptions{UserMode: target.userMode})
+		if err != nil {
+			continue // this mode isn't available on this platform; nothing to restart
+		}
+		st, err := mgr.Status(target.name)
+		if err != nil {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not check status of %s service: %v\n", target.name, err)
+			continue
+		}
+		if !st.Installed || !st.Running {
+			continue
+		}
+		if err := mgr.Stop(target.name); err != nil {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not restart %s (stop failed): %v\n", target.name, err)
+			continue
+		}
+		if err := mgr.Start(target.name); err != nil {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not restart %s (stopped, but failed to start again — start it manually): %v\n", target.name, err)
+			continue
+		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ restarted %s service\n", target.name)
+	}
 }
 
 // updateResolveExePath returns the path of the running executable.

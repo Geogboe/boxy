@@ -370,8 +370,10 @@ boxy
     ├── --check                                  Check for updates without installing
     ├── --version <ver>                          Install a specific version (e.g. v0.1.9)
     ├── --proxy <url>                             HTTP proxy URL (overrides HTTPS_PROXY env var)
-    └── --prerelease                              Consider prerelease/draft releases as "latest"
-                                                  (default: stable releases only)
+    ├── --prerelease                              Consider prerelease/draft releases as "latest"
+    │                                             (default: stable releases only)
+    └── --skip-service-restart                    Don't check for/restart an installed
+                                                  boxy-agent/boxy-serve service after updating
 
     $ boxy update
       ==> Checking for updates...
@@ -389,12 +391,17 @@ boxy
       Error: check for updates: Geogboe/boxy: no stable release found (re-run with
       --prerelease to update to a prerelease build)
 
-    $ boxy update --prerelease
+    $ boxy update --prerelease  (boxy-agent installed as a service and currently running)
       ==> Checking for updates...
           Current version: v0.1.34
           Latest version:  v0.1.35
       ==> Downloading boxy v0.1.35...
       ✓ boxy updated to v0.1.35
+      ✓ restarted boxy-agent service
+
+    (the restart check only covers the default-named boxy-agent/boxy-serve instances —
+     named --instance-name instances, see `boxy agent service`, are not restarted
+     automatically; --skip-service-restart disables the check entirely)
 
 
 Global flags (on root command):
