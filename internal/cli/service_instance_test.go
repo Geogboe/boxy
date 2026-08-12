@@ -25,6 +25,7 @@ func TestValidateInstanceName_ValidCases(t *testing.T) {
 func TestValidateInstanceName_InvalidCases(t *testing.T) {
 	for _, name := range []string{
 		"-leading-hyphen",
+		"trailing-hyphen-",
 		"has space",
 		"has/slash",
 		"has_underscore",

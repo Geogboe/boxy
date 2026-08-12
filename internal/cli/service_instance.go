@@ -13,8 +13,9 @@ import (
 // or Task Scheduler task name, a systemd unit name, a launchd label, and a
 // filesystem directory name (the default data/state directory gets the same
 // suffix — see instanceDirSuffix). Letters, digits, and interior hyphens
-// only, starting with a letter or digit.
-var instanceNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
+// only — must start and end with a letter or digit, so the resolved name
+// (base + "-" + instance) never ends up with a doubled or trailing hyphen.
+var instanceNamePattern = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$`)
 
 // maxInstanceNameLen keeps the resolved service name (base + "-" + instance)
 // comfortably under every backend's real limit (Windows service names allow

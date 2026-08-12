@@ -95,6 +95,7 @@ boxy
 │
 │           $ boxy serve service status
 │             boxy-serve: running (system-service)
+│           (Mode is system-service/user-task on Windows, system-unit/user-unit on Linux)
 │
 │           $ boxy serve service status --instance-name test1 --user
 │             boxy-serve-test1: running (user-task)
@@ -323,6 +324,7 @@ boxy
 │   │
 │   │       $ boxy agent service status
 │   │         boxy-agent: running (system-service)
+│   │       (Mode is system-service/user-task on Windows, system-unit/user-unit on Linux)
 │   │
 │   │       $ boxy agent service status --instance-name test1 --user
 │   │         boxy-agent-test1: running (user-task)
