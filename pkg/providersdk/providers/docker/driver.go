@@ -25,6 +25,7 @@ import (
 	"github.com/docker/go-connections/nat"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
+	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
@@ -276,6 +277,53 @@ func (d *Driver) execInContainer(ctx context.Context, id string, op *ExecOp) (*p
 	}, nil
 }
 
+func (d *Driver) UpdateStream(ctx context.Context, id string, op providersdk.Operation, sink eventstream.Sink) (*providersdk.Result, error) {
+	execOp, ok := op.(*ExecOp)
+	if !ok {
+		return nil, fmt.Errorf("unsupported streaming operation type %T", op)
+	}
+	if sink == nil {
+		return nil, fmt.Errorf("stream sink is required")
+	}
+	execResp, err := d.cli.ContainerExecCreate(ctx, id, container.ExecOptions{
+		Cmd:          execOp.Command,
+		AttachStdout: true,
+		AttachStderr: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("docker ContainerExecCreate %s: %w", id, err)
+	}
+	attach, err := d.cli.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("docker ContainerExecAttach %s: %w", execResp.ID, err)
+	}
+	defer attach.Close()
+
+	stdout := streamWriter{ctx: ctx, sink: sink, channel: eventstream.Channel("stdout")}
+	stderr := streamWriter{ctx: ctx, sink: sink, channel: eventstream.Channel("stderr")}
+	if _, err := stdcopy.StdCopy(stdout, stderr, attach.Reader); err != nil {
+		return nil, fmt.Errorf("docker exec stream output: %w", err)
+	}
+	inspect, err := d.cli.ContainerExecInspect(ctx, execResp.ID)
+	if err != nil {
+		return nil, fmt.Errorf("docker ContainerExecInspect %s: %w", execResp.ID, err)
+	}
+	return &providersdk.Result{Outputs: map[string]string{"exit_code": strconv.Itoa(inspect.ExitCode)}}, nil
+}
+
+type streamWriter struct {
+	ctx     context.Context
+	sink    eventstream.Sink
+	channel eventstream.Channel
+}
+
+func (w streamWriter) Write(p []byte) (int, error) {
+	if err := w.sink.Send(w.ctx, eventstream.Event{Kind: eventstream.Data, Channel: w.channel, Payload: append([]byte(nil), p...)}); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
 func (d *Driver) Allocate(ctx context.Context, id string) (map[string]any, error) {
 	info, err := d.cli.ContainerInspect(ctx, id)
 	if err != nil {
@@ -305,10 +353,9 @@ func (d *Driver) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-// ExecOp runs a command inside a container.
-type ExecOp struct {
-	Command []string
-}
+// ExecOp is retained as a provider-specific spelling of the shared command
+// operation for compatibility with existing callers.
+type ExecOp = providersdk.ExecOperation
 
 func (d *Driver) deleteBestEffort(ctx context.Context, id string) error {
 	return d.cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true})

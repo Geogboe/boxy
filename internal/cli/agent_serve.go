@@ -305,8 +305,18 @@ func persistAgentCredentials(dataDir string, resp *boxyagentv1.RegisterResponse)
 		if len(data) == 0 {
 			return fmt.Errorf("server response missing %s material", name)
 		}
-		if err := os.WriteFile(filepath.Join(dataDir, name), data, 0o600); err != nil {
+		path := filepath.Join(dataDir, name)
+		// os.WriteFile's mode argument is only applied by the OS when it
+		// creates a new file; on rewrite of a pre-existing file (this path
+		// runs on every successful registration, including reconnects over
+		// already-persisted credentials), the file keeps whatever
+		// permissions it already had, silently. name here includes the
+		// agent's private key — explicit os.Chmod closes that gap. See #158.
+		if err := os.WriteFile(path, data, 0o600); err != nil {
 			return fmt.Errorf("write %s: %w", name, err)
+		}
+		if err := os.Chmod(path, 0o600); err != nil {
+			return fmt.Errorf("set %s permissions: %w", name, err)
 		}
 	}
 	return nil

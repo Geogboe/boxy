@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
@@ -65,6 +66,18 @@ func (a *EmbeddedAgent) Update(ctx context.Context, provider providersdk.Type, i
 		return nil, err
 	}
 	return d.Update(ctx, id, op)
+}
+
+func (a *EmbeddedAgent) UpdateStream(ctx context.Context, provider providersdk.Type, id string, op providersdk.Operation, sink eventstream.Sink) (*providersdk.Result, error) {
+	d, err := a.driver(provider)
+	if err != nil {
+		return nil, err
+	}
+	streamer, ok := d.(providersdk.StreamingDriver)
+	if !ok {
+		return nil, fmt.Errorf("agent %q: provider %q does not support streaming operations", a.info.ID, provider)
+	}
+	return streamer.UpdateStream(ctx, id, op, sink)
 }
 
 func (a *EmbeddedAgent) Delete(ctx context.Context, provider providersdk.Type, id string) error {

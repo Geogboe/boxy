@@ -21,8 +21,9 @@ const (
 // This model is intentionally minimal. Orchestration state and richer composition
 // semantics are layered on later.
 type Sandbox struct {
-	ID   SandboxID `json:"id" yaml:"id"`
-	Name string    `json:"name,omitempty" yaml:"name,omitempty"`
+	ID      SandboxID `json:"id" yaml:"id"`
+	Name    string    `json:"name,omitempty" yaml:"name,omitempty"`
+	OwnerID string    `json:"owner_id,omitempty" yaml:"owner_id,omitempty"`
 
 	// Policies are sandbox-level behavioral controls (security, retention, etc).
 	Policies SandboxPolicies `json:"policies,omitzero" yaml:"policies,omitempty"`

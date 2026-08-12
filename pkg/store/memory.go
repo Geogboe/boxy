@@ -16,6 +16,7 @@ type MemoryStore struct {
 	resources              map[model.ResourceID]model.Resource
 	sandboxes              map[model.SandboxID]model.Sandbox
 	agentTokens            map[model.AgentTokenID]model.AgentRegistrationToken
+	apiKeys                map[model.APIKeyID]model.APIKey
 	revokedAgentIdentities map[model.AgentIdentityID]model.RevokedAgentIdentity
 	agentIdentities        map[string]model.AgentIdentity
 }
@@ -26,6 +27,7 @@ func NewMemoryStore() *MemoryStore {
 		resources:              make(map[model.ResourceID]model.Resource),
 		sandboxes:              make(map[model.SandboxID]model.Sandbox),
 		agentTokens:            make(map[model.AgentTokenID]model.AgentRegistrationToken),
+		apiKeys:                make(map[model.APIKeyID]model.APIKey),
 		revokedAgentIdentities: make(map[model.AgentIdentityID]model.RevokedAgentIdentity),
 		agentIdentities:        make(map[string]model.AgentIdentity),
 	}
@@ -189,6 +191,52 @@ func (s *MemoryStore) DeleteAgentToken(_ context.Context, id model.AgentTokenID)
 	}
 	delete(s.agentTokens, id)
 	return nil
+}
+
+func (s *MemoryStore) GetAPIKey(_ context.Context, id model.APIKeyID) (model.APIKey, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key, ok := s.apiKeys[id]
+	if !ok {
+		return model.APIKey{}, ErrNotFound
+	}
+	return key, nil
+}
+
+func (s *MemoryStore) PutAPIKey(_ context.Context, key model.APIKey) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if key.ID == "" {
+		return fmt.Errorf("api key id is required")
+	}
+	if key.Hash == "" {
+		return fmt.Errorf("api key hash is required")
+	}
+	if !key.Role.Valid() {
+		return fmt.Errorf("api key role %q is invalid", key.Role)
+	}
+	s.apiKeys[key.ID] = key
+	return nil
+}
+
+func (s *MemoryStore) DeleteAPIKey(_ context.Context, id model.APIKeyID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.apiKeys[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.apiKeys, id)
+	return nil
+}
+
+func (s *MemoryStore) ListAPIKeys(_ context.Context) ([]model.APIKey, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]model.APIKey, 0, len(s.apiKeys))
+	for _, key := range s.apiKeys {
+		out = append(out, key)
+	}
+	return out, nil
 }
 
 func (s *MemoryStore) ListAgentTokens(_ context.Context) ([]model.AgentRegistrationToken, error) {

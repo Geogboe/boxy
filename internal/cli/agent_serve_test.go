@@ -5,11 +5,13 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/Geogboe/boxy/internal/agentserver"
 	"github.com/Geogboe/boxy/internal/pool"
+	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
@@ -157,6 +159,53 @@ func TestAgentServe_RequiresCACertForFirstConnection(t *testing.T) {
 	}
 	if err := runAgentServe(context.Background(), opts); err == nil {
 		t.Fatal("expected an error when --ca-cert is missing for a token-based first connection")
+	}
+}
+
+// TestPersistAgentCredentials_ReappliesPermissionsOnRewrite guards the same
+// bug class as issue #158 (os.WriteFile's mode argument is only applied by
+// the OS when it creates a new file — on rewrite of a pre-existing file, it
+// silently keeps whatever permissions the file already had). This path
+// persists the agent's private key (client.key) and runs on every
+// successful registration per RemoteClientConfig.OnRegistered's doc
+// comment, including reconnects over already-persisted credentials, so the
+// rewrite case is the normal case here, not an edge case.
+func TestPersistAgentCredentials_ReappliesPermissionsOnRewrite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits don't apply on windows")
+	}
+	dataDir := t.TempDir()
+	resp := &boxyagentv1.RegisterResponse{
+		AgentId:              "agent-1",
+		ClientCertificatePem: []byte("cert-1"),
+		ClientPrivateKeyPem:  []byte("key-1"),
+		CaCertificatePem:     []byte("ca-1"),
+	}
+	if err := persistAgentCredentials(dataDir, resp); err != nil {
+		t.Fatalf("persistAgentCredentials (first): %v", err)
+	}
+
+	keyPath := filepath.Join(dataDir, agentClientKeyFile)
+	if err := os.Chmod(keyPath, 0o644); err != nil {
+		t.Fatalf("loosen permissions: %v", err)
+	}
+
+	resp2 := &boxyagentv1.RegisterResponse{
+		AgentId:              "agent-1",
+		ClientCertificatePem: []byte("cert-2"),
+		ClientPrivateKeyPem:  []byte("key-2"),
+		CaCertificatePem:     []byte("ca-2"),
+	}
+	if err := persistAgentCredentials(dataDir, resp2); err != nil {
+		t.Fatalf("persistAgentCredentials (second, rewrite): %v", err)
+	}
+
+	info, err := os.Stat(keyPath)
+	if err != nil {
+		t.Fatalf("stat client.key: %v", err)
+	}
+	if got, want := info.Mode().Perm(), os.FileMode(0o600); got != want {
+		t.Fatalf("client.key permissions = %04o, want %04o", got, want)
 	}
 }
 

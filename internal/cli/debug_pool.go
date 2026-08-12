@@ -35,7 +35,7 @@ func newDebugPoolDrainCommand(serverAddr func() string) *cobra.Command {
 			}
 			pool, err := postJSON[map[string]any, model.Pool](
 				cmd.Context(),
-				maintenanceAPIClient(),
+				maintenanceAPIClientForServer(serverAddr()),
 				apiBaseURL(serverAddr())+"/api/v1/pools/"+name+"/drain",
 				map[string]any{},
 			)
@@ -60,7 +60,7 @@ func newDebugPoolFillCommand(serverAddr func() string) *cobra.Command {
 			}
 			pool, err := postJSON[map[string]any, model.Pool](
 				cmd.Context(),
-				maintenanceAPIClient(),
+				maintenanceAPIClientForServer(serverAddr()),
 				apiBaseURL(serverAddr())+"/api/v1/pools/"+name+"/fill",
 				map[string]any{},
 			)

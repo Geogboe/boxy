@@ -47,7 +47,7 @@ func newAgentTokenCreateCommand(serverAddr func() string) *cobra.Command {
 					return fmt.Errorf("invalid ttl %q: %w", ttl, err)
 				}
 			}
-			client := defaultAPIClient()
+			client := apiClientForServer(serverAddr())
 			base := apiBaseURL(serverAddr())
 			resp, err := postJSON[createAgentTokenRequest, createAgentTokenResponse](
 				cmd.Context(), client, base+"/api/v1/agent-tokens",
@@ -86,7 +86,7 @@ func newAgentTokenListCommand(serverAddr func() string) *cobra.Command {
 		Short: "List registration tokens",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client := defaultAPIClient()
+			client := apiClientForServer(serverAddr())
 			base := apiBaseURL(serverAddr())
 			toks, err := fetchJSON[[]agentTokenSummary](cmd.Context(), client, base+"/api/v1/agent-tokens")
 			if err != nil {
@@ -121,7 +121,7 @@ func newAgentTokenRevokeCommand(serverAddr func() string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			client := defaultAPIClient()
+			client := apiClientForServer(serverAddr())
 			base := apiBaseURL(serverAddr())
 			if err := deleteNoContent(cmd.Context(), client, base+"/api/v1/agent-tokens/"+id); err != nil {
 				return err

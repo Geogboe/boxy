@@ -6,7 +6,7 @@ Periodically update this document with guidelines, architectural decisions, less
 
 - **Module:** `github.com/Geogboe/boxy`
 - **Go version:** 1.25
-- **Dependencies:** cobra (CLI), yaml.v3 (config parsing)
+- **Dependencies:** cobra (CLI), yaml.v3 (config parsing), go-keyring (OS credential storage)
 
 ## Issue Tracking
 
@@ -72,6 +72,7 @@ docs/adr/             # Architecture Decision Records
 - `boxy serve` persists runtime state in `.boxy/state.json` next to the active config (or under the working directory when no config file is used), so accepted async sandbox requests survive normal daemon restarts.
 - `boxy sandbox create -f ...` is daemon-backed: the CLI loads a sandbox spec, resolves named pools from the daemon pool catalog, submits async `requests`, and waits for `ready`/`failed` by default. Use `--no-wait` to return after the daemon accepts the request.
 - `Policies.AutoDestroyAfter` (`auto_destroy_after` in requests) is enforced (as of 2026-07): sandbox creation computes a real `ExpiresAt`, and the existing async-deletion reconciler (`internal/sandbox/deleter.go`, ticked every 10s alongside everything else) promotes expired sandboxes into deletion. `POST /api/v1/sandboxes/{id}/extend` / `boxy sandbox extend <id> <duration>` push the deadline out, compounding from the current `ExpiresAt` rather than resetting from now. See ADR-0003.
+- `POST /api/v1/sandboxes/{id}/exec` and `boxy sandbox exec` execute non-interactive commands only in ready sandboxes. Single-resource sandboxes select implicitly; multi-resource sandboxes require `resource_id`/`--resource`. `stream=true`/`--stream` gives live NDJSON with bounded output and timeout enforcement; interactive stdin/PTY is intentionally out of scope. See [ADR-0008](docs/adr/0008-streaming-command-execution.md) for the full status-code contract (413/504/500), streaming-vs-buffered semantics, and a known test-coverage gap in `pkg/psdirect`.
 - Preferred phrasing when describing compositions:
   - "container sandbox" (1 container)
   - "3 VM lab sandbox" (multi-VM lab)
@@ -93,6 +94,7 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
 - **PolicyController**: reconciler that compares desired vs actual pool state and issues driver operations (`pkg/policycontroller/`)
 - **`pkg/agentsdk` (live) vs. a config-declared `agents:` list (removed, 2026-07)**: don't confuse these. `pkg/agentsdk.EmbeddedAgent` is real, in-process code wired into `boxy serve` today. A separate `Config.Agents`/`AgentSpec` field once existed for a *pull-model* remote agent (server dials out to a static agent address) but was dead code — never read anywhere — and has been deleted. The actual remote-agent design is a *push* model, **implemented 2026-07** (#37/#62) per [ADR-0005](docs/adr/0005-remote-agent-transport-and-registration.md): `boxy agent serve` dials the daemon over gRPC bidirectional streaming with full mTLS from a boxy-owned private CA, bootstrapped by a single-use token exchanged for a client cert. Per-resource agent provenance (`ProviderRef.AgentID`) ensures `Destroy`/`Allocate` route to the exact agent that created a resource rather than any agent offering the same provider type; `PoolSpec.Agent` pins a pool to a specific agent.
 - `boxy debug provider *` (drives the in-process `devfactory` reference driver directly, bypassing the daemon) is compiled only with `-tags devtools` and is absent from release binaries. `boxy debug pool drain/fill` is a separate, always-available command that does go through the daemon's HTTP API.
+- Streaming is an optional `providersdk.StreamingDriver`/`agentsdk.StreamingAgent` capability routed through `pkg/eventstream`; Docker, devfactory, SSH guests, and PowerShell Direct guests can emit live events. Unsupported custom providers return a capability error instead of buffering unary output as a fake stream.
 
 ### Bundled Agent Skill
 
@@ -151,6 +153,23 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   `Fixes`/`Resolves`) for GitHub to auto-close the issue on merge. Referencing
   `#N` alone (e.g. "part of #133") does not trigger auto-close — check and
   close manually if it was missed.
+- **`pkg/psdirect`'s `Exec.ExecStream` is uncovered by tests, deliberately** —
+  PSRP's `StreamResult` has no constructible test double without a
+  production interface seam. See [ADR-0008](docs/adr/0008-streaming-command-execution.md)'s
+  Consequences for the full reasoning; don't rediscover this from scratch.
+- **A feature branch can go stale mid-session** if another PR merges to
+  `main` while you're working — a clean `git push` succeeding says nothing
+  about whether the PR's base is current. During #162 (2026-08), an
+  unrelated PR (#159, a large service-install feature) and a release-please
+  release both merged to `main` after this branch's base commit. Before
+  opening or merging a PR that's been in progress for a while, `git fetch
+  origin main` and check `git log main..origin/main`; if it's non-empty,
+  `git merge --no-commit --no-ff origin/main` locally, resolve conflicts,
+  and rerun the full test suite before pushing — don't assume a same-repo
+  file that merged cleanly actually kept both sides' changes without
+  checking (see ADR-0009's file list for what #162 touched that #159 also
+  touched: `internal/cli/agent_serve.go`, `agent.go`, `serve.go`, and the
+  bundled skill all needed a real 3-way merge, not just a fast-forward).
 
 ## ADRs
 
@@ -189,7 +208,7 @@ Wrap repeated commands in `Taskfile.yml`. If a command is run more than once, ad
 
 ## Tools
 
-- `gopls` is available locally for code navigation, refactoring, and linting.
+- `gopls` is available locally for code navigation, refactoring, and linting. Use the Go language server whenever possible when reading, navigating, analyzing, or modifying Go code; prefer its symbol, reference, diagnostic, and refactoring capabilities over broad text searches or manual edits for greater efficiency and correctness.
 - `task` (go-task) for running project commands.
 - `task lint` mirrors CI by running `golangci-lint` v2 from source via `go run`, so it does not depend on a preinstalled local binary version.
 - GoReleaser is pinned in the isolated `tools/` module; use `task release:check` and `task release:snapshot` instead of assuming a global `goreleaser` binary is installed.
@@ -245,6 +264,30 @@ it's no longer needed. See #100.
   actual `release.yml` before referencing signing in docs or code — this
   section itself was previously stale and described signing that was never
   actually wired up.
+
+## Current Delivery Notes
+
+- Secure REST/CLI management (#154), sandbox command execution (#153), and
+  the file-permission-on-rewrite sweep (#158) landed together in #162
+  (2026-08). See [ADR-0007](docs/adr/0007-secure-rest-api-and-cli-authentication.md),
+  [ADR-0008](docs/adr/0008-streaming-command-execution.md), and
+  [ADR-0009](docs/adr/0009-file-permission-hardening-on-rewrite.md) for the
+  decisions and their dated change notes.
+- REST handlers are currently hand-wired under `internal/server/api_*.go`.
+  Keep the route catalog, generated `docs/api.md`, CLI wireframe, and bundled
+  skill synchronized when adding routes or commands; use `task generate`.
+- API keys are hashed in the daemon store and raw values belong only in the OS
+  keyring. The first admin key is loopback-bootstrap-only; TLS uses the Boxy CA
+  by default, `--ca-cert` for custom trust, and explicit insecure overrides —
+  including for a bare (schemeless) `--server` address, which defaults to
+  `https://`, not `http://` (ADR-0007).
+- `os.WriteFile`'s mode argument is ignored on rewrite of a pre-existing
+  file — any new write site handling sensitive or config material needs an
+  explicit `os.Chmod` follow-up unless it uses disk.go's write-tmp-then-rename
+  pattern. See ADR-0009 for the full file list and why rename is exempt.
+- For feature work, use TDD red/green/blue: add a failing test, implement the
+  smallest fix, then review/refactor with `gopls`; finish with `task test`,
+  `task lint`, and documentation/drift checks.
 
 # Deletions
 

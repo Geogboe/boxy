@@ -36,7 +36,7 @@ func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 	}
 	doneSpec(fmt.Sprintf("%s  (%d resource group(s))", spec.Name, len(spec.Resources)))
 
-	client := defaultAPIClient()
+	client := apiClientForServer(opts.server)
 	base := apiBaseURL(opts.server)
 
 	donePools, failPools := step("Loading pool catalog")
@@ -305,6 +305,9 @@ func writeEnvFile(sb model.Sandbox, resources []model.Resource, filename string)
 
 	if err := os.WriteFile(path, []byte(buf.String()), 0600); err != nil {
 		return fmt.Errorf("write env file: %w", err)
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		return fmt.Errorf("set env file permissions: %w", err)
 	}
 
 	pterm.Println()

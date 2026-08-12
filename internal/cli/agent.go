@@ -49,7 +49,7 @@ func newAgentListCommand(serverAddr func() string) *cobra.Command {
 		Short: "List registered agents and their availability",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client := defaultAPIClient()
+			client := apiClientForServer(serverAddr())
 			base := apiBaseURL(serverAddr())
 			agents, err := fetchJSON[[]agentSummary](cmd.Context(), client, base+"/api/v1/agents")
 			if err != nil {
@@ -84,7 +84,7 @@ func newAgentRevokeCommand(serverAddr func() string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			client := defaultAPIClient()
+			client := apiClientForServer(serverAddr())
 			base := apiBaseURL(serverAddr())
 			body := struct {
 				Reason               string `json:"reason,omitempty"`

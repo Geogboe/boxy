@@ -20,7 +20,7 @@ func newSandboxListCommand(serverAddr func() string) *cobra.Command {
 				return fmt.Errorf("unknown --format %q: want json or table", format)
 			}
 
-			client := defaultAPIClient()
+			client := apiClientForServer(serverAddr())
 			base := apiBaseURL(serverAddr())
 
 			sbs, err := fetchJSON[[]model.Sandbox](cmd.Context(), client, base+"/api/v1/sandboxes")

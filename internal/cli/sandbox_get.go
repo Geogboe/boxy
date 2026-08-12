@@ -32,7 +32,7 @@ func newSandboxGetCommand(serverAddr func() string) *cobra.Command {
 				return err
 			}
 
-			client := defaultAPIClient()
+			client := apiClientForServer(serverAddr())
 			base := apiBaseURL(serverAddr())
 
 			sb, err := fetchJSON[model.Sandbox](cmd.Context(), client, base+"/api/v1/sandboxes/"+id)

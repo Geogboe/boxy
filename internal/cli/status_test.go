@@ -29,10 +29,14 @@ func TestRunStatus_Healthy(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	addr := srv.Listener.Addr().String()
+	// srv.URL (not the bare listener address): apiBaseURL now defaults a
+	// schemeless --server address to https://, matching boxy serve's
+	// HTTPS-by-default posture, but httptest.NewServer serves plain HTTP —
+	// this test's fake server needs its explicit http:// scheme carried
+	// through, same as a real deployment behind plain HTTP would need it.
 	cmd := newStatusCommand()
 	stdout, stderr := captureCommandOutput(cmd)
-	cmd.SetArgs([]string{"--server", addr})
+	cmd.SetArgs([]string{"--server", srv.URL})
 	execErr := cmd.ExecuteContext(context.Background())
 
 	if execErr != nil {
@@ -78,10 +82,10 @@ func TestRunStatus_Unhealthy(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	addr := srv.Listener.Addr().String()
+	// srv.URL, not the bare listener address — see TestRunStatus_Healthy.
 	cmd := newStatusCommand()
 	stdout, stderr := captureCommandOutput(cmd)
-	cmd.SetArgs([]string{"--server", addr})
+	cmd.SetArgs([]string{"--server", srv.URL})
 	err := cmd.ExecuteContext(context.Background())
 	if err == nil {
 		t.Fatal("expected error when server is unhealthy")

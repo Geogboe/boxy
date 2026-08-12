@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"sync"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc/metadata"
 
 	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
+	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
@@ -67,6 +69,104 @@ func (d *fakeDriver) Delete(ctx context.Context, id string) error {
 
 func (d *fakeDriver) Allocate(ctx context.Context, id string) (map[string]any, error) {
 	return d.allocateRes, d.allocateErr
+}
+
+type fakeStreamingDriver struct {
+	*fakeDriver
+}
+
+func (d *fakeStreamingDriver) UpdateStream(ctx context.Context, id string, op providersdk.Operation, sink eventstream.Sink) (*providersdk.Result, error) {
+	if err := sink.Send(ctx, eventstream.Event{Kind: eventstream.Data, Channel: eventstream.Channel("stdout"), Payload: []byte("live")}); err != nil {
+		return nil, err
+	}
+	return &providersdk.Result{Outputs: map[string]string{"exit_code": "0"}}, nil
+}
+
+func TestExecuteStreamingCommandForwardsDataAndCompletion(t *testing.T) {
+	var sent []*boxyagentv1.AgentMessage
+	driver := &fakeStreamingDriver{fakeDriver: &fakeDriver{providerType: "docker"}}
+	operation, _ := json.Marshal(&providersdk.ExecOperation{Command: []string{"echo", "hi"}})
+	cmd := &boxyagentv1.Command{
+		CommandId:    "stream-1",
+		ProviderType: "docker",
+		Op: &boxyagentv1.Command_Update{Update: &boxyagentv1.UpdateCommand{
+			ResourceId:    "resource-1",
+			OperationJson: operation,
+			Stream:        true,
+		}},
+	}
+	executeStreamingCommand(context.Background(), DriverSet{"docker": driver}, cmd, func(message *boxyagentv1.AgentMessage) error {
+		sent = append(sent, message)
+		return nil
+	})
+	if len(sent) != 2 {
+		t.Fatalf("sent %d messages, want data and completion", len(sent))
+	}
+	if got := sent[0].GetResult().GetOperationStream().GetData(); string(got) != "live" {
+		t.Fatalf("stream data = %q, want live", got)
+	}
+	if !sent[1].GetResult().GetOperationStream().GetComplete() {
+		t.Fatal("last message is not a completion")
+	}
+	if got := sent[1].GetResult().GetOperationStream().GetAttributes()["exit_code"]; got != "0" {
+		t.Fatalf("exit_code = %q, want 0", got)
+	}
+}
+
+// TestRemoteStreamSink_ConcurrentSendDoesNotRaceOrDoubleComplete guards a gap
+// a GitHub Copilot review on this PR caught: remoteStreamSink.completed was
+// a bare bool read/written from Send/complete with no synchronization. Every
+// concrete driver in this codebase happens to fan its stream events through
+// a single consumer goroutine, so the race was never reachable via the
+// drivers actually wired up here — but providersdk.StreamingDriver (and
+// eventstream.Sink) is a public interface, and nothing in Sink's contract
+// promises Send is only ever called from one goroutine at a time (e.g. a
+// driver with independent concurrent stdout/stderr forwarders, the same
+// shape pkg/vmsdk/ssh.go's ExecStream uses internally before serializing
+// down to one consumer). This test drives Send concurrently the way such a
+// driver could, run under `go test -race` in CI (not available on this
+// dev machine's windows/arm64 host) to catch the data race directly; it
+// also asserts the logical invariant a race could otherwise violate: at
+// most one Complete event ever reaches the wire.
+func TestRemoteStreamSink_ConcurrentSendDoesNotRaceOrDoubleComplete(t *testing.T) {
+	var mu sync.Mutex
+	var sent []*boxyagentv1.AgentMessage
+	sink := &remoteStreamSink{
+		commandID: "cmd-1",
+		send: func(message *boxyagentv1.AgentMessage) error {
+			mu.Lock()
+			defer mu.Unlock()
+			sent = append(sent, message)
+			return nil
+		},
+	}
+
+	const n = 20
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := range n {
+		go func(i int) {
+			defer wg.Done()
+			if i%4 == 0 {
+				_ = sink.Send(context.Background(), eventstream.Event{Kind: eventstream.Complete, Completion: &eventstream.Completion{Attributes: map[string]string{"exit_code": "0"}}})
+				return
+			}
+			_ = sink.Send(context.Background(), eventstream.Event{Kind: eventstream.Data, Channel: eventstream.Channel("stdout"), Payload: []byte("x")})
+		}(i)
+	}
+	wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	completes := 0
+	for _, m := range sent {
+		if m.GetResult().GetOperationStream().GetComplete() {
+			completes++
+		}
+	}
+	if completes != 1 {
+		t.Fatalf("got %d Complete events sent, want exactly 1", completes)
+	}
 }
 
 // fakeListingDriver adds providersdk.ResourceLister on top of fakeDriver, so

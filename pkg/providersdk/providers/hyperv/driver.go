@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/psdirect"
 	"github.com/Geogboe/boxy/pkg/vmsdk"
@@ -239,10 +240,9 @@ func normalizeVMState(s string) string {
 
 // --- Update ---
 
-// ExecOp runs a command on the VM guest.
-type ExecOp struct {
-	Command []string
-}
+// ExecOp is retained as a provider-specific spelling of the shared command
+// operation for compatibility with existing callers.
+type ExecOp = providersdk.ExecOperation
 
 func (d *Driver) Update(ctx context.Context, id string, op providersdk.Operation) (*providersdk.Result, error) {
 	switch o := op.(type) {
@@ -318,6 +318,79 @@ func (d *Driver) execOnGuest(ctx context.Context, id string, op *ExecOp) (*provi
 			"exit_code": strconv.Itoa(result.ExitCode),
 		},
 	}, nil
+}
+
+// UpdateStream forwards a guest's native streaming capability. Hyper-V
+// providers that cannot stream return an explicit capability error rather than
+// buffering unary output and presenting it as live data.
+func (d *Driver) UpdateStream(ctx context.Context, id string, op providersdk.Operation, sink eventstream.Sink) (*providersdk.Result, error) {
+	execOp, ok := op.(*ExecOp)
+	if !ok {
+		return nil, fmt.Errorf("unsupported streaming operation type %T", op)
+	}
+	if len(execOp.Command) == 0 {
+		return nil, fmt.Errorf("ExecOp.Command is empty")
+	}
+	if sink == nil {
+		return nil, fmt.Errorf("stream sink is required")
+	}
+
+	notes, err := d.readNotes(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("read VM notes for %s: %w", id, err)
+	}
+	guestOS := notes["boxy_guest_os"]
+	if guestOS == "" {
+		guestOS = "windows"
+	}
+	guestUser := notes["boxy_guest_user"]
+	guestPassword, err := d.resolveGuestPassword(ctx, notes)
+	if err != nil {
+		return nil, fmt.Errorf("resolve guest password for %s: %w", id, err)
+	}
+
+	var ge vmsdk.GuestExec
+	if d.guestExecFactory != nil {
+		sshHost := ""
+		if strings.EqualFold(guestOS, "linux") {
+			vmName, err := d.vmNameFromID(ctx, id)
+			if err != nil {
+				return nil, fmt.Errorf("resolve VM name for %s: %w", id, err)
+			}
+			sshHost, err = d.vmIP(ctx, vmName)
+			if err != nil {
+				return nil, fmt.Errorf("get VM IP for %s: %w", vmName, err)
+			}
+		}
+		ge = d.guestExecFactory(id, guestOS, guestUser, guestPassword, sshHost)
+	} else {
+		switch strings.ToLower(guestOS) {
+		case "linux":
+			vmName, err := d.vmNameFromID(ctx, id)
+			if err != nil {
+				return nil, fmt.Errorf("resolve VM name for %s: %w", id, err)
+			}
+			ip, err := d.vmIP(ctx, vmName)
+			if err != nil {
+				return nil, fmt.Errorf("get VM IP for %s: %w", vmName, err)
+			}
+			ge = &vmsdk.SSHExec{Host: ip, User: guestUser, Password: guestPassword}
+		default:
+			ge = psdirect.New(id, guestUser, guestPassword)
+		}
+	}
+
+	streamer, ok := ge.(vmsdk.GuestExecStreamer)
+	if !ok {
+		return nil, fmt.Errorf("hyperv %s guest does not support streaming execution", guestOS)
+	}
+	result, err := streamer.ExecStream(ctx, execOp.Command[0], execOp.Command[1:], sink)
+	if err != nil {
+		return nil, fmt.Errorf("stream exec on %s guest (VM %s): %w", guestOS, id, err)
+	}
+	return &providersdk.Result{Outputs: map[string]string{
+		"exit_code": strconv.Itoa(result.ExitCode),
+	}}, nil
 }
 
 // --- Delete ---

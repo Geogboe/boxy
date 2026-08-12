@@ -29,7 +29,7 @@ func newSandboxExtendCommand(serverAddr func() string) *cobra.Command {
 				return fmt.Errorf("invalid duration %q: %w", durationArg, err)
 			}
 
-			client := defaultAPIClient()
+			client := apiClientForServer(serverAddr())
 			base := apiBaseURL(serverAddr())
 
 			sb, err := postJSON[extendSandboxRequest, model.Sandbox](

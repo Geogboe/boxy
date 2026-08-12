@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
+	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
@@ -28,8 +29,9 @@ type RemoteAgent struct {
 	info   AgentInfo
 	stream boxyagentv1.AgentTransportService_ConnectServer
 
-	mu      sync.Mutex
-	pending map[string]chan *boxyagentv1.CommandResult
+	mu            sync.Mutex
+	pending       map[string]chan *boxyagentv1.CommandResult
+	streamPending map[string]*streamWaiter
 
 	// sendMu serializes Send calls: a single gRPC stream is not safe for
 	// concurrent use by multiple goroutines on the send side.
@@ -45,16 +47,31 @@ type RemoteAgent struct {
 	closeOnce sync.Once
 }
 
+// streamWaiter is one UpdateStream call's registration in streamPending.
+// done is closed by that specific call's cleanup (deferred, so it runs on
+// every exit path — a full result, ctx expiry, a.closed, or a sink error)
+// and exists so deliver() can bound its send by "this particular waiter
+// gave up" in addition to "the whole connection closed" (a.closed): the
+// exec context's own deadline (default 30s, max 5m — see
+// internal/server/api_exec.go) is entirely independent of the connection's
+// health, so a.closed alone left deliver() with no way to notice a timed-out
+// (but otherwise healthy) waiter and could block forever on a full ch.
+type streamWaiter struct {
+	ch   chan *boxyagentv1.CommandResult
+	done chan struct{}
+}
+
 var _ GuestPersonalizingAgent = (*RemoteAgent)(nil)
 
 // NewRemoteAgent wraps a server-side stream handle for one connected agent.
 // The caller must run Serve in its own goroutine to pump incoming frames.
 func NewRemoteAgent(info AgentInfo, stream boxyagentv1.AgentTransportService_ConnectServer) *RemoteAgent {
 	a := &RemoteAgent{
-		info:    info,
-		stream:  stream,
-		pending: make(map[string]chan *boxyagentv1.CommandResult),
-		closed:  make(chan struct{}),
+		info:          info,
+		stream:        stream,
+		pending:       make(map[string]chan *boxyagentv1.CommandResult),
+		streamPending: make(map[string]*streamWaiter),
+		closed:        make(chan struct{}),
 	}
 	a.lastSeen.Store(time.Now().UnixNano())
 	return a
@@ -98,13 +115,35 @@ func (a *RemoteAgent) Serve() error {
 // Close tears down this agent's view of the connection: every call
 // currently blocked waiting on a CommandResult fails immediately rather
 // than hanging until its context deadline. Safe to call multiple times.
+//
+// It deliberately does not close the individual per-command channels in
+// pending/streamPending — only clears the maps. Closing a.closed already
+// unblocks every call()/UpdateStream waiter via their `case <-a.closed`
+// select arm, so closing the per-command channels too would be redundant,
+// and for streamPending it's actively unsafe: deliver() reads a channel
+// reference out of the map, releases a.mu, and only then sends on it, so a
+// concurrent Close() (called for real from Server.Revoke on a different
+// goroutine than the one running Serve()) could delete-and-close that same
+// channel in the gap, panicking deliver()'s send with "send on closed
+// channel". Leaving the channels open removes that race entirely: a late
+// send from deliver() after Close() just lands in an unread buffer that's
+// garbage collected once the waiter (already gone via a.closed) drops its
+// reference.
+//
+// It also never closes a streamWaiter's done channel — that's exclusively
+// UpdateStream's own deferred cleanup's job, exactly once per call. a.closed
+// already gives deliver() a connection-teardown signal; closing done here
+// too would risk a double-close panic if UpdateStream's own cleanup runs
+// concurrently.
 func (a *RemoteAgent) Close() {
 	a.closeOnce.Do(func() {
 		close(a.closed)
 		a.mu.Lock()
-		for id, ch := range a.pending {
+		for id := range a.pending {
 			delete(a.pending, id)
-			close(ch)
+		}
+		for id := range a.streamPending {
+			delete(a.streamPending, id)
 		}
 		a.mu.Unlock()
 	})
@@ -112,11 +151,35 @@ func (a *RemoteAgent) Close() {
 
 func (a *RemoteAgent) deliver(result *boxyagentv1.CommandResult) {
 	a.mu.Lock()
+	waiter, streamOK := a.streamPending[result.GetCommandId()]
+	if streamOK {
+		if result.GetOperationStream().GetComplete() || result.GetError() != nil {
+			delete(a.streamPending, result.GetCommandId())
+		}
+	}
 	ch, ok := a.pending[result.GetCommandId()]
 	if ok {
 		delete(a.pending, result.GetCommandId())
 	}
 	a.mu.Unlock()
+	if streamOK {
+		// A non-terminal event's specific waiter may already have given up
+		// — not just via the whole connection closing (a.closed), but via
+		// its own exec context expiring or its sink erroring, both entirely
+		// independent of connection health (see streamWaiter's doc comment).
+		// With the 32-slot buffer full and nothing left to drain it, a send
+		// bound only by a.closed could block forever on a healthy
+		// connection, and since deliver() runs inside Serve()'s single
+		// receive loop, that would wedge the whole agent connection, not
+		// just this one command. waiter.done — closed by UpdateStream's
+		// deferred cleanup on every exit path — closes that gap.
+		select {
+		case waiter.ch <- result:
+		case <-a.closed:
+		case <-waiter.done:
+		}
+		return
+	}
 	if ok {
 		ch <- result
 	}
@@ -229,6 +292,87 @@ func (a *RemoteAgent) Update(ctx context.Context, provider providersdk.Type, id 
 		return nil, fmt.Errorf("agent %q: unexpected result for update", a.info.ID)
 	}
 	return &providersdk.Result{Outputs: out.GetOutputs()}, nil
+}
+
+func (a *RemoteAgent) UpdateStream(ctx context.Context, provider providersdk.Type, id string, op providersdk.Operation, sink eventstream.Sink) (*providersdk.Result, error) {
+	if sink == nil {
+		return nil, fmt.Errorf("agent %q: stream sink is required", a.info.ID)
+	}
+	opJSON, err := json.Marshal(op)
+	if err != nil {
+		return nil, fmt.Errorf("agent %q: marshal streaming update operation: %w", a.info.ID, err)
+	}
+	cmd := &boxyagentv1.Command{
+		ProviderType: string(provider),
+		Op: &boxyagentv1.Command_Update{Update: &boxyagentv1.UpdateCommand{
+			ResourceId:    id,
+			OperationJson: opJSON,
+			Stream:        true,
+		}},
+	}
+	cmd.CommandId = uuid.NewString()
+	waiter := &streamWaiter{ch: make(chan *boxyagentv1.CommandResult, 32), done: make(chan struct{})}
+	a.mu.Lock()
+	a.streamPending[cmd.CommandId] = waiter
+	a.mu.Unlock()
+	cleanup := func() {
+		a.mu.Lock()
+		delete(a.streamPending, cmd.CommandId)
+		a.mu.Unlock()
+		// Closed last, and only here: this is the single deferred call for
+		// this UpdateStream invocation, so it runs exactly once no matter
+		// which return path is taken — deliver() relies on that (a second
+		// close would panic exactly like the bug fixed two rounds ago).
+		close(waiter.done)
+	}
+	defer cleanup()
+
+	a.sendMu.Lock()
+	err = a.stream.Send(&boxyagentv1.ServerMessage{Payload: &boxyagentv1.ServerMessage_Command{Command: cmd}})
+	a.sendMu.Unlock()
+	if err != nil {
+		return nil, fmt.Errorf("agent %q: send streaming command: %w", a.info.ID, err)
+	}
+
+	for {
+		select {
+		case result, ok := <-waiter.ch:
+			if !ok || result == nil {
+				return nil, fmt.Errorf("agent %q: connection closed while streaming command %s", a.info.ID, cmd.CommandId)
+			}
+			if agentErr := result.GetError(); agentErr != nil {
+				return nil, fmt.Errorf("agent %q: %s", a.info.ID, agentErr.GetMessage())
+			}
+			if event := result.GetOperationStream(); event != nil {
+				if event.GetComplete() {
+					if event.GetError() != "" {
+						return nil, fmt.Errorf("agent %q: %s", a.info.ID, event.GetError())
+					}
+					completion := eventstream.Completion{Attributes: event.GetAttributes()}
+					if err := sink.Send(ctx, eventstream.Event{Kind: eventstream.Complete, Completion: &completion}); err != nil {
+						return nil, err
+					}
+					return &providersdk.Result{Outputs: event.GetAttributes()}, nil
+				}
+				if err := sink.Send(ctx, eventstream.Event{Kind: eventstream.Data, Channel: eventstream.Channel(event.GetChannel()), Payload: append([]byte(nil), event.GetData()...)}); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			if result.GetOperation() != nil {
+				outputs := result.GetOperation().GetOutputs()
+				completion := eventstream.Completion{Attributes: outputs}
+				if err := sink.Send(ctx, eventstream.Event{Kind: eventstream.Complete, Completion: &completion}); err != nil {
+					return nil, err
+				}
+				return &providersdk.Result{Outputs: outputs}, nil
+			}
+		case <-a.closed:
+			return nil, fmt.Errorf("agent %q: connection closed while streaming command %s", a.info.ID, cmd.CommandId)
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 }
 
 func (a *RemoteAgent) Delete(ctx context.Context, provider providersdk.Type, id string) error {

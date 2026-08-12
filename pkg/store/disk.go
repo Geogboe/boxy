@@ -27,6 +27,7 @@ type diskState struct {
 	Resources              map[model.ResourceID]model.Resource                  `json:"resources"`
 	Sandboxes              map[model.SandboxID]model.Sandbox                    `json:"sandboxes"`
 	AgentTokens            map[model.AgentTokenID]model.AgentRegistrationToken  `json:"agent_tokens"`
+	APIKeys                map[model.APIKeyID]model.APIKey                      `json:"api_keys"`
 	RevokedAgentIdentities map[model.AgentIdentityID]model.RevokedAgentIdentity `json:"revoked_agent_identities"`
 	AgentIdentities        map[string]model.AgentIdentity                       `json:"agent_identities"`
 }
@@ -42,6 +43,7 @@ func NewDiskStore(path string) (*DiskStore, error) {
 			Resources:              make(map[model.ResourceID]model.Resource),
 			Sandboxes:              make(map[model.SandboxID]model.Sandbox),
 			AgentTokens:            make(map[model.AgentTokenID]model.AgentRegistrationToken),
+			APIKeys:                make(map[model.APIKeyID]model.APIKey),
 			RevokedAgentIdentities: make(map[model.AgentIdentityID]model.RevokedAgentIdentity),
 			AgentIdentities:        make(map[string]model.AgentIdentity),
 		},
@@ -81,6 +83,9 @@ func (s *DiskStore) load() error {
 	}
 	if st.AgentTokens == nil {
 		st.AgentTokens = make(map[model.AgentTokenID]model.AgentRegistrationToken)
+	}
+	if st.APIKeys == nil {
+		st.APIKeys = make(map[model.APIKeyID]model.APIKey)
 	}
 	if st.RevokedAgentIdentities == nil {
 		st.RevokedAgentIdentities = make(map[model.AgentIdentityID]model.RevokedAgentIdentity)
@@ -279,6 +284,52 @@ func (s *DiskStore) ListAgentTokens(_ context.Context) ([]model.AgentRegistratio
 	out := make([]model.AgentRegistrationToken, 0, len(s.data.AgentTokens))
 	for _, tok := range s.data.AgentTokens {
 		out = append(out, tok)
+	}
+	return out, nil
+}
+
+func (s *DiskStore) GetAPIKey(_ context.Context, id model.APIKeyID) (model.APIKey, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key, ok := s.data.APIKeys[id]
+	if !ok {
+		return model.APIKey{}, ErrNotFound
+	}
+	return key, nil
+}
+
+func (s *DiskStore) PutAPIKey(_ context.Context, key model.APIKey) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if key.ID == "" {
+		return fmt.Errorf("api key id is required")
+	}
+	if key.Hash == "" {
+		return fmt.Errorf("api key hash is required")
+	}
+	if !key.Role.Valid() {
+		return fmt.Errorf("api key role %q is invalid", key.Role)
+	}
+	s.data.APIKeys[key.ID] = key
+	return s.persistLocked()
+}
+
+func (s *DiskStore) DeleteAPIKey(_ context.Context, id model.APIKeyID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.data.APIKeys[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.data.APIKeys, id)
+	return s.persistLocked()
+}
+
+func (s *DiskStore) ListAPIKeys(_ context.Context) ([]model.APIKey, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]model.APIKey, 0, len(s.data.APIKeys))
+	for _, key := range s.data.APIKeys {
+		out = append(out, key)
 	}
 	return out, nil
 }

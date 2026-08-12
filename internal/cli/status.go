@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	boxyconfig "github.com/Geogboe/boxy/internal/config"
 	"github.com/Geogboe/boxy/pkg/model"
@@ -35,7 +36,7 @@ func runStatus(ctx context.Context, opts statusOpts, cmd *cobra.Command) error {
 	addr := resolveServerAddr(opts, cmd)
 	base := apiBaseURL(addr)
 
-	client := defaultAPIClient()
+	client := apiClientForServer(addr)
 
 	// Health check
 	healthy, err := checkHealth(ctx, client, base)
@@ -86,11 +87,18 @@ func resolveServerAddr(opts statusOpts, cmd *cobra.Command) string {
 	if opts.configPath != "" {
 		cfg, err := boxyconfig.LoadFile(opts.configPath)
 		if err == nil && cfg.Server.Listen != "" {
-			return displayAddr(cfg.Server.Listen)
+			return secureServerURL(displayAddr(cfg.Server.Listen))
 		}
 	}
 
-	return "127.0.0.1:9090"
+	return "https://127.0.0.1:9090"
+}
+
+func secureServerURL(addr string) string {
+	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
+		return addr
+	}
+	return "https://" + addr
 }
 
 func checkHealth(ctx context.Context, client *http.Client, base string) (bool, error) {

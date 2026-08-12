@@ -18,6 +18,7 @@ import (
 	"github.com/docker/docker/client"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
+	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
@@ -93,7 +94,48 @@ func runningInspect(id, name string) container.InspectResponse {
 	}
 }
 
-// stdcopyFrame builds a Docker multiplexed stream frame (stdout).
+func TestDriver_UpdateStreamEmitsLiveOutput(t *testing.T) {
+	mock := &mockDockerClient{
+		containerExecCreate: func(_ context.Context, id string, opts container.ExecOptions) (container.ExecCreateResponse, error) {
+			if id != "container-1" || len(opts.Cmd) != 1 || opts.Cmd[0] != "hostname" {
+				t.Fatalf("exec create = id %q opts %+v", id, opts)
+			}
+			return container.ExecCreateResponse{ID: "exec-1"}, nil
+		},
+		containerExecAttach: func(_ context.Context, id string, _ container.ExecAttachOptions) (types.HijackedResponse, error) {
+			if id != "exec-1" {
+				t.Fatalf("exec attach id = %q, want exec-1", id)
+			}
+			return pipeHijack(stdcopyFrame("hello\n")), nil
+		},
+		containerExecInspect: func(_ context.Context, _ string) (container.ExecInspect, error) {
+			return container.ExecInspect{ExitCode: 0}, nil
+		},
+	}
+	d := &Driver{cli: mock}
+	sink := &recordingEventSink{}
+	result, err := d.UpdateStream(context.Background(), "container-1", &ExecOp{Command: []string{"hostname"}}, sink)
+	if err != nil {
+		t.Fatalf("UpdateStream: %v", err)
+	}
+	if result.Outputs["exit_code"] != "0" {
+		t.Fatalf("exit_code = %q, want 0", result.Outputs["exit_code"])
+	}
+	if len(sink.events) != 1 || string(sink.events[0].Payload) != "hello\n" || sink.events[0].Channel != eventstream.Channel("stdout") {
+		t.Fatalf("events = %+v, want stdout hello newline", sink.events)
+	}
+}
+
+type recordingEventSink struct {
+	events []eventstream.Event
+}
+
+func (s *recordingEventSink) Send(_ context.Context, event eventstream.Event) error {
+	s.events = append(s.events, event)
+	return nil
+}
+
+// stdcopyFrame builds a Docker multiplexed stream frame (stdout).}]}_ }
 // Format: [stream_type(1), 0,0,0, size(4-byte big-endian), data...]
 func stdcopyFrame(stdout string) []byte {
 	data := []byte(stdout)

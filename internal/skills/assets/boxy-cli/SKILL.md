@@ -17,12 +17,19 @@ Run `boxy <command> --help` before using a command you have not executed yet.
 Core commands you will commonly use:
 - `boxy init`
 - `boxy serve`
+- `boxy login`
+- `boxy logout`
+- `boxy admin api-key bootstrap`
+- `boxy admin api-key create`
+- `boxy admin api-key list`
+- `boxy admin api-key revoke`
 - `boxy config validate`
 - `boxy sandbox create`
 - `boxy sandbox list`
 - `boxy sandbox get`
 - `boxy sandbox delete`
 - `boxy sandbox extend`
+- `boxy sandbox exec`
 - `boxy agent serve`
 - `boxy agent service install`
 - `boxy agent service uninstall`
@@ -55,10 +62,13 @@ Core commands you will commonly use:
 ## Operating Rules
 
 - Validate config with `boxy config validate` before telling the user to run `boxy serve`.
+- Boxy serves REST and agent gRPC over TLS by default. Use `--ca-cert` for the generated Boxy CA; use `--insecure` only for explicit local development.
+- Run `boxy admin api-key bootstrap` locally once to create the first administrator key, then `boxy login --server <url> --ca-cert <path>` to store it in the OS keyring. Raw keys are shown once and must not be written to config or state files.
 - Prefer `boxy serve --once` for smoke checks and `boxy serve` for daemon usage.
 - Sandbox creation is asynchronous. Use `boxy sandbox create --no-wait` if you need the request accepted quickly, then poll with `boxy sandbox get`.
 - Sandbox deletion is asynchronous. `boxy sandbox delete <id>` waits until the daemon finishes cleanup; use `--no-wait` to return after acceptance.
 - `boxy sandbox extend <id> <duration>` only works on sandboxes created with `policies.auto_destroy_after` set; it pushes that expiry out by `<duration>` and fails if the sandbox has no expiry to extend or is already being deleted.
+- `boxy sandbox exec <id> -- <command> [args...]` runs a one-shot command only in a ready sandbox. It selects the only resource automatically; pass `--resource` for multi-resource sandboxes. Use `--stream` for live NDJSON events. Interactive stdin/PTY sessions are not supported.
 - Use `boxy debug pool drain <pool>` and `boxy debug pool fill <pool>` for daemon-backed operator maintenance of unused ready pool inventory.
 - Remote agents register with a single-use token: `boxy agent token create` prints the raw token exactly once (never stored or retrievable again); the agent redeems it on first connect and authenticates with an issued mTLS client certificate afterward. `boxy agent list` shows registered agents and availability; `boxy agent revoke <id>` deny-lists an agent's certificate and tears down its live connection. If the agent is permanently gone, `boxy agent revoke <id> --force-orphan-resources` also detaches every resource still attributed to it (pool inventory + store) without contacting the agent — resources otherwise stay un-`Destroy`able through the normal path since `Destroy` always routes to the exact agent that created them.
 - `boxy agent serve --server <host:port> --providers <list> --token <token> --ca-cert <path>` runs a host as a remote agent. The `--server` address is the daemon's gRPC listener (default `:9091`), not its REST port. `--ca-cert` (the server's `.boxy/ca.crt`, copied out-of-band) is required for the first connection; after registration the issued credentials in `.boxy-agent/` are used automatically and neither flag is needed again.

@@ -6,6 +6,7 @@ import (
 	"encoding/pem"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -26,6 +27,36 @@ func TestEnsureCA_GeneratesAndReloads(t *testing.T) {
 	}
 	if ca1.Cert.SerialNumber.Cmp(ca2.Cert.SerialNumber) != 0 {
 		t.Fatal("expected reloading an existing CA to return the same certificate, not generate a new one")
+	}
+}
+
+// TestEnsureCA_ReappliesPermissionsOnRewrite guards against the same bug
+// class as issue #158 (os.WriteFile's mode argument is only applied by the
+// OS when it creates a new file — on rewrite of a pre-existing file, the
+// file keeps whatever permissions it already had). ca.key holds the CA
+// private key, so this path matters more than the CLI-side files #158
+// named: pre-creating ca.key with loose permissions and no ca.crt forces
+// EnsureCA down its regenerate-and-overwrite path.
+func TestEnsureCA_ReappliesPermissionsOnRewrite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits don't apply on windows")
+	}
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, caKeyFileName)
+	if err := os.WriteFile(keyPath, []byte("stale"), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	if _, err := EnsureCA(dir); err != nil {
+		t.Fatalf("EnsureCA: %v", err)
+	}
+
+	info, err := os.Stat(keyPath)
+	if err != nil {
+		t.Fatalf("stat ca.key: %v", err)
+	}
+	if got, want := info.Mode().Perm(), os.FileMode(0o600); got != want {
+		t.Fatalf("ca.key permissions = %04o, want %04o", got, want)
 	}
 }
 
@@ -175,6 +206,42 @@ func TestIssueServerCert_RegeneratesWhenSANsChange(t *testing.T) {
 // IssueServerCert to return an error, not silently self-heal by
 // regenerating (which could paper over something more concerning than a
 // stale SAN list).
+// TestIssueServerCert_ReappliesPermissionsOnRewrite is server.key's
+// counterpart to TestEnsureCA_ReappliesPermissionsOnRewrite: a SAN change
+// forces IssueServerCert down its regenerate-and-overwrite path (see
+// TestIssueServerCert_RegeneratesWhenSANsChange), which must reapply 0600
+// even though server.key already existed with looser permissions.
+func TestIssueServerCert_ReappliesPermissionsOnRewrite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits don't apply on windows")
+	}
+	dir := t.TempDir()
+	ca, err := EnsureCA(dir)
+	if err != nil {
+		t.Fatalf("EnsureCA: %v", err)
+	}
+	if _, err := IssueServerCert(ca, dir, []string{"127.0.0.1"}); err != nil {
+		t.Fatalf("IssueServerCert (first): %v", err)
+	}
+
+	keyPath := filepath.Join(dir, serverKeyFileName)
+	if err := os.Chmod(keyPath, 0o644); err != nil {
+		t.Fatalf("loosen permissions: %v", err)
+	}
+
+	if _, err := IssueServerCert(ca, dir, []string{"127.0.0.1", "extra.example.test"}); err != nil {
+		t.Fatalf("IssueServerCert (second, SAN changed): %v", err)
+	}
+
+	info, err := os.Stat(keyPath)
+	if err != nil {
+		t.Fatalf("stat server.key: %v", err)
+	}
+	if got, want := info.Mode().Perm(), os.FileMode(0o600); got != want {
+		t.Fatalf("server.key permissions = %04o, want %04o", got, want)
+	}
+}
+
 func TestIssueServerCert_ErrorsWhenExistingCertUnparseable(t *testing.T) {
 	dir := t.TempDir()
 	ca, err := EnsureCA(dir)
