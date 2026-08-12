@@ -234,7 +234,11 @@ func restartInstalledDefaultServices(cmd *cobra.Command) {
 			continue // this mode isn't available on this platform; nothing to restart
 		}
 		st, err := mgr.Status(target.name)
-		if err != nil || !st.Installed || !st.Running {
+		if err != nil {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not check status of %s service: %v\n", target.name, err)
+			continue
+		}
+		if !st.Installed || !st.Running {
 			continue
 		}
 		if err := mgr.Stop(target.name); err != nil {
