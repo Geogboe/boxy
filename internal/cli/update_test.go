@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/Geogboe/rog/pkg/selfupdate"
 	"github.com/spf13/cobra"
 )
 
@@ -172,6 +176,107 @@ func TestUpdateCommand_FlagsWireCorrectly(t *testing.T) {
 	}
 	if capturedOpts.proxyURL != "http://proxy:8080" {
 		t.Errorf("expected proxyURL='http://proxy:8080', got %q", capturedOpts.proxyURL)
+	}
+}
+
+func TestUpdateCommand_PrereleaseFlag_WiresThrough(t *testing.T) {
+	withVersion(t, "v1.0.0")
+
+	var capturedOpts updateOptions
+	orig := updateNewUpdater
+	updateNewUpdater = func(opts updateOptions) updaterIface {
+		capturedOpts = opts
+		return &mockUpdater{latestVersion: "v1.0.0"}
+	}
+	t.Cleanup(func() { updateNewUpdater = orig })
+
+	cmd := newUpdateCommand()
+	cmd.SetArgs([]string{"--prerelease"})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if !capturedOpts.prerelease {
+		t.Error("expected prerelease=true")
+	}
+}
+
+func TestDefaultUpdateNewUpdater_SetsAllowPrereleaseAndDraft(t *testing.T) {
+	updater := defaultUpdateNewUpdater(updateOptions{prerelease: true})
+	bu, ok := updater.(*boxyUpdater)
+	if !ok {
+		t.Fatalf("expected *boxyUpdater, got %T", updater)
+	}
+	if !bu.u.AllowPrereleaseAndDraft {
+		t.Error("expected underlying selfupdate.Updater.AllowPrereleaseAndDraft=true")
+	}
+}
+
+func TestDefaultUpdateNewUpdater_DefaultsToStableOnly(t *testing.T) {
+	updater := defaultUpdateNewUpdater(updateOptions{})
+	bu, ok := updater.(*boxyUpdater)
+	if !ok {
+		t.Fatalf("expected *boxyUpdater, got %T", updater)
+	}
+	if bu.u.AllowPrereleaseAndDraft {
+		t.Error("expected underlying selfupdate.Updater.AllowPrereleaseAndDraft=false by default")
+	}
+}
+
+// githubAPIRewriteClient rewrites requests targeting the real GitHub API to a
+// test server, mirroring the same trick used in rog's own selfupdate tests.
+type githubAPIRewriteClient struct {
+	base    *http.Client
+	srvURL  string
+	apiBase string
+}
+
+func (c *githubAPIRewriteClient) Do(req *http.Request) (*http.Response, error) {
+	if strings.HasPrefix(req.URL.String(), c.apiBase) {
+		rewritten := c.srvURL + req.URL.Path
+		if req.URL.RawQuery != "" {
+			rewritten += "?" + req.URL.RawQuery
+		}
+		newURL, err := req.URL.Parse(rewritten)
+		if err != nil {
+			return nil, fmt.Errorf("rewrite test request URL: %w", err)
+		}
+		newReq := req.Clone(req.Context())
+		newReq.URL = newURL
+		req = newReq
+	}
+	return c.base.Do(req)
+}
+
+// TestBoxyUpdater_CheckLatest_NoStableRelease_MentionsPrereleaseFlag verifies
+// that when every release is prerelease/draft-marked (so GitHub's
+// /releases/latest 404s), boxy's own error wrapping points the user at
+// --prerelease rather than surfacing rog's generic sentinel alone.
+func TestBoxyUpdater_CheckLatest_NoStableRelease_MentionsPrereleaseFlag(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	u := &selfupdate.Updater{
+		Repo:       "Geogboe/boxy",
+		BinaryName: "boxy",
+		AssetNamer: func(v, goos, goarch string) string { return "boxy_" + v + "_" + goos + "_" + goarch },
+		Client:     &githubAPIRewriteClient{base: srv.Client(), srvURL: srv.URL, apiBase: "https://api.github.com"},
+	}
+	bu := &boxyUpdater{u: u}
+
+	_, err := bu.CheckLatest(context.Background())
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, selfupdate.ErrNoStableRelease) {
+		t.Errorf("expected error to wrap selfupdate.ErrNoStableRelease, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "--prerelease") {
+		t.Errorf("expected error to mention --prerelease, got: %v", err)
 	}
 }
 
