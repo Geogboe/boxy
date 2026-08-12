@@ -93,3 +93,24 @@ are cwd-relative, so a mismatched `--instance-name`, wrong working
 directory, or stale `--data-dir`/`--boxy-dir` override must fail loudly
 instead of silently deleting whatever happens to exist at the computed
 path.
+
+## `boxy update` and installed services
+
+`boxy update` replaces the binary in place but a running service keeps
+whatever binary it already loaded in memory until restarted. After a
+successful update, `boxy update` checks whether the default-named
+`boxy-agent`/`boxy-serve` services (privileged or `--user`) are installed
+and currently running, and restarts (stop then start) each one that is —
+so you don't have to remember to do it manually. A service that's
+installed but not currently running is left stopped; update doesn't start
+it as a side effect.
+
+This only covers the default (unnamed) instance — named `--instance-name`
+instances aren't restarted automatically, since `svcmgr.Manager` has no
+way to enumerate them. Restart those yourself:
+`boxy agent service stop --instance-name <name> && boxy agent service
+start --instance-name <name>` (same shape for `serve`).
+
+Pass `--skip-service-restart` to disable the check entirely. A restart
+failure (e.g. a permission issue) is reported as a warning, not a command
+failure — the binary update itself already succeeded by that point.

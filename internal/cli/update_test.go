@@ -9,9 +9,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/Geogboe/boxy/internal/svcmgr"
 	"github.com/Geogboe/rog/pkg/selfupdate"
 	"github.com/spf13/cobra"
 )
@@ -103,6 +105,7 @@ func TestRunUpdate_InstallsToExePath(t *testing.T) {
 	withVersion(t, "v1.0.0")
 	mock := &mockUpdater{latestVersion: "v1.1.0"}
 	withMockUpdater(t, mock)
+	withFakeSvcManager(t, &fakeManager{}) // nothing installed: restart check no-ops
 	t.Setenv("BOXY_TEST_EXE_PATH", t.TempDir()+"/boxy")
 
 	var out bytes.Buffer
@@ -307,6 +310,7 @@ func TestRunUpdate_RefreshesCanonicalSkillAfterInstall(t *testing.T) {
 	withVersion(t, "v1.0.0")
 	mock := &mockUpdater{latestVersion: "v1.1.0"}
 	withMockUpdater(t, mock)
+	withFakeSvcManager(t, &fakeManager{}) // nothing installed: restart check no-ops
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -327,5 +331,144 @@ func TestRunUpdate_RefreshesCanonicalSkillAfterInstall(t *testing.T) {
 	}
 	if strings.TrimSpace(string(versionData)) != "v1.1.0" {
 		t.Fatalf("skill version = %q, want v1.1.0", strings.TrimSpace(string(versionData)))
+	}
+}
+
+func TestRunUpdate_RestartsRunningInstalledService(t *testing.T) {
+	withVersion(t, "v1.0.0")
+	withMockUpdater(t, &mockUpdater{latestVersion: "v1.1.0"})
+	t.Setenv("BOXY_TEST_EXE_PATH", t.TempDir()+"/boxy")
+
+	system := &fakeManager{statusByName: map[string]svcmgr.Status{
+		agentServiceName: {Installed: true, Running: true, Mode: "system-service"},
+	}}
+	user := &fakeManager{}
+	withPerModeFakeSvcManager(t, system, user)
+
+	var out bytes.Buffer
+	if err := runUpdate(newTestUpdateCmd(&out), updateOptions{}); err != nil {
+		t.Fatalf("runUpdate: %v", err)
+	}
+	if !slices.Contains(system.stoppedNames, agentServiceName) {
+		t.Errorf("stoppedNames = %v, want to contain %q", system.stoppedNames, agentServiceName)
+	}
+	if !slices.Contains(system.startedNames, agentServiceName) {
+		t.Errorf("startedNames = %v, want to contain %q", system.startedNames, agentServiceName)
+	}
+	if !strings.Contains(out.String(), "restarted "+agentServiceName) {
+		t.Errorf("expected output to mention restarting %s, got:\n%s", agentServiceName, out.String())
+	}
+}
+
+func TestRunUpdate_DoesNotRestartInstalledButStoppedService(t *testing.T) {
+	withVersion(t, "v1.0.0")
+	withMockUpdater(t, &mockUpdater{latestVersion: "v1.1.0"})
+	t.Setenv("BOXY_TEST_EXE_PATH", t.TempDir()+"/boxy")
+
+	system := &fakeManager{statusByName: map[string]svcmgr.Status{
+		serveServiceName: {Installed: true, Running: false, Mode: "system-unit"},
+	}}
+	withFakeSvcManager(t, system)
+
+	var out bytes.Buffer
+	if err := runUpdate(newTestUpdateCmd(&out), updateOptions{}); err != nil {
+		t.Fatalf("runUpdate: %v", err)
+	}
+	if len(system.stoppedNames) != 0 || len(system.startedNames) != 0 {
+		t.Errorf("a stopped (not running) service must not be started as a side effect of update; got stopped=%v started=%v", system.stoppedNames, system.startedNames)
+	}
+}
+
+func TestRunUpdate_ChecksBothPrivilegedAndUserModeInstances(t *testing.T) {
+	withVersion(t, "v1.0.0")
+	withMockUpdater(t, &mockUpdater{latestVersion: "v1.1.0"})
+	t.Setenv("BOXY_TEST_EXE_PATH", t.TempDir()+"/boxy")
+
+	// boxy-agent installed privileged; boxy-serve installed --user. Both
+	// running, both should be restarted via their respective manager.
+	system := &fakeManager{statusByName: map[string]svcmgr.Status{
+		agentServiceName: {Installed: true, Running: true, Mode: "system-service"},
+	}}
+	user := &fakeManager{statusByName: map[string]svcmgr.Status{
+		serveServiceName: {Installed: true, Running: true, Mode: "user-task"},
+	}}
+	withPerModeFakeSvcManager(t, system, user)
+
+	var out bytes.Buffer
+	if err := runUpdate(newTestUpdateCmd(&out), updateOptions{}); err != nil {
+		t.Fatalf("runUpdate: %v", err)
+	}
+	if !slices.Contains(system.startedNames, agentServiceName) {
+		t.Errorf("expected the privileged manager to restart %s, started=%v", agentServiceName, system.startedNames)
+	}
+	if !slices.Contains(user.startedNames, serveServiceName) {
+		t.Errorf("expected the --user manager to restart %s, started=%v", serveServiceName, user.startedNames)
+	}
+}
+
+func TestRunUpdate_SkipServiceRestartFlag_SkipsRestartCheck(t *testing.T) {
+	withVersion(t, "v1.0.0")
+	withMockUpdater(t, &mockUpdater{latestVersion: "v1.1.0"})
+	t.Setenv("BOXY_TEST_EXE_PATH", t.TempDir()+"/boxy")
+
+	m := &fakeManager{statusByName: map[string]svcmgr.Status{
+		agentServiceName: {Installed: true, Running: true},
+	}}
+	withFakeSvcManager(t, m)
+
+	var out bytes.Buffer
+	err := runUpdate(newTestUpdateCmd(&out), updateOptions{skipServiceRestart: true})
+	if err != nil {
+		t.Fatalf("runUpdate: %v", err)
+	}
+	if len(m.statusNames) != 0 {
+		t.Errorf("--skip-service-restart must skip the restart check entirely, got Status calls: %v", m.statusNames)
+	}
+}
+
+func TestRunUpdate_RestartFailure_WarnsButDoesNotFailUpdate(t *testing.T) {
+	withVersion(t, "v1.0.0")
+	withMockUpdater(t, &mockUpdater{latestVersion: "v1.1.0"})
+	t.Setenv("BOXY_TEST_EXE_PATH", t.TempDir()+"/boxy")
+
+	system := &fakeManager{
+		statusByName: map[string]svcmgr.Status{
+			agentServiceName: {Installed: true, Running: true},
+		},
+		stopErr: errors.New("access denied"),
+	}
+	withPerModeFakeSvcManager(t, system, &fakeManager{})
+
+	var out bytes.Buffer
+	err := runUpdate(newTestUpdateCmd(&out), updateOptions{})
+	if err != nil {
+		t.Fatalf("a restart failure must not fail the overall update, got: %v", err)
+	}
+	if !strings.Contains(out.String(), "warning") || !strings.Contains(out.String(), agentServiceName) {
+		t.Errorf("expected a warning mentioning %s, got:\n%s", agentServiceName, out.String())
+	}
+}
+
+func TestUpdateCommand_SkipServiceRestartFlag_WiresThrough(t *testing.T) {
+	withVersion(t, "v1.0.0")
+
+	var capturedOpts updateOptions
+	orig := updateNewUpdater
+	updateNewUpdater = func(opts updateOptions) updaterIface {
+		capturedOpts = opts
+		return &mockUpdater{latestVersion: "v1.0.0"}
+	}
+	t.Cleanup(func() { updateNewUpdater = orig })
+
+	cmd := newUpdateCommand()
+	cmd.SetArgs([]string{"--skip-service-restart"})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if !capturedOpts.skipServiceRestart {
+		t.Error("expected skipServiceRestart=true")
 	}
 }

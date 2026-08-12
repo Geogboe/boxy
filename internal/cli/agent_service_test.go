@@ -26,11 +26,24 @@ type fakeManager struct {
 	stopErr        error
 	status         svcmgr.Status
 	statusErr      error
+	// statusByName overrides status/statusErr per name when non-nil, for
+	// tests that need distinct answers for different service names against
+	// the same manager (e.g. #157's boxy-agent-vs-boxy-serve restart
+	// check). A name absent from the map reports Status{} (not installed).
+	statusByName map[string]svcmgr.Status
 
 	uninstalledName string
 	startedName     string
 	stoppedName     string
 	statusQueried   string
+
+	// *Names record every call in order, for tests asserting multiple
+	// Start/Stop/Status calls against one fakeManager instance. The
+	// single-value fields above still hold the most recent call, for
+	// existing single-call tests.
+	startedNames []string
+	stoppedNames []string
+	statusNames  []string
 }
 
 func (f *fakeManager) Install(spec svcmgr.Spec) error {
@@ -46,15 +59,39 @@ func (f *fakeManager) Uninstall(name string) error {
 }
 func (f *fakeManager) Start(name string) error {
 	f.startedName = name
+	f.startedNames = append(f.startedNames, name)
 	return f.startErr
 }
 func (f *fakeManager) Stop(name string) error {
 	f.stoppedName = name
+	f.stoppedNames = append(f.stoppedNames, name)
 	return f.stopErr
 }
 func (f *fakeManager) Status(name string) (svcmgr.Status, error) {
 	f.statusQueried = name
+	f.statusNames = append(f.statusNames, name)
+	if f.statusByName != nil {
+		return f.statusByName[name], nil // zero value (not installed) if absent
+	}
 	return f.status, f.statusErr
+}
+
+// withPerModeFakeSvcManager routes svcmgrNewManager to a different
+// fakeManager depending on ManagerOptions.UserMode, mirroring reality:
+// the privileged and --user install modes are entirely different backends
+// (SCM vs Task Scheduler on Windows, system vs --user systemd on Linux),
+// so a service installed under one mode is genuinely invisible to the
+// other's Manager.
+func withPerModeFakeSvcManager(t *testing.T, system, user *fakeManager) {
+	t.Helper()
+	orig := svcmgrNewManager
+	svcmgrNewManager = func(opts svcmgr.ManagerOptions) (svcmgr.Manager, error) {
+		if opts.UserMode {
+			return user, nil
+		}
+		return system, nil
+	}
+	t.Cleanup(func() { svcmgrNewManager = orig })
 }
 
 func withFakeSvcManager(t *testing.T, m *fakeManager) {
