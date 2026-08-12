@@ -215,62 +215,93 @@ boxy
 │       └── delete <id>
 │
 │
-└── agent                                      Manage remote agents and registration tokens
-    ├── --server <addr>                          Server address (default 127.0.0.1:9090)
-    │
-    ├── serve                                    Run this host as a remote agent (dials the server's
-    │   │                                          gRPC listener, executes provider operations)
-    │   ├── --server <host:port>                   Server gRPC address (required; note: gRPC port,
-    │   │                                            default :9091 — not the REST port)
-    │   ├── --providers <list>                     Provider types this agent hosts (required)
-    │   ├── --token <token>                        Single-use registration token (first connection only)
-    │   ├── --ca-cert <path>                       Server CA cert, required for the first (token)
-    │   │                                            connection unless --insecure
-    │   ├── --name <name>                          Agent name (default: hostname)
-    │   ├── --data-dir <path>                      Issued-credential dir (default .boxy-agent in cwd)
-    │   ├── --insecure                             Connect without TLS (local development only)
-    │   │
-    │   $ boxy agent serve --server boxy.example.com:9091 --providers hyperv \
-    │       --token 4f9c…e2a1 --ca-cert ./ca.crt
-    │     (runs until stopped; reconnects with backoff; after the first
-    │      registration the issued mTLS client cert in .boxy-agent/ is used
-    │      and --token is no longer needed)
-    │
-    ├── token                                    Manage single-use registration tokens
-    │   ├── create                                 Mint a token (raw value shown once, never stored)
-    │   │   ├── --label <note>                       Optional operator note (e.g. target host)
-    │   │   ├── --ttl <duration>                     Validity as a Go duration (default 1h)
-    │   │   │
-    │   │   $ boxy agent token create --label lab-hv-1 --ttl 2h
-    │   │     token: 4f9c…e2a1
-    │   │     id: 6b1f0e7c-…
-    │   │     label: lab-hv-1
-    │   │     expires: 2026-07-08T18:00:00Z
-    │   │     The token is shown once and never stored — pass it to `boxy agent serve --token <token>` before it expires.
-    │   │
-    │   ├── list                                   List tokens (id, label, unused/used/expired, expiry)
-    │   │   $ boxy agent token list
-    │   │     6b1f0e7c-…	lab-hv-1	unused	expires 2026-07-08T18:00:00Z
-    │   │
-    │   └── revoke <id>                            Revoke an unredeemed token
-    │       $ boxy agent token revoke 6b1f0e7c-…
-    │         revoked token 6b1f0e7c-…
-    │
-    ├── list                                     List registered agents and availability
-    │   $ boxy agent list
-    │     0d9a…	lab-hv-1	[hyperv]	available
-    │
-    └── revoke <id>                              Revoke an agent's identity (deny-lists its mTLS cert
-        │                                          and tears down any live connection)
-        ├── --reason <text>                        Optional reason recorded with the revocation
-        ├── --force-orphan-resources                Force-orphan resources still attributed to this
-        │                                          agent (never contacts the agent; use only when it
-        │                                          is permanently gone — see ADR-0005)
-        │
-        $ boxy agent revoke 0d9a… --reason "host decommissioned"
-          revoked agent 0d9a…
-        $ boxy agent revoke 0d9a… --reason "host decommissioned" --force-orphan-resources
-          revoked agent 0d9a… (resources force-orphaned)
+├── agent                                      Manage remote agents and registration tokens
+│   ├── --server <addr>                          Server address (default 127.0.0.1:9090)
+│   │
+│   ├── serve                                    Run this host as a remote agent (dials the server's
+│   │   │                                          gRPC listener, executes provider operations)
+│   │   ├── --server <host:port>                   Server gRPC address (required; note: gRPC port,
+│   │   │                                            default :9091 — not the REST port)
+│   │   ├── --providers <list>                     Provider types this agent hosts (required)
+│   │   ├── --token <token>                        Single-use registration token (first connection only)
+│   │   ├── --ca-cert <path>                       Server CA cert, required for the first (token)
+│   │   │                                            connection unless --insecure
+│   │   ├── --name <name>                          Agent name (default: hostname)
+│   │   ├── --data-dir <path>                      Issued-credential dir (default .boxy-agent in cwd)
+│   │   ├── --insecure                             Connect without TLS (local development only)
+│   │   │
+│   │   $ boxy agent serve --server boxy.example.com:9091 --providers hyperv \
+│   │       --token 4f9c…e2a1 --ca-cert ./ca.crt
+│   │     (runs until stopped; reconnects with backoff; after the first
+│   │      registration the issued mTLS client cert in .boxy-agent/ is used
+│   │      and --token is no longer needed)
+│   │
+│   ├── token                                    Manage single-use registration tokens
+│   │   ├── create                                 Mint a token (raw value shown once, never stored)
+│   │   │   ├── --label <note>                       Optional operator note (e.g. target host)
+│   │   │   ├── --ttl <duration>                     Validity as a Go duration (default 1h)
+│   │   │   │
+│   │   │   $ boxy agent token create --label lab-hv-1 --ttl 2h
+│   │   │     token: 4f9c…e2a1
+│   │   │     id: 6b1f0e7c-…
+│   │   │     label: lab-hv-1
+│   │   │     expires: 2026-07-08T18:00:00Z
+│   │   │     The token is shown once and never stored — pass it to `boxy agent serve --token <token>` before it expires.
+│   │   │
+│   │   ├── list                                   List tokens (id, label, unused/used/expired, expiry)
+│   │   │   $ boxy agent token list
+│   │   │     6b1f0e7c-…	lab-hv-1	unused	expires 2026-07-08T18:00:00Z
+│   │   │
+│   │   └── revoke <id>                            Revoke an unredeemed token
+│   │       $ boxy agent token revoke 6b1f0e7c-…
+│   │         revoked token 6b1f0e7c-…
+│   │
+│   ├── list                                     List registered agents and availability
+│   │   $ boxy agent list
+│   │     0d9a…	lab-hv-1	[hyperv]	available
+│   │
+│   └── revoke <id>                              Revoke an agent's identity (deny-lists its mTLS cert
+│       │                                          and tears down any live connection)
+│       ├── --reason <text>                        Optional reason recorded with the revocation
+│       ├── --force-orphan-resources                Force-orphan resources still attributed to this
+│       │                                          agent (never contacts the agent; use only when it
+│       │                                          is permanently gone — see ADR-0005)
+│       │
+│       $ boxy agent revoke 0d9a… --reason "host decommissioned"
+│         revoked agent 0d9a…
+│       $ boxy agent revoke 0d9a… --reason "host decommissioned" --force-orphan-resources
+│         revoked agent 0d9a… (resources force-orphaned)
+│
+│
+└── update                                     Update boxy to the latest release
+    ├── --check                                  Check for updates without installing
+    ├── --version <ver>                          Install a specific version (e.g. v0.1.9)
+    ├── --proxy <url>                             HTTP proxy URL (overrides HTTPS_PROXY env var)
+    └── --prerelease                              Consider prerelease/draft releases as "latest"
+                                                  (default: stable releases only)
+
+    $ boxy update
+      ==> Checking for updates...
+          Current version: v0.1.34
+          Latest version:  v0.1.34
+      ✓ Already up to date (v0.1.34)
+
+    $ boxy update --check
+      ==> Checking for updates...
+          Current version: v0.1.34
+          Latest version:  v0.1.35
+      update available — run 'boxy update' to install
+
+    $ boxy update  (every published release is prerelease-marked, no stable release exists)
+      Error: check for updates: Geogboe/boxy: no stable release found (re-run with
+      --prerelease to update to a prerelease build)
+
+    $ boxy update --prerelease
+      ==> Checking for updates...
+          Current version: v0.1.34
+          Latest version:  v0.1.35
+      ==> Downloading boxy v0.1.35...
+      ✓ boxy updated to v0.1.35
 
 
 Global flags (on root command):

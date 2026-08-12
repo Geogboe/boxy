@@ -3,7 +3,7 @@ module github.com/Geogboe/boxy
 go 1.25.0
 
 require (
-	github.com/Geogboe/rog v0.5.0
+	github.com/Geogboe/rog v0.6.0
 	github.com/containerd/errdefs v1.0.0
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.6.0
@@ -11,7 +11,9 @@ require (
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/pterm/pterm v0.12.83
 	github.com/smnsjas/go-psrp v0.2.0
+	github.com/smnsjas/go-psrpcore v0.0.0-20260211164949-dace42c5b6a8
 	github.com/spf13/cobra v1.10.1
+	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/crypto v0.50.0
 	golang.org/x/sync v0.20.0
 	golang.org/x/sys v0.43.0
@@ -54,10 +56,8 @@ require (
 	github.com/morikuni/aec v1.1.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/smnsjas/go-psrpcore v0.0.0-20260211164949-dace42c5b6a8 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	github.com/zalando/go-keyring v0.2.8 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.67.0 // indirect
 	go.opentelemetry.io/otel v1.43.0 // indirect

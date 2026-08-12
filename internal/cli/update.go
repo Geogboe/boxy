@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -21,6 +22,7 @@ type updateOptions struct {
 	proxyURL      string
 	token         string
 	checkOnly     bool
+	prerelease    bool
 }
 
 // updaterIface is the narrow interface used by runUpdate, enabling injection in tests.
@@ -40,11 +42,12 @@ func defaultUpdateNewUpdater(opts updateOptions) updaterIface {
 	client := &http.Client{Transport: transport}
 
 	u := &selfupdate.Updater{
-		Repo:       buildcfg.Repo,
-		BinaryName: buildcfg.BinaryName,
-		Token:      opts.token,
-		Client:     client,
-		AssetNamer: buildcfg.AssetName,
+		Repo:            buildcfg.Repo,
+		BinaryName:      buildcfg.BinaryName,
+		Token:           opts.token,
+		Client:          client,
+		AssetNamer:      buildcfg.AssetName,
+		AllowPrerelease: opts.prerelease,
 	}
 	return &boxyUpdater{u: u, pinnedVersion: opts.pinnedVersion}
 }
@@ -65,6 +68,9 @@ func (b *boxyUpdater) CheckLatest(ctx context.Context) (string, error) {
 	}
 	rel, err := b.u.CheckLatest(ctx)
 	if err != nil {
+		if errors.Is(err, selfupdate.ErrNoStableRelease) {
+			return "", fmt.Errorf("%w (re-run with --prerelease to update to a prerelease build)", err)
+		}
 		return "", err
 	}
 	return rel.Version, nil
@@ -94,12 +100,17 @@ func newUpdateCommand() *cobra.Command {
 		checkOnly     bool
 		pinnedVersion string
 		proxyURL      string
+		prerelease    bool
 	)
 
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update boxy to the latest release",
 		Long: `Update the boxy binary in-place to the latest (or a pinned) release from GitHub.
+
+By default, only a stable (non-prerelease, non-draft) release is considered
+"latest". Pass --prerelease to update to the newest release regardless of
+that flag, e.g. when no stable release has been published yet.
 
 Environment variables:
   BOXY_GITHUB_TOKEN   GitHub API token to avoid rate limits`,
@@ -110,6 +121,7 @@ Environment variables:
 				proxyURL:      proxyURL,
 				token:         os.Getenv("BOXY_GITHUB_TOKEN"),
 				checkOnly:     checkOnly,
+				prerelease:    prerelease,
 			})
 		},
 	}
@@ -117,6 +129,7 @@ Environment variables:
 	cmd.Flags().BoolVar(&checkOnly, "check", false, "Check for updates without installing")
 	cmd.Flags().StringVar(&pinnedVersion, "version", "", "Install a specific version (e.g. v0.1.9)")
 	cmd.Flags().StringVar(&proxyURL, "proxy", "", "HTTP proxy URL (overrides HTTPS_PROXY env var)")
+	cmd.Flags().BoolVar(&prerelease, "prerelease", false, "Consider prerelease/draft releases when checking for the latest version")
 
 	return cmd
 }
