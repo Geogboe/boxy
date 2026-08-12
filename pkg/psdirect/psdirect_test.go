@@ -195,6 +195,19 @@ func TestExtractOutput_Int64ExitCode(t *testing.T) {
 	}
 }
 
+func TestBuildStreamScriptUsesExitMarkerWithoutBuffering(t *testing.T) {
+	script := buildStreamScript("myapp", []string{"arg1"})
+	if strings.Contains(script, "Out-String") {
+		t.Fatalf("stream script buffers output with Out-String: %s", script)
+	}
+	if !strings.Contains(script, "__BOXY_EXIT_CODE:") {
+		t.Fatalf("stream script lacks exit marker: %s", script)
+	}
+	if code, ok := parseExitMarker("__BOXY_EXIT_CODE:17"); !ok || code != 17 {
+		t.Fatalf("parseExitMarker = %d, %v; want 17, true", code, ok)
+	}
+}
+
 // --- buildScript tests ---
 
 func TestBuildScript_QuotesAndJoins(t *testing.T) {

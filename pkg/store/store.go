@@ -37,6 +37,13 @@ type Store interface {
 	DeleteAgentToken(ctx context.Context, id model.AgentTokenID) error
 	ListAgentTokens(ctx context.Context) ([]model.AgentRegistrationToken, error)
 
+	// Operator API keys. Only hashes and metadata are persisted; raw key values
+	// are returned once at creation and are never stored by the daemon.
+	GetAPIKey(ctx context.Context, id model.APIKeyID) (model.APIKey, error)
+	PutAPIKey(ctx context.Context, key model.APIKey) error
+	DeleteAPIKey(ctx context.Context, id model.APIKeyID) error
+	ListAPIKeys(ctx context.Context) ([]model.APIKey, error)
+
 	// Revoked agent identities (deny-list, keyed by client certificate
 	// serial). No bbolt or other new persistence engine — this reuses the
 	// same Store this interface already defines, since revocation counts

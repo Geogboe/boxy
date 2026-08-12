@@ -73,8 +73,12 @@ func InstallCanonical(force bool, version string) (string, error) {
 	if err := copyEmbeddedSkill(canonicalPath); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(canonicalPath, VersionFileName), []byte(strings.TrimSpace(version)+"\n"), 0o600); err != nil {
+	versionPath := filepath.Join(canonicalPath, VersionFileName)
+	if err := os.WriteFile(versionPath, []byte(strings.TrimSpace(version)+"\n"), 0o600); err != nil {
 		return "", fmt.Errorf("write version file: %w", err)
+	}
+	if err := os.Chmod(versionPath, 0o600); err != nil {
+		return "", fmt.Errorf("set version file permissions: %w", err)
 	}
 	return canonicalPath, nil
 }
@@ -96,8 +100,12 @@ func LinkAt(canonicalPath, targetParent string, force bool) (string, bool, error
 		return "", false, fmt.Errorf("link skill into %q: %w", targetParent, err)
 	}
 	if copyFallback {
-		if err := os.WriteFile(filepath.Join(targetPath, SourceFileName), []byte(canonicalPath+"\n"), 0o600); err != nil {
+		sourcePath := filepath.Join(targetPath, SourceFileName)
+		if err := os.WriteFile(sourcePath, []byte(canonicalPath+"\n"), 0o600); err != nil {
 			return "", false, fmt.Errorf("write managed source marker: %w", err)
+		}
+		if err := os.Chmod(sourcePath, 0o600); err != nil {
+			return "", false, fmt.Errorf("set managed source marker permissions: %w", err)
 		}
 	}
 	return targetPath, copyFallback, nil

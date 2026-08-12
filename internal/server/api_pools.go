@@ -12,6 +12,10 @@ import (
 
 // registerAPIRoutes wires the JSON REST API endpoints into the mux.
 func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/v1/api-keys/bootstrap", s.handleBootstrapAPIKey)
+	mux.HandleFunc("POST /api/v1/api-keys", s.handleCreateAPIKey)
+	mux.HandleFunc("GET /api/v1/api-keys", s.handleListAPIKeys)
+	mux.HandleFunc("DELETE /api/v1/api-keys/{id}", s.handleRevokeAPIKey)
 	mux.HandleFunc("GET /api/v1/pools", s.handleListPools)
 	mux.HandleFunc("GET /api/v1/pools/{name}", s.handleGetPool)
 	mux.HandleFunc("POST /api/v1/pools/{name}/drain", s.handleDrainPool)
@@ -23,6 +27,7 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/sandboxes", s.handleCreateSandbox)
 	mux.HandleFunc("DELETE /api/v1/sandboxes/{id}", s.handleDeleteSandbox)
 	mux.HandleFunc("POST /api/v1/sandboxes/{id}/extend", s.handleExtendSandbox)
+	mux.HandleFunc("POST /api/v1/sandboxes/{id}/exec", s.handleSandboxExec)
 	mux.HandleFunc("POST /api/v1/agent-tokens", s.handleCreateAgentToken)
 	mux.HandleFunc("GET /api/v1/agent-tokens", s.handleListAgentTokens)
 	mux.HandleFunc("DELETE /api/v1/agent-tokens/{id}", s.handleDeleteAgentToken)
@@ -32,6 +37,9 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 
 // handleListPools returns all pools as JSON.
 func (s *Server) handleListPools(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRole(w, r, model.APIKeyRoleAuditor, model.APIKeyRoleAdmin) {
+		return
+	}
 	pools, err := s.store.ListPools(r.Context())
 	if err != nil {
 		httpjson.Error(w, http.StatusInternalServerError, "failed to list pools")
@@ -42,6 +50,9 @@ func (s *Server) handleListPools(w http.ResponseWriter, r *http.Request) {
 
 // handleGetPool returns a single pool by name.
 func (s *Server) handleGetPool(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRole(w, r, model.APIKeyRoleAuditor, model.APIKeyRoleAdmin) {
+		return
+	}
 	name := model.PoolName(r.PathValue("name"))
 	pool, err := s.store.GetPool(r.Context(), name)
 	if errors.Is(err, store.ErrNotFound) {
@@ -56,6 +67,9 @@ func (s *Server) handleGetPool(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDrainPool(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRole(w, r, model.APIKeyRoleAdmin) {
+		return
+	}
 	if s.poolMaintenance == nil {
 		httpjson.Error(w, http.StatusServiceUnavailable, "pool maintenance is not available")
 		return
@@ -65,6 +79,9 @@ func (s *Server) handleDrainPool(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFillPool(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRole(w, r, model.APIKeyRoleAdmin) {
+		return
+	}
 	if s.poolMaintenance == nil {
 		httpjson.Error(w, http.StatusServiceUnavailable, "pool maintenance is not available")
 		return

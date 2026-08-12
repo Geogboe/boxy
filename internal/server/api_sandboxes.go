@@ -15,10 +15,23 @@ import (
 
 // handleListSandboxes returns all sandboxes as JSON.
 func (s *Server) handleListSandboxes(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRole(w, r, model.APIKeyRoleUser, model.APIKeyRoleAuditor, model.APIKeyRoleAdmin) {
+		return
+	}
 	sbs, err := s.store.ListSandboxes(r.Context())
 	if err != nil {
 		httpjson.Error(w, http.StatusInternalServerError, "failed to list sandboxes")
 		return
+	}
+	if principalFromRequest(r).Role == model.APIKeyRoleUser && s.authRequired {
+		ownerID := string(principalFromRequest(r).KeyID)
+		filtered := sbs[:0]
+		for _, sb := range sbs {
+			if sb.OwnerID == ownerID {
+				filtered = append(filtered, sb)
+			}
+		}
+		sbs = filtered
 	}
 	httpjson.Write(w, http.StatusOK, sbs)
 }
@@ -33,6 +46,9 @@ func (s *Server) handleGetSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		httpjson.Error(w, http.StatusInternalServerError, "failed to get sandbox")
+		return
+	}
+	if !s.authorizeSandbox(w, r, sb, false) {
 		return
 	}
 	httpjson.Write(w, http.StatusOK, sb)
@@ -69,7 +85,14 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sb, err := s.sandboxMgr.CreateRequested(r.Context(), req.Name, req.Policies, req.Requests)
+	if !s.requireRole(w, r, model.APIKeyRoleUser, model.APIKeyRoleAdmin) {
+		return
+	}
+	ownerID := ""
+	if s.authRequired {
+		ownerID = string(principalFromRequest(r).KeyID)
+	}
+	sb, err := s.sandboxMgr.CreateRequestedOwned(r.Context(), req.Name, req.Policies, req.Requests, ownerID)
 	if err != nil {
 		httpjson.Error(w, http.StatusInternalServerError, "failed to create sandbox")
 		return
@@ -79,7 +102,22 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 
 // handleDeleteSandbox accepts a sandbox deletion request and returns 202.
 func (s *Server) handleDeleteSandbox(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRole(w, r, model.APIKeyRoleUser, model.APIKeyRoleAdmin) {
+		return
+	}
 	id := model.SandboxID(r.PathValue("id"))
+	existing, err := s.store.GetSandbox(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		httpjson.Error(w, http.StatusNotFound, "sandbox not found")
+		return
+	}
+	if err != nil {
+		httpjson.Error(w, http.StatusInternalServerError, "failed to get sandbox")
+		return
+	}
+	if !s.authorizeSandbox(w, r, existing, true) {
+		return
+	}
 	sb, err := s.sandboxMgr.RequestDelete(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
 		httpjson.Error(w, http.StatusNotFound, "sandbox not found")
@@ -115,6 +153,19 @@ func (s *Server) handleExtendSandbox(w http.ResponseWriter, r *http.Request) {
 	extension, err := time.ParseDuration(req.Duration)
 	if err != nil || extension <= 0 {
 		httpjson.Error(w, http.StatusBadRequest, "duration must be a positive Go duration string (e.g. \"15m\")")
+		return
+	}
+
+	existing, err := s.store.GetSandbox(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		httpjson.Error(w, http.StatusNotFound, "sandbox not found")
+		return
+	}
+	if err != nil {
+		httpjson.Error(w, http.StatusInternalServerError, "failed to get sandbox")
+		return
+	}
+	if !s.authorizeSandbox(w, r, existing, true) {
 		return
 	}
 

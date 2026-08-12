@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -139,5 +140,14 @@ func TestRunInit_ForceOverwrites(t *testing.T) {
 	}
 	if string(data) == "old" {
 		t.Fatal("file was not overwritten")
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(filepath.Join(dir, "boxy.yaml"))
+		if err != nil {
+			t.Fatalf("stat config: %v", err)
+		}
+		if got, want := info.Mode().Perm(), os.FileMode(0o600); got != want {
+			t.Fatalf("config permissions = %04o, want %04o", got, want)
+		}
 	}
 }

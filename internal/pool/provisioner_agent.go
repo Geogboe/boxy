@@ -8,6 +8,7 @@ import (
 
 	boxyconfig "github.com/Geogboe/boxy/internal/config"
 	"github.com/Geogboe/boxy/pkg/agentsdk"
+	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
@@ -98,6 +99,26 @@ func (ap *AgentProvisioner) Allocate(ctx context.Context, pool model.Pool, res m
 		}
 	}
 	return agent.Allocate(ctx, driverType, string(res.ID))
+}
+
+// ExecuteSandbox routes a provider-neutral command to the exact agent that
+// owns a sandbox resource and requires that agent/provider to support live
+// streaming.
+func (ap *AgentProvisioner) ExecuteSandbox(ctx context.Context, res model.Resource, command []string, sink eventstream.Sink) (*providersdk.Result, error) {
+	spec, ok := ap.Specs[model.PoolName(res.OriginPool)]
+	if !ok {
+		return nil, fmt.Errorf("unknown origin pool %q", res.OriginPool)
+	}
+	driverType := ap.driverTypeForPool(spec)
+	agent, err := ap.agentForResource(res)
+	if err != nil {
+		return nil, err
+	}
+	streamer, ok := agent.(agentsdk.StreamingAgent)
+	if !ok {
+		return nil, fmt.Errorf("agent %q does not support streaming operations", agent.Info().ID)
+	}
+	return streamer.UpdateStream(ctx, driverType, string(res.ID), &providersdk.ExecOperation{Command: append([]string(nil), command...)}, sink)
 }
 
 func (ap *AgentProvisioner) Destroy(ctx context.Context, pool model.Pool, res model.Resource) error {

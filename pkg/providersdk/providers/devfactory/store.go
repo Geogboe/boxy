@@ -69,5 +69,11 @@ func saveStore(dataDir string, s *storeData) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o600)
+	// os.WriteFile's mode argument is only applied by the OS on file
+	// creation, not on rewrite of a pre-existing file — see #158. This path
+	// rewrites the same store file on every save.
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
 }

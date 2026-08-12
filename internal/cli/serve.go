@@ -183,6 +183,10 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 
 	grpcListenAddr := resolveGRPCListenAddr(opts, cmd, cfg)
 	grpcCertSANs := resolveGRPCCertSANs(opts, cmd, cfg)
+	// The shared Boxy server certificate serves both agent gRPC and the REST
+	// API, so include hostnames from both listen addresses in its SAN set.
+	certSANs := append([]string(nil), grpcCertSANs...)
+	certSANs = append(certSANs, agentCertSANs(listenAddr, nil)...)
 	heartbeatInterval, err := cfg.Server.EffectiveAgentHeartbeatInterval()
 	if err != nil {
 		return err
@@ -190,7 +194,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 
 	// Agent transport: private CA + mTLS gRPC listener (ADR-0005).
 	doneTLS, failTLS := ui.step("Setting up agent CA/TLS")
-	grpcSrv, agentSrv, err := buildAgentGRPCServer(st, agentRegistry, poolMgr, filepath.Dir(statePath), grpcListenAddr, heartbeatInterval, opts.insecure, grpcCertSANs)
+	grpcSrv, agentSrv, err := buildAgentGRPCServer(st, agentRegistry, poolMgr, filepath.Dir(statePath), grpcListenAddr, heartbeatInterval, opts.insecure, certSANs)
 	if err != nil {
 		failTLS(err.Error())
 		return err
@@ -201,7 +205,27 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		doneTLS("private CA + mTLS")
 	}
 
-	srv := server.New(st, sandboxMgr, poolMgr, agentSrv, listenAddr, uiEnabled)
+	var httpCertPEM, httpKeyPEM []byte
+	if !opts.insecure {
+		ca, err := pki.EnsureCA(filepath.Dir(statePath))
+		if err != nil {
+			return fmt.Errorf("ensure REST API CA: %w", err)
+		}
+		serverCert, err := pki.IssueServerCert(ca, filepath.Dir(statePath), agentCertSANs(grpcListenAddr, certSANs))
+		if err != nil {
+			return fmt.Errorf("issue REST API server cert: %w", err)
+		}
+		httpCertPEM = serverCert.CertPEM
+		httpKeyPEM = serverCert.KeyPEM
+	}
+
+	srv := server.NewWithOptions(st, sandboxMgr, poolMgr, agentSrv, listenAddr, uiEnabled, server.ServerOptions{
+		AuthRequired: true,
+		InsecureHTTP: opts.insecure,
+		TLSCertPEM:   httpCertPEM,
+		TLSKeyPEM:    httpKeyPEM,
+		Executor:     provisioner,
+	})
 
 	g, ctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
@@ -218,7 +242,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		return serveLoop(ctx, poolMgr, sandboxDeleter, sandboxFulfiller, poolNames, ui)
 	})
 
-	printServeBanner(listenAddr, uiEnabled, len(cfg.Pools))
+	printServeBanner(listenAddr, uiEnabled, len(cfg.Pools), opts.insecure)
 
 	return g.Wait()
 }
@@ -571,17 +595,21 @@ func poolSpecToModel(spec boxyconfig.PoolSpec) (model.Pool, error) {
 }
 
 // printServeBanner writes the startup banner to the terminal via pterm.
-func printServeBanner(listenAddr string, uiEnabled bool, poolCount int) {
+func printServeBanner(listenAddr string, uiEnabled bool, poolCount int, insecure bool) {
 	host := displayAddr(listenAddr)
+	scheme := "https"
+	if insecure {
+		scheme = "http"
+	}
 
 	pterm.Println()
 	pterm.Bold.Printfln("  Boxy is running")
 	pterm.Println()
 	if uiEnabled {
-		pterm.Printfln("    Dashboard   http://%s/", host)
+		pterm.Printfln("    Dashboard   %s://%s/", scheme, host)
 	}
-	pterm.Printfln("    API         http://%s/api/v1/", host)
-	pterm.Printfln("    Health      http://%s/healthz", host)
+	pterm.Printfln("    API         %s://%s/api/v1/", scheme, host)
+	pterm.Printfln("    Health      %s://%s/healthz", scheme, host)
 	pterm.Println()
 	pterm.Printfln("  Pools: %d configured  ·  Press Ctrl+C to stop", poolCount)
 	pterm.Println()

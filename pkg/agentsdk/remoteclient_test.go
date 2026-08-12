@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
+	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
@@ -67,6 +68,48 @@ func (d *fakeDriver) Delete(ctx context.Context, id string) error {
 
 func (d *fakeDriver) Allocate(ctx context.Context, id string) (map[string]any, error) {
 	return d.allocateRes, d.allocateErr
+}
+
+type fakeStreamingDriver struct {
+	*fakeDriver
+}
+
+func (d *fakeStreamingDriver) UpdateStream(ctx context.Context, id string, op providersdk.Operation, sink eventstream.Sink) (*providersdk.Result, error) {
+	if err := sink.Send(ctx, eventstream.Event{Kind: eventstream.Data, Channel: eventstream.Channel("stdout"), Payload: []byte("live")}); err != nil {
+		return nil, err
+	}
+	return &providersdk.Result{Outputs: map[string]string{"exit_code": "0"}}, nil
+}
+
+func TestExecuteStreamingCommandForwardsDataAndCompletion(t *testing.T) {
+	var sent []*boxyagentv1.AgentMessage
+	driver := &fakeStreamingDriver{fakeDriver: &fakeDriver{providerType: "docker"}}
+	operation, _ := json.Marshal(&providersdk.ExecOperation{Command: []string{"echo", "hi"}})
+	cmd := &boxyagentv1.Command{
+		CommandId:    "stream-1",
+		ProviderType: "docker",
+		Op: &boxyagentv1.Command_Update{Update: &boxyagentv1.UpdateCommand{
+			ResourceId:    "resource-1",
+			OperationJson: operation,
+			Stream:        true,
+		}},
+	}
+	executeStreamingCommand(context.Background(), DriverSet{"docker": driver}, cmd, func(message *boxyagentv1.AgentMessage) error {
+		sent = append(sent, message)
+		return nil
+	})
+	if len(sent) != 2 {
+		t.Fatalf("sent %d messages, want data and completion", len(sent))
+	}
+	if got := sent[0].GetResult().GetOperationStream().GetData(); string(got) != "live" {
+		t.Fatalf("stream data = %q, want live", got)
+	}
+	if !sent[1].GetResult().GetOperationStream().GetComplete() {
+		t.Fatal("last message is not a completion")
+	}
+	if got := sent[1].GetResult().GetOperationStream().GetAttributes()["exit_code"]; got != "0" {
+		t.Fatalf("exit_code = %q, want 0", got)
+	}
 }
 
 // fakeListingDriver adds providersdk.ResourceLister on top of fakeDriver, so

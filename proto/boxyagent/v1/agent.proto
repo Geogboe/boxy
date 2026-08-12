@@ -52,6 +52,7 @@ message CommandResult {
     AgentError error = 7;
     ListResult list = 8;
     PersonalizeGuestResult personalize_guest = 9;
+    OperationStreamEvent operation_stream = 10;
   }
 }
 
@@ -111,6 +112,7 @@ message ReadCommand {
 message UpdateCommand {
   string resource_id = 1;
   bytes operation_json = 2;
+  bool stream = 3;
 }
 
 message DeleteCommand {
@@ -143,6 +145,17 @@ message ResourceStatusResult {
 
 message OperationResult {
   map<string, string> outputs = 1;
+}
+
+// OperationStreamEvent carries one provider-neutral event over the existing
+// bidirectional agent stream. A complete event terminates the command and may
+// include consumer-defined result attributes.
+message OperationStreamEvent {
+  string channel = 1;
+  bytes data = 2;
+  bool complete = 3;
+  map<string, string> attributes = 4;
+  string error = 5;
 }
 
 // properties_json carries providersdk.Driver.Allocate's `map[string]any`

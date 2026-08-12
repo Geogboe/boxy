@@ -3,11 +3,16 @@ package psdirect
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	psrpclient "github.com/smnsjas/go-psrp/client"
+	"github.com/smnsjas/go-psrpcore/messages"
+	"github.com/smnsjas/go-psrpcore/serialization"
 
+	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/vmsdk"
 )
 
@@ -17,6 +22,11 @@ type psrpExecutor interface {
 	Connect(ctx context.Context) error
 	Execute(ctx context.Context, script string) (*psrpclient.Result, error)
 	Close(ctx context.Context) error
+}
+
+type psrpStreamExecutor interface {
+	psrpExecutor
+	ExecuteStream(ctx context.Context, script string) (*psrpclient.StreamResult, error)
 }
 
 // Exec implements vmsdk.GuestExec via PowerShell Direct (HvSocket/PSRP).
@@ -79,6 +89,120 @@ func (e *Exec) Exec(ctx context.Context, cmd string, args ...string) (*vmsdk.Exe
 	}, nil
 }
 
+// ExecStream runs cmd through PowerShell Direct and forwards PSRP output as it
+// arrives. PowerShell's merged native output is represented on stdout; PSRP
+// error records are represented on stderr.
+func (e *Exec) ExecStream(ctx context.Context, cmd string, args []string, sink eventstream.Sink) (*vmsdk.ExecResult, error) {
+	if sink == nil {
+		return nil, fmt.Errorf("psdirect: stream sink is required")
+	}
+	executor, err := e.newExecutor()
+	if err != nil {
+		return nil, fmt.Errorf("psdirect: create client for VM %s: %w", e.VMID, err)
+	}
+	streamer, ok := executor.(psrpStreamExecutor)
+	if !ok {
+		return nil, fmt.Errorf("psdirect: streaming is not supported by the executor")
+	}
+	if err := streamer.Connect(ctx); err != nil {
+		return nil, fmt.Errorf("psdirect: connect to VM %s: %w", e.VMID, err)
+	}
+	defer streamer.Close(ctx) //nolint:errcheck
+
+	stream, err := streamer.ExecuteStream(ctx, buildStreamScript(cmd, args))
+	if err != nil {
+		return nil, fmt.Errorf("psdirect: start stream on VM %s: %w", e.VMID, err)
+	}
+
+	type streamItem struct {
+		channel eventstream.Channel
+		msg     *messages.Message
+	}
+	items := make(chan streamItem)
+	var forwardWG sync.WaitGroup
+	forward := func(channel eventstream.Channel, source <-chan *messages.Message) {
+		forwardWG.Add(1)
+		go func() {
+			defer forwardWG.Done()
+			for msg := range source {
+				select {
+				case items <- streamItem{channel: channel, msg: msg}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+	forward(eventstream.Channel("stdout"), stream.Output)
+	forward(eventstream.Channel("stderr"), stream.Errors)
+	forward(eventstream.Channel("stderr"), stream.Warnings)
+	forward(eventstream.Channel("stderr"), stream.Verbose)
+	forward(eventstream.Channel("stderr"), stream.Debug)
+	forward(eventstream.Channel("stderr"), stream.Progress)
+	forward(eventstream.Channel("stderr"), stream.Information)
+
+	waitCh := make(chan error, 1)
+	go func() {
+		err := stream.Wait()
+		forwardWG.Wait()
+		close(items)
+		waitCh <- err
+	}()
+	exitCode := 0
+	for {
+		select {
+		case <-ctx.Done():
+			stream.Cancel()
+			return nil, ctx.Err()
+		case item, ok := <-items:
+			if !ok {
+				if err := <-waitCh; err != nil {
+					return nil, fmt.Errorf("psdirect: stream on VM %s: %w", e.VMID, err)
+				}
+				return &vmsdk.ExecResult{ExitCode: exitCode}, nil
+			}
+			if item.msg == nil {
+				continue
+			}
+			values, decodeErr := decodeMessage(item.msg)
+			if decodeErr != nil {
+				values = []interface{}{string(item.msg.Data)}
+			}
+			for _, value := range values {
+				if item.channel == eventstream.Channel("stdout") {
+					if code, ok := parseExitMarker(value); ok {
+						exitCode = code
+						continue
+					}
+				}
+				payload := fmt.Append(nil, value)
+				if len(payload) == 0 {
+					continue
+				}
+				if err := sink.Send(ctx, eventstream.Event{Kind: eventstream.Data, Channel: item.channel, Payload: payload}); err != nil {
+					stream.Cancel()
+					return nil, err
+				}
+			}
+		}
+	}
+}
+
+func decodeMessage(msg *messages.Message) ([]interface{}, error) {
+	deserializer := serialization.NewDeserializer()
+	defer deserializer.Close()
+	return deserializer.Deserialize(msg.Data)
+}
+
+func parseExitMarker(value interface{}) (int, bool) {
+	marker, ok := value.(string)
+	if !ok || !strings.HasPrefix(marker, "__BOXY_EXIT_CODE:") {
+		return 0, false
+	}
+	code, err := strconv.Atoi(strings.TrimPrefix(marker, "__BOXY_EXIT_CODE:"))
+	return code, err == nil
+}
+
 // newExecutor returns a psrpExecutor, using the injected factory if set.
 func (e *Exec) newExecutor() (psrpExecutor, error) {
 	if e.execFactory != nil {
@@ -99,6 +223,15 @@ func (e *Exec) newExecutor() (psrpExecutor, error) {
 	cfg.Timeout = 30 * time.Second
 
 	return psrpclient.New("", cfg)
+}
+
+func buildStreamScript(cmd string, args []string) string {
+	parts := make([]string, 0, 1+len(args))
+	parts = append(parts, psQuote(cmd))
+	for _, a := range args {
+		parts = append(parts, psQuote(a))
+	}
+	return fmt.Sprintf("& %s 2>&1\nWrite-Output ('__BOXY_EXIT_CODE:' + [string]$LASTEXITCODE)", strings.Join(parts, " "))
 }
 
 // buildScript constructs the PowerShell script that runs the command and

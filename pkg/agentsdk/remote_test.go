@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
+	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
@@ -422,5 +423,236 @@ func TestRemoteAgent_StreamDropFailsAllPendingWaiters(t *testing.T) {
 		if err := <-errCh; err == nil {
 			t.Fatal("expected every pending call to fail after stream drop, got nil error")
 		}
+	}
+}
+
+// discardSink is a no-op eventstream.Sink used where a test only cares about
+// UpdateStream's return value, not the events it forwards.
+type discardSink struct{}
+
+func (discardSink) Send(context.Context, eventstream.Event) error { return nil }
+
+// recordingSink records every event it receives, in order, for tests that
+// need to assert on the events UpdateStream forwards to its caller's sink.
+type recordingSink struct {
+	mu     sync.Mutex
+	events []eventstream.Event
+}
+
+func (s *recordingSink) Send(_ context.Context, event eventstream.Event) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, event)
+	return nil
+}
+
+func (s *recordingSink) snapshot() []eventstream.Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]eventstream.Event(nil), s.events...)
+}
+
+// TestRemoteAgent_UpdateStreamForwardsDataAndCompletion exercises the
+// server-side half of remote streaming end to end: two non-terminal
+// OperationStreamEvents fed in over the fake stream must reach the caller's
+// sink in order with their channel/payload intact, and a terminal event
+// carrying attributes must both reach the sink as a Complete event and
+// produce a matching *providersdk.Result from UpdateStream's return value —
+// proving exit_code (and other attributes) survive the wire round trip.
+func TestRemoteAgent_UpdateStreamForwardsDataAndCompletion(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)
+	go func() { _ = a.Serve() }()
+
+	sink := &recordingSink{}
+	type result struct {
+		res *providersdk.Result
+		err error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		res, err := a.UpdateStream(context.Background(), "docker", "res-1", &providersdk.ExecOperation{Command: []string{"echo", "hi"}}, sink)
+		resultCh <- result{res, err}
+	}()
+
+	cmd := recvCommand(t, stream.sentCh)
+	update := cmd.GetUpdate()
+	if update == nil || !update.GetStream() {
+		t.Fatalf("expected a streaming UpdateCommand, got %#v", cmd)
+	}
+
+	stream.feedResult(&boxyagentv1.CommandResult{
+		CommandId: cmd.GetCommandId(),
+		Outcome: &boxyagentv1.CommandResult_OperationStream{OperationStream: &boxyagentv1.OperationStreamEvent{
+			Channel: "stdout",
+			Data:    []byte("hello "),
+		}},
+	})
+	stream.feedResult(&boxyagentv1.CommandResult{
+		CommandId: cmd.GetCommandId(),
+		Outcome: &boxyagentv1.CommandResult_OperationStream{OperationStream: &boxyagentv1.OperationStreamEvent{
+			Channel: "stdout",
+			Data:    []byte("world"),
+		}},
+	})
+	stream.feedResult(&boxyagentv1.CommandResult{
+		CommandId: cmd.GetCommandId(),
+		Outcome: &boxyagentv1.CommandResult_OperationStream{OperationStream: &boxyagentv1.OperationStreamEvent{
+			Complete:   true,
+			Attributes: map[string]string{"exit_code": "127"},
+		}},
+	})
+
+	select {
+	case r := <-resultCh:
+		if r.err != nil {
+			t.Fatalf("UpdateStream returned error: %v", r.err)
+		}
+		if r.res == nil || r.res.Outputs["exit_code"] != "127" {
+			t.Fatalf("expected exit_code 127 in result outputs, got %#v", r.res)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for UpdateStream to return")
+	}
+
+	events := sink.snapshot()
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events delivered to sink, got %d: %#v", len(events), events)
+	}
+	if events[0].Kind != eventstream.Data || string(events[0].Payload) != "hello " || events[0].Channel != "stdout" {
+		t.Fatalf("unexpected first event: %+v", events[0])
+	}
+	if events[1].Kind != eventstream.Data || string(events[1].Payload) != "world" {
+		t.Fatalf("unexpected second event: %+v", events[1])
+	}
+	if events[2].Kind != eventstream.Complete || events[2].Completion == nil || events[2].Completion.Attributes["exit_code"] != "127" {
+		t.Fatalf("unexpected third (completion) event: %+v", events[2])
+	}
+}
+
+// TestRemoteAgent_CloseDoesNotPanicSendOnStreamChannel guards against a
+// TOCTOU race in deliver()/Close(): deliver() reads a channel reference out
+// of streamPending, releases a.mu, and only then sends the result on it. A
+// non-terminal OperationStreamEvent (data, not complete/error) leaves the
+// entry in streamPending — since Close() is called for real from
+// Server.Revoke on a goroutine other than the one running Serve(), it can
+// land in exactly that gap: acquire a.mu, delete the entry, and close(ch)
+// out from under deliver()'s pending send. Reproducing that interleaving by
+// launching goroutines and hoping the scheduler cooperates is unreliable
+// (the send after feedResult completes long before Close() can be
+// scheduled), so this test drives the same sequence deliver() takes
+// directly and deterministically instead.
+func TestRemoteAgent_CloseDoesNotPanicSendOnStreamChannel(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)
+
+	const cmdID = "cmd-1"
+	ch := make(chan *boxyagentv1.CommandResult, 32)
+	a.mu.Lock()
+	a.streamPending[cmdID] = ch
+	a.mu.Unlock()
+
+	// Mirrors deliver()'s read of the channel reference for a non-terminal
+	// event: the entry stays in streamPending because only Complete/Error
+	// events delete it.
+	a.mu.Lock()
+	streamCh, ok := a.streamPending[cmdID]
+	a.mu.Unlock()
+	if !ok {
+		t.Fatal("expected streamPending entry to still be present")
+	}
+
+	// Close() runs here — in the window deliver() leaves open between
+	// reading the channel and sending on it, exactly what a concurrent
+	// Revoke() can hit.
+	a.Close()
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Close() left the stream channel in a state where a late send panics: %v", r)
+		}
+	}()
+	streamCh <- &boxyagentv1.CommandResult{CommandId: cmdID}
+}
+
+// TestRemoteAgent_CloseUnblocksLiveUpdateStreamWaiter proves the behavioral
+// guarantee Close() must still provide once it no longer closes individual
+// streamPending channels (see TestRemoteAgent_CloseDoesNotPanicSendOnStreamChannel):
+// a goroutine genuinely blocked inside UpdateStream, waiting on a
+// mid-command stream, must still unblock with an error as soon as Close()
+// runs — via the `case <-a.closed` select arm — rather than hanging until
+// its context deadline.
+func TestRemoteAgent_CloseUnblocksLiveUpdateStreamWaiter(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)
+	go func() { _ = a.Serve() }()
+
+	type result struct {
+		res *providersdk.Result
+		err error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		res, err := a.UpdateStream(context.Background(), "docker", "res-1", &providersdk.ExecOperation{Command: []string{"true"}}, discardSink{})
+		resultCh <- result{res, err}
+	}()
+
+	recvCommand(t, stream.sentCh) // wait until the streaming command is actually sent/pending
+
+	a.Close()
+
+	select {
+	case r := <-resultCh:
+		if r.err == nil {
+			t.Fatal("expected UpdateStream to return an error once Close() runs, got nil")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out: UpdateStream did not unblock after Close()")
+	}
+}
+
+// TestRemoteAgent_DeliverStreamSendDoesNotBlockForeverOnFullBufferAfterClosed
+// guards the other half of the deliver()/Close() TOCTOU fix (see
+// TestRemoteAgent_CloseDoesNotPanicSendOnStreamChannel): deliver()'s send on
+// a streamPending channel is a bare `streamCh <- result` with only a 32-slot
+// buffer. If the waiter already gave up (via `case <-a.closed`, e.g. because
+// Close() ran) but hasn't drained the buffer, and the buffer is full — a
+// slow HTTP client can plausibly leave 32 unread events — that bare send
+// blocks forever, and since deliver() runs inside Serve()'s single receive
+// loop, the whole agent connection's Serve() goroutine never returns.
+//
+// close(a.closed) is used directly instead of a.Close() so streamPending
+// keeps its entry (Close() would otherwise clear it before deliver() has a
+// chance to reach its send step) — deliver() must still find the entry to
+// exercise the code path under test.
+func TestRemoteAgent_DeliverStreamSendDoesNotBlockForeverOnFullBufferAfterClosed(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)
+
+	const cmdID = "cmd-1"
+	ch := make(chan *boxyagentv1.CommandResult, 1)
+	a.mu.Lock()
+	a.streamPending[cmdID] = ch
+	a.mu.Unlock()
+	ch <- &boxyagentv1.CommandResult{CommandId: cmdID} // fill the buffer: nothing will ever drain it
+
+	close(a.closed) // the waiter already gave up via `case <-a.closed`
+
+	done := make(chan struct{})
+	go func() {
+		a.deliver(&boxyagentv1.CommandResult{
+			CommandId: cmdID,
+			Outcome: &boxyagentv1.CommandResult_OperationStream{OperationStream: &boxyagentv1.OperationStreamEvent{
+				Channel: "stdout",
+				Data:    []byte("x"),
+			}},
+		})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("deliver() blocked forever sending to a full streamPending channel whose waiter already gave up")
 	}
 }

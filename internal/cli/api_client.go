@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,8 +12,12 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
+
+	"github.com/Geogboe/boxy/internal/credentials"
+	"github.com/spf13/cobra"
 )
 
 type apiError struct {
@@ -137,16 +143,93 @@ func apiBaseURL(server string) string {
 	server = strings.TrimSpace(server)
 	server = strings.TrimRight(server, "/")
 	if server == "" {
-		server = "127.0.0.1:9090"
+		return "https://127.0.0.1:9090"
 	}
 	if strings.HasPrefix(server, "http://") || strings.HasPrefix(server, "https://") {
 		return server
 	}
+	// An explicit bare address is retained as a local-development HTTP
+	// shorthand. Production/default resolution supplies an https:// URL.
 	return "http://" + server
 }
 
 func defaultAPIClient() *http.Client {
 	return &http.Client{Timeout: 5 * time.Second}
+}
+
+func apiClientForServer(server string) *http.Client {
+	client, _ := apiClientForSettings(server, "", apiInsecureFromEnvironment())
+	return client
+}
+
+func apiClientForCommand(cmd *cobra.Command, server string) (*http.Client, error) {
+	caCertPath, _ := cmd.Flags().GetString("ca-cert")
+	insecure, _ := cmd.Flags().GetBool("insecure")
+	return apiClientForSettings(server, caCertPath, insecure)
+}
+
+func apiClientForSettings(server, caCertPath string, insecure bool) (*http.Client, error) {
+	creds := credentials.New()
+	key, _ := creds.Get(apiBaseURL(server))
+	caPEM, _ := creds.GetCA(apiBaseURL(server))
+	if caCertPath != "" {
+		data, err := os.ReadFile(caCertPath)
+		if err != nil {
+			return nil, fmt.Errorf("read CA certificate: %w", err)
+		}
+		caPEM = data
+	}
+	return apiClientWithMaterial(server, key, caPEM, insecure), nil
+}
+
+func apiClientWithCredentials(server string, creds *credentials.Store, insecure bool) *http.Client {
+	base := apiBaseURL(server)
+	key, _ := creds.Get(base)
+	caPEM, _ := creds.GetCA(base)
+	return apiClientWithMaterial(base, key, caPEM, insecure)
+}
+
+func apiClientWithMaterial(server, key string, caPEM []byte, insecure bool) *http.Client {
+	base := apiBaseURL(server)
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if strings.HasPrefix(base, "https://") {
+		transport.TLSClientConfig = &tls.Config{
+			MinVersion:         tls.VersionTLS13,
+			InsecureSkipVerify: insecure, //nolint:gosec // only enabled by the explicit --insecure development path.
+		}
+		if len(caPEM) != 0 {
+			roots := x509.NewCertPool()
+			if roots.AppendCertsFromPEM(caPEM) {
+				transport.TLSClientConfig.RootCAs = roots
+			}
+		}
+	}
+	if key != "" {
+		return &http.Client{Transport: bearerTransport{base: transport, key: key}, Timeout: 5 * time.Second}
+	}
+	return &http.Client{Transport: transport, Timeout: 5 * time.Second}
+}
+
+type bearerTransport struct {
+	base http.RoundTripper
+	key  string
+}
+
+func (t bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	clone.Header.Set("Authorization", "Bearer "+t.key)
+	return t.base.RoundTrip(clone)
+}
+
+func apiInsecureFromEnvironment() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("BOXY_API_INSECURE")))
+	return value == "1" || value == "true" || value == "yes"
+}
+
+func maintenanceAPIClientForServer(server string) *http.Client {
+	client := apiClientForServer(server)
+	client.Timeout = 5 * time.Minute
+	return client
 }
 
 func maintenanceAPIClient() *http.Client {

@@ -87,11 +87,22 @@ func EnsureCA(dir string) (*CA, error) {
 		return nil, fmt.Errorf("marshal CA key: %w", err)
 	}
 	keyOut := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	// os.WriteFile's mode argument is only applied by the OS when it creates
+	// a new file; on rewrite of a pre-existing file (e.g. ca.crt was lost
+	// but ca.key survived from an older Boxy version), the file keeps
+	// whatever permissions it already had, silently. Explicit os.Chmod
+	// closes that gap for this CA private key — see #158.
 	if err := os.WriteFile(keyPath, keyOut, 0o600); err != nil {
 		return nil, fmt.Errorf("write CA key %q: %w", keyPath, err)
 	}
+	if err := os.Chmod(keyPath, 0o600); err != nil {
+		return nil, fmt.Errorf("set CA key permissions %q: %w", keyPath, err)
+	}
 	if err := os.WriteFile(certPath, ca.CertPEM, 0o600); err != nil {
 		return nil, fmt.Errorf("write CA cert %q: %w", certPath, err)
+	}
+	if err := os.Chmod(certPath, 0o600); err != nil {
+		return nil, fmt.Errorf("set CA cert permissions %q: %w", certPath, err)
 	}
 
 	return ca, nil
@@ -228,11 +239,20 @@ func IssueServerCert(ca *CA, dir string, sans []string) (*ServerCert, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("mkdir %q: %w", dir, err)
 	}
+	// Same rewrite-permission gap as EnsureCA above: this path runs again
+	// whenever SANs change, overwriting a server.key that may already exist
+	// with looser permissions from an older Boxy version.
 	if err := os.WriteFile(keyPath, sc.KeyPEM, 0o600); err != nil {
 		return nil, fmt.Errorf("write server key %q: %w", keyPath, err)
 	}
+	if err := os.Chmod(keyPath, 0o600); err != nil {
+		return nil, fmt.Errorf("set server key permissions %q: %w", keyPath, err)
+	}
 	if err := os.WriteFile(certPath, sc.CertPEM, 0o600); err != nil {
 		return nil, fmt.Errorf("write server cert %q: %w", certPath, err)
+	}
+	if err := os.Chmod(certPath, 0o600); err != nil {
+		return nil, fmt.Errorf("set server cert permissions %q: %w", certPath, err)
 	}
 
 	return sc, nil

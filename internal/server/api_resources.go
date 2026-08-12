@@ -11,6 +11,9 @@ import (
 
 // handleListResources returns all resources as JSON.
 func (s *Server) handleListResources(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRole(w, r, model.APIKeyRoleAuditor, model.APIKeyRoleAdmin) {
+		return
+	}
 	res, err := s.store.ListResources(r.Context())
 	if err != nil {
 		httpjson.Error(w, http.StatusInternalServerError, "failed to list resources")
@@ -21,6 +24,9 @@ func (s *Server) handleListResources(w http.ResponseWriter, r *http.Request) {
 
 // handleGetResource returns a single resource by ID.
 func (s *Server) handleGetResource(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRole(w, r, model.APIKeyRoleAuditor, model.APIKeyRoleAdmin) {
+		return
+	}
 	id := model.ResourceID(r.PathValue("id"))
 	res, err := s.store.GetResource(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {

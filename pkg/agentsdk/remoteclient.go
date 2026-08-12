@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
+	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
@@ -211,6 +212,10 @@ func (s *clientSession) dispatchCommands(ctx context.Context, drivers DriverSet)
 			continue
 		}
 		go func(cmd *boxyagentv1.Command) {
+			if update := cmd.GetUpdate(); update != nil && update.GetStream() {
+				executeStreamingCommand(ctx, drivers, cmd, s.send)
+				return
+			}
 			result := executeCommand(ctx, drivers, cmd)
 			// Best effort: if the stream is already gone, this Send fails
 			// and is silently dropped — the Recv loop above observes the
@@ -221,6 +226,93 @@ func (s *clientSession) dispatchCommands(ctx context.Context, drivers DriverSet)
 			})
 		}(cmd)
 	}
+}
+
+func executeStreamingCommand(ctx context.Context, drivers DriverSet, cmd *boxyagentv1.Command, send func(*boxyagentv1.AgentMessage) error) {
+	d, ok := drivers[providersdk.Type(cmd.GetProviderType())]
+	if !ok {
+		_ = send(&boxyagentv1.AgentMessage{Payload: &boxyagentv1.AgentMessage_Result{Result: errorResult(cmd.GetCommandId(), fmt.Sprintf("provider %q not available", cmd.GetProviderType()))}})
+		return
+	}
+	update := cmd.GetUpdate()
+	var opv map[string]any
+	if len(update.GetOperationJson()) > 0 {
+		if err := json.Unmarshal(update.GetOperationJson(), &opv); err != nil {
+			_ = send(&boxyagentv1.AgentMessage{Payload: &boxyagentv1.AgentMessage_Result{Result: errorResult(cmd.GetCommandId(), fmt.Sprintf("unmarshal update operation: %v", err))}})
+			return
+		}
+	}
+	streamSink := &remoteStreamSink{commandID: cmd.GetCommandId(), send: send}
+	streamer, ok := d.(providersdk.StreamingDriver)
+	if !ok {
+		_ = streamSink.complete(nil, fmt.Sprintf("provider %q does not support streaming operations", cmd.GetProviderType()))
+		return
+	}
+	result, err := streamer.UpdateStream(ctx, update.GetResourceId(), decodeUpdateOperation(opv), streamSink)
+	if err != nil {
+		_ = streamSink.complete(nil, err.Error())
+		return
+	}
+	if !streamSink.completed {
+		var outputs map[string]string
+		if result != nil {
+			outputs = result.Outputs
+		}
+		_ = streamSink.complete(outputs, "")
+	}
+}
+
+type remoteStreamSink struct {
+	commandID string
+	send      func(*boxyagentv1.AgentMessage) error
+	completed bool
+}
+
+func (s *remoteStreamSink) Send(_ context.Context, event eventstream.Event) error {
+	if s.completed {
+		return eventstream.ErrCompleted
+	}
+	message := &boxyagentv1.OperationStreamEvent{Channel: string(event.Channel), Data: append([]byte(nil), event.Payload...)}
+	if event.Kind == eventstream.Complete {
+		message.Complete = true
+		if event.Completion != nil {
+			message.Attributes = cloneStringMap(event.Completion.Attributes)
+			if event.Completion.Err != nil {
+				message.Error = event.Completion.Err.Error()
+			}
+		}
+		s.completed = true
+	}
+	return s.send(&boxyagentv1.AgentMessage{Payload: &boxyagentv1.AgentMessage_Result{Result: &boxyagentv1.CommandResult{
+		CommandId: s.commandID,
+		Outcome:   &boxyagentv1.CommandResult_OperationStream{OperationStream: message},
+	}}})
+}
+
+func (s *remoteStreamSink) complete(attributes map[string]string, errMsg string) error {
+	if s.completed {
+		return nil
+	}
+	s.completed = true
+	return s.send(&boxyagentv1.AgentMessage{Payload: &boxyagentv1.AgentMessage_Result{Result: &boxyagentv1.CommandResult{
+		CommandId: s.commandID,
+		Outcome: &boxyagentv1.CommandResult_OperationStream{OperationStream: &boxyagentv1.OperationStreamEvent{
+			Complete:   true,
+			Attributes: cloneStringMap(attributes),
+			Error:      errMsg,
+		}},
+	}}})
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 func executeCommand(ctx context.Context, drivers DriverSet, cmd *boxyagentv1.Command) *boxyagentv1.CommandResult {
@@ -267,7 +359,7 @@ func executeCommand(ctx context.Context, drivers DriverSet, cmd *boxyagentv1.Com
 				return errorResult(cmd.GetCommandId(), fmt.Sprintf("unmarshal update operation: %v", err))
 			}
 		}
-		res, err := d.Update(ctx, op.Update.GetResourceId(), opv)
+		res, err := d.Update(ctx, op.Update.GetResourceId(), decodeUpdateOperation(opv))
 		if err != nil {
 			return errorResult(cmd.GetCommandId(), err.Error())
 		}
@@ -349,6 +441,21 @@ func executeCommand(ctx context.Context, drivers DriverSet, cmd *boxyagentv1.Com
 	default:
 		return errorResult(cmd.GetCommandId(), "unknown command op")
 	}
+}
+
+func decodeUpdateOperation(raw map[string]any) providersdk.Operation {
+	if len(raw) == 0 {
+		return raw
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return raw
+	}
+	var execOp providersdk.ExecOperation
+	if err := json.Unmarshal(encoded, &execOp); err == nil && len(execOp.Command) > 0 {
+		return &execOp
+	}
+	return raw
 }
 
 func errorResult(commandID, msg string) *boxyagentv1.CommandResult {

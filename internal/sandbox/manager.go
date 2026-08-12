@@ -87,6 +87,18 @@ func (m *Manager) CreateRequested(
 	policies model.SandboxPolicies,
 	requests []model.ResourceRequest,
 ) (model.Sandbox, error) {
+	return m.CreateRequestedOwned(ctx, sbName, policies, requests, "")
+}
+
+// CreateRequestedOwned creates a sandbox request and records the API-key
+// identity that owns it. An empty owner preserves local unauthenticated mode.
+func (m *Manager) CreateRequestedOwned(
+	ctx context.Context,
+	sbName string,
+	policies model.SandboxPolicies,
+	requests []model.ResourceRequest,
+	ownerID string,
+) (model.Sandbox, error) {
 	if m == nil {
 		return model.Sandbox{}, fmt.Errorf("sandbox manager is nil")
 	}
@@ -104,6 +116,7 @@ func (m *Manager) CreateRequested(
 	sb := model.Sandbox{
 		ID:        sbID,
 		Name:      sbName,
+		OwnerID:   ownerID,
 		Policies:  policies,
 		Status:    model.SandboxStatusPending,
 		Requests:  append([]model.ResourceRequest(nil), requests...),

@@ -20,6 +20,19 @@ curl -fsSL https://raw.githubusercontent.com/Geogboe/boxy/main/scripts/install.s
 
 See [docs/install.md](docs/install.md) for supported platforms, version pinning, environment overrides, PATH behavior, and verification details.
 
+## Developer Quickstart
+
+```bash
+task test             # Run the full Go test suite
+task lint             # Run CI-equivalent Go linting
+go generate ./...     # Regenerate schemas, installers, and API documentation
+```
+
+Use `gopls format -w <files>` and `gopls check <file>` while editing Go. User-facing
+CLI changes must update [docs/cli-wireframe.md](docs/cli-wireframe.md) and the
+bundled skill under `internal/skills/assets/boxy-cli/`. The REST reference lives
+in [docs/api.md](docs/api.md).
+
 ## How It Works
 
 Boxy keeps pools of generic, ready-to-use resources warm ahead of time. When a user requests a sandbox, resources are pulled from pools and personalized via hooks — credentials are set, networking is configured, and connection info is returned. The user connects with their native client (SSH, RDP, SMB, etc.). Boxy is not a proxy.
@@ -43,8 +56,9 @@ Boxy keeps pools of generic, ready-to-use resources warm ahead of time. When a u
 ```
 
 A remote agent mode (`boxy agent`, connecting to the server over gRPC from a
-separate host) is planned but not yet implemented — see #37/#62. Today, the
-embedded local agent inside `boxy serve` is the only agent.
+separate host) is implemented with the push model and full mTLS; see
+[ADR-0005](docs/adr/0005-remote-agent-transport-and-registration.md). The
+embedded local agent inside `boxy serve` remains available for local providers.
 
 ---
 
@@ -84,7 +98,9 @@ boxy agent                     — distributed agent: connects to server via gRP
 
 **REST API** — for CLI-to-server communication. Standard HTTP REST, always served alongside the web dashboard by `boxy serve` (no separate `api.enabled` gate). This is implemented today and is the primary interaction layer.
 
-**gRPC over TLS (planned, #37/#62)** — for future agent-to-server communication. Bidirectional streaming: agent dials the server (NAT/firewall friendly), server pushes work down the stream. No gRPC transport exists in the codebase yet.
+**gRPC over TLS** — for remote agent-to-server communication. Bidirectional
+streaming lets an agent dial the server (NAT/firewall friendly) while the server
+pushes work down the stream. See [ADR-0005](docs/adr/0005-remote-agent-transport-and-registration.md).
 
 ### Pool Routing
 
@@ -272,14 +288,13 @@ boxy sandbox list                       — list sandboxes
 boxy sandbox get <id>                   — get sandbox details
 boxy sandbox delete <id>                — delete a sandbox (waits by default; use --no-wait to return after acceptance)
 boxy sandbox extend <id> <duration>     — push a sandbox's auto-destroy expiry further out
-```
-
-**Planned (not yet implemented):**
-
-```
-boxy agent list                         — list agents and connection status
-boxy agent token create                 — create registration token
-boxy agent revoke <id>                  — revoke an agent
+boxy sandbox exec <id> -- <command>      — execute a one-shot command (`--stream` for live output)
+boxy login --server <addr>               — store an API key in the OS keyring
+boxy logout --server <addr>              — remove the stored API key
+boxy admin api-key create                — create an API key (admin)
+boxy agent list                          — list agents and connection status
+boxy agent token create                  — create registration token
+boxy agent revoke <id>                   — revoke an agent
 ```
 
 Pools are config-driven — no `boxy pool create` command. Pool state is observable via the API and web dashboard.

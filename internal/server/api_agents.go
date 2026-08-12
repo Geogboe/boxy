@@ -38,6 +38,9 @@ type agentTokenSummary struct {
 }
 
 func (s *Server) handleCreateAgentToken(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRole(w, r, model.APIKeyRoleAdmin) {
+		return
+	}
 	var req createAgentTokenRequest
 	if r.Body != nil && r.ContentLength != 0 {
 		dec := json.NewDecoder(r.Body)
@@ -72,6 +75,9 @@ func (s *Server) handleCreateAgentToken(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleListAgentTokens(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRole(w, r, model.APIKeyRoleAdmin) {
+		return
+	}
 	toks, err := s.store.ListAgentTokens(r.Context())
 	if err != nil {
 		httpjson.Error(w, http.StatusInternalServerError, "failed to list agent tokens")
@@ -91,6 +97,9 @@ func (s *Server) handleListAgentTokens(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteAgentToken(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRole(w, r, model.APIKeyRoleAdmin) {
+		return
+	}
 	id := model.AgentTokenID(r.PathValue("id"))
 	err := s.store.DeleteAgentToken(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
@@ -105,6 +114,9 @@ func (s *Server) handleDeleteAgentToken(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRole(w, r, model.APIKeyRoleAuditor, model.APIKeyRoleAdmin) {
+		return
+	}
 	if s.agentAdmin == nil {
 		httpjson.Error(w, http.StatusServiceUnavailable, "agent transport not available")
 		return
@@ -120,6 +132,9 @@ type revokeAgentRequest struct {
 }
 
 func (s *Server) handleRevokeAgent(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRole(w, r, model.APIKeyRoleAdmin) {
+		return
+	}
 	if s.agentAdmin == nil {
 		httpjson.Error(w, http.StatusServiceUnavailable, "agent transport not available")
 		return

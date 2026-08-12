@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
@@ -181,6 +182,7 @@ func (d *Driver) Update(ctx context.Context, id string, op providersdk.Operation
 		desc = fmt.Sprintf("exec: %v", o.Command)
 		outputs["operation"] = desc
 		outputs["stdout"] = fmt.Sprintf("[simulated output of: %v]", o.Command)
+		outputs["exit_code"] = "0"
 	case *SetStateOp:
 		prev := r.State
 		desc = fmt.Sprintf("set_state: %s → %s", prev, o.State)
@@ -199,6 +201,21 @@ func (d *Driver) Update(ctx context.Context, id string, op providersdk.Operation
 	}
 
 	return &providersdk.Result{Outputs: outputs}, nil
+}
+
+// UpdateStream emits the simulated command output through the generic event
+// sink, allowing end-to-end streaming tests without a real provider.
+func (d *Driver) UpdateStream(ctx context.Context, id string, op providersdk.Operation, sink eventstream.Sink) (*providersdk.Result, error) {
+	result, err := d.Update(ctx, id, op)
+	if err != nil {
+		return nil, err
+	}
+	if output := result.Outputs["stdout"]; output != "" {
+		if err := sink.Send(ctx, eventstream.Event{Kind: eventstream.Data, Channel: eventstream.Channel("stdout"), Payload: []byte(output)}); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
 }
 
 // Delete removes a simulated resource.
@@ -287,7 +304,12 @@ func generateSSHKey(path string) error {
 		Type:  "RSA PRIVATE KEY",
 		Bytes: x509.MarshalPKCS1PrivateKey(key),
 	}
-	return os.WriteFile(path, pem.EncodeToMemory(block), 0600)
+	// os.WriteFile's mode argument is only applied by the OS on file
+	// creation, not on rewrite of a pre-existing file — see #158.
+	if err := os.WriteFile(path, pem.EncodeToMemory(block), 0600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0600)
 }
 
 func generatePassword() (string, error) {

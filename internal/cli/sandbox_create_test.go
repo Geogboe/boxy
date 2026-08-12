@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -161,6 +162,31 @@ func writeSandboxSpec(t *testing.T, body string) string {
 		t.Fatalf("write spec: %v", err)
 	}
 	return path
+}
+
+func TestWriteEnvFile_RestoresPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose Unix permission bits")
+	}
+
+	dir := t.TempDir()
+	t.Setenv("BOXY_WORKING_DIR", dir)
+	path := filepath.Join(dir, ".sandbox-lab.env")
+	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
+		t.Fatalf("setup env file: %v", err)
+	}
+
+	if err := writeEnvFile(model.Sandbox{ID: "sb-lab", Name: "lab"}, nil, ".sandbox-lab.env"); err != nil {
+		t.Fatalf("writeEnvFile: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat env file: %v", err)
+	}
+	if got, want := info.Mode().Perm(), os.FileMode(0o600); got != want {
+		t.Fatalf("env file permissions = %04o, want %04o", got, want)
+	}
 }
 
 func TestSandboxCreate_BlockingSuccess(t *testing.T) {

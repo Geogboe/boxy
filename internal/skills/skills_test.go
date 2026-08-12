@@ -43,6 +43,35 @@ func TestInstallCanonicalCopiesSkillAndVersion(t *testing.T) {
 	}
 }
 
+func TestInstallCanonical_RestoresVersionFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose Unix permission bits")
+	}
+
+	home := setTestHome(t)
+	xdg := filepath.Join(home, "cfg")
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	versionPath := filepath.Join(xdg, "boxy", "skills", SkillName, VersionFileName)
+	if err := os.MkdirAll(filepath.Dir(versionPath), 0o750); err != nil {
+		t.Fatalf("create skill directory: %v", err)
+	}
+	if err := os.WriteFile(versionPath, []byte("old\n"), 0o644); err != nil {
+		t.Fatalf("setup version file: %v", err)
+	}
+
+	if _, err := InstallCanonical(false, "v1.2.3"); err != nil {
+		t.Fatalf("InstallCanonical: %v", err)
+	}
+
+	info, err := os.Stat(versionPath)
+	if err != nil {
+		t.Fatalf("stat version file: %v", err)
+	}
+	if got, want := info.Mode().Perm(), os.FileMode(0o600); got != want {
+		t.Fatalf("version file permissions = %04o, want %04o", got, want)
+	}
+}
+
 func TestLinkAtAndRemoveLinkAt(t *testing.T) {
 	home := setTestHome(t)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "cfg"))

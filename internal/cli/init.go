@@ -44,6 +44,9 @@ func runInit(force bool) error {
 	if err := os.WriteFile(dest, []byte(starterConfig), 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", configFileName, err)
 	}
+	if err := os.Chmod(dest, 0o600); err != nil {
+		return fmt.Errorf("set permissions on %s: %w", configFileName, err)
+	}
 
 	fmt.Fprintf(os.Stderr, "  Created %s\n", configFileName)
 	fmt.Fprintf(os.Stderr, "\n  Next steps:\n")

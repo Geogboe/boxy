@@ -9,6 +9,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net"
@@ -17,7 +18,9 @@ import (
 
 	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/internal/sandbox"
+	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
@@ -35,26 +38,59 @@ type AgentAdmin interface {
 	Revoke(ctx context.Context, agentID, reason string, forceOrphanResources bool) error
 }
 
+// SandboxExecutor is the application seam used by the REST exec endpoint.
+// Implementations own provider-specific operation construction and agent
+// routing; the server owns request validation and HTTP event encoding.
+type SandboxExecutor interface {
+	ExecuteSandbox(ctx context.Context, resource model.Resource, command []string, sink eventstream.Sink) (*providersdk.Result, error)
+}
+
 // Server is the HTTP server for the Boxy REST API and optional web UI.
 type Server struct {
 	store           store.Store
 	sandboxMgr      *sandbox.Manager
 	poolMaintenance PoolMaintenance
 	agentAdmin      AgentAdmin
+	executor        SandboxExecutor
 	uiEnabled       bool
+	authRequired    bool
+	insecureHTTP    bool
+	tlsCertPEM      []byte
+	tlsKeyPEM       []byte
 	addr            string
 	srv             *http.Server
 }
 
-// New creates a Server that will listen on addr.
+// ServerOptions controls transport security and API authentication.
+type ServerOptions struct {
+	AuthRequired bool
+	InsecureHTTP bool
+	TLSCertPEM   []byte
+	TLSKeyPEM    []byte
+	Executor     SandboxExecutor
+}
+
+// New creates a Server that will listen on addr. It retains the in-process,
+// unauthenticated HTTP behavior used by tests and embedded callers; the
+// daemon uses NewWithOptions to enable authenticated TLS by default.
 // If uiEnabled is true, the web dashboard is served at /.
 func New(st store.Store, sm *sandbox.Manager, pm PoolMaintenance, aa AgentAdmin, addr string, uiEnabled bool) *Server {
+	return NewWithOptions(st, sm, pm, aa, addr, uiEnabled, ServerOptions{InsecureHTTP: true})
+}
+
+// NewWithOptions creates a daemon-configured HTTP server.
+func NewWithOptions(st store.Store, sm *sandbox.Manager, pm PoolMaintenance, aa AgentAdmin, addr string, uiEnabled bool, opts ServerOptions) *Server {
 	s := &Server{
 		store:           st,
 		sandboxMgr:      sm,
 		poolMaintenance: pm,
 		agentAdmin:      aa,
+		executor:        opts.Executor,
 		uiEnabled:       uiEnabled,
+		authRequired:    opts.AuthRequired,
+		insecureHTTP:    opts.InsecureHTTP,
+		tlsCertPEM:      append([]byte(nil), opts.TLSCertPEM...),
+		tlsKeyPEM:       append([]byte(nil), opts.TLSKeyPEM...),
 		addr:            addr,
 	}
 	mux := http.NewServeMux()
@@ -76,7 +112,13 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	})
 
 	// REST API
-	s.registerAPIRoutes(mux)
+	apiMux := http.NewServeMux()
+	s.registerAPIRoutes(apiMux)
+	if s.authRequired {
+		mux.Handle("/api/v1/", s.authenticate(apiMux))
+	} else {
+		mux.Handle("/api/v1/", apiMux)
+	}
 
 	// Web UI (optional)
 	if s.uiEnabled {
@@ -102,8 +144,23 @@ func (s *Server) Start(ctx context.Context) error {
 		_ = s.srv.Shutdown(shutdownCtx)
 	}()
 
-	if err := s.srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-		return fmt.Errorf("http serve: %w", err)
+	if s.insecureHTTP || len(s.tlsCertPEM) == 0 || len(s.tlsKeyPEM) == 0 {
+		if err := s.srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			return fmt.Errorf("http serve: %w", err)
+		}
+		return nil
+	}
+
+	cert, err := tls.X509KeyPair(s.tlsCertPEM, s.tlsKeyPEM)
+	if err != nil {
+		return fmt.Errorf("load HTTP server certificate: %w", err)
+	}
+	s.srv.TLSConfig = &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS13,
+	}
+	if err := s.srv.ServeTLS(ln, "", ""); err != nil && err != http.ErrServerClosed {
+		return fmt.Errorf("https serve: %w", err)
 	}
 	return nil
 }

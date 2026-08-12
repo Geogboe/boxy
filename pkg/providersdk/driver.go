@@ -1,6 +1,10 @@
 package providersdk
 
-import "context"
+import (
+	"context"
+
+	"github.com/Geogboe/boxy/pkg/eventstream"
+)
 
 // Type identifies the provider kind (e.g. "docker", "hyperv").
 type Type string
@@ -73,6 +77,13 @@ type ResourceStatus struct {
 // concrete operation types.
 type Operation interface{}
 
+// ExecOperation is the provider-neutral command shape used by Boxy workflows.
+// Providers may alias or translate it into their native operation type.
+type ExecOperation struct {
+	Command []string
+	Env     map[string]string
+}
+
 // Result is returned by Driver.Update.
 type Result struct {
 	// Outputs holds key/value pairs produced by the operation
@@ -87,4 +98,11 @@ type Result struct {
 // assert for it rather than relying on it being part of Driver.
 type ResourceLister interface {
 	List(ctx context.Context) ([]ResourceStatus, error)
+}
+
+// StreamingDriver is an optional capability for providers that can emit live
+// events while an operation runs. The base Driver contract remains unary so
+// providers can opt in incrementally.
+type StreamingDriver interface {
+	UpdateStream(ctx context.Context, id string, op Operation, sink eventstream.Sink) (*Result, error)
 }

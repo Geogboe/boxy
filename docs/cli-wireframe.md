@@ -36,15 +36,16 @@ boxy
 │   ├── --config <path>                          Config file (.yaml/.yml/.json)
 │   ├── --listen <addr>                          HTTP listen address (default :9090)
 │   ├── --ui true|false                          Enable web dashboard (default true)
+│   ├── --insecure                                Disable REST and agent-gRPC TLS (local development only)
 │   ├── --log-level debug|info|warn|error        Log verbosity (default info)
 │   └── --log-file <path>                        Write structured logs to file
 │
 │   $ boxy serve
 │     Boxy server running
 │
-│       Dashboard:  http://127.0.0.1:9090/
-│       API:        http://127.0.0.1:9090/api/v1/
-│       Health:     http://127.0.0.1:9090/healthz
+│       Dashboard:  https://127.0.0.1:9090/
+│       API:        https://127.0.0.1:9090/api/v1/
+│       Health:     https://127.0.0.1:9090/healthz
 │
 │     Pools: 2 configured
 │     Press Ctrl+C to stop
@@ -57,13 +58,42 @@ boxy
 │   └── --config <path>                          Config to resolve server address
 │
 │   $ boxy status
-│     Server:     http://127.0.0.1:9090 (healthy)
+│     Server:     https://127.0.0.1:9090 (healthy)
 │     Pools:      2 configured, 5 resources ready
 │     Sandboxes:  1 active
 │
 │   $ boxy status  (server not running)
 │     Error: cannot reach server at 127.0.0.1:9090
 │     Is `boxy serve` running?
+│
+│
+├── login                                      Store an operator API key in the OS keyring
+│   ├── --server <url>                           Server URL (default 127.0.0.1:9090)
+│   ├── --api-key <key>                          Optional non-interactive key input
+│   ├── --ca-cert <path>                         Trust a Boxy self-signed CA
+│   └── --insecure                               Skip HTTPS verification (development only)
+│
+│   $ boxy login --server https://boxy.example:9090 --ca-cert .boxy/ca.crt
+│     API key: ********
+│     Logged in to https://boxy.example:9090
+│
+│
+├── logout                                     Remove the stored operator credential
+│   └── --server <url>                           Server URL (default 127.0.0.1:9090)
+│
+│
+├── admin                                      Manage operator access and shared state
+│   ├── --server <url>                           Server URL (default 127.0.0.1:9090)
+│   ├── --ca-cert <path>                         Trust a Boxy self-signed CA
+│   ├── --insecure                               Skip HTTPS verification (development only)
+│   │
+│   └── api-key
+│       ├── bootstrap [--name <name>]             First local administrator key; shown once
+│       ├── create --role user|auditor|admin      Create a key; shown once
+│       │   ├── --name <name>
+│       │   └── --expires <duration>
+│       ├── list                                  List key metadata, never raw keys
+│       └── revoke <id>                            Revoke a key
 │
 │
 ├── config
@@ -115,12 +145,20 @@ boxy
 │   │   $ boxy sandbox delete sb-a1b2c3 --no-wait
 │   │     accepted deletion of sandbox sb-a1b2c3
 │   │
-│   └── extend <id> <duration>                   Push a sandbox's auto-destroy expiry out
-│                                                   (only works if policies.auto_destroy_after
-│                                                    was set at creation; fails with 409 otherwise)
+│   ├── extend <id> <duration>                   Push a sandbox's auto-destroy expiry out
+│   │                                               (only works if policies.auto_destroy_after
+│   │                                                was set at creation; fails with 409 otherwise)
+│   │
+│   │   $ boxy sandbox extend sb-a1b2c3 15m
+│   │     extended sandbox sb-a1b2c3, expires at 2026-07-08T14:00:00Z
+│   │
+│   └── exec <id> -- <command> [args...]         Execute a one-shot command
+│       ├── --resource <id>                        Required for multi-resource sandboxes
+│       ├── --timeout <duration>                   Default 30s, maximum 5m
+│       └── --stream                              Stream NDJSON events to stdout/stderr
 │
-│       $ boxy sandbox extend sb-a1b2c3 15m
-│         extended sandbox sb-a1b2c3, expires at 2026-07-08T14:00:00Z
+│       $ boxy sandbox exec sb-a1b2c3 -- hostname
+│         sandbox output...
 │
 │
 ├── skills                                     Install bundled coding-agent skills

@@ -3,9 +3,13 @@ package cli
 import (
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Geogboe/boxy/internal/credentials"
 )
 
 func TestWrapConnError_ClassifiesDialFailure(t *testing.T) {
@@ -91,6 +95,53 @@ func TestValidatePathID_AcceptsOrdinaryID(t *testing.T) {
 	if got != "sb-1" {
 		t.Fatalf("got %q, want unchanged id", got)
 	}
+}
+
+func TestAPIClientForServerAttachesStoredCredential(t *testing.T) {
+	var gotAuth atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth.Store(r.Header.Get("Authorization"))
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	backend := &testCredentialBackend{values: make(map[string]string)}
+	creds := credentials.NewWithBackend("boxy", backend)
+	if err := creds.Set(srv.URL, "boxy_secret"); err != nil {
+		t.Fatalf("Set credential: %v", err)
+	}
+
+	client := apiClientWithCredentials(srv.URL, creds, false)
+	req, err := http.NewRequest(http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("client.Do: %v", err)
+	}
+	_ = resp.Body.Close()
+	if got, want := gotAuth.Load().(string), "Bearer boxy_secret"; got != want {
+		t.Fatalf("Authorization = %q, want %q", got, want)
+	}
+}
+
+type testCredentialBackend struct {
+	values map[string]string
+}
+
+func (b *testCredentialBackend) Get(service, user string) (string, error) {
+	return b.values[service+"\x00"+user], nil
+}
+
+func (b *testCredentialBackend) Set(service, user, value string) error {
+	b.values[service+"\x00"+user] = value
+	return nil
+}
+
+func (b *testCredentialBackend) Delete(service, user string) error {
+	delete(b.values, service+"\x00"+user)
+	return nil
 }
 
 func TestMaintenanceAPIClientHasABoundedTimeout(t *testing.T) {
