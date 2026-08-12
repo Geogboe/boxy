@@ -42,12 +42,12 @@ func defaultUpdateNewUpdater(opts updateOptions) updaterIface {
 	client := &http.Client{Transport: transport}
 
 	u := &selfupdate.Updater{
-		Repo:            buildcfg.Repo,
-		BinaryName:      buildcfg.BinaryName,
-		Token:           opts.token,
-		Client:          client,
-		AssetNamer:      buildcfg.AssetName,
-		AllowPrerelease: opts.prerelease,
+		Repo:                    buildcfg.Repo,
+		BinaryName:              buildcfg.BinaryName,
+		Token:                   opts.token,
+		Client:                  client,
+		AssetNamer:              buildcfg.AssetName,
+		AllowPrereleaseAndDraft: opts.prerelease,
 	}
 	return &boxyUpdater{u: u, pinnedVersion: opts.pinnedVersion}
 }

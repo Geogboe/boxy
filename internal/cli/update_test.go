@@ -203,14 +203,14 @@ func TestUpdateCommand_PrereleaseFlag_WiresThrough(t *testing.T) {
 	}
 }
 
-func TestDefaultUpdateNewUpdater_SetsAllowPrerelease(t *testing.T) {
+func TestDefaultUpdateNewUpdater_SetsAllowPrereleaseAndDraft(t *testing.T) {
 	updater := defaultUpdateNewUpdater(updateOptions{prerelease: true})
 	bu, ok := updater.(*boxyUpdater)
 	if !ok {
 		t.Fatalf("expected *boxyUpdater, got %T", updater)
 	}
-	if !bu.u.AllowPrerelease {
-		t.Error("expected underlying selfupdate.Updater.AllowPrerelease=true")
+	if !bu.u.AllowPrereleaseAndDraft {
+		t.Error("expected underlying selfupdate.Updater.AllowPrereleaseAndDraft=true")
 	}
 }
 
@@ -220,8 +220,8 @@ func TestDefaultUpdateNewUpdater_DefaultsToStableOnly(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *boxyUpdater, got %T", updater)
 	}
-	if bu.u.AllowPrerelease {
-		t.Error("expected underlying selfupdate.Updater.AllowPrerelease=false by default")
+	if bu.u.AllowPrereleaseAndDraft {
+		t.Error("expected underlying selfupdate.Updater.AllowPrereleaseAndDraft=false by default")
 	}
 }
 
