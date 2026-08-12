@@ -13,11 +13,14 @@ import (
 const serveServiceName = "boxy-serve"
 
 type serveServiceInstallOpts struct {
-	userMode  bool
-	serveOpts serveOpts
+	userMode     bool
+	instanceName string
+	serveOpts    serveOpts
 	// boxyDir overrides where service.yaml/service.log are written;
 	// empty means the real default (resolved the same way serveStatePath
-	// resolves .boxy/, so the service config sits next to state.json).
+	// resolves .boxy/, so the service config sits next to state.json,
+	// with an -<instance-name> suffix on the directory for a named
+	// instance so it doesn't collide with the default instance's).
 	boxyDir string
 }
 
@@ -47,13 +50,20 @@ By default this registers a real service (Windows Service via SCM, Linux
 systemd system unit) and requires an elevated process (Administrator /
 root). Pass --user to install the unprivileged fallback instead (Windows
 Task Scheduler at-logon task, Linux systemd user unit) — note this starts
-at user logon, not at machine boot before any login.`,
+at user logon, not at machine boot before any login.
+
+Pass --instance-name to install more than one daemon instance on the same
+host — it produces a distinctly named service (boxy-serve-<name>) and,
+unless --boxy-dir is also given, a distinctly named default state
+directory (.boxy-<name>). uninstall/start/stop/status all take the same
+--instance-name to target that instance.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runServeServiceInstall(cmd, opts)
 		},
 	}
 	cmd.Flags().BoolVar(&opts.userMode, "user", false, "install the unprivileged fallback (no admin/root required) instead of a real service")
+	cmd.Flags().StringVar(&opts.instanceName, "instance-name", "", "install as a named instance (produces boxy-serve-<name> and .boxy-<name>) instead of the default single instance")
 	cmd.Flags().StringVar(&opts.serveOpts.configPath, "config", "", "config file path (.yaml/.yml/.json); default: ./boxy.yaml or ./boxy.yml if present")
 	cmd.Flags().StringVar(&opts.serveOpts.listen, "listen", "", "HTTP listen address (default :9090)")
 	cmd.Flags().BoolVar(&opts.serveOpts.ui, "ui", true, "enable web dashboard UI")
@@ -64,13 +74,18 @@ at user logon, not at machine boot before any login.`,
 }
 
 func runServeServiceInstall(cmd *cobra.Command, opts serveServiceInstallOpts) error {
+	if err := validateInstanceName(opts.instanceName); err != nil {
+		return err
+	}
+	svcName := serviceInstanceName(serveServiceName, opts.instanceName)
+
 	if !opts.userMode {
 		elevated, err := isElevatedFn()
 		if err != nil {
 			return fmt.Errorf("check process privilege: %w", err)
 		}
 		if !elevated {
-			return fmt.Errorf("installing a real boxy-serve service requires an elevated process (run as Administrator, or as root/sudo) — pass --user to install the unprivileged fallback instead")
+			return fmt.Errorf("installing a real %s service requires an elevated process (run as Administrator, or as root/sudo) — pass --user to install the unprivileged fallback instead", svcName)
 		}
 	}
 
@@ -81,6 +96,9 @@ func runServeServiceInstall(cmd *cobra.Command, opts serveServiceInstallOpts) er
 			return err
 		}
 		boxyDir = filepath.Dir(statePath)
+		if suffix := instanceDirSuffix(opts.instanceName); suffix != "" {
+			boxyDir = filepath.Join(filepath.Dir(boxyDir), filepath.Base(boxyDir)+suffix)
+		}
 	}
 	absConfigPath, err := resolveAbs(opts.serveOpts.configPath)
 	if err != nil {
@@ -112,7 +130,7 @@ func runServeServiceInstall(cmd *cobra.Command, opts serveServiceInstallOpts) er
 		return fmt.Errorf("create service manager: %w", err)
 	}
 	spec := svcmgr.Spec{
-		Name:        serveServiceName,
+		Name:        svcName,
 		DisplayName: "Boxy Server",
 		Description: "Boxy daemon — API server, reconcile loop, and embedded agent",
 		ExecPath:    exePath,
@@ -124,116 +142,172 @@ func runServeServiceInstall(cmd *cobra.Command, opts serveServiceInstallOpts) er
 		Args: []string{"serve", "--service-config", cfgPath, "--log-file", logFile},
 	}
 	if err := mgr.Install(spec); err != nil {
-		return fmt.Errorf("install %s service: %w", serveServiceName, err)
+		return fmt.Errorf("install %s service: %w", svcName, err)
 	}
 
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ boxy-serve installed and started (config: %s, log: %s)\n", cfgPath, logFile)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ %s installed and started (config: %s, log: %s)\n", svcName, cfgPath, logFile)
 	return nil
 }
 
+type serveServiceUninstallOpts struct {
+	purge        bool
+	boxyDir      string
+	instanceName string
+	userMode     bool
+}
+
 func newServeServiceUninstallCommand() *cobra.Command {
-	var purge bool
-	var boxyDir string
+	var opts serveServiceUninstallOpts
 	cmd := &cobra.Command{
 		Use:   "uninstall",
 		Short: "Remove the installed boxy serve service",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resolvedBoxyDir := boxyDir
-			if resolvedBoxyDir == "" {
-				statePath, err := serveStatePath("")
-				if err != nil {
-					return err
-				}
-				resolvedBoxyDir = filepath.Dir(statePath)
-			}
-			mgr, err := svcmgrNewManager(svcmgr.ManagerOptions{})
-			if err != nil {
-				return fmt.Errorf("create service manager: %w", err)
-			}
-			if err := mgr.Uninstall(serveServiceName); err != nil {
-				return fmt.Errorf("uninstall %s service: %w", serveServiceName, err)
-			}
-			if purge {
-				if err := os.RemoveAll(resolvedBoxyDir); err != nil {
-					return fmt.Errorf("remove state directory %q: %w", resolvedBoxyDir, err)
-				}
-			}
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "✓ boxy-serve service uninstalled")
-			return nil
+			return runServeServiceUninstall(cmd, opts)
 		},
 	}
-	cmd.Flags().BoolVar(&purge, "purge", false, "also remove boxy serve's state directory (.boxy/)")
-	cmd.Flags().StringVar(&boxyDir, "boxy-dir", "", "the .boxy/ state directory, to locate it for --purge (default resolved the same way `boxy serve` resolves it)")
+	cmd.Flags().BoolVar(&opts.purge, "purge", false, "also remove boxy serve's state directory (.boxy[-<instance-name>]/)")
+	cmd.Flags().StringVar(&opts.boxyDir, "boxy-dir", "", "the .boxy[-<instance-name>]/ state directory, to locate it for --purge (default resolved the same way `boxy serve` resolves it)")
+	cmd.Flags().StringVar(&opts.instanceName, "instance-name", "", instanceNameFlagHelp)
+	cmd.Flags().BoolVar(&opts.userMode, "user", false, "target the --user (unprivileged) instance — must match how it was installed")
 	return cmd
 }
 
+func runServeServiceUninstall(cmd *cobra.Command, opts serveServiceUninstallOpts) error {
+	if err := validateInstanceName(opts.instanceName); err != nil {
+		return err
+	}
+	svcName := serviceInstanceName(serveServiceName, opts.instanceName)
+
+	boxyDir := opts.boxyDir
+	if boxyDir == "" {
+		statePath, err := serveStatePath("")
+		if err != nil {
+			return err
+		}
+		boxyDir = filepath.Dir(statePath)
+		if suffix := instanceDirSuffix(opts.instanceName); suffix != "" {
+			boxyDir = filepath.Join(filepath.Dir(boxyDir), filepath.Base(boxyDir)+suffix)
+		}
+	}
+
+	mgr, err := svcmgrNewManager(svcmgr.ManagerOptions{UserMode: opts.userMode})
+	if err != nil {
+		return fmt.Errorf("create service manager: %w", err)
+	}
+	if err := mgr.Uninstall(svcName); err != nil {
+		return fmt.Errorf("uninstall %s service: %w", svcName, err)
+	}
+	if opts.purge {
+		if err := purgeServiceDataDir(boxyDir); err != nil {
+			return err
+		}
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ %s service uninstalled\n", svcName)
+	return nil
+}
+
 func newServeServiceStartCommand() *cobra.Command {
-	return &cobra.Command{
+	var instanceName string
+	var userMode bool
+	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start the installed boxy serve service",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			mgr, err := svcmgrNewManager(svcmgr.ManagerOptions{})
-			if err != nil {
-				return fmt.Errorf("create service manager: %w", err)
-			}
-			if err := mgr.Start(serveServiceName); err != nil {
-				return fmt.Errorf("start %s service: %w", serveServiceName, err)
-			}
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "✓ boxy-serve service started")
-			return nil
+			return runServeServiceStart(cmd, instanceName, userMode)
 		},
 	}
+	cmd.Flags().StringVar(&instanceName, "instance-name", "", instanceNameFlagHelp)
+	cmd.Flags().BoolVar(&userMode, "user", false, "target the --user (unprivileged) instance — must match how it was installed")
+	return cmd
+}
+
+func runServeServiceStart(cmd *cobra.Command, instanceName string, userMode bool) error {
+	if err := validateInstanceName(instanceName); err != nil {
+		return err
+	}
+	svcName := serviceInstanceName(serveServiceName, instanceName)
+	mgr, err := svcmgrNewManager(svcmgr.ManagerOptions{UserMode: userMode})
+	if err != nil {
+		return fmt.Errorf("create service manager: %w", err)
+	}
+	if err := mgr.Start(svcName); err != nil {
+		return fmt.Errorf("start %s service: %w", svcName, err)
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ %s service started\n", svcName)
+	return nil
 }
 
 func newServeServiceStopCommand() *cobra.Command {
-	return &cobra.Command{
+	var instanceName string
+	var userMode bool
+	cmd := &cobra.Command{
 		Use:   "stop",
 		Short: "Stop the installed boxy serve service",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			mgr, err := svcmgrNewManager(svcmgr.ManagerOptions{})
-			if err != nil {
-				return fmt.Errorf("create service manager: %w", err)
-			}
-			if err := mgr.Stop(serveServiceName); err != nil {
-				return fmt.Errorf("stop %s service: %w", serveServiceName, err)
-			}
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "✓ boxy-serve service stopped")
-			return nil
+			return runServeServiceStop(cmd, instanceName, userMode)
 		},
 	}
+	cmd.Flags().StringVar(&instanceName, "instance-name", "", instanceNameFlagHelp)
+	cmd.Flags().BoolVar(&userMode, "user", false, "target the --user (unprivileged) instance — must match how it was installed")
+	return cmd
+}
+
+func runServeServiceStop(cmd *cobra.Command, instanceName string, userMode bool) error {
+	if err := validateInstanceName(instanceName); err != nil {
+		return err
+	}
+	svcName := serviceInstanceName(serveServiceName, instanceName)
+	mgr, err := svcmgrNewManager(svcmgr.ManagerOptions{UserMode: userMode})
+	if err != nil {
+		return fmt.Errorf("create service manager: %w", err)
+	}
+	if err := mgr.Stop(svcName); err != nil {
+		return fmt.Errorf("stop %s service: %w", svcName, err)
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ %s service stopped\n", svcName)
+	return nil
 }
 
 func newServeServiceStatusCommand() *cobra.Command {
-	return &cobra.Command{
+	var instanceName string
+	var userMode bool
+	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show the installed boxy serve service's status",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runServeServiceStatus(cmd)
+			return runServeServiceStatus(cmd, instanceName, userMode)
 		},
 	}
+	cmd.Flags().StringVar(&instanceName, "instance-name", "", instanceNameFlagHelp)
+	cmd.Flags().BoolVar(&userMode, "user", false, "target the --user (unprivileged) instance — must match how it was installed")
+	return cmd
 }
 
-func runServeServiceStatus(cmd *cobra.Command) error {
-	mgr, err := svcmgrNewManager(svcmgr.ManagerOptions{})
+func runServeServiceStatus(cmd *cobra.Command, instanceName string, userMode bool) error {
+	if err := validateInstanceName(instanceName); err != nil {
+		return err
+	}
+	svcName := serviceInstanceName(serveServiceName, instanceName)
+	mgr, err := svcmgrNewManager(svcmgr.ManagerOptions{UserMode: userMode})
 	if err != nil {
 		return fmt.Errorf("create service manager: %w", err)
 	}
-	st, err := mgr.Status(serveServiceName)
+	st, err := mgr.Status(svcName)
 	if err != nil {
-		return fmt.Errorf("get %s service status: %w", serveServiceName, err)
+		return fmt.Errorf("get %s service status: %w", svcName, err)
 	}
 	if !st.Installed {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "boxy-serve: not installed")
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: not installed\n", svcName)
 		return nil
 	}
 	state := "stopped"
 	if st.Running {
 		state = "running"
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "boxy-serve: %s (%s)\n", state, st.Mode)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s (%s)\n", svcName, state, st.Mode)
 	return nil
 }

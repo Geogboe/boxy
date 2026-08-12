@@ -68,9 +68,28 @@ protected by `0600` file permissions on Linux. Once the agent registers
 successfully, the token is scrubbed from the file — it's single-use and
 worthless after that point regardless.
 
-## Single instance per host
+## Single instance per host by default, named multi-instance via --instance-name
 
-v1 supports exactly one installed agent and one installed server per
-host, under the fixed names `boxy-agent` and `boxy-serve`. `install`
-errors if one is already registered rather than creating a second one.
-Multi-instance support is tracked as a follow-up issue.
+The default (unnamed) instance keeps the fixed names `boxy-agent` and
+`boxy-serve` — `install` errors if one is already registered rather than
+creating a second one. Pass `--instance-name <name>` to `install` to run
+more than one agent or server side by side on the same host (e.g. to test
+two provider configs at once): it produces a distinctly named service
+(`boxy-agent-<name>` / `boxy-serve-<name>`) and, unless `--data-dir` /
+`--boxy-dir` is also given, a distinctly named default data/state
+directory (`.boxy-agent-<name>/` / `.boxy-<name>/`) so named instances
+don't collide with the default instance or each other. `uninstall`,
+`start`, `stop`, and `status` all take the same `--instance-name` (and
+`--user`, if that's how the instance was installed) to target it.
+
+`--instance-name` is restricted to letters, digits, and hyphens (max 32
+characters) — it becomes a literal Windows service/task name, systemd
+unit name, and directory-name suffix, so it needs to be safe everywhere
+at once.
+
+`uninstall --purge` refuses to delete a data/state directory that has no
+`service.yaml` in it. Service names are host-global but data directories
+are cwd-relative, so a mismatched `--instance-name`, wrong working
+directory, or stale `--data-dir`/`--boxy-dir` override must fail loudly
+instead of silently deleting whatever happens to exist at the computed
+path.

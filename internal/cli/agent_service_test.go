@@ -15,7 +15,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// fakeManager stubs svcmgr.Manager for command-layer tests.
+// fakeManager stubs svcmgr.Manager for command-layer tests. It records the
+// name each method was called with so tests can assert instance-name
+// resolution without depending on a real OS service manager.
 type fakeManager struct {
 	installedSpecs []svcmgr.Spec
 	installErr     error
@@ -24,6 +26,11 @@ type fakeManager struct {
 	stopErr        error
 	status         svcmgr.Status
 	statusErr      error
+
+	uninstalledName string
+	startedName     string
+	stoppedName     string
+	statusQueried   string
 }
 
 func (f *fakeManager) Install(spec svcmgr.Spec) error {
@@ -33,15 +40,43 @@ func (f *fakeManager) Install(spec svcmgr.Spec) error {
 	f.installedSpecs = append(f.installedSpecs, spec)
 	return nil
 }
-func (f *fakeManager) Uninstall(string) error               { return f.uninstallErr }
-func (f *fakeManager) Start(string) error                   { return f.startErr }
-func (f *fakeManager) Stop(string) error                    { return f.stopErr }
-func (f *fakeManager) Status(string) (svcmgr.Status, error) { return f.status, f.statusErr }
+func (f *fakeManager) Uninstall(name string) error {
+	f.uninstalledName = name
+	return f.uninstallErr
+}
+func (f *fakeManager) Start(name string) error {
+	f.startedName = name
+	return f.startErr
+}
+func (f *fakeManager) Stop(name string) error {
+	f.stoppedName = name
+	return f.stopErr
+}
+func (f *fakeManager) Status(name string) (svcmgr.Status, error) {
+	f.statusQueried = name
+	return f.status, f.statusErr
+}
 
 func withFakeSvcManager(t *testing.T, m *fakeManager) {
 	t.Helper()
 	orig := svcmgrNewManager
 	svcmgrNewManager = func(svcmgr.ManagerOptions) (svcmgr.Manager, error) { return m, nil }
+	t.Cleanup(func() { svcmgrNewManager = orig })
+}
+
+// withFakeSvcManagerCapturingOpts behaves like withFakeSvcManager but also
+// records every ManagerOptions the command layer passed to svcmgrNewManager,
+// so tests can assert --user threads through to uninstall/start/stop/status
+// — those get UserMode only via ManagerOptions, unlike Install which also
+// carries it implicitly through which ManagerOptions built the Manager it's
+// called on.
+func withFakeSvcManagerCapturingOpts(t *testing.T, m *fakeManager, captured *[]svcmgr.ManagerOptions) {
+	t.Helper()
+	orig := svcmgrNewManager
+	svcmgrNewManager = func(opts svcmgr.ManagerOptions) (svcmgr.Manager, error) {
+		*captured = append(*captured, opts)
+		return m, nil
+	}
 	t.Cleanup(func() { svcmgrNewManager = orig })
 }
 
@@ -150,16 +185,61 @@ func TestAgentServiceInstall_AlreadyInstalled_SurfacesClearError(t *testing.T) {
 	}
 }
 
+func TestAgentServiceInstall_NamedInstance_UsesSuffixedNameAndDataDir(t *testing.T) {
+	withElevated(t, true)
+	m := &fakeManager{}
+	withFakeSvcManager(t, m)
+
+	wd := t.TempDir()
+	t.Setenv("BOXY_WORKING_DIR", wd)
+
+	err := runAgentServiceInstall(newTestCmd(&bytes.Buffer{}), agentServiceInstallOpts{
+		instanceName: "test1",
+		agentOpts:    agentServeOpts{server: "s:9091", providers: []string{"docker"}},
+	})
+	if err != nil {
+		t.Fatalf("runAgentServiceInstall: %v", err)
+	}
+	if len(m.installedSpecs) != 1 || m.installedSpecs[0].Name != "boxy-agent-test1" {
+		t.Fatalf("installedSpecs = %+v, want one Spec named boxy-agent-test1", m.installedSpecs)
+	}
+	wantDataDir := filepath.Join(wd, ".boxy-agent-test1")
+	if _, err := os.Stat(filepath.Join(wantDataDir, "service.yaml")); err != nil {
+		t.Fatalf("expected service config under %q: %v", wantDataDir, err)
+	}
+}
+
+func TestAgentServiceInstall_InvalidInstanceName_ErrorsWithoutInstalling(t *testing.T) {
+	withElevated(t, true)
+	m := &fakeManager{}
+	withFakeSvcManager(t, m)
+
+	err := runAgentServiceInstall(newTestCmd(&bytes.Buffer{}), agentServiceInstallOpts{
+		instanceName: "bad name!",
+		agentOpts:    agentServeOpts{server: "s:9091", providers: []string{"docker"}, dataDir: t.TempDir()},
+	})
+	if err == nil {
+		t.Fatal("expected an error for an invalid --instance-name")
+	}
+	if len(m.installedSpecs) != 0 {
+		t.Fatal("must not call Install when --instance-name fails validation")
+	}
+}
+
 func TestAgentServiceUninstall_NotPurge_KeepsDataDir(t *testing.T) {
 	m := &fakeManager{status: svcmgr.Status{Installed: true}}
 	withFakeSvcManager(t, m)
 
 	dataDir := t.TempDir()
-	if err := runAgentServiceUninstall(newTestCmd(&bytes.Buffer{}), false, dataDir); err != nil {
+	err := runAgentServiceUninstall(newTestCmd(&bytes.Buffer{}), agentServiceUninstallOpts{dataDir: dataDir})
+	if err != nil {
 		t.Fatalf("runAgentServiceUninstall: %v", err)
 	}
 	if _, err := os.Stat(dataDir); err != nil {
 		t.Fatalf("data dir should still exist: %v", err)
+	}
+	if m.uninstalledName != "boxy-agent" {
+		t.Errorf("Uninstall called with %q, want boxy-agent", m.uninstalledName)
 	}
 }
 
@@ -168,11 +248,93 @@ func TestAgentServiceUninstall_Purge_RemovesDataDir(t *testing.T) {
 	withFakeSvcManager(t, m)
 
 	dataDir := t.TempDir()
-	if err := runAgentServiceUninstall(newTestCmd(&bytes.Buffer{}), true, dataDir); err != nil {
+	if err := os.WriteFile(filepath.Join(dataDir, "service.yaml"), []byte("server: x\n"), 0o600); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+	err := runAgentServiceUninstall(newTestCmd(&bytes.Buffer{}), agentServiceUninstallOpts{purge: true, dataDir: dataDir})
+	if err != nil {
 		t.Fatalf("runAgentServiceUninstall: %v", err)
 	}
 	if _, err := os.Stat(dataDir); err == nil {
 		t.Fatal("data dir should have been removed by --purge")
+	}
+}
+
+func TestAgentServiceUninstall_Purge_RefusesWithoutMarker(t *testing.T) {
+	m := &fakeManager{status: svcmgr.Status{Installed: true}}
+	withFakeSvcManager(t, m)
+
+	// A directory that exists but was never actually a boxy service data
+	// directory (e.g. --instance-name typo'd, or --data-dir pointed at the
+	// wrong instance's directory) must not be silently deleted.
+	dataDir := t.TempDir()
+	err := runAgentServiceUninstall(newTestCmd(&bytes.Buffer{}), agentServiceUninstallOpts{purge: true, dataDir: dataDir})
+	if err == nil {
+		t.Fatal("expected an error instead of purging a directory with no service.yaml")
+	}
+	if _, statErr := os.Stat(dataDir); statErr != nil {
+		t.Fatalf("data dir should NOT have been removed: %v", statErr)
+	}
+}
+
+func TestAgentServiceUninstall_NamedInstance_TargetsSuffixedName(t *testing.T) {
+	m := &fakeManager{status: svcmgr.Status{Installed: true}}
+	withFakeSvcManager(t, m)
+
+	err := runAgentServiceUninstall(newTestCmd(&bytes.Buffer{}), agentServiceUninstallOpts{
+		instanceName: "test1",
+		dataDir:      t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("runAgentServiceUninstall: %v", err)
+	}
+	if m.uninstalledName != "boxy-agent-test1" {
+		t.Errorf("Uninstall called with %q, want boxy-agent-test1", m.uninstalledName)
+	}
+}
+
+func TestAgentServiceUninstall_UserMode_ThreadsThroughToManagerOptions(t *testing.T) {
+	m := &fakeManager{status: svcmgr.Status{Installed: true}}
+	var captured []svcmgr.ManagerOptions
+	withFakeSvcManagerCapturingOpts(t, m, &captured)
+
+	err := runAgentServiceUninstall(newTestCmd(&bytes.Buffer{}), agentServiceUninstallOpts{
+		userMode: true,
+		dataDir:  t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("runAgentServiceUninstall: %v", err)
+	}
+	if len(captured) != 1 || !captured[0].UserMode {
+		t.Fatalf("ManagerOptions captured = %+v, want exactly one call with UserMode=true", captured)
+	}
+}
+
+func TestAgentServiceStart_UserMode_ThreadsThroughToManagerOptions(t *testing.T) {
+	m := &fakeManager{}
+	var captured []svcmgr.ManagerOptions
+	withFakeSvcManagerCapturingOpts(t, m, &captured)
+
+	if err := runAgentServiceStart(newTestCmd(&bytes.Buffer{}), "", true); err != nil {
+		t.Fatalf("runAgentServiceStart: %v", err)
+	}
+	if len(captured) != 1 || !captured[0].UserMode {
+		t.Fatalf("ManagerOptions captured = %+v, want exactly one call with UserMode=true", captured)
+	}
+	if m.startedName != "boxy-agent" {
+		t.Errorf("Start called with %q, want boxy-agent", m.startedName)
+	}
+}
+
+func TestAgentServiceStop_NamedInstance_TargetsSuffixedName(t *testing.T) {
+	m := &fakeManager{}
+	withFakeSvcManager(t, m)
+
+	if err := runAgentServiceStop(newTestCmd(&bytes.Buffer{}), "test1", false); err != nil {
+		t.Fatalf("runAgentServiceStop: %v", err)
+	}
+	if m.stoppedName != "boxy-agent-test1" {
+		t.Errorf("Stop called with %q, want boxy-agent-test1", m.stoppedName)
 	}
 }
 
@@ -181,11 +343,27 @@ func TestAgentServiceStatus_PrintsInstalledState(t *testing.T) {
 	withFakeSvcManager(t, m)
 
 	var out bytes.Buffer
-	if err := runAgentServiceStatus(newTestCmd(&out)); err != nil {
+	if err := runAgentServiceStatus(newTestCmd(&out), "", false); err != nil {
 		t.Fatalf("runAgentServiceStatus: %v", err)
 	}
 	got := out.String()
 	if !strings.Contains(got, "running") || !strings.Contains(got, "system-service") {
 		t.Fatalf("status output = %q, expected to mention running and system-service", got)
+	}
+}
+
+func TestAgentServiceStatus_NamedInstance_QueriesSuffixedNameAndPrintsIt(t *testing.T) {
+	m := &fakeManager{status: svcmgr.Status{Installed: true, Running: false, Mode: "user-task"}}
+	withFakeSvcManager(t, m)
+
+	var out bytes.Buffer
+	if err := runAgentServiceStatus(newTestCmd(&out), "test1", true); err != nil {
+		t.Fatalf("runAgentServiceStatus: %v", err)
+	}
+	if m.statusQueried != "boxy-agent-test1" {
+		t.Errorf("Status queried %q, want boxy-agent-test1", m.statusQueried)
+	}
+	if !strings.Contains(out.String(), "boxy-agent-test1") {
+		t.Errorf("status output = %q, expected to mention the named instance", out.String())
 	}
 }

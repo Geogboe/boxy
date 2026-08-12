@@ -21,9 +21,14 @@ var svcmgrNewManager = svcmgr.NewManager
 
 const agentServiceName = "boxy-agent"
 
+// instanceNameFlagHelp is shared verbatim across every agent/serve service
+// subcommand's --instance-name flag so their --help text stays identical.
+const instanceNameFlagHelp = "target a named instance installed with --instance-name (default: the unnamed instance)"
+
 type agentServiceInstallOpts struct {
-	userMode  bool
-	agentOpts agentServeOpts
+	userMode     bool
+	instanceName string
+	agentOpts    agentServeOpts
 }
 
 func newAgentServiceCommand() *cobra.Command {
@@ -52,19 +57,27 @@ By default this registers a real service (Windows Service via SCM, Linux
 systemd system unit) and requires an elevated process (Administrator /
 root). Pass --user to install the unprivileged fallback instead (Windows
 Task Scheduler at-logon task, Linux systemd user unit) — note this starts
-at user logon, not at machine boot before any login.`,
+at user logon, not at machine boot before any login.
+
+Pass --instance-name to install more than one agent instance on the same
+host (e.g. to test two provider configs side by side) — it produces a
+distinctly named service (boxy-agent-<name>) and, unless --data-dir is
+also given, a distinctly named default data directory
+(.boxy-agent-<name>). uninstall/start/stop/status all take the same
+--instance-name to target that instance.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAgentServiceInstall(cmd, opts)
 		},
 	}
 	cmd.Flags().BoolVar(&opts.userMode, "user", false, "install the unprivileged fallback (no admin/root required) instead of a real service")
+	cmd.Flags().StringVar(&opts.instanceName, "instance-name", "", "install as a named instance (produces boxy-agent-<name> and .boxy-agent-<name>) instead of the default single instance")
 	cmd.Flags().StringVar(&opts.agentOpts.server, "server", "", "boxy server gRPC address (host:port), required")
 	cmd.Flags().StringSliceVar(&opts.agentOpts.providers, "providers", nil, "provider types this agent hosts (e.g. docker,hyperv), required")
 	cmd.Flags().StringVar(&opts.agentOpts.token, "token", "", "single-use registration token (first connection only)")
 	cmd.Flags().StringVar(&opts.agentOpts.name, "name", "", "human-readable agent name (default: hostname)")
 	cmd.Flags().StringVar(&opts.agentOpts.caCert, "ca-cert", "", "path to the server's CA certificate, required for the first (token) connection unless --insecure")
-	cmd.Flags().StringVar(&opts.agentOpts.dataDir, "data-dir", "", "directory for the agent's issued credentials (default .boxy-agent in cwd)")
+	cmd.Flags().StringVar(&opts.agentOpts.dataDir, "data-dir", "", "directory for the agent's issued credentials (default .boxy-agent[-<instance-name>] in cwd)")
 	cmd.Flags().BoolVar(&opts.agentOpts.insecure, "insecure", false, "connect without TLS (local development only)")
 	_ = cmd.MarkFlagRequired("server")
 	_ = cmd.MarkFlagRequired("providers")
@@ -72,13 +85,18 @@ at user logon, not at machine boot before any login.`,
 }
 
 func runAgentServiceInstall(cmd *cobra.Command, opts agentServiceInstallOpts) error {
+	if err := validateInstanceName(opts.instanceName); err != nil {
+		return err
+	}
+	svcName := serviceInstanceName(agentServiceName, opts.instanceName)
+
 	if !opts.userMode {
 		elevated, err := isElevatedFn()
 		if err != nil {
 			return fmt.Errorf("check process privilege: %w", err)
 		}
 		if !elevated {
-			return fmt.Errorf("installing a real boxy-agent service requires an elevated process (run as Administrator, or as root/sudo) — pass --user to install the unprivileged fallback instead")
+			return fmt.Errorf("installing a real %s service requires an elevated process (run as Administrator, or as root/sudo) — pass --user to install the unprivileged fallback instead", svcName)
 		}
 	}
 
@@ -88,7 +106,7 @@ func runAgentServiceInstall(cmd *cobra.Command, opts agentServiceInstallOpts) er
 		if err != nil {
 			return fmt.Errorf("get working directory: %w", err)
 		}
-		dataDir = filepath.Join(wd, ".boxy-agent")
+		dataDir = filepath.Join(wd, ".boxy-agent"+instanceDirSuffix(opts.instanceName))
 	}
 	absDataDir, err := resolveAbs(dataDir)
 	if err != nil {
@@ -125,7 +143,7 @@ func runAgentServiceInstall(cmd *cobra.Command, opts agentServiceInstallOpts) er
 		return fmt.Errorf("create service manager: %w", err)
 	}
 	spec := svcmgr.Spec{
-		Name:        agentServiceName,
+		Name:        svcName,
 		DisplayName: "Boxy Agent",
 		Description: "Boxy remote agent — dials a boxy server and executes provider operations",
 		ExecPath:    exePath,
@@ -139,10 +157,10 @@ func runAgentServiceInstall(cmd *cobra.Command, opts agentServiceInstallOpts) er
 		Args: []string{"agent", "serve", "--service-config", cfgPath, "--log-file", logFile},
 	}
 	if err := mgr.Install(spec); err != nil {
-		return fmt.Errorf("install %s service: %w", agentServiceName, err)
+		return fmt.Errorf("install %s service: %w", svcName, err)
 	}
 
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ boxy-agent installed and started (config: %s, log: %s)\n", cfgPath, logFile)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ %s installed and started (config: %s, log: %s)\n", svcName, cfgPath, logFile)
 	return nil
 }
 
@@ -157,113 +175,162 @@ func stringsOf(ss []string) []string {
 	return out
 }
 
+type agentServiceUninstallOpts struct {
+	purge        bool
+	dataDir      string
+	instanceName string
+	userMode     bool
+}
+
 func newAgentServiceUninstallCommand() *cobra.Command {
-	var purge bool
-	var dataDir string
+	var opts agentServiceUninstallOpts
 	cmd := &cobra.Command{
 		Use:   "uninstall",
 		Short: "Remove the installed boxy agent service",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resolvedDataDir := dataDir
-			if resolvedDataDir == "" {
-				wd, err := effectiveWD()
-				if err != nil {
-					return fmt.Errorf("get working directory: %w", err)
-				}
-				resolvedDataDir = filepath.Join(wd, ".boxy-agent")
-			}
-			return runAgentServiceUninstall(cmd, purge, resolvedDataDir)
+			return runAgentServiceUninstall(cmd, opts)
 		},
 	}
-	cmd.Flags().BoolVar(&purge, "purge", false, "also remove the agent's data directory (credentials, state)")
-	cmd.Flags().StringVar(&dataDir, "data-dir", "", "the agent's data directory, to locate it for --purge (default .boxy-agent in cwd)")
+	cmd.Flags().BoolVar(&opts.purge, "purge", false, "also remove the agent's data directory (credentials, state)")
+	cmd.Flags().StringVar(&opts.dataDir, "data-dir", "", "the agent's data directory, to locate it for --purge (default .boxy-agent[-<instance-name>] in cwd)")
+	cmd.Flags().StringVar(&opts.instanceName, "instance-name", "", instanceNameFlagHelp)
+	cmd.Flags().BoolVar(&opts.userMode, "user", false, "target the --user (unprivileged) instance — must match how it was installed")
 	return cmd
 }
 
-func runAgentServiceUninstall(cmd *cobra.Command, purge bool, dataDir string) error {
-	mgr, err := svcmgrNewManager(svcmgr.ManagerOptions{})
+func runAgentServiceUninstall(cmd *cobra.Command, opts agentServiceUninstallOpts) error {
+	if err := validateInstanceName(opts.instanceName); err != nil {
+		return err
+	}
+	svcName := serviceInstanceName(agentServiceName, opts.instanceName)
+
+	dataDir := opts.dataDir
+	if dataDir == "" {
+		wd, err := effectiveWD()
+		if err != nil {
+			return fmt.Errorf("get working directory: %w", err)
+		}
+		dataDir = filepath.Join(wd, ".boxy-agent"+instanceDirSuffix(opts.instanceName))
+	}
+
+	mgr, err := svcmgrNewManager(svcmgr.ManagerOptions{UserMode: opts.userMode})
 	if err != nil {
 		return fmt.Errorf("create service manager: %w", err)
 	}
-	if err := mgr.Uninstall(agentServiceName); err != nil {
-		return fmt.Errorf("uninstall %s service: %w", agentServiceName, err)
+	if err := mgr.Uninstall(svcName); err != nil {
+		return fmt.Errorf("uninstall %s service: %w", svcName, err)
 	}
-	if purge {
-		if err := os.RemoveAll(dataDir); err != nil {
-			return fmt.Errorf("remove data directory %q: %w", dataDir, err)
+	if opts.purge {
+		if err := purgeServiceDataDir(dataDir); err != nil {
+			return err
 		}
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ boxy-agent service uninstalled\n")
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ %s service uninstalled\n", svcName)
 	return nil
 }
 
 func newAgentServiceStartCommand() *cobra.Command {
-	return &cobra.Command{
+	var instanceName string
+	var userMode bool
+	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start the installed boxy agent service",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			mgr, err := svcmgrNewManager(svcmgr.ManagerOptions{})
-			if err != nil {
-				return fmt.Errorf("create service manager: %w", err)
-			}
-			if err := mgr.Start(agentServiceName); err != nil {
-				return fmt.Errorf("start %s service: %w", agentServiceName, err)
-			}
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "✓ boxy-agent service started")
-			return nil
+			return runAgentServiceStart(cmd, instanceName, userMode)
 		},
 	}
+	cmd.Flags().StringVar(&instanceName, "instance-name", "", instanceNameFlagHelp)
+	cmd.Flags().BoolVar(&userMode, "user", false, "target the --user (unprivileged) instance — must match how it was installed")
+	return cmd
+}
+
+func runAgentServiceStart(cmd *cobra.Command, instanceName string, userMode bool) error {
+	if err := validateInstanceName(instanceName); err != nil {
+		return err
+	}
+	svcName := serviceInstanceName(agentServiceName, instanceName)
+	mgr, err := svcmgrNewManager(svcmgr.ManagerOptions{UserMode: userMode})
+	if err != nil {
+		return fmt.Errorf("create service manager: %w", err)
+	}
+	if err := mgr.Start(svcName); err != nil {
+		return fmt.Errorf("start %s service: %w", svcName, err)
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ %s service started\n", svcName)
+	return nil
 }
 
 func newAgentServiceStopCommand() *cobra.Command {
-	return &cobra.Command{
+	var instanceName string
+	var userMode bool
+	cmd := &cobra.Command{
 		Use:   "stop",
 		Short: "Stop the installed boxy agent service",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			mgr, err := svcmgrNewManager(svcmgr.ManagerOptions{})
-			if err != nil {
-				return fmt.Errorf("create service manager: %w", err)
-			}
-			if err := mgr.Stop(agentServiceName); err != nil {
-				return fmt.Errorf("stop %s service: %w", agentServiceName, err)
-			}
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "✓ boxy-agent service stopped")
-			return nil
+			return runAgentServiceStop(cmd, instanceName, userMode)
 		},
 	}
+	cmd.Flags().StringVar(&instanceName, "instance-name", "", instanceNameFlagHelp)
+	cmd.Flags().BoolVar(&userMode, "user", false, "target the --user (unprivileged) instance — must match how it was installed")
+	return cmd
+}
+
+func runAgentServiceStop(cmd *cobra.Command, instanceName string, userMode bool) error {
+	if err := validateInstanceName(instanceName); err != nil {
+		return err
+	}
+	svcName := serviceInstanceName(agentServiceName, instanceName)
+	mgr, err := svcmgrNewManager(svcmgr.ManagerOptions{UserMode: userMode})
+	if err != nil {
+		return fmt.Errorf("create service manager: %w", err)
+	}
+	if err := mgr.Stop(svcName); err != nil {
+		return fmt.Errorf("stop %s service: %w", svcName, err)
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ %s service stopped\n", svcName)
+	return nil
 }
 
 func newAgentServiceStatusCommand() *cobra.Command {
-	return &cobra.Command{
+	var instanceName string
+	var userMode bool
+	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show the installed boxy agent service's status",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAgentServiceStatus(cmd)
+			return runAgentServiceStatus(cmd, instanceName, userMode)
 		},
 	}
+	cmd.Flags().StringVar(&instanceName, "instance-name", "", instanceNameFlagHelp)
+	cmd.Flags().BoolVar(&userMode, "user", false, "target the --user (unprivileged) instance — must match how it was installed")
+	return cmd
 }
 
-func runAgentServiceStatus(cmd *cobra.Command) error {
-	mgr, err := svcmgrNewManager(svcmgr.ManagerOptions{})
+func runAgentServiceStatus(cmd *cobra.Command, instanceName string, userMode bool) error {
+	if err := validateInstanceName(instanceName); err != nil {
+		return err
+	}
+	svcName := serviceInstanceName(agentServiceName, instanceName)
+	mgr, err := svcmgrNewManager(svcmgr.ManagerOptions{UserMode: userMode})
 	if err != nil {
 		return fmt.Errorf("create service manager: %w", err)
 	}
-	st, err := mgr.Status(agentServiceName)
+	st, err := mgr.Status(svcName)
 	if err != nil {
-		return fmt.Errorf("get %s service status: %w", agentServiceName, err)
+		return fmt.Errorf("get %s service status: %w", svcName, err)
 	}
 	if !st.Installed {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "boxy-agent: not installed")
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: not installed\n", svcName)
 		return nil
 	}
 	state := "stopped"
 	if st.Running {
 		state = "running"
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "boxy-agent: %s (%s)\n", state, st.Mode)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s (%s)\n", svcName, state, st.Mode)
 	return nil
 }
