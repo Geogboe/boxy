@@ -352,7 +352,7 @@ func buildAgentGRPCServer(st store.Store, registry *pool.AgentRegistry, forceOrp
 		return nil, nil, fmt.Errorf("ensure CA: %w", err)
 	}
 
-	agentSrv := agentserver.New(st, registry, ca, heartbeatInterval, forceOrphaner)
+	agentSrv := agentserver.New(st, registry, ca, heartbeatInterval, forceOrphaner, Version)
 
 	var serverOpts []grpc.ServerOption
 	if insecureMode {

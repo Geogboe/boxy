@@ -28,8 +28,13 @@ type DriverSet map[providersdk.Type]providersdk.Driver
 // process restart) authenticates via the client certificate issued in
 // OnRegistered instead.
 type RemoteClientConfig struct {
-	AgentName         string
-	Token             string
+	AgentName string
+	Token     string
+	// AgentVersion is this agent binary's version string, sent on every
+	// RegisterRequest so the server can refuse a version-mismatched
+	// connection (see #167) rather than let skewed agent/server builds
+	// talk an ambiguous protocol to each other.
+	AgentVersion      string
 	ProviderTypes     []providersdk.Type
 	Drivers           DriverSet
 	HeartbeatInterval time.Duration // default 15s if zero; overridden by the server's RegisterResponse if set
@@ -131,6 +136,7 @@ func RunSession(ctx context.Context, stream boxyagentv1.AgentTransportService_Co
 			RegistrationToken: cfg.Token,
 			AgentName:         cfg.AgentName,
 			ProviderTypes:     providerTypes,
+			AgentVersion:      cfg.AgentVersion,
 		}},
 	}); err != nil {
 		return fmt.Errorf("send register request: %w", err)

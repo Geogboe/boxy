@@ -467,6 +467,7 @@ func TestRunSession_RegistersAndDispatchesCommand(t *testing.T) {
 		sessionErrCh <- RunSession(ctx, stream, RemoteClientConfig{
 			AgentName:         "test-agent",
 			Token:             "tok-123",
+			AgentVersion:      "v-test",
 			ProviderTypes:     []providersdk.Type{"docker"},
 			Drivers:           drivers,
 			HeartbeatInterval: 20 * time.Millisecond,
@@ -484,6 +485,9 @@ func TestRunSession_RegistersAndDispatchesCommand(t *testing.T) {
 	reg := registerSent.GetRegister()
 	if reg == nil || reg.GetRegistrationToken() != "tok-123" {
 		t.Fatalf("expected RegisterRequest with the configured token, got %#v", registerSent)
+	}
+	if reg.GetAgentVersion() != "v-test" {
+		t.Fatalf("expected RegisterRequest.AgentVersion to be forwarded from config, got %q", reg.GetAgentVersion())
 	}
 
 	// Server acks registration.

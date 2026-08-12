@@ -53,6 +53,7 @@ type Server struct {
 	registry      *pool.AgentRegistry
 	ca            *pki.CA
 	forceOrphaner ResourceForceOrphaner
+	version       string
 
 	heartbeatInterval    time.Duration
 	missedHeartbeatLimit int
@@ -69,12 +70,18 @@ type Server struct {
 // to connecting agents in RegisterResponse. forceOrphaner may be nil (e.g.
 // in tests that don't exercise `boxy agent revoke --force-orphan-resources`);
 // Revoke logs and skips the sweep in that case rather than panicking.
-func New(st store.Store, registry *pool.AgentRegistry, ca *pki.CA, heartbeatInterval time.Duration, forceOrphaner ResourceForceOrphaner) *Server {
+// version is this server binary's version string; Connect rejects any
+// agent whose RegisterRequest.agent_version doesn't match it exactly (see
+// #167), including a blank agent_version from an agent built before that
+// field existed — deliberately strict, since a silent "unknown version
+// always accepted" exception would defeat the point of the check.
+func New(st store.Store, registry *pool.AgentRegistry, ca *pki.CA, heartbeatInterval time.Duration, forceOrphaner ResourceForceOrphaner, version string) *Server {
 	return &Server{
 		store:                st,
 		registry:             registry,
 		ca:                   ca,
 		forceOrphaner:        forceOrphaner,
+		version:              version,
 		heartbeatInterval:    heartbeatInterval,
 		missedHeartbeatLimit: DefaultMissedHeartbeatLimit,
 		now:                  time.Now,
@@ -132,8 +139,10 @@ func MintToken(ctx context.Context, st store.Store, label string, ttl time.Durat
 
 // Connect implements the AgentTransportService.Connect bidi-streaming RPC.
 // The first frame must be a RegisterRequest (token-based for a first-time
-// registration, or bare for a cert-authenticated reconnect); every frame
-// after that is handled by the resulting RemoteAgent's own Serve loop.
+// registration, or token-less for a cert-authenticated reconnect — see
+// authenticate) with an agent_version matching this server's own version
+// (see #167); every frame after that is handled by the resulting
+// RemoteAgent's own Serve loop.
 func (s *Server) Connect(stream boxyagentv1.AgentTransportService_ConnectServer) error {
 	ctx := stream.Context()
 
@@ -144,6 +153,20 @@ func (s *Server) Connect(stream boxyagentv1.AgentTransportService_ConnectServer)
 	reg := first.GetRegister()
 	if reg == nil {
 		return fmt.Errorf("first frame must be a RegisterRequest")
+	}
+
+	// Checked before authenticate so a version-skewed agent doesn't burn a
+	// single-use registration token (or, on a cert-based reconnect, doesn't
+	// spend a store lookup checking revocation) just to be told to upgrade.
+	// The rejection sent back over the wire deliberately omits the actual
+	// version strings: unlike every other rejection reason below this point,
+	// this one fires before any token or mTLS identity has been checked, so
+	// the peer isn't known to be a legitimate agent yet — the full detail
+	// (useful for an operator diagnosing a real skewed agent) goes to the
+	// server log instead, not to whatever opened the stream.
+	if reg.GetAgentVersion() != s.version {
+		s.log().Warn("agent registration rejected: version mismatch", "agent_name", reg.GetAgentName(), "agent_version", reg.GetAgentVersion(), "server_version", s.version)
+		return fmt.Errorf("agent version does not match server version; upgrade the agent (or the server) so both sides match")
 	}
 
 	agentID, certPEM, keyPEM, err := s.authenticate(ctx, reg)

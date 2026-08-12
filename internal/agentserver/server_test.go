@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,6 +25,13 @@ import (
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/store"
 )
+
+// testServerVersion is the version every test server is constructed with;
+// RegisterRequest literals that exercise the happy-path registration flow
+// (as opposed to token-rejection paths, which fail before the version
+// check ever runs) must set AgentVersion to this same value, or Connect's
+// #167 version check rejects them before reaching the behavior under test.
+const testServerVersion = "v-test"
 
 // newTestServer wires up a Server against fresh in-memory dependencies and
 // starts it listening on an in-process bufconn — no real network socket,
@@ -46,7 +54,7 @@ func newTestServerWithForceOrphaner(t *testing.T, fo ResourceForceOrphaner) (*Se
 	if err != nil {
 		t.Fatalf("EnsureCA: %v", err)
 	}
-	srv := New(st, registry, ca, 50*time.Millisecond, fo)
+	srv := New(st, registry, ca, 50*time.Millisecond, fo, testServerVersion)
 
 	const bufSize = 1024 * 1024
 	lis := bufconn.Listen(bufSize)
@@ -99,6 +107,7 @@ func TestConnect_TokenRegistrationHappyPath(t *testing.T) {
 			RegistrationToken: "tok-good",
 			AgentName:         "test-agent",
 			ProviderTypes:     []string{"docker"},
+			AgentVersion:      testServerVersion,
 		}},
 	}); err != nil {
 		t.Fatalf("send register request: %v", err)
@@ -134,6 +143,83 @@ func TestConnect_TokenRegistrationHappyPath(t *testing.T) {
 	}
 }
 
+// TestConnect_VersionMismatchRejected covers #167: a RegisterRequest whose
+// agent_version doesn't exactly match the server's own version must be
+// rejected before authentication runs, so a version-skewed agent doesn't
+// burn its single-use token just to be told to upgrade.
+func TestConnect_VersionMismatchRejected(t *testing.T) {
+	_, st, client, cleanup := newTestServer(t)
+	defer cleanup()
+	mintToken(t, st, "tok-good", time.Hour)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if err := stream.Send(&boxyagentv1.AgentMessage{
+		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{
+			RegistrationToken: "tok-good",
+			AgentName:         "test-agent",
+			ProviderTypes:     []string{"docker"},
+			AgentVersion:      "v-other",
+		}},
+	}); err != nil {
+		t.Fatalf("send register request: %v", err)
+	}
+	_, recvErr := stream.Recv()
+	if recvErr == nil {
+		t.Fatal("expected an error for a mismatched agent version")
+	}
+	// The peer isn't authenticated yet at this point in Connect, so the
+	// rejection sent over the wire must not hand an unauthenticated caller
+	// the server's exact version string — only the server-side log gets
+	// that detail.
+	if strings.Contains(recvErr.Error(), "v-test") || strings.Contains(recvErr.Error(), "v-other") {
+		t.Fatalf("rejection error leaked a version string to an unauthenticated peer: %v", recvErr)
+	}
+
+	// The token must still be unused — a version-mismatched agent hasn't
+	// authenticated, so it shouldn't cost its single registration attempt.
+	tok, err := st.GetAgentToken(context.Background(), "tok-good")
+	if err != nil {
+		t.Fatalf("GetAgentToken: %v", err)
+	}
+	if tok.Used() {
+		t.Fatal("expected the token to remain unused after a version-mismatch rejection")
+	}
+}
+
+// TestConnect_BlankVersionRejected covers the deliberate strictness called
+// out in New's doc comment: an agent built before agent_version existed
+// (or that otherwise sends a blank version) is rejected exactly like any
+// other mismatch, not treated as a wildcard.
+func TestConnect_BlankVersionRejected(t *testing.T) {
+	_, st, client, cleanup := newTestServer(t)
+	defer cleanup()
+	mintToken(t, st, "tok-good", time.Hour)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if err := stream.Send(&boxyagentv1.AgentMessage{
+		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{
+			RegistrationToken: "tok-good",
+			AgentName:         "test-agent",
+			ProviderTypes:     []string{"docker"},
+		}},
+	}); err != nil {
+		t.Fatalf("send register request: %v", err)
+	}
+	if _, err := stream.Recv(); err == nil {
+		t.Fatal("expected an error for a blank agent version")
+	}
+}
+
 // TestConnect_TriggersReconciliationSweep verifies the #133 wiring end to
 // end: a successful registration must cause the server to send a
 // ListCommand down the stream (pool.ReconcileAgent auditing this agent),
@@ -156,6 +242,7 @@ func TestConnect_TriggersReconciliationSweep(t *testing.T) {
 			RegistrationToken: "tok-good",
 			AgentName:         "test-agent",
 			ProviderTypes:     []string{"docker"},
+			AgentVersion:      testServerVersion,
 		}},
 	}); err != nil {
 		t.Fatalf("send register request: %v", err)
@@ -222,7 +309,7 @@ func TestConnect_UnknownTokenRejected(t *testing.T) {
 		t.Fatalf("Connect: %v", err)
 	}
 	_ = stream.Send(&boxyagentv1.AgentMessage{
-		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{RegistrationToken: "no-such-token"}},
+		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{RegistrationToken: "no-such-token", AgentVersion: testServerVersion}},
 	})
 	if _, err := stream.Recv(); err == nil {
 		t.Fatal("expected an error for an unknown registration token")
@@ -241,7 +328,7 @@ func TestConnect_ExpiredTokenRejected(t *testing.T) {
 		t.Fatalf("Connect: %v", err)
 	}
 	_ = stream.Send(&boxyagentv1.AgentMessage{
-		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{RegistrationToken: "tok-expired"}},
+		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{RegistrationToken: "tok-expired", AgentVersion: testServerVersion}},
 	})
 	if _, err := stream.Recv(); err == nil {
 		t.Fatal("expected an error for an expired registration token")
@@ -260,7 +347,7 @@ func TestConnect_UsedTokenRejectedOnSecondAttempt(t *testing.T) {
 		t.Fatalf("Connect (first): %v", err)
 	}
 	_ = stream1.Send(&boxyagentv1.AgentMessage{
-		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{RegistrationToken: "tok-reuse"}},
+		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{RegistrationToken: "tok-reuse", AgentVersion: testServerVersion}},
 	})
 	if _, err := stream1.Recv(); err != nil {
 		t.Fatalf("expected the first registration to succeed: %v", err)
@@ -273,7 +360,7 @@ func TestConnect_UsedTokenRejectedOnSecondAttempt(t *testing.T) {
 		t.Fatalf("Connect (second): %v", err)
 	}
 	_ = stream2.Send(&boxyagentv1.AgentMessage{
-		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{RegistrationToken: "tok-reuse"}},
+		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{RegistrationToken: "tok-reuse", AgentVersion: testServerVersion}},
 	})
 	if _, err := stream2.Recv(); err == nil {
 		t.Fatal("expected the second attempt to redeem the same token to be rejected")
@@ -295,7 +382,7 @@ func TestConnect_DeletedTokenRejected(t *testing.T) {
 		t.Fatalf("Connect: %v", err)
 	}
 	_ = stream.Send(&boxyagentv1.AgentMessage{
-		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{RegistrationToken: "tok-revoked"}},
+		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{RegistrationToken: "tok-revoked", AgentVersion: testServerVersion}},
 	})
 	if _, err := stream.Recv(); err == nil {
 		t.Fatal("expected a deleted (revoked) token to be rejected")
@@ -317,6 +404,7 @@ func TestConnect_HeartbeatMarksAvailability(t *testing.T) {
 		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{
 			RegistrationToken: "tok-hb",
 			ProviderTypes:     []string{"docker"},
+			AgentVersion:      testServerVersion,
 		}},
 	})
 	msg, err := stream.Recv()
@@ -415,7 +503,7 @@ func TestRevoke_ForceOrphanResourcesTrue_SweepsAfterDeregister(t *testing.T) {
 	}
 	fo := &fakeForceOrphaner{registry: registry, n: 2}
 
-	srv := New(store.NewMemoryStore(), registry, mustTestCA(t), time.Second, fo)
+	srv := New(store.NewMemoryStore(), registry, mustTestCA(t), time.Second, fo, testServerVersion)
 	if err := srv.Revoke(context.Background(), "agent-gone", "host decommissioned", true); err != nil {
 		t.Fatalf("Revoke: %v", err)
 	}
@@ -438,7 +526,7 @@ func TestRevoke_ForceOrphanResourcesFalse_DoesNotSweep(t *testing.T) {
 	}
 	fo := &fakeForceOrphaner{registry: registry}
 
-	srv := New(store.NewMemoryStore(), registry, mustTestCA(t), time.Second, fo)
+	srv := New(store.NewMemoryStore(), registry, mustTestCA(t), time.Second, fo, testServerVersion)
 	if err := srv.Revoke(context.Background(), "agent-gone", "reason", false); err != nil {
 		t.Fatalf("Revoke: %v", err)
 	}
@@ -450,7 +538,7 @@ func TestRevoke_ForceOrphanResourcesFalse_DoesNotSweep(t *testing.T) {
 
 func TestRevoke_ForceOrphanResourcesTrue_NilForceOrphanerLogsAndSucceeds(t *testing.T) {
 	registry := pool.NewAgentRegistry()
-	srv := New(store.NewMemoryStore(), registry, mustTestCA(t), time.Second, nil)
+	srv := New(store.NewMemoryStore(), registry, mustTestCA(t), time.Second, nil, testServerVersion)
 	if err := srv.Revoke(context.Background(), "agent-gone", "reason", true); err != nil {
 		t.Fatalf("Revoke: %v", err)
 	}
@@ -478,7 +566,7 @@ func TestAuthenticateWithCert_RejectsRevokedIdentity(t *testing.T) {
 	cert := parseTestCert(t, certPEM)
 
 	st := store.NewMemoryStore()
-	srv := New(st, pool.NewAgentRegistry(), ca, time.Second, nil)
+	srv := New(st, pool.NewAgentRegistry(), ca, time.Second, nil, testServerVersion)
 
 	ctx := contextWithPeerCert(cert)
 
@@ -512,7 +600,7 @@ func TestAuthenticateWithCert_UsesCommonNameAsAgentID(t *testing.T) {
 	}
 	cert := parseTestCert(t, certPEM)
 
-	srv := New(store.NewMemoryStore(), pool.NewAgentRegistry(), ca, time.Second, nil)
+	srv := New(store.NewMemoryStore(), pool.NewAgentRegistry(), ca, time.Second, nil, testServerVersion)
 	agentID, certOut, keyOut, err := srv.authenticateWithCert(contextWithPeerCert(cert))
 	if err != nil {
 		t.Fatalf("authenticateWithCert: %v", err)
