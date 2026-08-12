@@ -173,6 +173,29 @@ func TestMaintenanceAPIClientHasABoundedTimeout(t *testing.T) {
 // maxExecTimeout) and defaults to 30s, both well past the default client's
 // 5s, so exec needs its own longer-timeout client the same way drain/fill
 // already does via maintenanceAPIClient.
+// TestApiBaseURL_BareAddressDefaultsToHTTPS guards a GitHub Copilot review
+// finding on this PR: a schemeless --server address (e.g. "myhost:9090")
+// used to default to http://, even though boxy serve is HTTPS by default —
+// so the single most natural way to point the CLI at a remote server
+// (bare host:port, no scheme) silently built an HTTP request against a
+// TLS-only listener and just failed to connect. Only an explicit http://
+// prefix should still get plain HTTP; everything else defaults secure,
+// matching the empty-string (fully-default) case below it.
+func TestApiBaseURL_BareAddressDefaultsToHTTPS(t *testing.T) {
+	if got, want := apiBaseURL("myhost:9090"), "https://myhost:9090"; got != want {
+		t.Fatalf("apiBaseURL(bare) = %q, want %q", got, want)
+	}
+	if got, want := apiBaseURL(""), "https://127.0.0.1:9090"; got != want {
+		t.Fatalf("apiBaseURL(empty) = %q, want %q", got, want)
+	}
+	if got, want := apiBaseURL("http://myhost:9090"), "http://myhost:9090"; got != want {
+		t.Fatalf("apiBaseURL(explicit http) = %q, want %q (explicit http:// must still opt into plain HTTP for local --insecure dev)", got, want)
+	}
+	if got, want := apiBaseURL("https://myhost:9090"), "https://myhost:9090"; got != want {
+		t.Fatalf("apiBaseURL(explicit https) = %q, want %q", got, want)
+	}
+}
+
 func TestExecAPIClientHasABoundedTimeout(t *testing.T) {
 	if execAPIClient().Timeout == 0 {
 		t.Fatal("exec client timeout = 0, want a bounded timeout")

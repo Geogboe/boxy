@@ -148,9 +148,16 @@ func apiBaseURL(server string) string {
 	if strings.HasPrefix(server, "http://") || strings.HasPrefix(server, "https://") {
 		return server
 	}
-	// An explicit bare address is retained as a local-development HTTP
-	// shorthand. Production/default resolution supplies an https:// URL.
-	return "http://" + server
+	// A schemeless --server address defaults to https://, matching the
+	// empty-string (fully-default) case above and boxy serve's HTTPS-by-
+	// default posture: this is the single most natural way to point the
+	// CLI at a remote server, and defaulting it to plain HTTP would build a
+	// request that simply can't connect to a TLS-only listener. `boxy serve
+	// --insecure` genuinely serves plain HTTP, so that case requires an
+	// explicit http:// prefix here — see credentials.normalizeServerURL,
+	// which must default identically or a bare --server address would
+	// resolve to a different keyring key on login vs. on lookup.
+	return "https://" + server
 }
 
 func defaultAPIClient() *http.Client {

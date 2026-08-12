@@ -31,6 +31,16 @@ Core commands you will commonly use:
 - `boxy sandbox extend`
 - `boxy sandbox exec`
 - `boxy agent serve`
+- `boxy agent service install`
+- `boxy agent service uninstall`
+- `boxy agent service start`
+- `boxy agent service stop`
+- `boxy agent service status`
+- `boxy serve service install`
+- `boxy serve service uninstall`
+- `boxy serve service start`
+- `boxy serve service stop`
+- `boxy serve service status`
 - `boxy agent token create`
 - `boxy agent token list`
 - `boxy agent token revoke`
@@ -62,6 +72,7 @@ Core commands you will commonly use:
 - Use `boxy debug pool drain <pool>` and `boxy debug pool fill <pool>` for daemon-backed operator maintenance of unused ready pool inventory.
 - Remote agents register with a single-use token: `boxy agent token create` prints the raw token exactly once (never stored or retrievable again); the agent redeems it on first connect and authenticates with an issued mTLS client certificate afterward. `boxy agent list` shows registered agents and availability; `boxy agent revoke <id>` deny-lists an agent's certificate and tears down its live connection. If the agent is permanently gone, `boxy agent revoke <id> --force-orphan-resources` also detaches every resource still attributed to it (pool inventory + store) without contacting the agent — resources otherwise stay un-`Destroy`able through the normal path since `Destroy` always routes to the exact agent that created them.
 - `boxy agent serve --server <host:port> --providers <list> --token <token> --ca-cert <path>` runs a host as a remote agent. The `--server` address is the daemon's gRPC listener (default `:9091`), not its REST port. `--ca-cert` (the server's `.boxy/ca.crt`, copied out-of-band) is required for the first connection; after registration the issued credentials in `.boxy-agent/` are used automatically and neither flag is needed again.
+- `boxy agent service install --server <host:port> --providers <list> --token <token> --ca-cert <path>` installs the agent as a background service instead of a foreground process — a real service by default (requires an elevated process), or `--user` for an unprivileged Task Scheduler/systemd-user fallback. `boxy serve service install` does the same for the daemon. See docs/service-install.md.
 - If a sandbox fails or stalls, use the diagnosis workflow instead of guessing.
 - Boxy persists daemon runtime state in `.boxy/state.json` near the active config or working directory; use that fact in diagnosis, not as the primary control interface.
 

@@ -253,7 +253,7 @@ func executeStreamingCommand(ctx context.Context, drivers DriverSet, cmd *boxyag
 		_ = streamSink.complete(nil, err.Error())
 		return
 	}
-	if !streamSink.completed {
+	if !streamSink.isCompleted() {
 		var outputs map[string]string
 		if result != nil {
 			outputs = result.Outputs
@@ -262,18 +262,56 @@ func executeStreamingCommand(ctx context.Context, drivers DriverSet, cmd *boxyag
 	}
 }
 
+// remoteStreamSink is the agent-side eventstream.Sink that forwards a
+// driver's stream events back to the server over the shared gRPC stream.
+// completed is guarded by mu rather than left as a bare bool: every
+// concrete driver in this codebase happens to funnel its sink calls through
+// a single consumer goroutine, but providersdk.StreamingDriver (and thus
+// eventstream.Sink) is a public interface external implementations can
+// satisfy, and nothing in Sink's contract forbids calling Send from more
+// than one goroutine (e.g. independent stdout/stderr forwarders). Without
+// the lock, concurrent Send/complete calls would race on completed — an
+// actual data race, not just a logic bug — and could let more than one
+// goroutine past the "already completed" check.
 type remoteStreamSink struct {
 	commandID string
 	send      func(*boxyagentv1.AgentMessage) error
+
+	mu        sync.Mutex
 	completed bool
 }
 
+// isCompleted reports whether a Complete event has already been sent.
+// executeStreamingCommand uses this (rather than reading the completed
+// field directly) to decide whether it still needs to send its own
+// synthetic completion after UpdateStream returns — a direct field read
+// there would be exactly the same unsynchronized access Send/complete
+// guard against, just from outside the type instead of within it.
+func (s *remoteStreamSink) isCompleted() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.completed
+}
+
 func (s *remoteStreamSink) Send(_ context.Context, event eventstream.Event) error {
+	isComplete := event.Kind == eventstream.Complete
+
+	s.mu.Lock()
 	if s.completed {
+		s.mu.Unlock()
 		return eventstream.ErrCompleted
 	}
+	if isComplete {
+		s.completed = true
+	}
+	s.mu.Unlock()
+
+	// The actual send (network I/O) deliberately happens outside the lock:
+	// only the completed check-and-set needs to be atomic, not the
+	// downstream write, and clientSession.send has its own sendMu to
+	// serialize the underlying stream regardless.
 	message := &boxyagentv1.OperationStreamEvent{Channel: string(event.Channel), Data: append([]byte(nil), event.Payload...)}
-	if event.Kind == eventstream.Complete {
+	if isComplete {
 		message.Complete = true
 		if event.Completion != nil {
 			message.Attributes = cloneStringMap(event.Completion.Attributes)
@@ -281,7 +319,6 @@ func (s *remoteStreamSink) Send(_ context.Context, event eventstream.Event) erro
 				message.Error = event.Completion.Err.Error()
 			}
 		}
-		s.completed = true
 	}
 	return s.send(&boxyagentv1.AgentMessage{Payload: &boxyagentv1.AgentMessage_Result{Result: &boxyagentv1.CommandResult{
 		CommandId: s.commandID,
@@ -290,10 +327,14 @@ func (s *remoteStreamSink) Send(_ context.Context, event eventstream.Event) erro
 }
 
 func (s *remoteStreamSink) complete(attributes map[string]string, errMsg string) error {
+	s.mu.Lock()
 	if s.completed {
+		s.mu.Unlock()
 		return nil
 	}
 	s.completed = true
+	s.mu.Unlock()
+
 	return s.send(&boxyagentv1.AgentMessage{Payload: &boxyagentv1.AgentMessage_Result{Result: &boxyagentv1.CommandResult{
 		CommandId: s.commandID,
 		Outcome: &boxyagentv1.CommandResult_OperationStream{OperationStream: &boxyagentv1.OperationStreamEvent{

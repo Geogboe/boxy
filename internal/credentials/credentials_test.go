@@ -98,3 +98,20 @@ func TestNormalizeServerURL(t *testing.T) {
 		t.Fatalf("normalized URL = %q, want https://boxy.example:9090", got)
 	}
 }
+
+// TestNormalizeServerURL_BareAddressDefaultsToHTTPS guards the same GitHub
+// Copilot review finding as internal/cli's apiBaseURL: a schemeless address
+// must normalize to the same https:// key that function builds for the
+// actual connection. If this ever drifts from apiBaseURL's default,
+// `boxy login --server host:port` and a later `boxy sandbox list --server
+// host:port` would compute different keyring keys, and the stored
+// credential would silently appear missing.
+func TestNormalizeServerURL_BareAddressDefaultsToHTTPS(t *testing.T) {
+	got, err := normalizeServerURL("myhost:9090")
+	if err != nil {
+		t.Fatalf("normalizeServerURL: %v", err)
+	}
+	if got != "https://myhost:9090" {
+		t.Fatalf("normalized URL = %q, want https://myhost:9090", got)
+	}
+}

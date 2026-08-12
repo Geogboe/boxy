@@ -145,7 +145,14 @@ func normalizeServerURL(raw string) (string, error) {
 		return "", errors.New("server URL must not be empty")
 	}
 	if !strings.Contains(value, "://") {
-		value = "http://" + value
+		// Must match internal/cli's apiBaseURL's scheme default exactly: a
+		// bare address has to normalize to the same keyring key whether it
+		// arrives via `boxy login --server host:port` or a later command's
+		// `--server host:port` lookup. boxy serve is HTTPS by default, so
+		// https:// is the default here too — see apiBaseURL's doc comment
+		// for why defaulting to http:// broke the most natural way to point
+		// the CLI at a remote server.
+		value = "https://" + value
 	}
 	u, err := url.Parse(value)
 	if err != nil {

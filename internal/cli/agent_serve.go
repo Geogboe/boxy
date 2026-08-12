@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/Geogboe/boxy/internal/svcmgr"
 	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
 	"github.com/Geogboe/boxy/pkg/agentsdk"
 	"github.com/Geogboe/boxy/pkg/providersdk"
@@ -31,13 +32,14 @@ const (
 )
 
 type agentServeOpts struct {
-	server    string
-	providers []string
-	token     string
-	name      string
-	caCert    string
-	dataDir   string
-	insecure  bool
+	server            string
+	providers         []string
+	token             string
+	name              string
+	caCert            string
+	dataDir           string
+	insecure          bool
+	serviceConfigPath string
 }
 
 func newAgentServeCommand() *cobra.Command {
@@ -48,6 +50,12 @@ func newAgentServeCommand() *cobra.Command {
 		Short: "Run this host as a remote boxy agent (dials the server, executes provider operations)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			handled, err := svcmgr.RunAsWindowsService("boxy-agent", func(ctx context.Context) error {
+				return runAgentServe(ctx, opts)
+			})
+			if handled {
+				return err
+			}
 			return runAgentServe(cmd.Context(), opts)
 		},
 	}
@@ -58,13 +66,54 @@ func newAgentServeCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opts.caCert, "ca-cert", "", "path to the server's CA certificate, required for the first (token) connection unless --insecure")
 	cmd.Flags().StringVar(&opts.dataDir, "data-dir", "", "directory for the agent's issued credentials (default .boxy-agent in cwd)")
 	cmd.Flags().BoolVar(&opts.insecure, "insecure", false, "connect without TLS (local development only)")
-	_ = cmd.MarkFlagRequired("server")
-	_ = cmd.MarkFlagRequired("providers")
+	cmd.Flags().StringVar(&opts.serviceConfigPath, "service-config", "", "load flags from a service config file written by `boxy agent service install` instead of the flags above")
 
 	return cmd
 }
 
+// resolveAgentServeOpts returns the effective opts to run with: loaded
+// entirely from --service-config's file when set (a service invocation
+// carries no other flags), otherwise opts as given directly, validated
+// for the flags that used to be cobra-required (--server, --providers).
+func resolveAgentServeOpts(opts agentServeOpts) (agentServeOpts, error) {
+	if opts.serviceConfigPath == "" {
+		if opts.server == "" {
+			return agentServeOpts{}, fmt.Errorf("--server is required (or pass --service-config)")
+		}
+		if len(opts.providers) == 0 {
+			return agentServeOpts{}, fmt.Errorf("--providers is required (or pass --service-config)")
+		}
+		return opts, nil
+	}
+
+	cfg, err := loadAgentServiceConfig(opts.serviceConfigPath)
+	if err != nil {
+		return agentServeOpts{}, fmt.Errorf("load --service-config %q: %w", opts.serviceConfigPath, err)
+	}
+	if cfg.Server == "" {
+		return agentServeOpts{}, fmt.Errorf("invalid --service-config %q: missing server", opts.serviceConfigPath)
+	}
+	if len(cfg.Providers) == 0 {
+		return agentServeOpts{}, fmt.Errorf("invalid --service-config %q: missing providers", opts.serviceConfigPath)
+	}
+	return agentServeOpts{
+		server:            cfg.Server,
+		providers:         cfg.Providers,
+		token:             cfg.Token,
+		name:              cfg.Name,
+		caCert:            cfg.CACert,
+		dataDir:           cfg.DataDir,
+		insecure:          cfg.Insecure,
+		serviceConfigPath: opts.serviceConfigPath,
+	}, nil
+}
+
 func runAgentServe(ctx context.Context, opts agentServeOpts) error {
+	opts, err := resolveAgentServeOpts(opts)
+	if err != nil {
+		return err
+	}
+
 	dataDir := opts.dataDir
 	if dataDir == "" {
 		wd, err := effectiveWD()
@@ -128,6 +177,10 @@ func runAgentServe(ctx context.Context, opts agentServeOpts) error {
 					// token), but the live session keeps working — surface
 					// loudly and keep serving.
 					slog.Error("failed to persist issued credentials; reconnects after restart will need a new token", "error", err, "data_dir", dataDir)
+				} else if opts.serviceConfigPath != "" {
+					if err := scrubAgentServiceConfigToken(opts.serviceConfigPath); err != nil {
+						slog.Warn("failed to scrub bootstrap token from service config after registration", "error", err, "path", opts.serviceConfigPath)
+					}
 				}
 			}
 		},
