@@ -110,7 +110,7 @@ func newUpdateCommand() *cobra.Command {
 
 By default, only a stable (non-prerelease, non-draft) release is considered
 "latest". Pass --prerelease to update to the newest release regardless of
-that flag, e.g. when no stable release has been published yet.
+its prerelease/draft status, e.g. when no stable release has been published yet.
 
 Environment variables:
   BOXY_GITHUB_TOKEN   GitHub API token to avoid rate limits`,

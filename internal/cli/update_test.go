@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -238,8 +239,12 @@ func (c *githubAPIRewriteClient) Do(req *http.Request) (*http.Response, error) {
 		if req.URL.RawQuery != "" {
 			rewritten += "?" + req.URL.RawQuery
 		}
+		newURL, err := req.URL.Parse(rewritten)
+		if err != nil {
+			return nil, fmt.Errorf("rewrite test request URL: %w", err)
+		}
 		newReq := req.Clone(req.Context())
-		newReq.URL, _ = req.URL.Parse(rewritten)
+		newReq.URL = newURL
 		req = newReq
 	}
 	return c.base.Do(req)
