@@ -108,8 +108,10 @@ func TestDriver_Create_CleanupOnFailure(t *testing.T) {
 		case strings.Contains(script, "New-VM"):
 			return "", fmt.Errorf("New-VHD failed")
 		default:
-			// Cleanup script succeeds.
-			return "", nil
+			// Cleanup script's existence check: empty output = confirmed gone.
+			// deleteBestEffort makes exactly one round-trip in this case (no
+			// retry needed since the VM is confirmed gone on the first attempt).
+			return "\n", nil
 		}
 	})
 
@@ -121,6 +123,119 @@ func TestDriver_Create_CleanupOnFailure(t *testing.T) {
 	}
 	if callCount < 4 {
 		t.Errorf("expected health check + memory query + create + cleanup calls, callCount = %d", callCount)
+	}
+}
+
+func TestDriver_DeleteBestEffort_RetriesAndResolvesGUIDOnPersistentFailure(t *testing.T) {
+	callCount := 0
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		callCount++
+		// Every attempt's existence check reports the VM still present.
+		return fakeGUID + "\n", nil
+	})
+	d.deleteBestEffortInterval = time.Millisecond // avoid real sleeps in the test
+
+	guid, err := d.deleteBestEffort(context.Background(), "boxy-abc123", `C:\VMs\boxy-abc123.vhdx`)
+	if err == nil {
+		t.Fatal("expected error when the VM is still present after all attempts")
+	}
+	if guid != fakeGUID {
+		t.Errorf("guid = %q, want %q", guid, fakeGUID)
+	}
+	if callCount != deleteBestEffortAttempts {
+		t.Errorf("callCount = %d, want %d attempts", callCount, deleteBestEffortAttempts)
+	}
+}
+
+func TestDriver_DeleteBestEffort_SucceedsAfterRetry(t *testing.T) {
+	callCount := 0
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		callCount++
+		if callCount == 1 {
+			return fakeGUID + "\n", nil // still present on the first attempt
+		}
+		return "\n", nil // confirmed gone on the second attempt
+	})
+	d.deleteBestEffortInterval = time.Millisecond
+
+	guid, err := d.deleteBestEffort(context.Background(), "boxy-abc123", `C:\VMs\boxy-abc123.vhdx`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if guid != "" {
+		t.Errorf("guid = %q, want empty once confirmed gone, even though an earlier attempt saw it present", guid)
+	}
+	if callCount != 2 {
+		t.Errorf("callCount = %d, want exactly 2 (one retry before confirmation)", callCount)
+	}
+}
+
+func TestDriver_DeleteBestEffort_SucceedsWhenVMConfirmedGone(t *testing.T) {
+	callCount := 0
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		callCount++
+		return "\n", nil // empty output = Get-VM found nothing
+	})
+
+	guid, err := d.deleteBestEffort(context.Background(), "boxy-abc123", `C:\VMs\boxy-abc123.vhdx`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if guid != "" {
+		t.Errorf("guid = %q, want empty on confirmed cleanup", guid)
+	}
+	if callCount != 1 {
+		t.Errorf("callCount = %d, want exactly 1 (no retry needed once confirmed gone)", callCount)
+	}
+}
+
+func TestDriver_Create_ReturnsOrphanedResourceErrorWhenCleanupFails(t *testing.T) {
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		switch {
+		case strings.Contains(script, "Get-VMHost"):
+			return "OK\n", nil
+		case strings.Contains(script, hyperVAvailableMemoryScript):
+			return "16384\n", nil
+		case strings.Contains(script, "New-VM"):
+			return "", fmt.Errorf("New-VHD failed")
+		default:
+			// deleteBestEffort's script: existence check reports still present.
+			return fakeGUID + "\n", nil
+		}
+	})
+	d.deleteBestEffortInterval = time.Millisecond
+
+	_, err := d.Create(context.Background(), &CreateConfig{TemplateVHD: `C:\t.vhdx`})
+	var orphanErr *providersdk.OrphanedResourceError
+	if !errors.As(err, &orphanErr) {
+		t.Fatalf("expected *providersdk.OrphanedResourceError, got %#v", err)
+	}
+	if orphanErr.ID != fakeGUID {
+		t.Errorf("ID = %q, want %q", orphanErr.ID, fakeGUID)
+	}
+}
+
+func TestDriver_Create_PlainErrorWhenCleanupSucceeds(t *testing.T) {
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		switch {
+		case strings.Contains(script, "Get-VMHost"):
+			return "OK\n", nil
+		case strings.Contains(script, hyperVAvailableMemoryScript):
+			return "16384\n", nil
+		case strings.Contains(script, "New-VM"):
+			return "", fmt.Errorf("New-VHD failed")
+		default:
+			return "\n", nil // deleteBestEffort's existence check: confirmed gone
+		}
+	})
+
+	_, err := d.Create(context.Background(), &CreateConfig{TemplateVHD: `C:\t.vhdx`})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	var orphanErr *providersdk.OrphanedResourceError
+	if errors.As(err, &orphanErr) {
+		t.Fatalf("expected a plain error, not *OrphanedResourceError, when cleanup succeeded: %#v", orphanErr)
 	}
 }
 

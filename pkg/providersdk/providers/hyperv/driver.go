@@ -48,6 +48,11 @@ type Driver struct {
 	// tests override to avoid real sleeps.
 	memoryQueryTimeout time.Duration
 
+	// deleteBestEffortInterval bounds the pause between deleteBestEffort's
+	// cleanup-retry attempts. Zero uses the production default; tests
+	// override it to avoid real sleeps. See #174.
+	deleteBestEffortInterval time.Duration
+
 	// mu guards reservedMB, the memory (in MB) committed to in-flight Create
 	// calls that a live host query doesn't reflect yet. See reserveMemory.
 	mu         sync.Mutex
@@ -78,6 +83,14 @@ const (
 	// other processes. Not currently user-configurable — see #173's design
 	// spec, "Known gap surfaced by this work."
 	defaultHostReserveMB = 512
+
+	// deleteBestEffortAttempts/defaultDeleteBestEffortInterval bound
+	// deleteBestEffort's cleanup retry: Remove-VM's -ErrorAction
+	// SilentlyContinue masks whether it actually worked, so a single
+	// attempt can silently leave a VM behind (see #174). Same order of
+	// magnitude as defaultDeleteWaitInterval.
+	deleteBestEffortAttempts        = 3
+	defaultDeleteBestEffortInterval = 2 * time.Second
 )
 
 // vmTransitionalStates are Hyper-V VMState values that mean "still moving
@@ -110,6 +123,13 @@ func (d *Driver) memQueryTimeout() time.Duration {
 		return d.memoryQueryTimeout
 	}
 	return defaultMemoryQueryTimeout
+}
+
+func (d *Driver) bestEffortInterval() time.Duration {
+	if d.deleteBestEffortInterval > 0 {
+		return d.deleteBestEffortInterval
+	}
+	return defaultDeleteBestEffortInterval
 }
 
 // New creates a Hyper-V driver.
@@ -214,14 +234,12 @@ Start-VM -Name '%s' | Out-Null
 
 	out, err := d.ps(ctx, createScript)
 	if err != nil {
-		_ = d.deleteBestEffort(ctx, vmName, diffPath)
-		return nil, fmt.Errorf("hyperv create VM %q: %w", vmName, err)
+		return nil, d.createFailure(ctx, vmName, diffPath, fmt.Errorf("hyperv create VM %q: %w", vmName, err))
 	}
 
 	vmGUID := strings.TrimSpace(out)
 	if vmGUID == "" {
-		_ = d.deleteBestEffort(ctx, vmName, diffPath)
-		return nil, fmt.Errorf("hyperv create: empty VM GUID returned")
+		return nil, d.createFailure(ctx, vmName, diffPath, fmt.Errorf("hyperv create: empty VM GUID returned"))
 	}
 
 	return &providersdk.Resource{
@@ -822,18 +840,68 @@ func (d *Driver) resolveGuestPassword(ctx context.Context, notes map[string]stri
 	return password, nil
 }
 
-func (d *Driver) deleteBestEffort(ctx context.Context, vmName, vhdPath string) error {
+// deleteBestEffort attempts to remove a partially-created VM after Create
+// fails, retrying up to deleteBestEffortAttempts times since a transient
+// VMMS hiccup can make a single Stop-VM/Remove-VM attempt fail. Each attempt
+// is followed by a Get-VM existence check — -ErrorAction SilentlyContinue on
+// Remove-VM masks whether it actually worked, so this check is the only way
+// to know for certain, and its own output doubles as the VM's GUID if
+// cleanup still didn't work (needed to build OrphanedResourceError) — no
+// separate lookup call added. Returns ("", nil) once the VM is confirmed
+// gone. Returns (guid, err) if it's still present after all attempts; guid
+// is empty only if every attempt's PowerShell call itself failed (host
+// unreachable), meaning nothing could even be confirmed, let alone
+// quarantined.
+func (d *Driver) deleteBestEffort(ctx context.Context, vmName, vhdPath string) (guid string, err error) {
 	script := fmt.Sprintf(`
 $ErrorActionPreference = 'Continue'
 Stop-VM -Name '%s' -Force -TurnOff -ErrorAction SilentlyContinue
 Remove-VM -Name '%s' -Force -ErrorAction SilentlyContinue
 if ('%s' -ne '' -and (Test-Path '%s')) { Remove-Item '%s' -Force -ErrorAction SilentlyContinue }
+$vm = Get-VM -Name '%s' -ErrorAction SilentlyContinue
+if ($null -eq $vm) { '' } else { $vm.Id.ToString() }
 `,
 		psq(vmName), psq(vmName),
 		psq(vhdPath), psq(vhdPath), psq(vhdPath),
+		psq(vmName),
 	)
-	_, err := d.ps(ctx, script)
-	return err
+
+	var lastErr error
+	for attempt := 1; attempt <= deleteBestEffortAttempts; attempt++ {
+		out, psErr := d.ps(ctx, script)
+		if psErr != nil {
+			lastErr = psErr
+		} else if remaining := strings.TrimSpace(out); remaining == "" {
+			return "", nil // confirmed gone
+		} else {
+			guid = remaining
+			lastErr = fmt.Errorf("hyperv cleanup: VM %q still present after Remove-VM", vmName)
+		}
+		if attempt < deleteBestEffortAttempts {
+			select {
+			case <-ctx.Done():
+				return guid, ctx.Err()
+			case <-time.After(d.bestEffortInterval()):
+			}
+		}
+	}
+	return guid, lastErr
+}
+
+// createFailure builds Create's return error after a failed create attempt,
+// running best-effort cleanup and escalating to *providersdk.OrphanedResourceError
+// (carrying the real GUID, resolved by deleteBestEffort's own existence
+// check) when cleanup couldn't confirm the VM is gone. cause is the
+// original failure that triggered cleanup.
+func (d *Driver) createFailure(ctx context.Context, vmName, diffPath string, cause error) error {
+	guid, cleanupErr := d.deleteBestEffort(ctx, vmName, diffPath)
+	if cleanupErr != nil && guid != "" {
+		return &providersdk.OrphanedResourceError{
+			ID:           guid,
+			CauseMessage: fmt.Sprintf("%v (cleanup also failed: %v)", cause, cleanupErr),
+		}
+	}
+	return cause
 }
 
 func decodeCreateConfig(cfg any) (CreateConfig, error) {
