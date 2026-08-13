@@ -26,11 +26,12 @@ import (
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
-// testServerVersion is the version every test server is constructed with;
-// RegisterRequest literals that exercise the happy-path registration flow
-// (as opposed to token-rejection paths, which fail before the version
-// check ever runs) must set AgentVersion to this same value, or Connect's
-// #167 version check rejects them before reaching the behavior under test.
+// testServerVersion is the version every test server is constructed with.
+// Connect's #167 version check runs before authenticate, so every
+// RegisterRequest literal in this file — including ones exercising
+// token-rejection paths — must set AgentVersion to this same value, or the
+// version check rejects the request before it ever reaches the token/cert
+// validation the test actually means to exercise.
 const testServerVersion = "v-test"
 
 // newTestServer wires up a Server against fresh in-memory dependencies and

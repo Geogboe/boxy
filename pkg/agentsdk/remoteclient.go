@@ -124,6 +124,17 @@ func Run(ctx context.Context, dial Dialer, cfg RemoteClientConfig) error {
 // command-dispatch receiver concurrently until the stream ends or ctx is
 // cancelled. Returns the first error from either.
 func RunSession(ctx context.Context, stream boxyagentv1.AgentTransportService_ConnectClient, cfg RemoteClientConfig) error {
+	// Fail fast, locally: the server rejects a blank agent_version the same
+	// as any other mismatch (see #167), but its rejection deliberately
+	// omits detail since the peer isn't authenticated at that point yet
+	// (internal/agentserver/server.go's Connect). Catching this here, before
+	// the stream is used at all, turns a misconfigured caller's first
+	// symptom from an opaque round-trip failure into an immediate, clear
+	// local error.
+	if cfg.AgentVersion == "" {
+		return fmt.Errorf("agentsdk: RemoteClientConfig.AgentVersion must be set")
+	}
+
 	providerTypes := make([]string, len(cfg.ProviderTypes))
 	for i, t := range cfg.ProviderTypes {
 		providerTypes[i] = string(t)
