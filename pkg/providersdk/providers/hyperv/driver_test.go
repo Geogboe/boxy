@@ -23,8 +23,11 @@ func mockDriver(psExecFn func(ctx context.Context, script string) (string, error
 
 func TestDriver_Create_HappyPath(t *testing.T) {
 	callCount := 0
-	d := mockDriver(func(_ context.Context, _ string) (string, error) {
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
 		callCount++
+		if strings.Contains(script, hyperVFreeMemoryScript) {
+			return "16777216\n", nil // 16 GB in KB, comfortably above any test's request
+		}
 		return fakeGUID + "\n", nil
 	})
 
@@ -64,7 +67,12 @@ func TestDriver_Create_MissingTemplateVHD(t *testing.T) {
 func TestDriver_Create_Defaults(t *testing.T) {
 	var capturedScript string
 	d := mockDriver(func(_ context.Context, script string) (string, error) {
-		capturedScript = script
+		if strings.Contains(script, hyperVFreeMemoryScript) {
+			return "16777216\n", nil
+		}
+		if strings.Contains(script, "New-VM") {
+			capturedScript = script
+		}
 		return fakeGUID + "\n", nil
 	})
 
@@ -91,12 +99,12 @@ func TestDriver_Create_CleanupOnFailure(t *testing.T) {
 	callCount := 0
 	d := mockDriver(func(_ context.Context, script string) (string, error) {
 		callCount++
-		switch callCount {
-		case 1:
-			// Host health check succeeds.
+		switch {
+		case strings.Contains(script, "Get-VMHost"):
 			return "OK\n", nil
-		case 2:
-			// Main create script fails.
+		case strings.Contains(script, hyperVFreeMemoryScript):
+			return "16777216\n", nil
+		case strings.Contains(script, "New-VM"):
 			return "", fmt.Errorf("New-VHD failed")
 		default:
 			// Cleanup script succeeds.
@@ -110,8 +118,8 @@ func TestDriver_Create_CleanupOnFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when create script fails")
 	}
-	if callCount < 3 {
-		t.Errorf("expected health check + create + cleanup calls, callCount = %d", callCount)
+	if callCount < 4 {
+		t.Errorf("expected health check + memory query + create + cleanup calls, callCount = %d", callCount)
 	}
 }
 
@@ -136,10 +144,47 @@ func TestDriver_Create_HealthCheckFailure(t *testing.T) {
 	}
 }
 
+func TestDriver_Create_InsufficientMemoryRejectedBeforeNewVM(t *testing.T) {
+	callCount := 0
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		callCount++
+		switch {
+		case strings.Contains(script, "Get-VMHost"):
+			return "OK\n", nil
+		case strings.Contains(script, hyperVFreeMemoryScript):
+			return "1048576\n", nil // 1 GB in KB = 1024 MB free, minus 512 reserve = 512 MB available
+		case strings.Contains(script, "New-VM"):
+			t.Fatal("New-VM must not run when capacity is insufficient")
+			return "", nil
+		}
+		return "", fmt.Errorf("unexpected script: %s", script)
+	})
+
+	// Default MemoryMB is 2048; 512 MB available can't satisfy it.
+	_, err := d.Create(context.Background(), &CreateConfig{
+		TemplateVHD: `C:\t.vhdx`,
+	})
+	var capErr *CapacityError
+	if !errors.As(err, &capErr) {
+		t.Fatalf("expected *CapacityError, got %#v", err)
+	}
+	if capErr.RequestedMemoryMB != 2048 {
+		t.Errorf("RequestedMemoryMB = %d, want 2048", capErr.RequestedMemoryMB)
+	}
+	if callCount != 2 {
+		t.Errorf("callCount = %d, want 2 (health check + memory query only)", callCount)
+	}
+}
+
 func TestDriver_Create_LinuxDefaults(t *testing.T) {
 	var capturedScript string
 	d := mockDriver(func(_ context.Context, script string) (string, error) {
-		capturedScript = script
+		if strings.Contains(script, hyperVFreeMemoryScript) {
+			return "16777216\n", nil
+		}
+		if strings.Contains(script, "New-VM") {
+			capturedScript = script
+		}
 		return fakeGUID + "\n", nil
 	})
 

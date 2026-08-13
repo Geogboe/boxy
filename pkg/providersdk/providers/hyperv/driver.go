@@ -140,6 +140,12 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 		return nil, fmt.Errorf("hyperv host health check failed, refusing to provision: %w", err)
 	}
 
+	release, err := d.reserveMemory(ctx, int64(cc.MemoryMB))
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	vhdDir := cc.VHDDir
 	if vhdDir == "" {
 		vhdDir = filepath.Dir(cc.TemplateVHD)
