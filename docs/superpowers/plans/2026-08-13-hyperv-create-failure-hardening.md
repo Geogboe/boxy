@@ -1749,12 +1749,110 @@ with:
 	}, nil
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 4: Update three existing tests whose premise the grace period changes**
+
+Three existing tests assert `reservedMB == 0` immediately after calling
+`release()` — all three now need to reflect that the decrement is delayed,
+not synchronous:
+
+`TestDriver_ReserveMemory_SufficientCapacitySucceeds` (driver_test.go:279-299)
+— change the final block from:
+
+```go
+	release()
+	if d.reservedMB != 0 {
+		t.Errorf("reservedMB after release = %d, want 0", d.reservedMB)
+	}
+```
+
+to:
+
+```go
+	release()
+	if d.reservedMB != 2048 {
+		t.Errorf("reservedMB immediately after release() = %d, want 2048 (grace period still holding it)", d.reservedMB)
+	}
+	time.Sleep(reservationGraceInterval + 200*time.Millisecond)
+	if d.reservedMB != 0 {
+		t.Errorf("reservedMB after the grace period = %d, want 0", d.reservedMB)
+	}
+```
+
+`TestDriver_ReserveMemory_ConcurrentCallsLimitToCapacity` (driver_test.go:360-414)
+— change the final block from:
+
+```go
+	for release := range releases {
+		release()
+	}
+	if d.reservedMB != 0 {
+		t.Errorf("reservedMB after releasing all = %d, want 0", d.reservedMB)
+	}
+```
+
+to:
+
+```go
+	for release := range releases {
+		release()
+	}
+	time.Sleep(reservationGraceInterval + 200*time.Millisecond)
+	if d.reservedMB != 0 {
+		t.Errorf("reservedMB after releasing all and the grace period = %d, want 0", d.reservedMB)
+	}
+```
+
+`TestDriver_Create_ReservationReleasedAfterFailureAllowsNextCreate` (driver_test.go:416-446)
+— this test's original premise ("reservedMB after a failed Create = 0,
+must not leak, so a second Create can immediately reserve the same memory")
+is now deliberately false: Mitigation 2 holds the reservation for
+`reservationGraceInterval` after any release, including a failed `Create`'s.
+Rename and rewrite it to assert the new intentional behavior instead:
+
+```go
+func TestDriver_Create_ReservationHeldThroughGracePeriodAfterFailure(t *testing.T) {
+	callCount := 0
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		callCount++
+		switch {
+		case strings.Contains(script, "Get-VMHost"):
+			return "OK\n", nil
+		case strings.Contains(script, hyperVAvailableMemoryScript):
+			return "16384\n", nil
+		case strings.Contains(script, "New-VM"):
+			return "", fmt.Errorf("New-VHD failed")
+		default:
+			return "\n", nil // deleteBestEffort: confirmed gone on first attempt
+		}
+	})
+
+	if _, err := d.Create(context.Background(), &CreateConfig{TemplateVHD: `C:\t.vhdx`}); err == nil {
+		t.Fatal("expected the first Create to fail")
+	}
+	if d.reservedMB == 0 {
+		t.Fatal("expected reservedMB to still be held immediately after a failed Create (grace period)")
+	}
+
+	time.Sleep(reservationGraceInterval + 200*time.Millisecond)
+	if d.reservedMB != 0 {
+		t.Fatalf("reservedMB after the grace period = %d, want 0 (must not leak permanently)", d.reservedMB)
+	}
+
+	// A second reservation must succeed once the grace period has elapsed.
+	release, err := d.reserveMemory(context.Background(), 2048)
+	if err != nil {
+		t.Fatalf("second reservation unexpectedly failed: %v", err)
+	}
+	release()
+}
+```
+
+- [ ] **Step 5: Run tests to verify they pass**
 
 Run: `task test`
-Expected: PASS. Note: `TestDriver_ReserveMemory_InsufficientCapacityReturnsCapacityError` and any other existing `reserveMemory`/`release` test that calls `release()` and then immediately asserts `reservedMB == 0` in the same test process will now need `time.Sleep(reservationGraceInterval + ...)` before that assertion, or must assert the new "still held immediately after" behavior instead — check `driver_test.go` around line 301-320 (`TestDriver_ReserveMemory_InsufficientCapacityReturnsCapacityError`) and the concurrent-`Create` tests for any such assertion and update it to match.
+Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add pkg/providersdk/providers/hyperv/driver.go pkg/providersdk/providers/hyperv/driver_test.go
