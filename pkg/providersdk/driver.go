@@ -100,6 +100,16 @@ type ResourceLister interface {
 	List(ctx context.Context) ([]ResourceStatus, error)
 }
 
+// ErrorTyper lets a driver error self-report a stable category (and, via
+// json.Marshal on the error value itself, a JSON detail payload) for
+// propagation across the RemoteAgent/gRPC boundary — without coupling the
+// provider-neutral agentsdk layer to any specific driver package. Optional:
+// errors that don't implement it just lose their type on that path, same as
+// before this existed. See docs/superpowers/specs/2026-08-13-hyperv-create-failure-hardening-design.md.
+type ErrorTyper interface {
+	ErrorType() string // e.g. "capacity"
+}
+
 // StreamingDriver is an optional capability for providers that can emit live
 // events while an operation runs. The base Driver contract remains unary so
 // providers can opt in incrementally.

@@ -458,20 +458,9 @@ Get-VMHost | Out-Null
 	return nil
 }
 
-// CapacityError indicates the host does not currently have enough available
-// memory to satisfy a Create request. AvailableMemoryMB is already net of
-// defaultHostReserveMB and any other in-flight reservations.
-type CapacityError struct {
-	RequestedMemoryMB int64
-	AvailableMemoryMB int64
-}
-
-func (e *CapacityError) Error() string {
-	return fmt.Sprintf(
-		"hyperv: insufficient host memory: requested %d MB, %d MB available",
-		e.RequestedMemoryMB, e.AvailableMemoryMB,
-	)
-}
+// CapacityError is providersdk.CapacityError under this package's existing
+// name — see #185's design spec for why the type moved.
+type CapacityError = providersdk.CapacityError
 
 // queryAvailableMemoryMB returns the host's current available physical
 // memory in megabytes — memory immediately usable by a new VM, not just the
