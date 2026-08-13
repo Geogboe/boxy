@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
@@ -60,6 +61,20 @@ func New(cfg *Config) *Driver {
 
 func (d *Driver) Type() providersdk.Type {
 	return ProviderType
+}
+
+// Availability implements providersdk.AvailabilityReporter. It returns the
+// static value configured via Config.AvailableMemoryMB — no per-call
+// memory-request modeling; devfactory's Create doesn't decode one today,
+// and adding it purely to enforce here would be scope creep unrelated to
+// what this stub is for (letting other code exercise the
+// AvailabilityReporter interface without needing a real Hyper-V host).
+func (d *Driver) Availability(ctx context.Context) (*providersdk.ResourceAvailability, error) {
+	mb := d.cfg.AvailableMemoryMB
+	if mb == 0 {
+		mb = math.MaxInt64
+	}
+	return &providersdk.ResourceAvailability{MemoryMB: mb}, nil
 }
 
 // Create provisions a simulated resource. If latency is configured,
