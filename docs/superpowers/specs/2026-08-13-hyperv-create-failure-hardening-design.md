@@ -234,7 +234,7 @@ model.Resource{
     OriginPool: pool.Name,
     Provider:   model.ProviderRef{Name: providerName /* + AgentID for AgentProvisioner */},
     State:      model.ResourceStateError, // existing state, not a new one
-    Properties: map[string]any{"quarantine_reason": orphanErr.Cause.Error()},
+    Properties: map[string]any{"quarantine_reason": orphanErr.CauseMessage},
     CreatedAt:  now, UpdatedAt: now,
 }, orphanErr // still an error — caller still records the provision failure/backoff
 ```
@@ -277,19 +277,30 @@ func (d *Driver) List(ctx context.Context) ([]providersdk.ResourceStatus, error)
 ```
 
 `internal/agentserver/server.go`'s post-registration reconciliation goroutine
-(`server.go:233-239`) changes from a one-shot `pool.ReconcileAgent` call to
-`Controller.Run(ctx, interval)` — the existing generic periodic-reconcile
-primitive at `pkg/policycontroller/controller.go:128`, which
-`pool.ReconcileAgent` already builds a `Controller` for internally. `ctx` is
-already scoped to the agent's connection lifetime (the same `ctx` used in the
-handler's `select` on `serveDone`/`forceStop`), so the loop stops naturally on
-disconnect — no new lifecycle management needed. `interval` reuses
-`s.heartbeatInterval` (already configurable, already the cadence the
-connection runs on) rather than introducing a new constant.
+(`server.go:233-239`) changes from a one-shot `pool.ReconcileAgent` call to a
+new `pool.RunAgentReconciliation(ctx, ..., interval, passTimeout, ...)`
+sibling function. `ctx` is already scoped to the agent's connection lifetime
+(the same `ctx` used in the handler's `select` on `serveDone`/`forceStop`),
+so the loop stops naturally on disconnect — no new lifecycle management
+needed. `interval` reuses `s.heartbeatInterval` (already configurable,
+already the cadence the connection runs on) rather than introducing a new
+constant.
 
-`pool.ReconcileAgent` is refactored to expose its `Controller` (or gains a
-`RunAgentReconciliation` sibling) so the server can call `.Run` instead of
-`.Reconcile` once.
+**Not** `policycontroller.Controller.Run(ctx, interval)` — that generic
+primitive (which `pool.ReconcileAgent` already builds a `Controller` for
+internally) returns as soon as a single `Reconcile` pass errors, which is
+wrong here: the existing one-shot call's doc comment is explicit that
+"reconciliation trouble must never take down agent connectivity," and a
+`Controller.Run`-based loop would let one bad pass (e.g. a transient store
+error) silently end reconciliation for the rest of that connection's
+lifetime. `RunAgentReconciliation` is a small bespoke ticker loop instead —
+the same shape `internal/cli/serve.go`'s `serveLoop` already uses for the
+pool background-reconcile ticker (`time.NewTicker` + `select`), the
+established idiom in this codebase for a tolerant periodic pass — that logs
+and continues past any single pass's error, and applies `passTimeout`
+(reusing the existing `reconciliationTimeout` constant) per pass via
+`context.WithTimeout`, since the outer connection-lifetime `ctx` has no
+deadline of its own to bound an individual pass.
 
 Resources adopted via this path still land as `State: Unknown`,
 `OriginPool: ""` (unchanged from #133 — this design doesn't touch that
@@ -373,9 +384,10 @@ rather than being closed as fully fixed.
   assert `quarantinedOrphans` picks it up and it gets destroyed, and that
   `isTransientDestroyState`'s existing behavior for `Recycling`/`Destroying`
   resources is unchanged. `hyperv.Driver.List` → assert it filters to
-  `boxy-*` names only. `Controller.Run`-based periodic sweep → existing
-  `Controller` tests already cover `.Run`'s ticker semantics; add one
-  hyperv-`ResourceLister` integration test analogous to docker's.
+  `boxy-*` names only. `RunAgentReconciliation` → assert it runs an
+  immediate pass then repeats on `interval`, and that it keeps running (not
+  just logs and continues) past a single pass's error, unlike
+  `Controller.Run`.
 - **#183**: unit test for the grace-period release (reservation still counted
   immediately after `Create` returns, decremented only after the grace
   period elapses) and for the two-call script split (mock `psExec` asserts
