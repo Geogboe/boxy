@@ -59,21 +59,25 @@ triggering them (not an unattended infinite loop).
 
 ### Memory preflight and reservation (#173)
 
-`Create` queries the host's live free memory
-(`Get-CimInstance Win32_OperatingSystem`) before running its `New-VHD`/
-`New-VM`/`Start-VM` script, rejecting a request that can't fit with a typed
-`CapacityError` instead of letting `Start-VM` fail with a raw
-`0x8007000E`. An in-process, mutex-guarded reservation counter
-(`Driver.reservedMB`) makes this atomic across concurrent `Create` calls on
-the same agent process — the mutex is held across the live PowerShell query
-itself, not just the accounting, trading a small amount of parallelism for
-a zero-TOCTOU-gap guarantee *between concurrent calls*. It does not close
-the gap across rapid sequential calls (the reservation releases as soon as
-each `Create` returns, before the host's free-memory counter is guaranteed
-to reflect the new VM); see the design spec's "Known gap" and the
-tracking follow-up. The query itself is time-bounded independent of the
-caller's context so a hung PowerShell call can't hold the mutex — and
-therefore every other `Create` on this driver — indefinitely.
+`Create` queries the host's live available memory
+(`Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory`'s `AvailableMBytes`
+— not the naive `Win32_OperatingSystem.FreePhysicalMemory`, which excludes
+the reclaimable standby/cache list and routinely underreports what a new VM
+can actually use) before running its `New-VHD`/`New-VM`/`Start-VM` script,
+rejecting a request that can't fit with a typed `CapacityError` instead of
+letting `Start-VM` fail with a raw `0x8007000E`. An in-process,
+mutex-guarded reservation counter (`Driver.reservedMB`) makes this atomic
+across concurrent `Create` calls on the same agent process — the mutex is
+held across the live PowerShell query itself, not just the accounting,
+trading a small amount of parallelism for a zero-TOCTOU-gap guarantee
+*between concurrent calls*. It does not close the gap in either direction
+across rapid sequential calls (see the design spec's "Known gap" and the
+tracking follow-up for both the under- and over-reservation cases). The
+query itself is time-bounded on top of (never beyond) the caller's context,
+so a hung PowerShell call can't hold the mutex — and therefore every other
+`Create` on this driver — indefinitely, even on a caller context with no
+deadline of its own; the same bound applies to the pre-existing
+`Get-VMHost` health probe immediately before it in `Create`'s hot path.
 `defaultHostReserveMB` (512 MB,
 unexported) is reserved for the host OS and other processes; it is not
 currently user-configurable, because `boxy agent serve` has no
