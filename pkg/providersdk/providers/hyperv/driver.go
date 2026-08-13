@@ -438,9 +438,15 @@ func (d *Driver) UpdateStream(ctx context.Context, id string, op providersdk.Ope
 // before attempting to provision. If VMMS is already degraded (as can
 // happen after a stuck teardown, see #118), this fails fast with a clear
 // error instead of letting New-VHD/New-VM run into the same degraded state
-// on every reconcile pass.
+// on every reconcile pass. Bounded by memQueryTimeout, independent of the
+// caller's ctx (which for the background reconcile ticker has no deadline
+// of its own), so a hung probe fails Create promptly instead of hanging —
+// this call precedes reserveMemory and doesn't hold d.mu, so unlike that
+// call a hang here only blocks the current Create, not others.
 func (d *Driver) checkHostHealth(ctx context.Context) error {
-	_, err := d.ps(ctx, `
+	probeCtx, cancel := context.WithTimeout(ctx, d.memQueryTimeout())
+	defer cancel()
+	_, err := d.ps(probeCtx, `
 $ErrorActionPreference = 'Stop'
 Get-VMHost | Out-Null
 'OK'
@@ -466,22 +472,30 @@ func (e *CapacityError) Error() string {
 	)
 }
 
-// queryFreeMemoryMB returns the host's current free physical memory in
-// megabytes. Win32_OperatingSystem.FreePhysicalMemory is reported in
-// kilobytes, hence the /1024.
+// queryFreeMemoryMB returns the host's current available physical memory in
+// megabytes — memory immediately usable by a new VM, not just the raw free
+// list. Win32_OperatingSystem.FreePhysicalMemory (the naive choice) excludes
+// the standby/cache list, which Windows reclaims instantly under memory
+// pressure; on a host that's been running a while that list can be several
+// GB, so FreePhysicalMemory routinely underreports what's actually
+// available and would spuriously reject Create requests Start-VM could
+// satisfy fine. Win32_PerfFormattedData_PerfOS_Memory.AvailableMBytes is
+// already in MB and matches what Task Manager calls "Available" — deliberately
+// not Get-Counter '\Memory\Available MBytes', whose counter *path* is
+// localized on non-English Windows.
 func (d *Driver) queryFreeMemoryMB(ctx context.Context) (int64, error) {
 	out, err := d.ps(ctx, `
 $ErrorActionPreference = 'Stop'
-(Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory
+(Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory).AvailableMBytes
 `)
 	if err != nil {
 		return 0, fmt.Errorf("hyperv query free memory: %w", err)
 	}
-	kb, err := strconv.ParseInt(strings.TrimSpace(out), 10, 64)
+	mb, err := strconv.ParseInt(strings.TrimSpace(out), 10, 64)
 	if err != nil {
 		return 0, fmt.Errorf("hyperv parse free memory %q: %w", out, err)
 	}
-	return kb / 1024, nil
+	return mb, nil
 }
 
 // Availability implements providersdk.AvailabilityReporter.
@@ -531,7 +545,15 @@ func (d *Driver) reserveMemory(ctx context.Context, requestedMB int64) (release 
 
 	available := freeMB - defaultHostReserveMB - d.reservedMB
 	if available < requestedMB {
-		return nil, &CapacityError{RequestedMemoryMB: requestedMB, AvailableMemoryMB: available}
+		// Clamp to 0 for the error message, matching Availability()'s clamp
+		// for the same computation — a negative "available" (e.g. reservedMB
+		// alone exceeding freeMB-reserve under load) is a confusing thing to
+		// show a caller.
+		reported := available
+		if reported < 0 {
+			reported = 0
+		}
+		return nil, &CapacityError{RequestedMemoryMB: requestedMB, AvailableMemoryMB: reported}
 	}
 
 	d.reservedMB += requestedMB

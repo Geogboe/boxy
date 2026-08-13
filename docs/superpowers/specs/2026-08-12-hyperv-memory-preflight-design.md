@@ -65,13 +65,31 @@ calls that overlap in time. `release()` runs as soon as `Create` returns
 guaranteed to already reflect a just-started VM's consumption at that
 instant — so two `Create` calls issued back-to-back (not concurrently, e.g.
 during a pool fill from 0 to `min_ready`) can each pass their own live
-preflight check and still overcommit the host. Found during PR review
-(#182). A real fix means changing what the reservation lifecycle tracks —
-e.g. holding it per-VM until `Delete` releases it, not until `Create`
-returns — which is a bigger change than this PR's scope. Tracked as a
-follow-up issue rather than fixed here; the primary failure #173 reports
-(a host that can't fit even one more VM) is fixed regardless, since that
-case is caught by a single `Create`'s own live query.
+preflight check and still overcommit the host (under-reservation). Found
+during review of PR #182.
+
+The same review also found the mirror-image failure: while a `Create` is
+still in flight, `reservedMB` and the live query can both be counting the
+*same* memory. If an earlier `Create`'s `Start-VM` has already committed
+its memory, the live query the next `Create` sees already reflects that
+consumption — and `reservedMB` subtracts it again on top, understating real
+availability and spuriously rejecting a request the host could satisfy
+(over-reservation).
+
+**Both directions come from the same root tension: an in-process counter
+and a live host query can't be reconciled without a third signal telling
+`reserveMemory` which of "not yet visible to the query" vs. "already
+visible to the query" a given in-flight reservation is currently in** — and
+that signal doesn't exist today. Note this rules out the fix this section
+used to suggest here (hold the reservation per-VM until `Delete` releases
+it): that would fix under-reservation but make over-reservation permanent,
+since a long-lived VM's memory would then be double-counted against the
+live query for its entire lifetime, not just the narrow window around
+`Create` returning. A real fix needs a different mechanism, not just a
+longer hold — not designed here. Tracked as a follow-up issue rather than
+fixed in this pass; the primary failure #173 reports (a host that can't fit
+even one more VM) is fixed regardless, since that case is caught by a
+single `Create`'s own live query before either gap comes into play.
 
 ## Decisions confirmed during spec review
 
@@ -191,8 +209,23 @@ signature — nothing generic needs to type-assert it specially yet (there's
 no existing precedent of the pool layer inspecting driver-returned errors;
 `MaxTotalReachedError`/`DrainedPoolError` originate from `pool.Manager`
 itself, not from a driver call). A caller that wants to special-case it can
-`errors.As` for `*hyperv.CapacityError`, same as any other typed
-error in this codebase.
+`errors.As` for `*hyperv.CapacityError` **on the embedded-agent path**
+(`EmbeddedAgent`, used by `boxy serve`'s in-process drivers), same as any
+other typed error in this codebase.
+
+This does **not** hold on the `RemoteAgent`/gRPC path (`boxy agent serve`,
+the standalone remote-agent topology): `RemoteAgent.Create`
+(`pkg/agentsdk/remote.go`) flattens every driver error, `CapacityError`
+included, to a plain string (`agentErr.GetMessage()`) before re-wrapping it
+with `fmt.Errorf`, so `errors.As` can never match there. No current caller
+does `errors.As` for `CapacityError` on either path, so this is latent
+rather than actively broken — but it means the typed-error contract this
+paragraph describes silently doesn't hold for the realistic
+Windows-host/non-Windows-control-plane deployment. Found during review of
+this design's implementation PR (#182). Carrying a typed error across the
+gRPC boundary needs a wire-format decision (an error code enum, a
+structured detail field, etc.) — out of scope here; tracked as a follow-up
+issue rather than fixed in this pass.
 
 ### Testing
 
