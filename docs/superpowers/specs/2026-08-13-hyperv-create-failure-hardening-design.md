@@ -125,13 +125,20 @@ func reconstructAgentError(agentID string, ae *boxyagentv1.AgentError) error {
         if json.Unmarshal(ae.GetErrorDetailJson(), &ce) == nil {
             return &ce
         }
+    case "orphaned_resource":
+        var oe providersdk.OrphanedResourceError
+        if json.Unmarshal(ae.GetErrorDetailJson(), &oe) == nil {
+            return &oe
+        }
     }
     return base
 }
 ```
 
-Only one case exists today (`"capacity"`), but the mechanism generalizes to
-any future typed driver error without another proto change.
+Two cases exist at implementation time (`"capacity"`, `"orphaned_resource"` —
+the latter needed by #174's Fix 2 to work over this same boundary), and the
+mechanism generalizes to any future typed driver error without another proto
+change.
 
 ---
 
@@ -158,33 +165,62 @@ any future typed driver error without another proto change.
    cleanup, confirmed by reading `computeStale`/`orphanedTransientResources`
    directly.
 
-### Fix 1: bounded, reliable cleanup with a typed failure carrying the ID
+### Fix 1: bounded, reliable cleanup with a typed failure carrying the real ID
 
 `deleteBestEffort` gains bounded retry — 3 attempts, 2s apart (same order of
 magnitude as the existing `deleteWaitInterval` default of 3s) — instead of a
-single silent-continue attempt.
+single silent-continue attempt. Each attempt does `Stop-VM`/`Remove-VM` (as
+today) followed by a `Get-VM -Name` existence check, and returns that check's
+result rather than trusting `-ErrorAction SilentlyContinue` to mean success.
+This isn't an extra round-trip class: `SilentlyContinue` masks `Remove-VM`
+failures today, so *some* re-check is already required to know whether
+cleanup actually worked — reusing it to also capture the VM's GUID (when it's
+still present) means resolving the real ID never costs a separate PowerShell
+call. If the final attempt's existence check still finds the VM, that check's
+own `Get-VM` output carries the GUID needed below — no upfront or standalone
+lookup added.
 
 When cleanup still fails after retries, `Create` returns a new typed error
-instead of a plain one:
+carrying that resolved GUID — not the `boxy-*` name, which is all `Create`
+has before the VM exists, but not the identifier every other resource in this
+codebase uses (`Driver.Delete(ctx, id)` looks up `Get-VM -Id`, not `-Name`):
 
 ```go
 // pkg/providersdk/errors.go
 // OrphanedResourceError indicates Create failed and best-effort cleanup of
 // the partially-created resource also failed, leaving it on the host outside
-// Boxy's inventory. ID is the provider-native identifier a caller can use to
-// record a quarantined resource so cleanup can be retried instead of the
-// resource silently existing nowhere in Boxy's view.
+// Boxy's inventory. ID is the provider-native GUID — the same identifier
+// convention every successful Resource uses — so a caller can record a
+// quarantined resource and the existing Driver.Delete(ctx, id) path works
+// unmodified when the sweep (Fix 3) retries it. CauseMessage (not Cause
+// error) so this round-trips through error_detail_json (see #185, Fix
+// below) — an error interface's concrete type usually can't survive
+// json.Marshal/Unmarshal.
 type OrphanedResourceError struct {
-    ID    string
-    Cause error
+    ID           string
+    CauseMessage string
 }
 func (e *OrphanedResourceError) Error() string { ... }
-func (e *OrphanedResourceError) Unwrap() error { return e.Cause }
+func (e *OrphanedResourceError) ErrorType() string { return "orphaned_resource" }
 ```
+
+If cleanup's final existence check finds nothing (the VM never actually got
+created — e.g. `New-VHD` failed before `New-VM` ran), there's nothing to
+quarantine: `Create` returns a plain error as it does today, no
+`OrphanedResourceError`.
 
 `Create`'s signature is unchanged — this only affects what the failure
 *wraps*, not `Driver.Create`'s contract, so `docker`/`devfactory` are
 unaffected.
+
+**Cross-boundary propagation:** `OrphanedResourceError` implements
+`providersdk.ErrorTyper` (§Section 1) exactly like `CapacityError`, with its
+own `error_type` (`"orphaned_resource"`) and JSON detail. Without this, Fix 2
+below would only work over the `EmbeddedAgent` path — `errors.As` would never
+match on the `RemoteAgent`/gRPC path, which ADR-0005 describes as the
+realistic Hyper-V deployment topology, silently making quarantine a no-op in
+production. `remote.go`'s reconstruction switch (§Section 1) gets a second
+case alongside `"capacity"`.
 
 ### Fix 2: `Provisioner.Provision` records a quarantined resource on orphan
 
@@ -211,12 +247,21 @@ this only adds the missing store write for the *orphaned VM itself*.
 
 ### Fix 3: quarantined orphans get swept and destroyed automatically
 
-`ResourceStateError` resources with a non-empty `OriginPool` are folded into
-the existing stale/orphan sweep in `reconcileLocked`
-(`orphanedTransientResources`/`computeStale`, `manager.go:520-524`), reusing
-`destroyAndMark` — already idempotent-safe per its existing doc comment. No
-new sweep mechanism; this is the same "retry destroy every tick until it
-disappears" path pool-owned stale resources already get.
+A new `quarantinedOrphans(poolName, resources)` filter — parallel to, not a
+change to, `orphanedTransientResources` — matches `State ==
+ResourceStateError` with `OriginPool == poolName`, and its results are merged
+into the same `stale` list in `reconcileLocked` (`manager.go:520-524`),
+reusing `destroyAndMark` (already idempotent-safe per its existing doc
+comment) for the actual destroy-and-retry.
+
+Deliberately a separate function rather than adding `ResourceStateError` to
+`isTransientDestroyState`: that helper's documented meaning is "already
+mid-teardown" and it's also used by `destroyAndMark`'s idempotency guard
+(only re-stamp state if not already transient) — broadening it would quietly
+change that guard's behavior for `Error`-state resources too. A quarantined
+orphan hasn't started teardown yet; keeping the two concepts in separate
+functions avoids stretching `isTransientDestroyState`'s meaning to cover a
+state it wasn't written to describe.
 
 ### Fix 4: periodic agent reconciliation (defense-in-depth for the crash case)
 
@@ -274,6 +319,18 @@ already reflecting this VM's committed memory while this call still holds its
 reservation) from "the whole `Create` duration" down to one fast `Get-VM`
 call.
 
+**Split introduces a new failure shape, handled deliberately:** call 1
+(setup + `Start-VM`) succeeding but call 2 (the ID lookup) failing means the
+VM is healthy and running — nothing like today's "the whole script failed."
+`deleteBestEffort`/quarantine (Fix 1) only ever triggers on a call-1 failure.
+A call-2-only failure retries the lookup a couple of times (cheap, read-only,
+no mutation), and if it still fails, `Create` returns a distinct error
+without touching the VM at all — it's left alone, running, just unreported to
+the caller this round. The periodic `ResourceLister` sweep (§Section 2, Fix
+4) picks it up as an ordinary orphan on its next pass; treating it as a
+create failure and deleting a perfectly good VM over a metadata-lookup
+hiccup would be the wrong tradeoff.
+
 ### Mitigation 2: grace-period release, biased toward the safe direction
 
 `release()` no longer zeroes `reservedMB` synchronously at `Create`'s return.
@@ -300,22 +357,32 @@ rather than being closed as fully fixed.
 
 ## Testing
 
-- **#185**: round-trip test — driver returns `CapacityError`, assert
-  `errorResult` populates `error_type`/`error_detail_json`, assert
-  `RemoteAgent.Create` reconstructs a `*providersdk.CapacityError` with the
-  original fields via `errors.As`.
-- **#174**: `Create` failure + cleanup failure → assert
-  `OrphanedResourceError` with correct ID; `Provisioner.Provision` on that
-  error → assert a `ResourceStateError` resource is written with the right
-  `OriginPool`; a follow-up `Reconcile` pass → assert the quarantined
-  resource gets destroyed. `hyperv.Driver.List` → assert it filters to
+- **#185**: round-trip test for each `error_type` — driver returns
+  `CapacityError`/`OrphanedResourceError`, assert `errorResult` populates
+  `error_type`/`error_detail_json`, assert `RemoteAgent.Create` reconstructs
+  the correct concrete type with original fields intact via `errors.As`, over
+  both the `EmbeddedAgent` and `RemoteAgent` paths.
+- **#174**: `Create` failure where the mock `psExec` reports the VM still
+  present after all 3 cleanup retries → assert `OrphanedResourceError.ID` is
+  the GUID from the retry loop's own existence check, not the `boxy-*` name,
+  and assert no extra `Get-VM` call beyond what the retry loop already makes.
+  `Create` failure where cleanup succeeds on attempt 2 → assert no
+  `OrphanedResourceError` (plain error only). `Provisioner.Provision` on an
+  `OrphanedResourceError` → assert a `ResourceStateError` resource is written
+  with the right `OriginPool` and GUID `ID`; a follow-up `Reconcile` pass →
+  assert `quarantinedOrphans` picks it up and it gets destroyed, and that
+  `isTransientDestroyState`'s existing behavior for `Recycling`/`Destroying`
+  resources is unchanged. `hyperv.Driver.List` → assert it filters to
   `boxy-*` names only. `Controller.Run`-based periodic sweep → existing
   `Controller` tests already cover `.Run`'s ticker semantics; add one
   hyperv-`ResourceLister` integration test analogous to docker's.
 - **#183**: unit test for the grace-period release (reservation still counted
   immediately after `Create` returns, decremented only after the grace
   period elapses) and for the two-call script split (mock `psExec` asserts
-  `Start-VM` is in the first call, `Get-VM ... .Id` in the second).
+  `Start-VM` is in the first call, `Get-VM ... .Id` in the second). Mock
+  `psExec` returning success on call 1 and an error on call 2 → assert
+  `Create` returns an error without invoking `deleteBestEffort`/cleanup at
+  all (the VM is left running).
 
 ## Alternatives considered
 
@@ -333,3 +400,18 @@ rather than being closed as fully fixed.
   `Delete`. Rejected per the issue's own correction: this fixes
   under-reservation but makes over-reservation permanent for a VM's entire
   lifetime, not just the narrow window around `Create` returning.
+- **A standalone `Get-VM -Name -> Id` lookup** before building
+  `OrphanedResourceError`, instead of folding GUID resolution into the
+  cleanup retry loop's existing existence check. Rejected: PowerShell/Hyper-V
+  calls are expensive, and the retry loop already needs an existence check to
+  know whether `Remove-VM`'s `-ErrorAction SilentlyContinue` actually
+  succeeded — reusing it costs nothing extra.
+- **Deleting the VM when only the post-`Start-VM` ID lookup fails** (#183's
+  script split). Rejected: that failure mode means the VM is healthy and
+  running; destroying it would be actively worse than today's single-script
+  behavior, not a mitigation.
+- **Broadening `isTransientDestroyState`** to include `ResourceStateError`
+  instead of a parallel `quarantinedOrphans` filter. Rejected: that helper is
+  also load-bearing for `destroyAndMark`'s idempotency guard, and its
+  documented meaning ("already mid-teardown") doesn't fit a resource that
+  hasn't started teardown yet.
