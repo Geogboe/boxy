@@ -57,6 +57,31 @@ ready right now" deserves a live answer, not a stale "we're backing off"
 no-op, and such calls are inherently rate-limited by whoever/whatever is
 triggering them (not an unattended infinite loop).
 
+### Memory preflight and reservation (#173)
+
+`Create` queries the host's live free memory
+(`Get-CimInstance Win32_OperatingSystem`) before running its `New-VHD`/
+`New-VM`/`Start-VM` script, rejecting a request that can't fit with a typed
+`CapacityError` instead of letting `Start-VM` fail with a raw
+`0x8007000E`. An in-process, mutex-guarded reservation counter
+(`Driver.reservedMB`) makes this atomic across concurrent `Create` calls on
+the same agent process — the mutex is held across the live PowerShell query
+itself, not just the accounting, trading a small amount of parallelism for
+a zero-TOCTOU-gap guarantee *between concurrent calls*. It does not close
+the gap across rapid sequential calls (the reservation releases as soon as
+each `Create` returns, before the host's free-memory counter is guaranteed
+to reflect the new VM); see the design spec's "Known gap" and the
+tracking follow-up. The query itself is time-bounded independent of the
+caller's context so a hung PowerShell call can't hold the mutex — and
+therefore every other `Create` on this driver — indefinitely.
+`defaultHostReserveMB` (512 MB,
+unexported) is reserved for the host OS and other processes; it is not
+currently user-configurable, because `boxy agent serve` has no
+provider-config plumbing at all today (a pre-existing gap affecting every
+provider, not just Hyper-V — see the design spec's "Known gap").
+
+Full design: `docs/superpowers/specs/2026-08-12-hyperv-memory-preflight-design.md`.
+
 ## Consequences
 
 - Deleting a VM stuck in transition now takes up to ~30s longer (the wait

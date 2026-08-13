@@ -67,4 +67,10 @@ type Config struct {
 
 	// Labels are passed through to resource metadata.
 	Labels map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
+
+	// AvailableMemoryMB is the value Availability() reports as free memory.
+	// Zero (the default) means unlimited — matches the zero-value-friendly
+	// pattern the other fields here already use (e.g. FailCreate's zero
+	// value means "don't fail").
+	AvailableMemoryMB int64 `yaml:"available_memory_mb" json:"available_memory_mb"`
 }

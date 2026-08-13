@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,8 +24,11 @@ func mockDriver(psExecFn func(ctx context.Context, script string) (string, error
 
 func TestDriver_Create_HappyPath(t *testing.T) {
 	callCount := 0
-	d := mockDriver(func(_ context.Context, _ string) (string, error) {
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
 		callCount++
+		if strings.Contains(script, hyperVFreeMemoryScript) {
+			return "16777216\n", nil // 16 GB in KB, comfortably above any test's request
+		}
 		return fakeGUID + "\n", nil
 	})
 
@@ -64,7 +68,12 @@ func TestDriver_Create_MissingTemplateVHD(t *testing.T) {
 func TestDriver_Create_Defaults(t *testing.T) {
 	var capturedScript string
 	d := mockDriver(func(_ context.Context, script string) (string, error) {
-		capturedScript = script
+		if strings.Contains(script, hyperVFreeMemoryScript) {
+			return "16777216\n", nil
+		}
+		if strings.Contains(script, "New-VM") {
+			capturedScript = script
+		}
 		return fakeGUID + "\n", nil
 	})
 
@@ -91,12 +100,12 @@ func TestDriver_Create_CleanupOnFailure(t *testing.T) {
 	callCount := 0
 	d := mockDriver(func(_ context.Context, script string) (string, error) {
 		callCount++
-		switch callCount {
-		case 1:
-			// Host health check succeeds.
+		switch {
+		case strings.Contains(script, "Get-VMHost"):
 			return "OK\n", nil
-		case 2:
-			// Main create script fails.
+		case strings.Contains(script, hyperVFreeMemoryScript):
+			return "16777216\n", nil
+		case strings.Contains(script, "New-VM"):
 			return "", fmt.Errorf("New-VHD failed")
 		default:
 			// Cleanup script succeeds.
@@ -110,8 +119,8 @@ func TestDriver_Create_CleanupOnFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when create script fails")
 	}
-	if callCount < 3 {
-		t.Errorf("expected health check + create + cleanup calls, callCount = %d", callCount)
+	if callCount < 4 {
+		t.Errorf("expected health check + memory query + create + cleanup calls, callCount = %d", callCount)
 	}
 }
 
@@ -136,10 +145,65 @@ func TestDriver_Create_HealthCheckFailure(t *testing.T) {
 	}
 }
 
+func TestDriver_Create_InsufficientMemoryRejectedBeforeNewVM(t *testing.T) {
+	callCount := 0
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		callCount++
+		switch {
+		case strings.Contains(script, "Get-VMHost"):
+			return "OK\n", nil
+		case strings.Contains(script, hyperVFreeMemoryScript):
+			return "1048576\n", nil // 1 GB in KB = 1024 MB free, minus 512 reserve = 512 MB available
+		case strings.Contains(script, "New-VM"):
+			t.Fatal("New-VM must not run when capacity is insufficient")
+			return "", nil
+		}
+		return "", fmt.Errorf("unexpected script: %s", script)
+	})
+
+	// Default MemoryMB is 2048; 512 MB available can't satisfy it.
+	_, err := d.Create(context.Background(), &CreateConfig{
+		TemplateVHD: `C:\t.vhdx`,
+	})
+	var capErr *CapacityError
+	if !errors.As(err, &capErr) {
+		t.Fatalf("expected *CapacityError, got %#v", err)
+	}
+	if capErr.RequestedMemoryMB != 2048 {
+		t.Errorf("RequestedMemoryMB = %d, want 2048", capErr.RequestedMemoryMB)
+	}
+	if callCount != 2 {
+		t.Errorf("callCount = %d, want 2 (health check + memory query only)", callCount)
+	}
+}
+
+func TestDriver_Create_NegativeMemoryRejected(t *testing.T) {
+	d := mockDriver(func(_ context.Context, _ string) (string, error) {
+		t.Fatal("psExec should not be called when memory_mb is negative")
+		return "", nil
+	})
+
+	_, err := d.Create(context.Background(), &CreateConfig{
+		TemplateVHD: `C:\t.vhdx`,
+		MemoryMB:    -1024,
+	})
+	if err == nil {
+		t.Fatal("expected error for negative memory_mb")
+	}
+	if !strings.Contains(err.Error(), "memory_mb") {
+		t.Fatalf("expected error to mention memory_mb, got %v", err)
+	}
+}
+
 func TestDriver_Create_LinuxDefaults(t *testing.T) {
 	var capturedScript string
 	d := mockDriver(func(_ context.Context, script string) (string, error) {
-		capturedScript = script
+		if strings.Contains(script, hyperVFreeMemoryScript) {
+			return "16777216\n", nil
+		}
+		if strings.Contains(script, "New-VM") {
+			capturedScript = script
+		}
 		return fakeGUID + "\n", nil
 	})
 
@@ -172,6 +236,215 @@ func TestDriver_Create_RejectsGuestPassword(t *testing.T) {
 		t.Fatalf("expected error to mention guest_password_ref, got %v", err)
 	}
 }
+
+// --- Availability / reserveMemory ---
+
+// hyperVFreeMemoryScript is the fragment that appears in the live
+// free-memory query script; tests key their psExec mock off it.
+const hyperVFreeMemoryScript = "FreePhysicalMemory"
+
+func TestDriver_Availability_NetsOutReserveAndReservations(t *testing.T) {
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		if !strings.Contains(script, hyperVFreeMemoryScript) {
+			t.Fatalf("unexpected script: %s", script)
+		}
+		return "16777216\n", nil // 16 GB in KB
+	})
+	d.reservedMB = 1000
+
+	avail, err := d.Availability(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// 16 GB = 16384 MB, minus defaultHostReserveMB (512), minus reservedMB (1000).
+	want := int64(16384 - 512 - 1000)
+	if avail.MemoryMB != want {
+		t.Errorf("MemoryMB = %d, want %d", avail.MemoryMB, want)
+	}
+}
+
+func TestDriver_Availability_QueryFailurePropagates(t *testing.T) {
+	d := mockDriver(func(_ context.Context, _ string) (string, error) {
+		return "", fmt.Errorf("Get-CimInstance failed")
+	})
+
+	if _, err := d.Availability(context.Background()); err == nil {
+		t.Fatal("expected error when the free-memory query fails")
+	}
+}
+
+func TestDriver_ReserveMemory_SufficientCapacitySucceeds(t *testing.T) {
+	d := mockDriver(func(_ context.Context, _ string) (string, error) {
+		return "16777216\n", nil // 16 GB in KB
+	})
+
+	release, err := d.reserveMemory(context.Background(), 2048)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if release == nil {
+		t.Fatal("expected a non-nil release function")
+	}
+	if d.reservedMB != 2048 {
+		t.Errorf("reservedMB = %d, want 2048", d.reservedMB)
+	}
+
+	release()
+	if d.reservedMB != 0 {
+		t.Errorf("reservedMB after release = %d, want 0", d.reservedMB)
+	}
+}
+
+func TestDriver_ReserveMemory_InsufficientCapacityReturnsCapacityError(t *testing.T) {
+	d := mockDriver(func(_ context.Context, _ string) (string, error) {
+		return "1048576\n", nil // 1 GB in KB = 1024 MB free
+	})
+
+	// 1024 MB free, minus 512 reserve = 512 MB available. Requesting 2048 must fail.
+	_, err := d.reserveMemory(context.Background(), 2048)
+	var capErr *CapacityError
+	if !errors.As(err, &capErr) {
+		t.Fatalf("expected *CapacityError, got %#v", err)
+	}
+	if capErr.RequestedMemoryMB != 2048 {
+		t.Errorf("RequestedMemoryMB = %d, want 2048", capErr.RequestedMemoryMB)
+	}
+	if capErr.AvailableMemoryMB != 512 {
+		t.Errorf("AvailableMemoryMB = %d, want 512", capErr.AvailableMemoryMB)
+	}
+	if d.reservedMB != 0 {
+		t.Errorf("reservedMB after a rejected reservation = %d, want 0 (nothing committed)", d.reservedMB)
+	}
+}
+
+func TestDriver_ReserveMemory_QueryTimeoutBoundsMutexHold(t *testing.T) {
+	unblock := make(chan struct{})
+	d := mockDriver(func(ctx context.Context, _ string) (string, error) {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-unblock:
+			return "16777216\n", nil
+		}
+	})
+	d.memoryQueryTimeout = 10 * time.Millisecond
+
+	start := time.Now()
+	_, err := d.reserveMemory(context.Background(), 2048)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected reserveMemory to fail when the query times out")
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("reserveMemory took %v, want it bounded by memoryQueryTimeout", elapsed)
+	}
+
+	// mu must be released despite the timeout: unblock the mock and confirm
+	// a second call succeeds promptly instead of deadlocking on mu.
+	close(unblock)
+	done := make(chan struct{})
+	go func() {
+		_, _ = d.reserveMemory(context.Background(), 1)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reserveMemory deadlocked after a timed-out query")
+	}
+}
+
+func TestDriver_ReserveMemory_ConcurrentCallsLimitToCapacity(t *testing.T) {
+	// 16 GB free, minus the 512 MB reserve, leaves 16384-512 = 15872 MB
+	// available. Each caller requests 4096 MB, so exactly 3 of 8 concurrent
+	// callers can fit (3*4096=12288 <= 15872 < 4*4096=16384).
+	d := mockDriver(func(_ context.Context, _ string) (string, error) {
+		return "16777216\n", nil
+	})
+
+	const callers = 8
+	const requestMB = 4096
+	var wg sync.WaitGroup
+	results := make(chan error, callers)
+	releases := make(chan func(), callers)
+
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			release, err := d.reserveMemory(context.Background(), requestMB)
+			results <- err
+			if err == nil {
+				releases <- release
+			}
+		}()
+	}
+	wg.Wait()
+	close(results)
+	close(releases)
+
+	succeeded := 0
+	for err := range results {
+		var capErr *CapacityError
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.As(err, &capErr):
+			// Expected for callers that lost the race.
+		default:
+			t.Fatalf("unexpected error type: %v", err)
+		}
+	}
+	if succeeded != 3 {
+		t.Errorf("succeeded = %d, want 3", succeeded)
+	}
+	if d.reservedMB != int64(succeeded)*requestMB {
+		t.Errorf("reservedMB = %d, want %d", d.reservedMB, int64(succeeded)*requestMB)
+	}
+
+	for release := range releases {
+		release()
+	}
+	if d.reservedMB != 0 {
+		t.Errorf("reservedMB after releasing all = %d, want 0", d.reservedMB)
+	}
+}
+
+func TestDriver_Create_ReservationReleasedAfterFailureAllowsNextCreate(t *testing.T) {
+	callCount := 0
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		callCount++
+		switch {
+		case strings.Contains(script, "Get-VMHost"):
+			return "OK\n", nil
+		case strings.Contains(script, hyperVFreeMemoryScript):
+			return "16777216\n", nil
+		case strings.Contains(script, "New-VM"):
+			return "", fmt.Errorf("New-VHD failed")
+		default:
+			return "", nil // cleanup
+		}
+	})
+
+	// First Create fails after reserving memory.
+	if _, err := d.Create(context.Background(), &CreateConfig{TemplateVHD: `C:\t.vhdx`}); err == nil {
+		t.Fatal("expected the first Create to fail")
+	}
+	if d.reservedMB != 0 {
+		t.Fatalf("reservedMB after a failed Create = %d, want 0 (must not leak)", d.reservedMB)
+	}
+
+	// A second Create must still be able to reserve the same memory.
+	release, err := d.reserveMemory(context.Background(), 2048)
+	if err != nil {
+		t.Fatalf("second reservation unexpectedly failed: %v", err)
+	}
+	release()
+}
+
+// --- providersdk.AvailabilityReporter interface compliance ---
+
+var _ providersdk.AvailabilityReporter = (*Driver)(nil)
 
 // --- Read ---
 

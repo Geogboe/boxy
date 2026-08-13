@@ -3,10 +3,13 @@ package devfactory
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
 func newTestDriver(t *testing.T, cfg *Config) *Driver {
@@ -359,3 +362,31 @@ func TestRegistration(t *testing.T) {
 		t.Errorf("expected driver type %q, got %q", ProviderType, driver.Type())
 	}
 }
+
+func TestDriver_Availability_ReturnsConfiguredValue(t *testing.T) {
+	d := New(&Config{AvailableMemoryMB: 4096, DataDir: t.TempDir()})
+
+	avail, err := d.Availability(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if avail.MemoryMB != 4096 {
+		t.Errorf("MemoryMB = %d, want 4096", avail.MemoryMB)
+	}
+}
+
+func TestDriver_Availability_ZeroMeansUnlimited(t *testing.T) {
+	d := New(&Config{DataDir: t.TempDir()})
+
+	avail, err := d.Availability(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if avail.MemoryMB != math.MaxInt64 {
+		t.Errorf("MemoryMB = %d, want math.MaxInt64", avail.MemoryMB)
+	}
+}
+
+// --- providersdk.AvailabilityReporter interface compliance ---
+
+var _ providersdk.AvailabilityReporter = (*Driver)(nil)

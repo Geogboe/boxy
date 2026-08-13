@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Geogboe/boxy/pkg/eventstream"
@@ -38,6 +39,19 @@ type Driver struct {
 	// these to avoid real sleeps. See #118.
 	deleteWaitTimeout  time.Duration
 	deleteWaitInterval time.Duration
+
+	// memoryQueryTimeout bounds the live free-memory PowerShell query that
+	// reserveMemory/Availability run while holding mu. It applies on top of
+	// (never beyond) the caller's ctx, so a hung query can't wedge mu — and
+	// with it every other Create on this driver — indefinitely on a daemon
+	// ctx that has no deadline of its own. Zero uses the production default;
+	// tests override to avoid real sleeps.
+	memoryQueryTimeout time.Duration
+
+	// mu guards reservedMB, the memory (in MB) committed to in-flight Create
+	// calls that a live host query doesn't reflect yet. See reserveMemory.
+	mu         sync.Mutex
+	reservedMB int64
 }
 
 // ErrVMBusy indicates a VM is stuck transitioning between power states and
@@ -51,9 +65,19 @@ const (
 	defaultDeleteWaitTimeout  = 30 * time.Second
 	defaultDeleteWaitInterval = 3 * time.Second
 
+	// defaultMemoryQueryTimeout bounds reserveMemory/Availability's live
+	// PowerShell free-memory query. See Driver.memoryQueryTimeout.
+	defaultMemoryQueryTimeout = 15 * time.Second
+
 	// vmStateNotFound is a sentinel returned by state-polling scripts when
 	// the VM has disappeared (e.g. it finished tearing down on its own).
 	vmStateNotFound = "__BOXY_NOT_FOUND__"
+
+	// defaultHostReserveMB is headroom subtracted from the host's free memory
+	// before it's offered to a new Create request, protecting the host OS and
+	// other processes. Not currently user-configurable — see #173's design
+	// spec, "Known gap surfaced by this work."
+	defaultHostReserveMB = 512
 )
 
 // vmTransitionalStates are Hyper-V VMState values that mean "still moving
@@ -79,6 +103,13 @@ func (d *Driver) waitInterval() time.Duration {
 		return d.deleteWaitInterval
 	}
 	return defaultDeleteWaitInterval
+}
+
+func (d *Driver) memQueryTimeout() time.Duration {
+	if d.memoryQueryTimeout > 0 {
+		return d.memoryQueryTimeout
+	}
+	return defaultMemoryQueryTimeout
 }
 
 // New creates a Hyper-V driver.
@@ -108,6 +139,8 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 	}
 	if cc.MemoryMB == 0 {
 		cc.MemoryMB = 2048
+	} else if cc.MemoryMB < 0 {
+		return nil, fmt.Errorf("config.memory_mb must be positive, got %d", cc.MemoryMB)
 	}
 	if cc.GuestOS == "" {
 		cc.GuestOS = "windows"
@@ -127,6 +160,12 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 	if err := d.checkHostHealth(ctx); err != nil {
 		return nil, fmt.Errorf("hyperv host health check failed, refusing to provision: %w", err)
 	}
+
+	release, err := d.reserveMemory(ctx, int64(cc.MemoryMB))
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	vhdDir := cc.VHDDir
 	if vhdDir == "" {
@@ -410,6 +449,97 @@ Get-VMHost | Out-Null
 		return fmt.Errorf("hyperv host probe (Get-VMHost) failed, VMMS may be degraded: %w", err)
 	}
 	return nil
+}
+
+// CapacityError indicates the host does not currently have enough free
+// memory to satisfy a Create request. AvailableMemoryMB is already net of
+// defaultHostReserveMB and any other in-flight reservations.
+type CapacityError struct {
+	RequestedMemoryMB int64
+	AvailableMemoryMB int64
+}
+
+func (e *CapacityError) Error() string {
+	return fmt.Sprintf(
+		"hyperv: insufficient host memory: requested %d MB, %d MB available",
+		e.RequestedMemoryMB, e.AvailableMemoryMB,
+	)
+}
+
+// queryFreeMemoryMB returns the host's current free physical memory in
+// megabytes. Win32_OperatingSystem.FreePhysicalMemory is reported in
+// kilobytes, hence the /1024.
+func (d *Driver) queryFreeMemoryMB(ctx context.Context) (int64, error) {
+	out, err := d.ps(ctx, `
+$ErrorActionPreference = 'Stop'
+(Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory
+`)
+	if err != nil {
+		return 0, fmt.Errorf("hyperv query free memory: %w", err)
+	}
+	kb, err := strconv.ParseInt(strings.TrimSpace(out), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("hyperv parse free memory %q: %w", out, err)
+	}
+	return kb / 1024, nil
+}
+
+// Availability implements providersdk.AvailabilityReporter.
+func (d *Driver) Availability(ctx context.Context) (*providersdk.ResourceAvailability, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, d.memQueryTimeout())
+	defer cancel()
+	freeMB, err := d.queryFreeMemoryMB(queryCtx)
+	if err != nil {
+		return nil, err
+	}
+	d.mu.Lock()
+	reserved := d.reservedMB
+	d.mu.Unlock()
+
+	avail := freeMB - defaultHostReserveMB - reserved
+	if avail < 0 {
+		avail = 0
+	}
+	return &providersdk.ResourceAvailability{MemoryMB: avail}, nil
+}
+
+// reserveMemory atomically checks and commits requestedMB of host memory
+// against live availability, returning a release closure that must be
+// called exactly once (success or failure) to give the memory back. The
+// mutex is held across the live PowerShell query itself, not just the
+// accounting, closing the TOCTOU gap between concurrent Create calls on
+// this driver instance — the primary case this guards is a host that can't
+// fit even one more VM. It does NOT close the gap across sequential Create
+// calls: release() runs as soon as Create returns, and the host's live
+// free-memory counter isn't guaranteed to reflect a just-started VM's
+// consumption by then, so a rapid pool fill can still overcommit. See
+// #173's design spec, "Known gap", and the follow-up issue tracking a
+// reservation model that ties release to VM deletion instead. The query
+// itself is bounded by memQueryTimeout (independent of ctx's own deadline,
+// which may have none) so a hung PowerShell call can't hold this mutex —
+// and therefore every other Create on this driver — indefinitely.
+func (d *Driver) reserveMemory(ctx context.Context, requestedMB int64) (release func(), err error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	queryCtx, cancel := context.WithTimeout(ctx, d.memQueryTimeout())
+	defer cancel()
+	freeMB, err := d.queryFreeMemoryMB(queryCtx)
+	if err != nil {
+		return nil, err
+	}
+
+	available := freeMB - defaultHostReserveMB - d.reservedMB
+	if available < requestedMB {
+		return nil, &CapacityError{RequestedMemoryMB: requestedMB, AvailableMemoryMB: available}
+	}
+
+	d.reservedMB += requestedMB
+	return func() {
+		d.mu.Lock()
+		d.reservedMB -= requestedMB
+		d.mu.Unlock()
+	}, nil
 }
 
 // waitForTerminalVMState polls a VM's power state until it leaves the
