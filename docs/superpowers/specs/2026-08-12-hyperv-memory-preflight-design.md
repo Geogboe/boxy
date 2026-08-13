@@ -61,7 +61,7 @@ host-reserve headroom can't be a `Config` field yet. Worth its own issue.
 
 `reserveMemory`'s reservation only closes the TOCTOU gap between `Create`
 calls that overlap in time. `release()` runs as soon as `Create` returns
-(success or failure), and the host's live free-memory counter is not
+(success or failure), and the host's live available-memory counter is not
 guaranteed to already reflect a just-started VM's consumption at that
 instant — so two `Create` calls issued back-to-back (not concurrently, e.g.
 during a pool fill from 0 to `min_ready`) can each pass their own live
@@ -141,19 +141,22 @@ is that process's own in-memory state.
 - `Driver` gains `mu sync.Mutex` and `reservedMB int64` (memory committed to
   in-flight `Create` calls that a live host query doesn't reflect yet).
 - `func (d *Driver) Availability(ctx context.Context) (*providersdk.ResourceAvailability, error)`:
-  queries live free memory via the existing `d.ps` seam — the same
+  queries live available memory via the existing `d.ps` seam — the same
   injectable PowerShell-exec function `checkHostHealth` already uses, so no
   new test-mocking mechanism is needed — using
-  `(Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory`. This is the
-  actual number the host has free right now, and already reflects every VM
-  currently running (Boxy-managed or not, static or dynamic memory),
-  because a running Hyper-V VM consumes real host RAM regardless of how it
-  was started. **`FreePhysicalMemory` is reported in kilobytes, not
-  megabytes or bytes** — the query result must be divided by 1024 before
-  comparing against `requestedMB`/`defaultHostReserveMB`/`reservedMB`,
-  which are all in MB. Nets out `defaultHostReserveMB` (confirmed at
-  512 — see "Decisions") and the current `reservedMB` (read under the
-  lock).
+  `(Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory).AvailableMBytes`,
+  already in MB. (An earlier revision of this design used
+  `Win32_OperatingSystem.FreePhysicalMemory`, in KB; a second review pass on
+  the implementation found that metric excludes the reclaimable
+  standby/cache list and routinely underreports what a new VM can actually
+  use, rejecting `Create` requests `Start-VM` would satisfy fine — see
+  `driver.go`'s `queryAvailableMemoryMB` doc comment for the full
+  reasoning.) This is the actual number the host has available right now,
+  and already reflects every VM currently running (Boxy-managed or not,
+  static or dynamic memory), because a running Hyper-V VM consumes real
+  host RAM regardless of how it was started. Nets out `defaultHostReserveMB`
+  (confirmed at 512 — see "Decisions") and the current `reservedMB` (read
+  under the lock).
 - `func (d *Driver) reserveMemory(ctx context.Context, requestedMB int64) (release func(), err error)`:
   locks, computes current headroom (live query minus `defaultHostReserveMB`
   minus `reservedMB`), and either returns `*CapacityError` or adds
@@ -235,7 +238,7 @@ issue rather than fixed in this pass.
 - Insufficient memory returns `*CapacityError` without the mock ever
   seeing a `New-VM` call.
 - Concurrent `Create` calls (real goroutines) against a fake with limited
-  free memory: only as many succeed as capacity allows — a genuine race
+  available memory: only as many succeed as capacity allows — a genuine race
   test, same spirit as the `remote.go` TOCTOU regression tests from the
   `#153/#154/#158` session.
 - A failed `Create`'s reservation doesn't leak: a second `Create` still

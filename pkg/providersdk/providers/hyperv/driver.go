@@ -40,8 +40,8 @@ type Driver struct {
 	deleteWaitTimeout  time.Duration
 	deleteWaitInterval time.Duration
 
-	// memoryQueryTimeout bounds the live free-memory PowerShell query that
-	// reserveMemory/Availability run while holding mu. It applies on top of
+	// memoryQueryTimeout bounds the live available-memory PowerShell query
+	// that reserveMemory/Availability run while holding mu. It applies on top of
 	// (never beyond) the caller's ctx, so a hung query can't wedge mu — and
 	// with it every other Create on this driver — indefinitely on a daemon
 	// ctx that has no deadline of its own. Zero uses the production default;
@@ -66,15 +66,15 @@ const (
 	defaultDeleteWaitInterval = 3 * time.Second
 
 	// defaultMemoryQueryTimeout bounds reserveMemory/Availability's live
-	// PowerShell free-memory query. See Driver.memoryQueryTimeout.
+	// PowerShell available-memory query. See Driver.memoryQueryTimeout.
 	defaultMemoryQueryTimeout = 15 * time.Second
 
 	// vmStateNotFound is a sentinel returned by state-polling scripts when
 	// the VM has disappeared (e.g. it finished tearing down on its own).
 	vmStateNotFound = "__BOXY_NOT_FOUND__"
 
-	// defaultHostReserveMB is headroom subtracted from the host's free memory
-	// before it's offered to a new Create request, protecting the host OS and
+	// defaultHostReserveMB is headroom subtracted from the host's available
+	// memory before it's offered to a new Create request, protecting the host OS and
 	// other processes. Not currently user-configurable — see #173's design
 	// spec, "Known gap surfaced by this work."
 	defaultHostReserveMB = 512
@@ -438,11 +438,12 @@ func (d *Driver) UpdateStream(ctx context.Context, id string, op providersdk.Ope
 // before attempting to provision. If VMMS is already degraded (as can
 // happen after a stuck teardown, see #118), this fails fast with a clear
 // error instead of letting New-VHD/New-VM run into the same degraded state
-// on every reconcile pass. Bounded by memQueryTimeout, independent of the
-// caller's ctx (which for the background reconcile ticker has no deadline
-// of its own), so a hung probe fails Create promptly instead of hanging —
-// this call precedes reserveMemory and doesn't hold d.mu, so unlike that
-// call a hang here only blocks the current Create, not others.
+// on every reconcile pass. Bounded by memQueryTimeout, which applies on top
+// of (never beyond) the caller's ctx — so on the background reconcile
+// ticker's ctx, which has no deadline of its own, a hung probe still fails
+// Create promptly instead of hanging. This call precedes reserveMemory and
+// doesn't hold d.mu, so unlike that call a hang here only blocks the
+// current Create, not others.
 func (d *Driver) checkHostHealth(ctx context.Context) error {
 	probeCtx, cancel := context.WithTimeout(ctx, d.memQueryTimeout())
 	defer cancel()
@@ -457,7 +458,7 @@ Get-VMHost | Out-Null
 	return nil
 }
 
-// CapacityError indicates the host does not currently have enough free
+// CapacityError indicates the host does not currently have enough available
 // memory to satisfy a Create request. AvailableMemoryMB is already net of
 // defaultHostReserveMB and any other in-flight reservations.
 type CapacityError struct {
@@ -472,28 +473,28 @@ func (e *CapacityError) Error() string {
 	)
 }
 
-// queryFreeMemoryMB returns the host's current available physical memory in
-// megabytes — memory immediately usable by a new VM, not just the raw free
-// list. Win32_OperatingSystem.FreePhysicalMemory (the naive choice) excludes
-// the standby/cache list, which Windows reclaims instantly under memory
-// pressure; on a host that's been running a while that list can be several
-// GB, so FreePhysicalMemory routinely underreports what's actually
+// queryAvailableMemoryMB returns the host's current available physical
+// memory in megabytes — memory immediately usable by a new VM, not just the
+// raw free list. Win32_OperatingSystem.FreePhysicalMemory (the naive choice)
+// excludes the standby/cache list, which Windows reclaims instantly under
+// memory pressure; on a host that's been running a while that list can be
+// several GB, so FreePhysicalMemory routinely underreports what's actually
 // available and would spuriously reject Create requests Start-VM could
 // satisfy fine. Win32_PerfFormattedData_PerfOS_Memory.AvailableMBytes is
 // already in MB and matches what Task Manager calls "Available" — deliberately
 // not Get-Counter '\Memory\Available MBytes', whose counter *path* is
 // localized on non-English Windows.
-func (d *Driver) queryFreeMemoryMB(ctx context.Context) (int64, error) {
+func (d *Driver) queryAvailableMemoryMB(ctx context.Context) (int64, error) {
 	out, err := d.ps(ctx, `
 $ErrorActionPreference = 'Stop'
 (Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory).AvailableMBytes
 `)
 	if err != nil {
-		return 0, fmt.Errorf("hyperv query free memory: %w", err)
+		return 0, fmt.Errorf("hyperv query available memory: %w", err)
 	}
 	mb, err := strconv.ParseInt(strings.TrimSpace(out), 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("hyperv parse free memory %q: %w", out, err)
+		return 0, fmt.Errorf("hyperv parse available memory %q: %w", out, err)
 	}
 	return mb, nil
 }
@@ -502,7 +503,7 @@ $ErrorActionPreference = 'Stop'
 func (d *Driver) Availability(ctx context.Context) (*providersdk.ResourceAvailability, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, d.memQueryTimeout())
 	defer cancel()
-	freeMB, err := d.queryFreeMemoryMB(queryCtx)
+	availableMB, err := d.queryAvailableMemoryMB(queryCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -510,7 +511,7 @@ func (d *Driver) Availability(ctx context.Context) (*providersdk.ResourceAvailab
 	reserved := d.reservedMB
 	d.mu.Unlock()
 
-	avail := freeMB - defaultHostReserveMB - reserved
+	avail := availableMB - defaultHostReserveMB - reserved
 	if avail < 0 {
 		avail = 0
 	}
@@ -525,30 +526,31 @@ func (d *Driver) Availability(ctx context.Context) (*providersdk.ResourceAvailab
 // this driver instance — the primary case this guards is a host that can't
 // fit even one more VM. It does NOT close the gap across sequential Create
 // calls: release() runs as soon as Create returns, and the host's live
-// free-memory counter isn't guaranteed to reflect a just-started VM's
+// available-memory counter isn't guaranteed to reflect a just-started VM's
 // consumption by then, so a rapid pool fill can still overcommit. See
 // #173's design spec, "Known gap", and the follow-up issue tracking a
 // reservation model that ties release to VM deletion instead. The query
-// itself is bounded by memQueryTimeout (independent of ctx's own deadline,
-// which may have none) so a hung PowerShell call can't hold this mutex —
-// and therefore every other Create on this driver — indefinitely.
+// itself is bounded by memQueryTimeout, which applies on top of (never
+// beyond) ctx's own deadline — which may have none — so a hung PowerShell
+// call can't hold this mutex — and therefore every other Create on this
+// driver — indefinitely.
 func (d *Driver) reserveMemory(ctx context.Context, requestedMB int64) (release func(), err error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	queryCtx, cancel := context.WithTimeout(ctx, d.memQueryTimeout())
 	defer cancel()
-	freeMB, err := d.queryFreeMemoryMB(queryCtx)
+	availableMB, err := d.queryAvailableMemoryMB(queryCtx)
 	if err != nil {
 		return nil, err
 	}
 
-	available := freeMB - defaultHostReserveMB - d.reservedMB
+	available := availableMB - defaultHostReserveMB - d.reservedMB
 	if available < requestedMB {
 		// Clamp to 0 for the error message, matching Availability()'s clamp
 		// for the same computation — a negative "available" (e.g. reservedMB
-		// alone exceeding freeMB-reserve under load) is a confusing thing to
-		// show a caller.
+		// alone exceeding availableMB-reserve under load) is a confusing
+		// thing to show a caller.
 		reported := available
 		if reported < 0 {
 			reported = 0

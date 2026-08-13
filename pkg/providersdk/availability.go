@@ -6,7 +6,7 @@ import "context"
 // ResourceAvailability is a driver's point-in-time view of how much of a
 // resource it can currently hand out to a new Create request.
 type ResourceAvailability struct {
-	// MemoryMB is free memory available for new resources, in megabytes.
+	// MemoryMB is available memory for new resources, in megabytes.
 	MemoryMB int64
 }
 

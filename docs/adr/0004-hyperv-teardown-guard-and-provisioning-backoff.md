@@ -73,9 +73,10 @@ trading a small amount of parallelism for a zero-TOCTOU-gap guarantee
 *between concurrent calls*. It does not close the gap in either direction
 across rapid sequential calls (see the design spec's "Known gap" and the
 tracking follow-up for both the under- and over-reservation cases). The
-query itself is time-bounded independent of the caller's context so a hung
-PowerShell call can't hold the mutex — and therefore every other `Create`
-on this driver — indefinitely; the same bound applies to the pre-existing
+query itself is time-bounded on top of (never beyond) the caller's context,
+so a hung PowerShell call can't hold the mutex — and therefore every other
+`Create` on this driver — indefinitely, even on a caller context with no
+deadline of its own; the same bound applies to the pre-existing
 `Get-VMHost` health probe immediately before it in `Create`'s hot path.
 `defaultHostReserveMB` (512 MB,
 unexported) is reserved for the host OS and other processes; it is not

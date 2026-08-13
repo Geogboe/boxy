@@ -26,7 +26,7 @@ func TestDriver_Create_HappyPath(t *testing.T) {
 	callCount := 0
 	d := mockDriver(func(_ context.Context, script string) (string, error) {
 		callCount++
-		if strings.Contains(script, hyperVFreeMemoryScript) {
+		if strings.Contains(script, hyperVAvailableMemoryScript) {
 			return "16384\n", nil // 16 GB, comfortably above any test's request
 		}
 		return fakeGUID + "\n", nil
@@ -68,7 +68,7 @@ func TestDriver_Create_MissingTemplateVHD(t *testing.T) {
 func TestDriver_Create_Defaults(t *testing.T) {
 	var capturedScript string
 	d := mockDriver(func(_ context.Context, script string) (string, error) {
-		if strings.Contains(script, hyperVFreeMemoryScript) {
+		if strings.Contains(script, hyperVAvailableMemoryScript) {
 			return "16384\n", nil
 		}
 		if strings.Contains(script, "New-VM") {
@@ -103,7 +103,7 @@ func TestDriver_Create_CleanupOnFailure(t *testing.T) {
 		switch {
 		case strings.Contains(script, "Get-VMHost"):
 			return "OK\n", nil
-		case strings.Contains(script, hyperVFreeMemoryScript):
+		case strings.Contains(script, hyperVAvailableMemoryScript):
 			return "16384\n", nil
 		case strings.Contains(script, "New-VM"):
 			return "", fmt.Errorf("New-VHD failed")
@@ -152,7 +152,7 @@ func TestDriver_Create_InsufficientMemoryRejectedBeforeNewVM(t *testing.T) {
 		switch {
 		case strings.Contains(script, "Get-VMHost"):
 			return "OK\n", nil
-		case strings.Contains(script, hyperVFreeMemoryScript):
+		case strings.Contains(script, hyperVAvailableMemoryScript):
 			return "1024\n", nil // 1 GB free, minus 512 reserve = 512 MB available
 		case strings.Contains(script, "New-VM"):
 			t.Fatal("New-VM must not run when capacity is insufficient")
@@ -198,7 +198,7 @@ func TestDriver_Create_NegativeMemoryRejected(t *testing.T) {
 func TestDriver_Create_LinuxDefaults(t *testing.T) {
 	var capturedScript string
 	d := mockDriver(func(_ context.Context, script string) (string, error) {
-		if strings.Contains(script, hyperVFreeMemoryScript) {
+		if strings.Contains(script, hyperVAvailableMemoryScript) {
 			return "16384\n", nil
 		}
 		if strings.Contains(script, "New-VM") {
@@ -239,16 +239,16 @@ func TestDriver_Create_RejectsGuestPassword(t *testing.T) {
 
 // --- Availability / reserveMemory ---
 
-// hyperVFreeMemoryScript is the fragment that appears in the live
+// hyperVAvailableMemoryScript is the fragment that appears in the live
 // available-memory query script; tests key their psExec mock off it. Mock
 // return values below are plain MB strings — the real query
-// (queryFreeMemoryMB) now reads Win32_PerfFormattedData_PerfOS_Memory's
+// (queryAvailableMemoryMB) now reads Win32_PerfFormattedData_PerfOS_Memory's
 // AvailableMBytes, which unlike the old FreePhysicalMemory is already in MB.
-const hyperVFreeMemoryScript = "AvailableMBytes"
+const hyperVAvailableMemoryScript = "AvailableMBytes"
 
 func TestDriver_Availability_NetsOutReserveAndReservations(t *testing.T) {
 	d := mockDriver(func(_ context.Context, script string) (string, error) {
-		if !strings.Contains(script, hyperVFreeMemoryScript) {
+		if !strings.Contains(script, hyperVAvailableMemoryScript) {
 			t.Fatalf("unexpected script: %s", script)
 		}
 		return "16384\n", nil // 16 GB
@@ -420,7 +420,7 @@ func TestDriver_Create_ReservationReleasedAfterFailureAllowsNextCreate(t *testin
 		switch {
 		case strings.Contains(script, "Get-VMHost"):
 			return "OK\n", nil
-		case strings.Contains(script, hyperVFreeMemoryScript):
+		case strings.Contains(script, hyperVAvailableMemoryScript):
 			return "16384\n", nil
 		case strings.Contains(script, "New-VM"):
 			return "", fmt.Errorf("New-VHD failed")
