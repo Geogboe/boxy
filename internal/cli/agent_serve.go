@@ -167,6 +167,7 @@ func runAgentServe(ctx context.Context, opts agentServeOpts) error {
 	return agentsdk.Run(ctx, dial, agentsdk.RemoteClientConfig{
 		AgentName:     name,
 		Token:         token,
+		AgentVersion:  Version,
 		ProviderTypes: providerTypes,
 		Drivers:       drivers,
 		OnRegistered: func(resp *boxyagentv1.RegisterResponse) {

@@ -109,6 +109,19 @@ subsequent reconnect. Reconnects present that certificate instead of a
 token; the server checks it isn't in the revocation deny-list before
 re-registering.
 
+### Version match on registration (#167)
+
+`RegisterRequest.agent_version` (populated by the agent from its own build's
+`Version`) must exactly equal the server's `Version` or `Connect` rejects the
+registration outright, before `authenticate` runs — so a version-skewed
+agent doesn't burn its single-use token just to be told to upgrade. This is
+deliberately strict rather than tolerant of skew: the wire schema and
+command/result payloads in this ADR aren't versioned independently, so an
+agent and server built from different commits have no contract for what the
+other side actually understands. A blank `agent_version` (an agent built
+before this field existed) is rejected the same as any other mismatch —
+there is no "unknown version" exception.
+
 ### Multi-agent routing and per-resource agent provenance
 
 `internal/pool.AgentProvisioner`'s single hardcoded `Agent` field becomes a

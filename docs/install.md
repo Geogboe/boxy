@@ -106,6 +106,22 @@ Environment variables:
 |----------|-------------|
 | `BOXY_GITHUB_TOKEN` | GitHub API token to avoid rate limits. |
 
+### Upgrading a server with remote agents
+
+A remote `boxy agent` and the `boxy serve` it connects to must be running
+the **exact same** build version. On registration, the server rejects any
+agent whose version doesn't match its own (see
+[ADR-0005](adr/0005-remote-agent-transport-and-registration.md)) — there is
+no compatibility window or rolling-upgrade path. `boxy update` also
+restarts any installed `boxy-agent`/`boxy-serve` service after upgrading it
+(see [service-install.md](service-install.md)), so updating either side
+takes it offline until the other side is updated to match.
+
+When operating remote agents, upgrade the server and every connected agent
+together rather than one at a time — for example, update all agents first
+(they'll retry registration with backoff until the server matches), then
+update the server, or take agents offline for the duration of the upgrade.
+
 ## Run as a background service
 
 To have `boxy agent serve` or `boxy serve` start automatically and

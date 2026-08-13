@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -454,6 +455,37 @@ func (f *fakeClientStream) Context() context.Context     { return f.ctx }
 func (f *fakeClientStream) SendMsg(m any) error          { return nil }
 func (f *fakeClientStream) RecvMsg(m any) error          { return nil }
 
+// TestRunSession_BlankAgentVersionFailsFastLocally covers a Copilot finding
+// on PR #175: a caller that forgets to set AgentVersion should get an
+// immediate, clear local error instead of a wasted round-trip to a server
+// that will reject it anyway (with deliberately little detail, since the
+// peer isn't authenticated at that point — see server.go's Connect).
+func TestRunSession_BlankAgentVersionFailsFastLocally(t *testing.T) {
+	stream := newFakeClientStream()
+
+	err := RunSession(context.Background(), stream, RemoteClientConfig{
+		AgentName:     "test-agent",
+		Token:         "tok-123",
+		ProviderTypes: []providersdk.Type{"docker"},
+		Drivers:       DriverSet{},
+	})
+	if err == nil {
+		t.Fatal("expected an error for a blank AgentVersion")
+	}
+	// Pin the actual failure reason, not just "something errored" — the
+	// config above is also missing other fields (e.g. no Drivers entries),
+	// so a weaker assertion would pass even if the AgentVersion check were
+	// deleted and some unrelated validation failed instead.
+	if !strings.Contains(err.Error(), "AgentVersion") {
+		t.Fatalf("expected error to mention AgentVersion, got: %v", err)
+	}
+	select {
+	case sent := <-stream.sentCh:
+		t.Fatalf("expected no message sent on the stream, got %#v", sent)
+	default:
+	}
+}
+
 func TestRunSession_RegistersAndDispatchesCommand(t *testing.T) {
 	stream := newFakeClientStream()
 	drivers := DriverSet{"docker": &fakeDriver{providerType: "docker", createRes: &providersdk.Resource{ID: "c1"}}}
@@ -467,6 +499,7 @@ func TestRunSession_RegistersAndDispatchesCommand(t *testing.T) {
 		sessionErrCh <- RunSession(ctx, stream, RemoteClientConfig{
 			AgentName:         "test-agent",
 			Token:             "tok-123",
+			AgentVersion:      "v-test",
 			ProviderTypes:     []providersdk.Type{"docker"},
 			Drivers:           drivers,
 			HeartbeatInterval: 20 * time.Millisecond,
@@ -484,6 +517,9 @@ func TestRunSession_RegistersAndDispatchesCommand(t *testing.T) {
 	reg := registerSent.GetRegister()
 	if reg == nil || reg.GetRegistrationToken() != "tok-123" {
 		t.Fatalf("expected RegisterRequest with the configured token, got %#v", registerSent)
+	}
+	if reg.GetAgentVersion() != "v-test" {
+		t.Fatalf("expected RegisterRequest.AgentVersion to be forwarded from config, got %q", reg.GetAgentVersion())
 	}
 
 	// Server acks registration.

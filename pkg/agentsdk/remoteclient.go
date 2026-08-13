@@ -28,8 +28,13 @@ type DriverSet map[providersdk.Type]providersdk.Driver
 // process restart) authenticates via the client certificate issued in
 // OnRegistered instead.
 type RemoteClientConfig struct {
-	AgentName         string
-	Token             string
+	AgentName string
+	Token     string
+	// AgentVersion is this agent binary's version string, sent on every
+	// RegisterRequest so the server can refuse a version-mismatched
+	// connection (see #167) rather than let skewed agent/server builds
+	// talk an ambiguous protocol to each other.
+	AgentVersion      string
 	ProviderTypes     []providersdk.Type
 	Drivers           DriverSet
 	HeartbeatInterval time.Duration // default 15s if zero; overridden by the server's RegisterResponse if set
@@ -119,6 +124,17 @@ func Run(ctx context.Context, dial Dialer, cfg RemoteClientConfig) error {
 // command-dispatch receiver concurrently until the stream ends or ctx is
 // cancelled. Returns the first error from either.
 func RunSession(ctx context.Context, stream boxyagentv1.AgentTransportService_ConnectClient, cfg RemoteClientConfig) error {
+	// Fail fast, locally: the server rejects a blank agent_version the same
+	// as any other mismatch (see #167), but its rejection deliberately
+	// omits detail since the peer isn't authenticated at that point yet
+	// (internal/agentserver/server.go's Connect). Catching this here, before
+	// the stream is used at all, turns a misconfigured caller's first
+	// symptom from an opaque round-trip failure into an immediate, clear
+	// local error.
+	if cfg.AgentVersion == "" {
+		return fmt.Errorf("agentsdk: RemoteClientConfig.AgentVersion must be set")
+	}
+
 	providerTypes := make([]string, len(cfg.ProviderTypes))
 	for i, t := range cfg.ProviderTypes {
 		providerTypes[i] = string(t)
@@ -131,6 +147,7 @@ func RunSession(ctx context.Context, stream boxyagentv1.AgentTransportService_Co
 			RegistrationToken: cfg.Token,
 			AgentName:         cfg.AgentName,
 			ProviderTypes:     providerTypes,
+			AgentVersion:      cfg.AgentVersion,
 		}},
 	}); err != nil {
 		return fmt.Errorf("send register request: %w", err)
