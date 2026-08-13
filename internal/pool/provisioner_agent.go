@@ -2,6 +2,7 @@ package pool
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -49,7 +50,12 @@ func (ap *AgentProvisioner) Provision(ctx context.Context, pool model.Pool) (mod
 
 	res, err := agent.Create(ctx, driverType, spec.Config)
 	if err != nil {
-		return model.Resource{}, fmt.Errorf("agent create for pool %q: %w", pool.Name, err)
+		wrapped := fmt.Errorf("agent create for pool %q: %w", pool.Name, err)
+		var orphanErr *providersdk.OrphanedResourceError
+		if errors.As(err, &orphanErr) {
+			return ap.quarantinedResource(pool.Name, string(driverType), agent.Info().ID, orphanErr), wrapped
+		}
+		return model.Resource{}, wrapped
 	}
 
 	now := time.Now().UTC()
@@ -77,6 +83,24 @@ func (ap *AgentProvisioner) Provision(ctx context.Context, pool model.Pool) (mod
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}, nil
+}
+
+// quarantinedResource builds the ResourceStateError record written for a
+// Create failure whose cleanup also failed (see #174).
+func (ap *AgentProvisioner) quarantinedResource(poolName model.PoolName, providerName, agentID string, orphanErr *providersdk.OrphanedResourceError) model.Resource {
+	now := time.Now().UTC()
+	if ap.Now != nil {
+		now = ap.Now().UTC()
+	}
+	return model.Resource{
+		ID:         model.ResourceID(orphanErr.ID),
+		OriginPool: poolName,
+		Provider:   model.ProviderRef{Name: providerName, AgentID: agentID},
+		State:      model.ResourceStateError,
+		Properties: map[string]any{"quarantine_reason": orphanErr.CauseMessage},
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
 }
 
 func (ap *AgentProvisioner) Allocate(ctx context.Context, pool model.Pool, res model.Resource) (map[string]any, error) {

@@ -3,6 +3,7 @@ package pool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -35,7 +36,12 @@ func (dp *DriverProvisioner) Provision(ctx context.Context, pool model.Pool) (mo
 	spec := dp.Specs[pool.Name]
 	res, err := driver.Create(ctx, spec.Config)
 	if err != nil {
-		return model.Resource{}, fmt.Errorf("driver create for pool %q: %w", pool.Name, err)
+		wrapped := fmt.Errorf("driver create for pool %q: %w", pool.Name, err)
+		var orphanErr *providersdk.OrphanedResourceError
+		if errors.As(err, &orphanErr) {
+			return dp.quarantinedResource(pool.Name, providerName, "", orphanErr), wrapped
+		}
+		return model.Resource{}, wrapped
 	}
 
 	now := time.Now().UTC()
@@ -62,6 +68,25 @@ func (dp *DriverProvisioner) Provision(ctx context.Context, pool model.Pool) (mo
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}, nil
+}
+
+// quarantinedResource builds the ResourceStateError record written for a
+// Create failure whose cleanup also failed (see #174). agentID is empty for
+// DriverProvisioner (no agent concept); AgentProvisioner passes its own.
+func (dp *DriverProvisioner) quarantinedResource(poolName model.PoolName, providerName, agentID string, orphanErr *providersdk.OrphanedResourceError) model.Resource {
+	now := time.Now().UTC()
+	if dp.Now != nil {
+		now = dp.Now().UTC()
+	}
+	return model.Resource{
+		ID:         model.ResourceID(orphanErr.ID),
+		OriginPool: poolName,
+		Provider:   model.ProviderRef{Name: providerName, AgentID: agentID},
+		State:      model.ResourceStateError,
+		Properties: map[string]any{"quarantine_reason": orphanErr.CauseMessage},
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
 }
 
 func (dp *DriverProvisioner) Allocate(ctx context.Context, pool model.Pool, res model.Resource) (map[string]any, error) {

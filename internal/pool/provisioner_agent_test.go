@@ -344,6 +344,64 @@ func TestAgentProvisioner_Provision(t *testing.T) {
 	}
 }
 
+func TestAgentProvisioner_ProvisionQuarantinesOrphanedResource(t *testing.T) {
+	mockAgent := newMockAgent(providersdk.Type("hyperv"))
+	mockAgent.info.ID = "agent-a"
+	mockAgent.createErr = &providersdk.OrphanedResourceError{ID: "guid-1", CauseMessage: "remove-vm failed"}
+
+	provisioner := &AgentProvisioner{
+		Registry: registryWith(t, mockAgent),
+		Specs: map[model.PoolName]boxyconfig.PoolSpec{
+			"vm-pool": {Name: "vm-pool", Type: "hyperv"},
+		},
+		Providers: map[string]providersdk.Instance{},
+	}
+
+	res, err := provisioner.Provision(context.Background(), model.Pool{
+		Name:      "vm-pool",
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: "alpine"},
+	})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if res.ID != "guid-1" {
+		t.Errorf("ID = %q, want %q", res.ID, "guid-1")
+	}
+	if res.OriginPool != "vm-pool" {
+		t.Errorf("OriginPool = %q, want %q", res.OriginPool, "vm-pool")
+	}
+	if res.State != model.ResourceStateError {
+		t.Errorf("State = %q, want %q", res.State, model.ResourceStateError)
+	}
+	if res.Properties["quarantine_reason"] != "remove-vm failed" {
+		t.Errorf("quarantine_reason = %v, want %q", res.Properties["quarantine_reason"], "remove-vm failed")
+	}
+	if res.Provider.AgentID != "agent-a" {
+		t.Errorf("Provider.AgentID = %q, want %q", res.Provider.AgentID, "agent-a")
+	}
+}
+
+func TestAgentProvisioner_ProvisionPlainErrorWithoutOrphan(t *testing.T) {
+	mockAgent := newMockAgent(providersdk.Type("hyperv"))
+	mockAgent.createErr = errors.New("boom")
+
+	provisioner := &AgentProvisioner{
+		Registry: registryWith(t, mockAgent),
+		Specs: map[model.PoolName]boxyconfig.PoolSpec{
+			"vm-pool": {Name: "vm-pool", Type: "hyperv"},
+		},
+		Providers: map[string]providersdk.Instance{},
+	}
+
+	res, err := provisioner.Provision(context.Background(), model.Pool{Name: "vm-pool"})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if res.ID != "" {
+		t.Errorf("expected zero-value Resource for a non-orphan failure, got %+v", res)
+	}
+}
+
 func TestAgentProvisioner_Destroy(t *testing.T) {
 	mockAgent := newMockAgent(providersdk.Type("docker"))
 
