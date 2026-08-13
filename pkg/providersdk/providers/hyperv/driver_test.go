@@ -173,6 +173,90 @@ func TestDriver_Create_RejectsGuestPassword(t *testing.T) {
 	}
 }
 
+// --- Availability / reserveMemory ---
+
+// hyperVFreeMemoryScript is the fragment that appears in the live
+// free-memory query script; tests key their psExec mock off it.
+const hyperVFreeMemoryScript = "FreePhysicalMemory"
+
+func TestDriver_Availability_NetsOutReserveAndReservations(t *testing.T) {
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		if !strings.Contains(script, hyperVFreeMemoryScript) {
+			t.Fatalf("unexpected script: %s", script)
+		}
+		return "16777216\n", nil // 16 GB in KB
+	})
+	d.reservedMB = 1000
+
+	avail, err := d.Availability(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// 16 GB = 16384 MB, minus defaultHostReserveMB (512), minus reservedMB (1000).
+	want := int64(16384 - 512 - 1000)
+	if avail.MemoryMB != want {
+		t.Errorf("MemoryMB = %d, want %d", avail.MemoryMB, want)
+	}
+}
+
+func TestDriver_Availability_QueryFailurePropagates(t *testing.T) {
+	d := mockDriver(func(_ context.Context, _ string) (string, error) {
+		return "", fmt.Errorf("Get-CimInstance failed")
+	})
+
+	if _, err := d.Availability(context.Background()); err == nil {
+		t.Fatal("expected error when the free-memory query fails")
+	}
+}
+
+func TestDriver_ReserveMemory_SufficientCapacitySucceeds(t *testing.T) {
+	d := mockDriver(func(_ context.Context, _ string) (string, error) {
+		return "16777216\n", nil // 16 GB in KB
+	})
+
+	release, err := d.reserveMemory(context.Background(), 2048)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if release == nil {
+		t.Fatal("expected a non-nil release function")
+	}
+	if d.reservedMB != 2048 {
+		t.Errorf("reservedMB = %d, want 2048", d.reservedMB)
+	}
+
+	release()
+	if d.reservedMB != 0 {
+		t.Errorf("reservedMB after release = %d, want 0", d.reservedMB)
+	}
+}
+
+func TestDriver_ReserveMemory_InsufficientCapacityReturnsCapacityError(t *testing.T) {
+	d := mockDriver(func(_ context.Context, _ string) (string, error) {
+		return "1048576\n", nil // 1 GB in KB = 1024 MB free
+	})
+
+	// 1024 MB free, minus 512 reserve = 512 MB available. Requesting 2048 must fail.
+	_, err := d.reserveMemory(context.Background(), 2048)
+	var capErr *CapacityError
+	if !errors.As(err, &capErr) {
+		t.Fatalf("expected *CapacityError, got %#v", err)
+	}
+	if capErr.RequestedMemoryMB != 2048 {
+		t.Errorf("RequestedMemoryMB = %d, want 2048", capErr.RequestedMemoryMB)
+	}
+	if capErr.AvailableMemoryMB != 512 {
+		t.Errorf("AvailableMemoryMB = %d, want 512", capErr.AvailableMemoryMB)
+	}
+	if d.reservedMB != 0 {
+		t.Errorf("reservedMB after a rejected reservation = %d, want 0 (nothing committed)", d.reservedMB)
+	}
+}
+
+// --- providersdk.AvailabilityReporter interface compliance ---
+
+var _ providersdk.AvailabilityReporter = (*Driver)(nil)
+
 // --- Read ---
 
 func TestDriver_Read_StateMapping(t *testing.T) {
