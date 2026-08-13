@@ -63,6 +63,26 @@ type streamWaiter struct {
 
 var _ GuestPersonalizingAgent = (*RemoteAgent)(nil)
 
+// reconstructAgentError rebuilds a typed error from an AgentError's
+// error_type/error_detail_json when recognized, falling back to today's
+// plain message-only error otherwise. See providersdk.ErrorTyper.
+func reconstructAgentError(agentID string, ae *boxyagentv1.AgentError) error {
+	base := fmt.Errorf("agent %q: %s", agentID, ae.GetMessage())
+	switch ae.GetErrorType() {
+	case "capacity":
+		var ce providersdk.CapacityError
+		if json.Unmarshal(ae.GetErrorDetailJson(), &ce) == nil {
+			return &ce
+		}
+	case "orphaned_resource":
+		var oe providersdk.OrphanedResourceError
+		if json.Unmarshal(ae.GetErrorDetailJson(), &oe) == nil {
+			return &oe
+		}
+	}
+	return base
+}
+
 // NewRemoteAgent wraps a server-side stream handle for one connected agent.
 // The caller must run Serve in its own goroutine to pump incoming frames.
 func NewRemoteAgent(info AgentInfo, stream boxyagentv1.AgentTransportService_ConnectServer) *RemoteAgent {
@@ -241,7 +261,7 @@ func (a *RemoteAgent) Create(ctx context.Context, provider providersdk.Type, cfg
 		return nil, err
 	}
 	if agentErr := res.GetError(); agentErr != nil {
-		return nil, fmt.Errorf("agent %q: %s", a.info.ID, agentErr.GetMessage())
+		return nil, reconstructAgentError(a.info.ID, agentErr)
 	}
 	rr := res.GetResource()
 	if rr == nil {
@@ -263,7 +283,7 @@ func (a *RemoteAgent) Read(ctx context.Context, provider providersdk.Type, id st
 		return nil, err
 	}
 	if agentErr := res.GetError(); agentErr != nil {
-		return nil, fmt.Errorf("agent %q: %s", a.info.ID, agentErr.GetMessage())
+		return nil, reconstructAgentError(a.info.ID, agentErr)
 	}
 	st := res.GetStatus()
 	if st == nil {
@@ -285,7 +305,7 @@ func (a *RemoteAgent) Update(ctx context.Context, provider providersdk.Type, id 
 		return nil, err
 	}
 	if agentErr := res.GetError(); agentErr != nil {
-		return nil, fmt.Errorf("agent %q: %s", a.info.ID, agentErr.GetMessage())
+		return nil, reconstructAgentError(a.info.ID, agentErr)
 	}
 	out := res.GetOperation()
 	if out == nil {
@@ -341,7 +361,7 @@ func (a *RemoteAgent) UpdateStream(ctx context.Context, provider providersdk.Typ
 				return nil, fmt.Errorf("agent %q: connection closed while streaming command %s", a.info.ID, cmd.CommandId)
 			}
 			if agentErr := result.GetError(); agentErr != nil {
-				return nil, fmt.Errorf("agent %q: %s", a.info.ID, agentErr.GetMessage())
+				return nil, reconstructAgentError(a.info.ID, agentErr)
 			}
 			if event := result.GetOperationStream(); event != nil {
 				if event.GetComplete() {
@@ -384,7 +404,7 @@ func (a *RemoteAgent) Delete(ctx context.Context, provider providersdk.Type, id 
 		return err
 	}
 	if agentErr := res.GetError(); agentErr != nil {
-		return fmt.Errorf("agent %q: %s", a.info.ID, agentErr.GetMessage())
+		return reconstructAgentError(a.info.ID, agentErr)
 	}
 	return nil
 }
@@ -404,7 +424,7 @@ func (a *RemoteAgent) List(ctx context.Context, provider providersdk.Type) ([]pr
 		return nil, err
 	}
 	if agentErr := res.GetError(); agentErr != nil {
-		return nil, fmt.Errorf("agent %q: %s", a.info.ID, agentErr.GetMessage())
+		return nil, reconstructAgentError(a.info.ID, agentErr)
 	}
 	lr := res.GetList()
 	if lr == nil {
@@ -430,7 +450,7 @@ func (a *RemoteAgent) Allocate(ctx context.Context, provider providersdk.Type, i
 		return nil, err
 	}
 	if agentErr := res.GetError(); agentErr != nil {
-		return nil, fmt.Errorf("agent %q: %s", a.info.ID, agentErr.GetMessage())
+		return nil, reconstructAgentError(a.info.ID, agentErr)
 	}
 	ar := res.GetAllocate()
 	if ar == nil || len(ar.GetPropertiesJson()) == 0 {
@@ -459,7 +479,7 @@ func (a *RemoteAgent) PersonalizeGuest(ctx context.Context, provider providersdk
 		return nil, err
 	}
 	if agentErr := res.GetError(); agentErr != nil {
-		return nil, fmt.Errorf("agent %q: %s", a.info.ID, agentErr.GetMessage())
+		return nil, reconstructAgentError(a.info.ID, agentErr)
 	}
 	pg := res.GetPersonalizeGuest()
 	if pg == nil || len(pg.GetProperties()) == 0 {

@@ -2,6 +2,7 @@ package agentsdk
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"sync"
@@ -701,5 +702,93 @@ func TestRemoteAgent_DeliverStreamSendDoesNotBlockForeverWhenWaiterDoneClosesWit
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("deliver() blocked forever sending to a full streamPending channel whose specific waiter gave up, even though the connection stayed healthy")
+	}
+}
+
+func TestRemoteAgent_Create_ReconstructsCapacityError(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)
+	go func() { _ = a.Serve() }()
+
+	type result struct {
+		res *providersdk.Resource
+		err error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		res, err := a.Create(context.Background(), "hyperv", map[string]any{})
+		resultCh <- result{res, err}
+	}()
+
+	cmd := recvCommand(t, stream.sentCh)
+
+	detail, err := json.Marshal(&providersdk.CapacityError{RequestedMemoryMB: 2048, AvailableMemoryMB: 512})
+	if err != nil {
+		t.Fatalf("marshal detail: %v", err)
+	}
+	stream.feedResult(&boxyagentv1.CommandResult{
+		CommandId: cmd.GetCommandId(),
+		Outcome: &boxyagentv1.CommandResult_Error{Error: &boxyagentv1.AgentError{
+			Message:         "insufficient host capacity: requested 2048 MB, 512 MB available",
+			ErrorType:       "capacity",
+			ErrorDetailJson: detail,
+		}},
+	})
+
+	select {
+	case r := <-resultCh:
+		var capErr *providersdk.CapacityError
+		if !errors.As(r.err, &capErr) {
+			t.Fatalf("expected *providersdk.CapacityError, got %#v", r.err)
+		}
+		if capErr.RequestedMemoryMB != 2048 || capErr.AvailableMemoryMB != 512 {
+			t.Fatalf("capErr = %+v, want original fields intact", capErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for Create to return")
+	}
+}
+
+func TestRemoteAgent_Create_ReconstructsOrphanedResourceError(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)
+	go func() { _ = a.Serve() }()
+
+	type result struct {
+		res *providersdk.Resource
+		err error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		res, err := a.Create(context.Background(), "hyperv", map[string]any{})
+		resultCh <- result{res, err}
+	}()
+
+	cmd := recvCommand(t, stream.sentCh)
+
+	detail, err := json.Marshal(&providersdk.OrphanedResourceError{ID: "guid-1", CauseMessage: "remove-vm failed"})
+	if err != nil {
+		t.Fatalf("marshal detail: %v", err)
+	}
+	stream.feedResult(&boxyagentv1.CommandResult{
+		CommandId: cmd.GetCommandId(),
+		Outcome: &boxyagentv1.CommandResult_Error{Error: &boxyagentv1.AgentError{
+			Message:         "resource \"guid-1\" orphaned after create failure and cleanup failure: remove-vm failed",
+			ErrorType:       "orphaned_resource",
+			ErrorDetailJson: detail,
+		}},
+	})
+
+	select {
+	case r := <-resultCh:
+		var orphanErr *providersdk.OrphanedResourceError
+		if !errors.As(r.err, &orphanErr) {
+			t.Fatalf("expected *providersdk.OrphanedResourceError, got %#v", r.err)
+		}
+		if orphanErr.ID != "guid-1" || orphanErr.CauseMessage != "remove-vm failed" {
+			t.Fatalf("orphanErr = %+v, want original fields intact", orphanErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for Create to return")
 	}
 }

@@ -58,6 +58,12 @@ message CommandResult {
 
 message AgentError {
   string message = 1;
+  // error_type/error_detail_json let a typed driver error (see
+  // providersdk.ErrorTyper) survive this boundary instead of flattening to
+  // a plain string — mirrors CreateCommand.config_json's opaque-JSON
+  // rationale above: a new typed error never needs another proto change.
+  string error_type = 2;        // e.g. "capacity"; empty = no typed error
+  bytes error_detail_json = 3;  // opaque JSON payload for error_type
 }
 
 // ---- Server -> Agent ----

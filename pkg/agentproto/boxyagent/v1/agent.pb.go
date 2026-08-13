@@ -454,10 +454,16 @@ func (*CommandResult_PersonalizeGuest) isCommandResult_Outcome() {}
 func (*CommandResult_OperationStream) isCommandResult_Outcome() {}
 
 type AgentError struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Message       string                 `protobuf:"bytes,1,opt,name=message,proto3" json:"message,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Message string                 `protobuf:"bytes,1,opt,name=message,proto3" json:"message,omitempty"`
+	// error_type/error_detail_json let a typed driver error (see
+	// providersdk.ErrorTyper) survive this boundary instead of flattening to
+	// a plain string — mirrors CreateCommand.config_json's opaque-JSON
+	// rationale above: a new typed error never needs another proto change.
+	ErrorType       string `protobuf:"bytes,2,opt,name=error_type,json=errorType,proto3" json:"error_type,omitempty"`                     // e.g. "capacity"; empty = no typed error
+	ErrorDetailJson []byte `protobuf:"bytes,3,opt,name=error_detail_json,json=errorDetailJson,proto3" json:"error_detail_json,omitempty"` // opaque JSON payload for error_type
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *AgentError) Reset() {
@@ -495,6 +501,20 @@ func (x *AgentError) GetMessage() string {
 		return x.Message
 	}
 	return ""
+}
+
+func (x *AgentError) GetErrorType() string {
+	if x != nil {
+		return x.ErrorType
+	}
+	return ""
+}
+
+func (x *AgentError) GetErrorDetailJson() []byte {
+	if x != nil {
+		return x.ErrorDetailJson
+	}
+	return nil
 }
 
 type ServerMessage struct {
@@ -1573,10 +1593,13 @@ const file_boxyagent_v1_agent_proto_rawDesc = "" +
 	"\x11personalize_guest\x18\t \x01(\v2$.boxyagent.v1.PersonalizeGuestResultH\x00R\x10personalizeGuest\x12O\n" +
 	"\x10operation_stream\x18\n" +
 	" \x01(\v2\".boxyagent.v1.OperationStreamEventH\x00R\x0foperationStreamB\t\n" +
-	"\aoutcome\"&\n" +
+	"\aoutcome\"q\n" +
 	"\n" +
 	"AgentError\x12\x18\n" +
-	"\amessage\x18\x01 \x01(\tR\amessage\"\x8f\x01\n" +
+	"\amessage\x18\x01 \x01(\tR\amessage\x12\x1d\n" +
+	"\n" +
+	"error_type\x18\x02 \x01(\tR\terrorType\x12*\n" +
+	"\x11error_detail_json\x18\x03 \x01(\fR\x0ferrorDetailJson\"\x8f\x01\n" +
 	"\rServerMessage\x12@\n" +
 	"\n" +
 	"registered\x18\x01 \x01(\v2\x1e.boxyagent.v1.RegisterResponseH\x00R\n" +

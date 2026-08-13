@@ -3,6 +3,7 @@ package agentsdk
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -248,14 +249,14 @@ func (s *clientSession) dispatchCommands(ctx context.Context, drivers DriverSet)
 func executeStreamingCommand(ctx context.Context, drivers DriverSet, cmd *boxyagentv1.Command, send func(*boxyagentv1.AgentMessage) error) {
 	d, ok := drivers[providersdk.Type(cmd.GetProviderType())]
 	if !ok {
-		_ = send(&boxyagentv1.AgentMessage{Payload: &boxyagentv1.AgentMessage_Result{Result: errorResult(cmd.GetCommandId(), fmt.Sprintf("provider %q not available", cmd.GetProviderType()))}})
+		_ = send(&boxyagentv1.AgentMessage{Payload: &boxyagentv1.AgentMessage_Result{Result: errorResult(cmd.GetCommandId(), fmt.Sprintf("provider %q not available", cmd.GetProviderType()), nil)}})
 		return
 	}
 	update := cmd.GetUpdate()
 	var opv map[string]any
 	if len(update.GetOperationJson()) > 0 {
 		if err := json.Unmarshal(update.GetOperationJson(), &opv); err != nil {
-			_ = send(&boxyagentv1.AgentMessage{Payload: &boxyagentv1.AgentMessage_Result{Result: errorResult(cmd.GetCommandId(), fmt.Sprintf("unmarshal update operation: %v", err))}})
+			_ = send(&boxyagentv1.AgentMessage{Payload: &boxyagentv1.AgentMessage_Result{Result: errorResult(cmd.GetCommandId(), fmt.Sprintf("unmarshal update operation: %v", err), err)}})
 			return
 		}
 	}
@@ -376,7 +377,7 @@ func cloneStringMap(in map[string]string) map[string]string {
 func executeCommand(ctx context.Context, drivers DriverSet, cmd *boxyagentv1.Command) *boxyagentv1.CommandResult {
 	d, ok := drivers[providersdk.Type(cmd.GetProviderType())]
 	if !ok {
-		return errorResult(cmd.GetCommandId(), fmt.Sprintf("provider %q not available", cmd.GetProviderType()))
+		return errorResult(cmd.GetCommandId(), fmt.Sprintf("provider %q not available", cmd.GetProviderType()), nil)
 	}
 
 	switch op := cmd.GetOp().(type) {
@@ -384,12 +385,12 @@ func executeCommand(ctx context.Context, drivers DriverSet, cmd *boxyagentv1.Com
 		var cfg map[string]any
 		if len(op.Create.GetConfigJson()) > 0 {
 			if err := json.Unmarshal(op.Create.GetConfigJson(), &cfg); err != nil {
-				return errorResult(cmd.GetCommandId(), fmt.Sprintf("unmarshal create config: %v", err))
+				return errorResult(cmd.GetCommandId(), fmt.Sprintf("unmarshal create config: %v", err), err)
 			}
 		}
 		res, err := d.Create(ctx, cfg)
 		if err != nil {
-			return errorResult(cmd.GetCommandId(), err.Error())
+			return errorResult(cmd.GetCommandId(), err.Error(), err)
 		}
 		return &boxyagentv1.CommandResult{
 			CommandId: cmd.GetCommandId(),
@@ -403,7 +404,7 @@ func executeCommand(ctx context.Context, drivers DriverSet, cmd *boxyagentv1.Com
 	case *boxyagentv1.Command_Read:
 		st, err := d.Read(ctx, op.Read.GetResourceId())
 		if err != nil {
-			return errorResult(cmd.GetCommandId(), err.Error())
+			return errorResult(cmd.GetCommandId(), err.Error(), err)
 		}
 		return &boxyagentv1.CommandResult{
 			CommandId: cmd.GetCommandId(),
@@ -414,12 +415,12 @@ func executeCommand(ctx context.Context, drivers DriverSet, cmd *boxyagentv1.Com
 		var opv map[string]any
 		if len(op.Update.GetOperationJson()) > 0 {
 			if err := json.Unmarshal(op.Update.GetOperationJson(), &opv); err != nil {
-				return errorResult(cmd.GetCommandId(), fmt.Sprintf("unmarshal update operation: %v", err))
+				return errorResult(cmd.GetCommandId(), fmt.Sprintf("unmarshal update operation: %v", err), err)
 			}
 		}
 		res, err := d.Update(ctx, op.Update.GetResourceId(), decodeUpdateOperation(opv))
 		if err != nil {
-			return errorResult(cmd.GetCommandId(), err.Error())
+			return errorResult(cmd.GetCommandId(), err.Error(), err)
 		}
 		return &boxyagentv1.CommandResult{
 			CommandId: cmd.GetCommandId(),
@@ -428,7 +429,7 @@ func executeCommand(ctx context.Context, drivers DriverSet, cmd *boxyagentv1.Com
 
 	case *boxyagentv1.Command_Delete:
 		if err := d.Delete(ctx, op.Delete.GetResourceId()); err != nil {
-			return errorResult(cmd.GetCommandId(), err.Error())
+			return errorResult(cmd.GetCommandId(), err.Error(), err)
 		}
 		return &boxyagentv1.CommandResult{
 			CommandId: cmd.GetCommandId(),
@@ -438,11 +439,11 @@ func executeCommand(ctx context.Context, drivers DriverSet, cmd *boxyagentv1.Com
 	case *boxyagentv1.Command_List:
 		lister, ok := d.(providersdk.ResourceLister)
 		if !ok {
-			return errorResult(cmd.GetCommandId(), fmt.Sprintf("list not supported by driver %q", cmd.GetProviderType()))
+			return errorResult(cmd.GetCommandId(), fmt.Sprintf("list not supported by driver %q", cmd.GetProviderType()), nil)
 		}
 		statuses, err := lister.List(ctx)
 		if err != nil {
-			return errorResult(cmd.GetCommandId(), err.Error())
+			return errorResult(cmd.GetCommandId(), err.Error(), err)
 		}
 		resources := make([]*boxyagentv1.ResourceStatusResult, 0, len(statuses))
 		for _, st := range statuses {
@@ -456,14 +457,14 @@ func executeCommand(ctx context.Context, drivers DriverSet, cmd *boxyagentv1.Com
 	case *boxyagentv1.Command_Allocate:
 		props, err := d.Allocate(ctx, op.Allocate.GetResourceId())
 		if err != nil {
-			return errorResult(cmd.GetCommandId(), err.Error())
+			return errorResult(cmd.GetCommandId(), err.Error(), err)
 		}
 		var propsJSON []byte
 		if props != nil {
 			var merr error
 			propsJSON, merr = json.Marshal(props)
 			if merr != nil {
-				return errorResult(cmd.GetCommandId(), fmt.Sprintf("marshal allocate properties: %v", merr))
+				return errorResult(cmd.GetCommandId(), fmt.Sprintf("marshal allocate properties: %v", merr), merr)
 			}
 		}
 		return &boxyagentv1.CommandResult{
@@ -481,7 +482,7 @@ func executeCommand(ctx context.Context, drivers DriverSet, cmd *boxyagentv1.Com
 		}
 		result, err := gp.PersonalizeGuest(ctx, op.PersonalizeGuest.GetResourceId())
 		if err != nil {
-			return errorResult(cmd.GetCommandId(), err.Error())
+			return errorResult(cmd.GetCommandId(), err.Error(), err)
 		}
 		if result == nil {
 			return &boxyagentv1.CommandResult{
@@ -497,7 +498,7 @@ func executeCommand(ctx context.Context, drivers DriverSet, cmd *boxyagentv1.Com
 		}
 
 	default:
-		return errorResult(cmd.GetCommandId(), "unknown command op")
+		return errorResult(cmd.GetCommandId(), "unknown command op", nil)
 	}
 }
 
@@ -516,9 +517,18 @@ func decodeUpdateOperation(raw map[string]any) providersdk.Operation {
 	return raw
 }
 
-func errorResult(commandID, msg string) *boxyagentv1.CommandResult {
-	return &boxyagentv1.CommandResult{
-		CommandId: commandID,
-		Outcome:   &boxyagentv1.CommandResult_Error{Error: &boxyagentv1.AgentError{Message: msg}},
+func errorResult(commandID, msg string, err error) *boxyagentv1.CommandResult {
+	ae := &boxyagentv1.AgentError{Message: msg}
+	var et providersdk.ErrorTyper
+	if err != nil && errors.As(err, &et) {
+		ae.ErrorType = et.ErrorType()
+		// Marshal et (what errors.As actually found), not err: err may be a
+		// wrapper (e.g. fmt.Errorf("...: %w", et)) with no exported fields
+		// of its own, which would silently JSON-marshal to "{}" and zero out
+		// every field on the far side of reconstructAgentError.
+		if detail, jerr := json.Marshal(et); jerr == nil {
+			ae.ErrorDetailJson = detail
+		}
 	}
+	return &boxyagentv1.CommandResult{CommandId: commandID, Outcome: &boxyagentv1.CommandResult_Error{Error: ae}}
 }

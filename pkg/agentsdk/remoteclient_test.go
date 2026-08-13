@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -575,4 +576,61 @@ func TestRunSession_RegistersAndDispatchesCommand(t *testing.T) {
 			t.Fatal("timed out waiting for CommandResult")
 		}
 	}
+}
+
+func TestErrorResult_ClassifiesTypedErrors(t *testing.T) {
+	t.Run("capacity error", func(t *testing.T) {
+		err := &providersdk.CapacityError{RequestedMemoryMB: 2048, AvailableMemoryMB: 512}
+		result := errorResult("cmd-1", err.Error(), err)
+		ae := result.GetError()
+		if ae.GetErrorType() != "capacity" {
+			t.Errorf("error_type = %q, want %q", ae.GetErrorType(), "capacity")
+		}
+		var got providersdk.CapacityError
+		if jerr := json.Unmarshal(ae.GetErrorDetailJson(), &got); jerr != nil {
+			t.Fatalf("unmarshal detail: %v", jerr)
+		}
+		if got.RequestedMemoryMB != 2048 || got.AvailableMemoryMB != 512 {
+			t.Errorf("detail = %+v, want original fields", got)
+		}
+	})
+
+	t.Run("orphaned resource error", func(t *testing.T) {
+		err := &providersdk.OrphanedResourceError{ID: "guid-1", CauseMessage: "remove-vm failed"}
+		result := errorResult("cmd-2", err.Error(), err)
+		ae := result.GetError()
+		if ae.GetErrorType() != "orphaned_resource" {
+			t.Errorf("error_type = %q, want %q", ae.GetErrorType(), "orphaned_resource")
+		}
+		var got providersdk.OrphanedResourceError
+		if jerr := json.Unmarshal(ae.GetErrorDetailJson(), &got); jerr != nil {
+			t.Fatalf("unmarshal detail: %v", jerr)
+		}
+		if got.ID != "guid-1" || got.CauseMessage != "remove-vm failed" {
+			t.Errorf("detail = %+v, want original fields", got)
+		}
+	})
+
+	t.Run("wrapped capacity error keeps its fields", func(t *testing.T) {
+		inner := &providersdk.CapacityError{RequestedMemoryMB: 2048, AvailableMemoryMB: 512}
+		wrapped := fmt.Errorf("create vm: %w", inner)
+		ae := errorResult("cmd-4", wrapped.Error(), wrapped).GetError()
+		if ae.GetErrorType() != "capacity" {
+			t.Fatalf("error_type = %q, want %q", ae.GetErrorType(), "capacity")
+		}
+		var got providersdk.CapacityError
+		if jerr := json.Unmarshal(ae.GetErrorDetailJson(), &got); jerr != nil {
+			t.Fatalf("unmarshal detail: %v", jerr)
+		}
+		if got.RequestedMemoryMB != 2048 || got.AvailableMemoryMB != 512 {
+			t.Errorf("detail = %+v, want original fields", got)
+		}
+	})
+
+	t.Run("untyped error carries no error_type", func(t *testing.T) {
+		result := errorResult("cmd-3", "boom", errors.New("boom"))
+		if result.GetError().GetErrorType() != "" {
+			t.Errorf("error_type = %q, want empty for an untyped error", result.GetError().GetErrorType())
+		}
+	})
 }
