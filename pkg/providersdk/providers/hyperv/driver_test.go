@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -296,6 +297,94 @@ func TestDriver_ReserveMemory_InsufficientCapacityReturnsCapacityError(t *testin
 	if d.reservedMB != 0 {
 		t.Errorf("reservedMB after a rejected reservation = %d, want 0 (nothing committed)", d.reservedMB)
 	}
+}
+
+func TestDriver_ReserveMemory_ConcurrentCallsLimitToCapacity(t *testing.T) {
+	// 16 GB free, minus the 512 MB reserve, leaves 16384-512 = 15872 MB
+	// available. Each caller requests 4096 MB, so exactly 3 of 8 concurrent
+	// callers can fit (3*4096=12288 <= 15872 < 4*4096=16384).
+	d := mockDriver(func(_ context.Context, _ string) (string, error) {
+		return "16777216\n", nil
+	})
+
+	const callers = 8
+	const requestMB = 4096
+	var wg sync.WaitGroup
+	results := make(chan error, callers)
+	releases := make(chan func(), callers)
+
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			release, err := d.reserveMemory(context.Background(), requestMB)
+			results <- err
+			if err == nil {
+				releases <- release
+			}
+		}()
+	}
+	wg.Wait()
+	close(results)
+	close(releases)
+
+	succeeded := 0
+	for err := range results {
+		var capErr *CapacityError
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.As(err, &capErr):
+			// Expected for callers that lost the race.
+		default:
+			t.Fatalf("unexpected error type: %v", err)
+		}
+	}
+	if succeeded != 3 {
+		t.Errorf("succeeded = %d, want 3", succeeded)
+	}
+	if d.reservedMB != int64(succeeded)*requestMB {
+		t.Errorf("reservedMB = %d, want %d", d.reservedMB, int64(succeeded)*requestMB)
+	}
+
+	for release := range releases {
+		release()
+	}
+	if d.reservedMB != 0 {
+		t.Errorf("reservedMB after releasing all = %d, want 0", d.reservedMB)
+	}
+}
+
+func TestDriver_Create_ReservationReleasedAfterFailureAllowsNextCreate(t *testing.T) {
+	callCount := 0
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		callCount++
+		switch {
+		case strings.Contains(script, "Get-VMHost"):
+			return "OK\n", nil
+		case strings.Contains(script, hyperVFreeMemoryScript):
+			return "16777216\n", nil
+		case strings.Contains(script, "New-VM"):
+			return "", fmt.Errorf("New-VHD failed")
+		default:
+			return "", nil // cleanup
+		}
+	})
+
+	// First Create fails after reserving memory.
+	if _, err := d.Create(context.Background(), &CreateConfig{TemplateVHD: `C:\t.vhdx`}); err == nil {
+		t.Fatal("expected the first Create to fail")
+	}
+	if d.reservedMB != 0 {
+		t.Fatalf("reservedMB after a failed Create = %d, want 0 (must not leak)", d.reservedMB)
+	}
+
+	// A second Create must still be able to reserve the same memory.
+	release, err := d.reserveMemory(context.Background(), 2048)
+	if err != nil {
+		t.Fatalf("second reservation unexpectedly failed: %v", err)
+	}
+	release()
 }
 
 // --- providersdk.AvailabilityReporter interface compliance ---
