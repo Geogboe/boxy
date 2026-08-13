@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -470,6 +471,13 @@ func TestRunSession_BlankAgentVersionFailsFastLocally(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected an error for a blank AgentVersion")
+	}
+	// Pin the actual failure reason, not just "something errored" — the
+	// config above is also missing other fields (e.g. no Drivers entries),
+	// so a weaker assertion would pass even if the AgentVersion check were
+	// deleted and some unrelated validation failed instead.
+	if !strings.Contains(err.Error(), "AgentVersion") {
+		t.Fatalf("expected error to mention AgentVersion, got: %v", err)
 	}
 	select {
 	case sent := <-stream.sentCh:
