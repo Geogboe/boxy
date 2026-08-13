@@ -67,7 +67,14 @@ triggering them (not an unattended infinite loop).
 (`Driver.reservedMB`) makes this atomic across concurrent `Create` calls on
 the same agent process — the mutex is held across the live PowerShell query
 itself, not just the accounting, trading a small amount of parallelism for
-a genuinely zero-TOCTOU-gap guarantee. `defaultHostReserveMB` (512 MB,
+a zero-TOCTOU-gap guarantee *between concurrent calls*. It does not close
+the gap across rapid sequential calls (the reservation releases as soon as
+each `Create` returns, before the host's free-memory counter is guaranteed
+to reflect the new VM); see the design spec's "Known gap" and the
+tracking follow-up. The query itself is time-bounded independent of the
+caller's context so a hung PowerShell call can't hold the mutex — and
+therefore every other `Create` on this driver — indefinitely.
+`defaultHostReserveMB` (512 MB,
 unexported) is reserved for the host OS and other processes; it is not
 currently user-configurable, because `boxy agent serve` has no
 provider-config plumbing at all today (a pre-existing gap affecting every

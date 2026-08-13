@@ -177,6 +177,24 @@ func TestDriver_Create_InsufficientMemoryRejectedBeforeNewVM(t *testing.T) {
 	}
 }
 
+func TestDriver_Create_NegativeMemoryRejected(t *testing.T) {
+	d := mockDriver(func(_ context.Context, _ string) (string, error) {
+		t.Fatal("psExec should not be called when memory_mb is negative")
+		return "", nil
+	})
+
+	_, err := d.Create(context.Background(), &CreateConfig{
+		TemplateVHD: `C:\t.vhdx`,
+		MemoryMB:    -1024,
+	})
+	if err == nil {
+		t.Fatal("expected error for negative memory_mb")
+	}
+	if !strings.Contains(err.Error(), "memory_mb") {
+		t.Fatalf("expected error to mention memory_mb, got %v", err)
+	}
+}
+
 func TestDriver_Create_LinuxDefaults(t *testing.T) {
 	var capturedScript string
 	d := mockDriver(func(_ context.Context, script string) (string, error) {
@@ -296,6 +314,43 @@ func TestDriver_ReserveMemory_InsufficientCapacityReturnsCapacityError(t *testin
 	}
 	if d.reservedMB != 0 {
 		t.Errorf("reservedMB after a rejected reservation = %d, want 0 (nothing committed)", d.reservedMB)
+	}
+}
+
+func TestDriver_ReserveMemory_QueryTimeoutBoundsMutexHold(t *testing.T) {
+	unblock := make(chan struct{})
+	d := mockDriver(func(ctx context.Context, _ string) (string, error) {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-unblock:
+			return "16777216\n", nil
+		}
+	})
+	d.memoryQueryTimeout = 10 * time.Millisecond
+
+	start := time.Now()
+	_, err := d.reserveMemory(context.Background(), 2048)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected reserveMemory to fail when the query times out")
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("reserveMemory took %v, want it bounded by memoryQueryTimeout", elapsed)
+	}
+
+	// mu must be released despite the timeout: unblock the mock and confirm
+	// a second call succeeds promptly instead of deadlocking on mu.
+	close(unblock)
+	done := make(chan struct{})
+	go func() {
+		_, _ = d.reserveMemory(context.Background(), 1)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reserveMemory deadlocked after a timed-out query")
 	}
 }
 

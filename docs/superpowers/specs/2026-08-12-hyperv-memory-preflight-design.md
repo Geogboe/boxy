@@ -59,6 +59,20 @@ Hyper-V (e.g. `docker.Config.Host` has the identical gap) — it's a
 pre-existing architectural gap, surfaced here because it's the reason the
 host-reserve headroom can't be a `Config` field yet. Worth its own issue.
 
+`reserveMemory`'s reservation only closes the TOCTOU gap between `Create`
+calls that overlap in time. `release()` runs as soon as `Create` returns
+(success or failure), and the host's live free-memory counter is not
+guaranteed to already reflect a just-started VM's consumption at that
+instant — so two `Create` calls issued back-to-back (not concurrently, e.g.
+during a pool fill from 0 to `min_ready`) can each pass their own live
+preflight check and still overcommit the host. Found during PR review
+(#182). A real fix means changing what the reservation lifecycle tracks —
+e.g. holding it per-VM until `Delete` releases it, not until `Create`
+returns — which is a bigger change than this PR's scope. Tracked as a
+follow-up issue rather than fixed here; the primary failure #173 reports
+(a host that can't fit even one more VM) is fixed regardless, since that
+case is caught by a single `Create`'s own live query.
+
 ## Decisions confirmed during spec review
 
 - `defaultHostReserveMB = 512`.

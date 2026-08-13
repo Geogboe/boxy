@@ -40,6 +40,14 @@ type Driver struct {
 	deleteWaitTimeout  time.Duration
 	deleteWaitInterval time.Duration
 
+	// memoryQueryTimeout bounds the live free-memory PowerShell query that
+	// reserveMemory/Availability run while holding mu. It applies on top of
+	// (never beyond) the caller's ctx, so a hung query can't wedge mu — and
+	// with it every other Create on this driver — indefinitely on a daemon
+	// ctx that has no deadline of its own. Zero uses the production default;
+	// tests override to avoid real sleeps.
+	memoryQueryTimeout time.Duration
+
 	// mu guards reservedMB, the memory (in MB) committed to in-flight Create
 	// calls that a live host query doesn't reflect yet. See reserveMemory.
 	mu         sync.Mutex
@@ -56,6 +64,10 @@ var ErrVMBusy = errors.New("hyperv: vm did not reach a terminal power state in t
 const (
 	defaultDeleteWaitTimeout  = 30 * time.Second
 	defaultDeleteWaitInterval = 3 * time.Second
+
+	// defaultMemoryQueryTimeout bounds reserveMemory/Availability's live
+	// PowerShell free-memory query. See Driver.memoryQueryTimeout.
+	defaultMemoryQueryTimeout = 15 * time.Second
 
 	// vmStateNotFound is a sentinel returned by state-polling scripts when
 	// the VM has disappeared (e.g. it finished tearing down on its own).
@@ -93,6 +105,13 @@ func (d *Driver) waitInterval() time.Duration {
 	return defaultDeleteWaitInterval
 }
 
+func (d *Driver) memQueryTimeout() time.Duration {
+	if d.memoryQueryTimeout > 0 {
+		return d.memoryQueryTimeout
+	}
+	return defaultMemoryQueryTimeout
+}
+
 // New creates a Hyper-V driver.
 func New(_ *Config) *Driver {
 	return &Driver{}
@@ -120,6 +139,8 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 	}
 	if cc.MemoryMB == 0 {
 		cc.MemoryMB = 2048
+	} else if cc.MemoryMB < 0 {
+		return nil, fmt.Errorf("config.memory_mb must be positive, got %d", cc.MemoryMB)
 	}
 	if cc.GuestOS == "" {
 		cc.GuestOS = "windows"
@@ -465,7 +486,9 @@ $ErrorActionPreference = 'Stop'
 
 // Availability implements providersdk.AvailabilityReporter.
 func (d *Driver) Availability(ctx context.Context) (*providersdk.ResourceAvailability, error) {
-	freeMB, err := d.queryFreeMemoryMB(ctx)
+	queryCtx, cancel := context.WithTimeout(ctx, d.memQueryTimeout())
+	defer cancel()
+	freeMB, err := d.queryFreeMemoryMB(queryCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -484,14 +507,24 @@ func (d *Driver) Availability(ctx context.Context) (*providersdk.ResourceAvailab
 // against live availability, returning a release closure that must be
 // called exactly once (success or failure) to give the memory back. The
 // mutex is held across the live PowerShell query itself, not just the
-// accounting — the only construct with zero TOCTOU gap, and Create already
-// makes several more sequential PowerShell round-trips regardless, so this
-// isn't a new bottleneck relative to today.
+// accounting, closing the TOCTOU gap between concurrent Create calls on
+// this driver instance — the primary case this guards is a host that can't
+// fit even one more VM. It does NOT close the gap across sequential Create
+// calls: release() runs as soon as Create returns, and the host's live
+// free-memory counter isn't guaranteed to reflect a just-started VM's
+// consumption by then, so a rapid pool fill can still overcommit. See
+// #173's design spec, "Known gap", and the follow-up issue tracking a
+// reservation model that ties release to VM deletion instead. The query
+// itself is bounded by memQueryTimeout (independent of ctx's own deadline,
+// which may have none) so a hung PowerShell call can't hold this mutex —
+// and therefore every other Create on this driver — indefinitely.
 func (d *Driver) reserveMemory(ctx context.Context, requestedMB int64) (release func(), err error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	freeMB, err := d.queryFreeMemoryMB(ctx)
+	queryCtx, cancel := context.WithTimeout(ctx, d.memQueryTimeout())
+	defer cancel()
+	freeMB, err := d.queryFreeMemoryMB(queryCtx)
 	if err != nil {
 		return nil, err
 	}
