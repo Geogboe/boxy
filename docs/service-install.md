@@ -36,11 +36,11 @@ needed:
 ## Usage
 
 ```bash
-# Agent — real service, requires elevation
-boxy agent service install --server boxy-server:9091 --providers docker --token <token> --ca-cert ca.crt
+# Agent — real service, requires elevation (provider instances from boxy.yaml)
+boxy agent service install --config boxy.yaml --server boxy-server:9091 --token <token> --ca-cert ca.crt
 
-# Agent — unprivileged fallback
-boxy agent service install --user --server boxy-server:9091 --providers docker --token <token> --ca-cert ca.crt
+# Agent — unprivileged fallback (select only hyperv, if desired)
+boxy agent service install --user --config boxy.yaml --providers hyperv --server boxy-server:9091 --token <token> --ca-cert ca.crt
 
 boxy agent service status
 boxy agent service stop
@@ -61,6 +61,11 @@ boxy serve service uninstall
 next to the process's existing state directory (`.boxy-agent/` for the
 agent, `.boxy/` for `serve`) — a running service has no predictable
 working directory, so nothing in the installed invocation depends on cwd.
+
+For an agent, `--config` selects provider instances from the normal Boxy
+configuration and snapshots them into `service.yaml`; `--providers` may
+filter that set by provider type. Without `--config`, the legacy
+`--providers` list remains supported and creates zero-value provider configs.
 
 The agent's `service.yaml` briefly holds the single-use bootstrap
 `--token`: encrypted at rest with DPAPI (machine-scope) on Windows, and

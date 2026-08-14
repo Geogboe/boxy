@@ -262,3 +262,19 @@ resolved:
 Not resolved by this update: #101 (a distinct, broader provider
 guest-personalization *contract* for VM bootstrap/credential rotation) is a
 separate ask and remains open.
+
+## Update (2026-08-14)
+
+Remote agents can now load provider instances from the normal Boxy config
+file via `boxy agent serve --config` (and the matching service-install flag).
+The service snapshot preserves the selected `providersdk.Instance` values so
+the installed process does not depend on the caller's working directory or a
+daemon-side provider catalog. Provider selection is keyed by provider type;
+duplicate instances of one type are rejected because the agent driver map is
+type-keyed today. The legacy `--providers` form remains supported for agents
+that intentionally use zero-value provider configuration.
+
+Hyper-V's host memory reserve is now a provider-level setting,
+`providers[].config.host_reserve_mb`, with a 512 MiB default and explicit
+zero support. This keeps host capacity policy with the provider instance and
+makes the same setting available to embedded and remote agents.

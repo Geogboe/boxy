@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/Geogboe/boxy/internal/svcmgr"
+	"github.com/Geogboe/boxy/pkg/providersdk"
 	"gopkg.in/yaml.v3"
 )
 
@@ -20,14 +21,15 @@ import (
 // once the agent successfully registers (see scrubAgentServiceConfigToken
 // and its call site in agent_serve.go's OnRegistered callback).
 type agentServiceConfig struct {
-	Server    string   `yaml:"server"`
-	Providers []string `yaml:"providers"`
-	Token     string   `yaml:"token,omitempty"`
-	Name      string   `yaml:"name,omitempty"`
-	CACert    string   `yaml:"ca_cert,omitempty"`
-	DataDir   string   `yaml:"data_dir"`
-	Insecure  bool     `yaml:"insecure,omitempty"`
-	LogFile   string   `yaml:"log_file"`
+	Server          string                 `yaml:"server"`
+	Providers       []string               `yaml:"providers"`
+	ProviderConfigs []providersdk.Instance `yaml:"provider_configs,omitempty"`
+	Token           string                 `yaml:"token,omitempty"`
+	Name            string                 `yaml:"name,omitempty"`
+	CACert          string                 `yaml:"ca_cert,omitempty"`
+	DataDir         string                 `yaml:"data_dir"`
+	Insecure        bool                   `yaml:"insecure,omitempty"`
+	LogFile         string                 `yaml:"log_file"`
 }
 
 func saveAgentServiceConfig(path string, cfg agentServiceConfig) error {

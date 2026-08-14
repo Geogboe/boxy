@@ -2,6 +2,7 @@ package providersdk
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 )
@@ -82,6 +83,33 @@ func (r *Registry) Types() []Type {
 	}
 	sort.Slice(types, func(i, j int) bool { return types[i] < types[j] })
 	return types
+}
+
+// NewDriverFromInstance decodes a configured provider instance and creates its
+// driver. An instance with an empty config receives the registration's
+// zero-value configuration. This keeps provider configuration plumbing in the
+// provider-agnostic registry rather than duplicating it in each application
+// entrypoint.
+func (r *Registry) NewDriverFromInstance(instance Instance) (Driver, error) {
+	registration, ok := r.Get(instance.Type)
+	if !ok {
+		return nil, fmt.Errorf("provider type %q not found in registry", instance.Type)
+	}
+	cfg := registration.ConfigProto()
+	if len(instance.Config) != 0 {
+		b, err := json.Marshal(instance.Config)
+		if err != nil {
+			return nil, fmt.Errorf("marshal config for provider type %q: %w", instance.Type, err)
+		}
+		if err := json.Unmarshal(b, cfg); err != nil {
+			return nil, fmt.Errorf("unmarshal config for provider type %q: %w", instance.Type, err)
+		}
+	}
+	driver, err := registration.NewDriver(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("create driver for provider type %q: %w", instance.Type, err)
+	}
+	return driver, nil
 }
 
 // ValidateInstances checks that every instance references a registered provider type.

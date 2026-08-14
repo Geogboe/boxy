@@ -2,55 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "boxy://schemas/providers/hyperv.config.schema.json",
   "title": "Hyper-V Provider Config",
-  "description": "Schema for provider.config when provider.type is \"hyperv\". The boxy agent must run on the Hyper-V host as Administrator.",
+  "description": "Host-wide settings for the Hyper-V provider. The boxy agent must run on the Hyper-V host as Administrator.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "template_vhd": {
-      "description": "Path to the parent VHD/VHDX used as a base for differencing disks (required).",
-      "type": "string",
-      "minLength": 1
-    },
-    "vhd_dir": {
-      "description": "Directory where differencing VHDs are created. Defaults to the directory containing template_vhd.",
-      "type": "string"
-    },
-    "generation": {
-      "description": "Hyper-V VM generation (1 or 2). Default: 2.",
+    "host_reserve_mb": {
+      "description": "Memory headroom kept available for the host OS and other processes. Defaults to 512 MB; set to 0 to disable the reserve.",
       "type": "integer",
-      "enum": [1, 2]
-    },
-    "cpu_count": {
-      "description": "Number of virtual processors. Default: 2.",
-      "type": "integer",
-      "minimum": 1
-    },
-    "memory_mb": {
-      "description": "Startup memory in megabytes. Default: 2048.",
-      "type": "integer",
-      "minimum": 256
-    },
-    "switch": {
-      "description": "Name of the Hyper-V virtual switch to connect to. Optional.",
-      "type": "string"
-    },
-    "guest_os": {
-      "description": "Guest operating system. Windows guests use PowerShell Direct; Linux guests use SSH. Default: \"windows\".",
-      "type": "string",
-      "enum": ["windows", "linux"]
-    },
-    "guest_user": {
-      "description": "Guest OS username for exec operations (PSRP auth for Windows; SSH user for Linux). Default: \"Administrator\" for Windows, \"admin\" for Linux.",
-      "type": "string"
-    },
-    "guest_password_ref": {
-      "description": "Opaque lookup handle for the guest OS password. Supported built-in form: env:NAME.",
-      "type": "string"
-    },
-    "guest_password": {
-      "description": "Deprecated. Raw guest passwords are no longer supported; use guest_password_ref instead.",
-      "type": "string"
+      "minimum": 0,
+      "default": 512
     }
-  },
-  "required": ["template_vhd"]
+  }
 }

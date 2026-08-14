@@ -15,9 +15,38 @@ import (
 
 const fakeGUID = "12345678-1234-1234-1234-123456789abc"
 
+func int64Ptr(v int64) *int64 { return &v }
+
 // mockDriver builds a Driver with psExec and optional guestExecFactory injected.
 func mockDriver(psExecFn func(ctx context.Context, script string) (string, error)) *Driver {
 	return &Driver{psExec: psExecFn}
+}
+
+func TestNew_HostReserveDefaultsAndValidation(t *testing.T) {
+	d, err := New(&Config{})
+	if err != nil {
+		t.Fatalf("New(default): %v", err)
+	}
+	if got := d.hostReserve(); got != DefaultHostReserveMB {
+		t.Fatalf("default host reserve = %d, want %d", got, DefaultHostReserveMB)
+	}
+	zero, err := New(&Config{HostReserveMB: int64Ptr(0)})
+	if err != nil {
+		t.Fatalf("New(zero): %v", err)
+	}
+	if got := zero.hostReserve(); got != 0 {
+		t.Fatalf("zero host reserve = %d, want 0", got)
+	}
+	custom, err := New(&Config{HostReserveMB: int64Ptr(1024)})
+	if err != nil {
+		t.Fatalf("New(custom): %v", err)
+	}
+	if got := custom.hostReserve(); got != 1024 {
+		t.Fatalf("custom host reserve = %d, want 1024", got)
+	}
+	if _, err := New(&Config{HostReserveMB: int64Ptr(-1)}); err == nil {
+		t.Fatal("New(negative) error = nil")
+	}
 }
 
 // --- Create ---
@@ -513,6 +542,27 @@ func TestDriver_Availability_NetsOutReserveAndReservations(t *testing.T) {
 	want := int64(16384 - 512 - 1000)
 	if avail.MemoryMB != want {
 		t.Errorf("MemoryMB = %d, want %d", avail.MemoryMB, want)
+	}
+}
+
+func TestDriver_Availability_UsesConfiguredHostReserve(t *testing.T) {
+	d, err := New(&Config{HostReserveMB: int64Ptr(1024)})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	d.psExec = func(_ context.Context, script string) (string, error) {
+		if !strings.Contains(script, hyperVAvailableMemoryScript) {
+			t.Fatalf("unexpected script: %s", script)
+		}
+		return "4096\n", nil
+	}
+	d.reservedMB = 512
+	avail, err := d.Availability(context.Background())
+	if err != nil {
+		t.Fatalf("Availability: %v", err)
+	}
+	if got, want := avail.MemoryMB, int64(4096-1024-512); got != want {
+		t.Fatalf("MemoryMB = %d, want %d", got, want)
 	}
 }
 

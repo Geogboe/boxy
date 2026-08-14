@@ -276,7 +276,8 @@ boxy
 │   │   │                                          gRPC listener, executes provider operations)
 │   │   ├── --server <host:port>                   Server gRPC address (required; note: gRPC port,
 │   │   │                                            default :9091 — not the REST port)
-│   │   ├── --providers <list>                     Provider types this agent hosts (required)
+│   │   ├── --providers <list>                     Provider types this agent hosts (optional with --config)
+│   │   ├── --config <path>                        Boxy config supplying provider instances (optional)
 │   │   ├── --token <token>                        Single-use registration token (first connection only)
 │   │   ├── --ca-cert <path>                       Server CA cert, required for the first (token)
 │   │   │                                            connection unless --insecure
@@ -284,11 +285,12 @@ boxy
 │   │   ├── --data-dir <path>                      Issued-credential dir (default .boxy-agent in cwd)
 │   │   ├── --insecure                             Connect without TLS (local development only)
 │   │   │
-│   │   $ boxy agent serve --server boxy.example.com:9091 --providers hyperv \
+│   │   $ boxy agent serve --config boxy.yaml --server boxy.example.com:9091 \
 │   │       --token 4f9c…e2a1 --ca-cert ./ca.crt
 │   │     (runs until stopped; reconnects with backoff; after the first
-│   │      registration the issued mTLS client cert in .boxy-agent/ is used
-│   │      and --token is no longer needed)
+│   │      registration the provider instances from boxy.yaml are used; pass
+│   │      --providers to select a subset. After registration the issued mTLS
+│   │      client cert in .boxy-agent/ is used and --token is no longer needed)
 │   │
 │   ├── service                                  Install boxy agent as an OS-managed background service
 │   │   │                                          (real service by default — Windows SCM / Linux systemd
@@ -297,14 +299,15 @@ boxy
 │   │   ├── install                                Install and start the service
 │   │   │   ├── --user                               Install the unprivileged fallback instead
 │   │   │   ├── --instance-name <name>                Named instance -> boxy-agent-<name>, .boxy-agent-<name>/
-│   │   │   ├── --server, --providers, --token,
+│   │   │   ├── --server, --providers, --config, --token,
 │   │   │   │   --name, --ca-cert, --data-dir,
 │   │   │   │   --insecure                            Same as `boxy agent serve` (above)
 │   │   │
-│   │   │   $ boxy agent service install --server s:9091 --providers docker
+│   │   │   $ boxy agent service install --config boxy.yaml --server s:9091 \
+│   │   │       --token 4f9c…e2a1 --ca-cert ./ca.crt
 │   │   │     ✓ boxy-agent installed and started (config: .boxy-agent/service.yaml, log: .boxy-agent/service.log)
 │   │   │
-│   │   │   $ boxy agent service install --instance-name test1 --user --server s:9091 --providers docker
+│   │   │   $ boxy agent service install --instance-name test1 --user --config boxy.yaml --server s:9091
 │   │   │     ✓ boxy-agent-test1 installed and started (config: .boxy-agent-test1/service.yaml, log: .boxy-agent-test1/service.log)
 │   │   │
 │   │   ├── uninstall                              Remove the installed service

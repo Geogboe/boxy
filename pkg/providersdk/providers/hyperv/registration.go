@@ -8,7 +8,7 @@ func Registration() providersdk.Registration {
 		Type:        ProviderType,
 		ConfigProto: func() any { return &Config{} },
 		NewDriver: func(cfg any) (providersdk.Driver, error) {
-			return New(cfg.(*Config)), nil
+			return New(cfg.(*Config))
 		},
 	}
 }

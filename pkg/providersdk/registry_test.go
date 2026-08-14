@@ -114,6 +114,33 @@ func TestRegistryValidateInstances(t *testing.T) {
 	}
 }
 
+func TestRegistryNewDriverFromInstanceDecodesConfig(t *testing.T) {
+	var got string
+	registry := NewRegistry()
+	if err := registry.Register(Registration{
+		Type: "fake",
+		ConfigProto: func() any {
+			return &struct {
+				Host string `json:"host"`
+			}{}
+		},
+		NewDriver: func(cfg any) (Driver, error) {
+			got = cfg.(*struct {
+				Host string `json:"host"`
+			}).Host
+			return registryDriver{}, nil
+		},
+	}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if _, err := registry.NewDriverFromInstance(Instance{Type: "fake", Config: map[string]any{"host": "remote"}}); err != nil {
+		t.Fatalf("NewDriverFromInstance: %v", err)
+	}
+	if got != "remote" {
+		t.Fatalf("decoded host = %q, want remote", got)
+	}
+}
+
 func TestNilRegistryBehaviors(t *testing.T) {
 	var registry *Registry
 	if err := registry.Register(testRegistration()); err == nil {

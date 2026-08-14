@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -714,51 +713,29 @@ func buildDrivers(reg *providersdk.Registry, instances []providersdk.Instance) (
 	types := reg.Types()
 	drivers := make([]providersdk.Driver, 0, len(types))
 
-	// Build a map of type -> instance config for easy lookup.
-	configByType := make(map[providersdk.Type]map[string]any)
+	// Build a map of type -> configured instance for easy lookup.
+	configByType := make(map[providersdk.Type]providersdk.Instance)
 	for _, inst := range instances {
-		configByType[inst.Type] = inst.Config
+		configByType[inst.Type] = inst
 	}
 
 	// For each registered type, instantiate a driver.
 	for _, t := range types {
-		reg, ok := reg.Get(t)
+		_, ok := reg.Get(t)
 		if !ok {
 			return nil, fmt.Errorf("provider type %q not found in registry", t)
 		}
 
 		// Get config for this type, or use zero-value proto if not configured.
-		cfg := reg.ConfigProto()
-		if rawConfig, ok := configByType[t]; ok {
-			if err := decodeConfig(rawConfig, cfg); err != nil {
-				return nil, fmt.Errorf("decode config for provider type %q: %w", t, err)
-			}
-		}
-
-		// Instantiate the driver.
-		driver, err := reg.NewDriver(cfg)
+		instance := configByType[t]
+		instance.Type = t
+		driver, err := reg.NewDriverFromInstance(instance)
 		if err != nil {
-			return nil, fmt.Errorf("create driver for provider type %q: %w", t, err)
+			return nil, err
 		}
 
 		drivers = append(drivers, driver)
 	}
 
 	return drivers, nil
-}
-
-// decodeConfig does a basic map[string]any → struct decode using JSON round-trip.
-func decodeConfig(raw map[string]any, target any) error {
-	if len(raw) == 0 {
-		return nil
-	}
-
-	b, err := json.Marshal(raw)
-	if err != nil {
-		return fmt.Errorf("marshal config: %w", err)
-	}
-	if err := json.Unmarshal(b, target); err != nil {
-		return fmt.Errorf("unmarshal config: %w", err)
-	}
-	return nil
 }

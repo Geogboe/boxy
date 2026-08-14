@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
+	boxyconfig "github.com/Geogboe/boxy/internal/config"
 	"github.com/Geogboe/boxy/internal/svcmgr"
 	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
 	"github.com/Geogboe/boxy/pkg/agentsdk"
@@ -34,6 +35,8 @@ const (
 type agentServeOpts struct {
 	server            string
 	providers         []string
+	providerConfigs   []providersdk.Instance
+	configPath        string
 	token             string
 	name              string
 	caCert            string
@@ -60,7 +63,8 @@ func newAgentServeCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&opts.server, "server", "", "boxy server gRPC address (host:port), required")
-	cmd.Flags().StringSliceVar(&opts.providers, "providers", nil, "provider types this agent hosts (e.g. docker,hyperv), required")
+	cmd.Flags().StringSliceVar(&opts.providers, "providers", nil, "provider types this agent hosts (e.g. docker,hyperv); optional with --config")
+	cmd.Flags().StringVar(&opts.configPath, "config", "", "Boxy config file supplying provider instances")
 	cmd.Flags().StringVar(&opts.token, "token", "", "single-use registration token (first connection only)")
 	cmd.Flags().StringVar(&opts.name, "name", "", "human-readable agent name (default: hostname)")
 	cmd.Flags().StringVar(&opts.caCert, "ca-cert", "", "path to the server's CA certificate, required for the first (token) connection unless --insecure")
@@ -80,8 +84,22 @@ func resolveAgentServeOpts(opts agentServeOpts) (agentServeOpts, error) {
 		if opts.server == "" {
 			return agentServeOpts{}, fmt.Errorf("--server is required (or pass --service-config)")
 		}
+		if opts.configPath != "" {
+			cfg, err := boxyconfig.LoadFile(opts.configPath)
+			if err != nil {
+				return agentServeOpts{}, fmt.Errorf("load --config %q: %w", opts.configPath, err)
+			}
+			instances, err := selectAgentProviderInstances(cfg.Providers, opts.providers)
+			if err != nil {
+				return agentServeOpts{}, fmt.Errorf("select providers from --config %q: %w", opts.configPath, err)
+			}
+			opts.providerConfigs = instances
+			if len(opts.providers) == 0 {
+				opts.providers = providerTypesFromInstances(instances)
+			}
+		}
 		if len(opts.providers) == 0 {
-			return agentServeOpts{}, fmt.Errorf("--providers is required (or pass --service-config)")
+			return agentServeOpts{}, fmt.Errorf("--providers is required unless --config supplies provider instances (or pass --service-config)")
 		}
 		return opts, nil
 	}
@@ -93,12 +111,18 @@ func resolveAgentServeOpts(opts agentServeOpts) (agentServeOpts, error) {
 	if cfg.Server == "" {
 		return agentServeOpts{}, fmt.Errorf("invalid --service-config %q: missing server", opts.serviceConfigPath)
 	}
-	if len(cfg.Providers) == 0 {
+	if len(cfg.ProviderConfigs) == 0 && len(cfg.Providers) == 0 {
 		return agentServeOpts{}, fmt.Errorf("invalid --service-config %q: missing providers", opts.serviceConfigPath)
+	}
+	providers := cfg.Providers
+	providerConfigs := cfg.ProviderConfigs
+	if len(providerConfigs) != 0 {
+		providers = providerTypesFromInstances(providerConfigs)
 	}
 	return agentServeOpts{
 		server:            cfg.Server,
-		providers:         cfg.Providers,
+		providers:         providers,
+		providerConfigs:   providerConfigs,
 		token:             cfg.Token,
 		name:              cfg.Name,
 		caCert:            cfg.CACert,
@@ -106,6 +130,59 @@ func resolveAgentServeOpts(opts agentServeOpts) (agentServeOpts, error) {
 		insecure:          cfg.Insecure,
 		serviceConfigPath: opts.serviceConfigPath,
 	}, nil
+}
+
+func providerTypesFromInstances(instances []providersdk.Instance) []string {
+	providers := make([]string, 0, len(instances))
+	for _, instance := range instances {
+		providers = append(providers, string(instance.Type))
+	}
+	return providers
+}
+
+func selectAgentProviderInstances(instances []providersdk.Instance, requested []string) ([]providersdk.Instance, error) {
+	requestedTypes := make(map[providersdk.Type]struct{}, len(requested))
+	for _, raw := range requested {
+		t := providersdk.Type(strings.TrimSpace(raw))
+		if t == "" {
+			continue
+		}
+		requestedTypes[t] = struct{}{}
+	}
+	selected := make([]providersdk.Instance, 0, len(instances))
+	for _, instance := range instances {
+		if len(requestedTypes) != 0 {
+			if _, ok := requestedTypes[instance.Type]; !ok {
+				continue
+			}
+		}
+		selected = append(selected, instance)
+	}
+	if len(requestedTypes) != 0 {
+		for t := range requestedTypes {
+			count := 0
+			for _, instance := range selected {
+				if instance.Type == t {
+					count++
+				}
+			}
+			if count == 0 {
+				return nil, fmt.Errorf("requested provider type %q has no configured instance", t)
+			}
+			if count > 1 {
+				return nil, fmt.Errorf("requested provider type %q has %d configured instances; agent drivers are keyed by provider type", t, count)
+			}
+		}
+	} else {
+		seen := make(map[providersdk.Type]struct{}, len(selected))
+		for _, instance := range selected {
+			if _, ok := seen[instance.Type]; ok {
+				return nil, fmt.Errorf("provider type %q has multiple configured instances; agent drivers are keyed by provider type", instance.Type)
+			}
+			seen[instance.Type] = struct{}{}
+		}
+	}
+	return selected, nil
 }
 
 func runAgentServe(ctx context.Context, opts agentServeOpts) error {
@@ -141,7 +218,7 @@ func runAgentServe(ctx context.Context, opts agentServeOpts) error {
 		return fmt.Errorf("--providers must name at least one provider type")
 	}
 
-	drivers, err := buildAgentDrivers(providerTypes)
+	drivers, err := buildAgentDrivers(providerTypes, opts.providerConfigs)
 	if err != nil {
 		return err
 	}
@@ -190,9 +267,10 @@ func runAgentServe(ctx context.Context, opts agentServeOpts) error {
 
 // buildAgentDrivers instantiates a driver for exactly the requested
 // provider types (unlike the daemon's buildDrivers, which builds every
-// registered type). Provider connection config is auto-discovered by each
-// driver, per the existing provider model.
-func buildAgentDrivers(types []providersdk.Type) (agentsdk.DriverSet, error) {
+// registered type). When an instance was loaded from --config, its provider
+// connection settings are decoded before the driver is constructed; the
+// legacy flag-only path receives the provider's zero-value config.
+func buildAgentDrivers(types []providersdk.Type, instances []providersdk.Instance) (agentsdk.DriverSet, error) {
 	reg := providersdk.NewRegistry()
 	if err := builtins.RegisterBuiltins(reg); err != nil {
 		return nil, fmt.Errorf("register providers: %w", err)
@@ -200,13 +278,19 @@ func buildAgentDrivers(types []providersdk.Type) (agentsdk.DriverSet, error) {
 
 	drivers := make(agentsdk.DriverSet, len(types))
 	for _, t := range types {
-		registration, ok := reg.Get(t)
-		if !ok {
-			return nil, fmt.Errorf("unknown provider type %q (known: %v)", t, reg.Types())
+		instance := providersdk.Instance{Type: t}
+		for _, candidate := range instances {
+			if candidate.Type == t {
+				instance = candidate
+				break
+			}
 		}
-		driver, err := registration.NewDriver(registration.ConfigProto())
+		driver, err := reg.NewDriverFromInstance(instance)
 		if err != nil {
-			return nil, fmt.Errorf("create driver for provider type %q: %w", t, err)
+			if _, ok := reg.Get(t); !ok {
+				return nil, fmt.Errorf("unknown provider type %q (known: %v)", t, reg.Types())
+			}
+			return nil, err
 		}
 		drivers[t] = driver
 	}

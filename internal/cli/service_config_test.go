@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
 func TestAgentServiceConfig_SaveLoadRoundTrips(t *testing.T) {
@@ -17,10 +19,13 @@ func TestAgentServiceConfig_SaveLoadRoundTrips(t *testing.T) {
 	cfg := agentServiceConfig{
 		Server:    "boxy-server:9091",
 		Providers: []string{"docker", "hyperv"},
-		Token:     "raw-bootstrap-token",
-		Name:      "agent-1",
-		DataDir:   filepath.Join(dir, ".boxy-agent"),
-		LogFile:   filepath.Join(dir, ".boxy-agent", "service.log"),
+		ProviderConfigs: []providersdk.Instance{{
+			Name: "docker-local", Type: "docker", Config: map[string]any{"host": "unix:///tmp/docker.sock"},
+		}},
+		Token:   "raw-bootstrap-token",
+		Name:    "agent-1",
+		DataDir: filepath.Join(dir, ".boxy-agent"),
+		LogFile: filepath.Join(dir, ".boxy-agent", "service.log"),
 	}
 	if err := saveAgentServiceConfig(path, cfg); err != nil {
 		t.Fatalf("saveAgentServiceConfig: %v", err)
@@ -30,7 +35,7 @@ func TestAgentServiceConfig_SaveLoadRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadAgentServiceConfig: %v", err)
 	}
-	if got.Server != cfg.Server || got.Token != cfg.Token || got.DataDir != cfg.DataDir {
+	if got.Server != cfg.Server || got.Token != cfg.Token || got.DataDir != cfg.DataDir || !reflect.DeepEqual(got.ProviderConfigs, cfg.ProviderConfigs) {
 		t.Fatalf("round-tripped config = %+v, want %+v", got, cfg)
 	}
 }
