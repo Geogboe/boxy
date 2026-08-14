@@ -114,12 +114,19 @@ func (r *Registry) NewDriverFromInstance(instance Instance) (Driver, error) {
 	return driver, nil
 }
 
-// ValidateInstances checks that every instance references a registered provider type.
+// ValidateInstances checks that every instance references a registered provider type
+// and that each provider type is configured at most once. Driver lookup is keyed
+// by provider type, so duplicate instances would otherwise be ambiguous.
 func (r *Registry) ValidateInstances(_ context.Context, instances []Instance) error {
+	seen := make(map[Type]string, len(instances))
 	for _, inst := range instances {
 		if _, ok := r.Get(inst.Type); !ok {
 			return fmt.Errorf("provider %q: unknown type %q", inst.Name, inst.Type)
 		}
+		if previous, ok := seen[inst.Type]; ok {
+			return fmt.Errorf("provider type %q has multiple configured instances %q and %q; drivers are keyed by provider type", inst.Type, previous, inst.Name)
+		}
+		seen[inst.Type] = inst.Name
 	}
 	return nil
 }

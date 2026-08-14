@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -173,6 +172,21 @@ func TestResolveServerAddrHonorsEnvironmentProjectAndGlobalPrecedence(t *testing
 	}
 }
 
+func TestResolveServerAddrFallsBackToLocalDefault(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("BOXY_SERVER", "")
+	cmd := &cobra.Command{}
+	cmd.Flags().String("server", "", "")
+
+	got, err := resolveServerAddr(statusOpts{}, cmd)
+	if err != nil {
+		t.Fatalf("resolveServerAddr(default): %v", err)
+	}
+	if got != "127.0.0.1:9090" {
+		t.Fatalf("default server = %q, want 127.0.0.1:9090", got)
+	}
+}
+
 func TestConfigClientSetServerCommand(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	cmd := NewRootCommand()
@@ -197,8 +211,5 @@ func TestNormalizeClientServerRejectsInvalidURL(t *testing.T) {
 	}
 	if got, err := normalizeClientServer("boxy.example:9090/"); err != nil || got != "https://boxy.example:9090" {
 		t.Fatalf("normalizeClientServer(bare) = %q, %v", got, err)
-	}
-	if strings.TrimSpace("https://boxy.example:9090") == "" {
-		t.Fatal("unreachable")
 	}
 }

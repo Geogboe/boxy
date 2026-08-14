@@ -112,6 +112,17 @@ func TestRegistryValidateInstances(t *testing.T) {
 	if !strings.Contains(err.Error(), `provider "bad": unknown type "missing"`) {
 		t.Fatalf("ValidateInstances error = %q, want unknown provider message", err.Error())
 	}
+
+	err = registry.ValidateInstances(context.Background(), []Instance{
+		{Name: "first", Type: "fake"},
+		{Name: "second", Type: "fake"},
+	})
+	if err == nil {
+		t.Fatal("ValidateInstances duplicate error = nil")
+	}
+	if !strings.Contains(err.Error(), `provider type "fake" has multiple configured instances "first" and "second"`) {
+		t.Fatalf("ValidateInstances duplicate error = %q, want duplicate provider message", err.Error())
+	}
 }
 
 func TestRegistryNewDriverFromInstanceDecodesConfig(t *testing.T) {

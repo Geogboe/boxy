@@ -107,6 +107,9 @@ func resolveServerAddr(opts statusOpts, cmd *cobra.Command) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if strings.TrimSpace(server) == "" {
+		return "127.0.0.1:9090", nil
+	}
 	return server, nil
 }
 
