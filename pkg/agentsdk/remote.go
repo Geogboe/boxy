@@ -72,12 +72,17 @@ func reconstructAgentError(agentID string, ae *boxyagentv1.AgentError) error {
 	case "capacity":
 		var ce providersdk.CapacityError
 		if json.Unmarshal(ae.GetErrorDetailJson(), &ce) == nil {
-			return &ce
+			// %w keeps errors.As(err, *CapacityError) working for callers
+			// while the "agent %q" prefix keeps provenance in the message
+			// — a bare &ce here would silently drop which agent it came
+			// from, the opposite of what the RemoteAgent/gRPC boundary
+			// (#185) exists to preserve.
+			return fmt.Errorf("agent %q: %w", agentID, &ce)
 		}
 	case "orphaned_resource":
 		var oe providersdk.OrphanedResourceError
 		if json.Unmarshal(ae.GetErrorDetailJson(), &oe) == nil {
-			return &oe
+			return fmt.Errorf("agent %q: %w", agentID, &oe)
 		}
 	}
 	return base
