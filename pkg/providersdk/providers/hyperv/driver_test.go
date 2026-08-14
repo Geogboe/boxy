@@ -215,6 +215,43 @@ func TestDriver_Create_ReturnsOrphanedResourceErrorWhenCleanupFails(t *testing.T
 	}
 }
 
+func TestDriver_Create_CleanupFailureSurfacedWhenNoGUIDResolved(t *testing.T) {
+	// Every deleteBestEffort attempt's PowerShell call itself fails (e.g.
+	// host unreachable), so guid never resolves — deleteBestEffort returns
+	// ("", lastErr). createFailure must not drop lastErr silently in this
+	// case: there's no GUID to quarantine under, so the cleanup failure is
+	// the only signal an operator has that a VM might be orphaned.
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		switch {
+		case strings.Contains(script, "Get-VMHost"):
+			return "OK\n", nil
+		case strings.Contains(script, hyperVAvailableMemoryScript):
+			return "16384\n", nil
+		case strings.Contains(script, "New-VM"):
+			return "", fmt.Errorf("New-VHD failed")
+		default:
+			// deleteBestEffort: every attempt's PS call fails outright.
+			return "", fmt.Errorf("host unreachable")
+		}
+	})
+	d.deleteBestEffortInterval = time.Millisecond
+
+	_, err := d.Create(context.Background(), &CreateConfig{TemplateVHD: `C:\t.vhdx`})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	var orphanErr *providersdk.OrphanedResourceError
+	if errors.As(err, &orphanErr) {
+		t.Fatalf("expected a plain error, not *OrphanedResourceError, when no GUID could be resolved: %#v", orphanErr)
+	}
+	if !strings.Contains(err.Error(), "New-VHD failed") {
+		t.Errorf("error = %q, want it to contain the original cause", err.Error())
+	}
+	if !strings.Contains(err.Error(), "host unreachable") {
+		t.Errorf("error = %q, want it to also contain the cleanup failure instead of dropping it", err.Error())
+	}
+}
+
 func TestDriver_CreateFailure_CleanupDetachedFromCancelledCallerContext(t *testing.T) {
 	// psExec deliberately checks ctx itself (unlike most mocks here) to
 	// simulate a real d.ps call failing on an already-cancelled context —

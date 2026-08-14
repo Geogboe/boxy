@@ -1034,13 +1034,23 @@ func (d *Driver) createFailure(_ context.Context, vmName, diffPath string, cause
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), defaultCleanupTimeout)
 	defer cancel()
 	guid, cleanupErr := d.deleteBestEffort(cleanupCtx, vmName, diffPath)
-	if cleanupErr != nil && guid != "" {
+	switch {
+	case cleanupErr == nil:
+		return cause
+	case guid != "":
 		return &providersdk.OrphanedResourceError{
 			ID:           guid,
 			CauseMessage: fmt.Sprintf("%v (cleanup also failed: %v)", cause, cleanupErr),
 		}
+	default:
+		// No GUID to quarantine under — every deleteBestEffort attempt's
+		// PowerShell call itself failed (e.g. host unreachable), rather than
+		// confirming the VM still present. That's exactly the case where
+		// cleanupErr matters most for diagnosing a possible orphan, so it
+		// must not vanish silently the way returning bare cause would; %w
+		// on both keeps errors.Is/As working over either chain.
+		return fmt.Errorf("%w (cleanup also failed: %w)", cause, cleanupErr)
 	}
-	return cause
 }
 
 func decodeCreateConfig(cfg any) (CreateConfig, error) {
