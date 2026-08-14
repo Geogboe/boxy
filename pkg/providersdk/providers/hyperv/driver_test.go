@@ -239,6 +239,77 @@ func TestDriver_Create_PlainErrorWhenCleanupSucceeds(t *testing.T) {
 	}
 }
 
+func TestDriver_Create_SplitsSetupAndIDLookupCalls(t *testing.T) {
+	var sawStartVMCall, sawIDLookupCall bool
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		switch {
+		case strings.Contains(script, "Get-VMHost"):
+			return "OK\n", nil
+		case strings.Contains(script, hyperVAvailableMemoryScript):
+			return "16384\n", nil
+		case strings.Contains(script, "Start-VM"):
+			sawStartVMCall = true
+			if strings.Contains(script, ".Id.ToString()") {
+				t.Error("expected the ID lookup NOT to be in the same call as Start-VM")
+			}
+			return "", nil
+		case strings.Contains(script, ".Id.ToString()"):
+			sawIDLookupCall = true
+			if strings.Contains(script, "Start-VM") {
+				t.Error("expected Start-VM NOT to be in the same call as the ID lookup")
+			}
+			return fakeGUID + "\n", nil
+		default:
+			return "", nil
+		}
+	})
+
+	res, err := d.Create(context.Background(), &CreateConfig{TemplateVHD: `C:\t.vhdx`})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.ID != fakeGUID {
+		t.Errorf("ID = %q, want %q", res.ID, fakeGUID)
+	}
+	if !sawStartVMCall || !sawIDLookupCall {
+		t.Fatalf("expected both a setup+Start-VM call and a separate ID lookup call, got startVM=%v idLookup=%v", sawStartVMCall, sawIDLookupCall)
+	}
+}
+
+func TestDriver_Create_IDLookupFailureDoesNotTriggerCleanup(t *testing.T) {
+	cleanupScriptSeen := false
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		switch {
+		case strings.Contains(script, "Get-VMHost"):
+			return "OK\n", nil
+		case strings.Contains(script, hyperVAvailableMemoryScript):
+			return "16384\n", nil
+		case strings.Contains(script, "Start-VM"):
+			return "", nil // setup + Start-VM succeeds
+		case strings.Contains(script, ".Id.ToString()"):
+			return "", fmt.Errorf("transient Get-VM failure")
+		case strings.Contains(script, "Remove-VM"):
+			cleanupScriptSeen = true
+			return "", nil
+		default:
+			return "", nil
+		}
+	})
+	d.deleteBestEffortInterval = time.Millisecond
+
+	_, err := d.Create(context.Background(), &CreateConfig{TemplateVHD: `C:\t.vhdx`})
+	if err == nil {
+		t.Fatal("expected an error when the ID lookup fails")
+	}
+	var orphanErr *providersdk.OrphanedResourceError
+	if errors.As(err, &orphanErr) {
+		t.Fatalf("expected a plain error, not *OrphanedResourceError, when only the ID lookup fails: %#v", orphanErr)
+	}
+	if cleanupScriptSeen {
+		t.Error("expected NO cleanup (Stop-VM/Remove-VM) when only the ID lookup failed — the VM is healthy and running")
+	}
+}
+
 func TestDriver_Create_HealthCheckFailure(t *testing.T) {
 	callCount := 0
 	d := mockDriver(func(_ context.Context, _ string) (string, error) {
@@ -408,8 +479,41 @@ func TestDriver_ReserveMemory_SufficientCapacitySucceeds(t *testing.T) {
 	}
 
 	release()
+	if d.reservedMB != 2048 {
+		t.Errorf("reservedMB immediately after release() = %d, want 2048 (grace period still holding it)", d.reservedMB)
+	}
+	time.Sleep(reservationGraceInterval + 200*time.Millisecond)
 	if d.reservedMB != 0 {
-		t.Errorf("reservedMB after release = %d, want 0", d.reservedMB)
+		t.Errorf("reservedMB after the grace period = %d, want 0", d.reservedMB)
+	}
+}
+
+func TestDriver_ReserveMemory_ReleaseHasGracePeriod(t *testing.T) {
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		return "1024\n", nil // 1 GB available
+	})
+
+	release, err := d.reserveMemory(context.Background(), 512)
+	if err != nil {
+		t.Fatalf("reserveMemory: %v", err)
+	}
+	release()
+
+	// Immediately after release() returns, the reservation must still be
+	// counted — the decrement is scheduled, not synchronous.
+	d.mu.Lock()
+	immediatelyAfter := d.reservedMB
+	d.mu.Unlock()
+	if immediatelyAfter != 512 {
+		t.Fatalf("reservedMB immediately after release() = %d, want 512 (still held during the grace period)", immediatelyAfter)
+	}
+
+	time.Sleep(reservationGraceInterval + 200*time.Millisecond)
+	d.mu.Lock()
+	afterGracePeriod := d.reservedMB
+	d.mu.Unlock()
+	if afterGracePeriod != 0 {
+		t.Fatalf("reservedMB after the grace period = %d, want 0", afterGracePeriod)
 	}
 }
 
@@ -523,12 +627,13 @@ func TestDriver_ReserveMemory_ConcurrentCallsLimitToCapacity(t *testing.T) {
 	for release := range releases {
 		release()
 	}
+	time.Sleep(reservationGraceInterval + 200*time.Millisecond)
 	if d.reservedMB != 0 {
-		t.Errorf("reservedMB after releasing all = %d, want 0", d.reservedMB)
+		t.Errorf("reservedMB after releasing all and the grace period = %d, want 0", d.reservedMB)
 	}
 }
 
-func TestDriver_Create_ReservationReleasedAfterFailureAllowsNextCreate(t *testing.T) {
+func TestDriver_Create_ReservationHeldThroughGracePeriodAfterFailure(t *testing.T) {
 	callCount := 0
 	d := mockDriver(func(_ context.Context, script string) (string, error) {
 		callCount++
@@ -540,19 +645,23 @@ func TestDriver_Create_ReservationReleasedAfterFailureAllowsNextCreate(t *testin
 		case strings.Contains(script, "New-VM"):
 			return "", fmt.Errorf("New-VHD failed")
 		default:
-			return "", nil // cleanup
+			return "\n", nil // deleteBestEffort: confirmed gone on first attempt
 		}
 	})
 
-	// First Create fails after reserving memory.
 	if _, err := d.Create(context.Background(), &CreateConfig{TemplateVHD: `C:\t.vhdx`}); err == nil {
 		t.Fatal("expected the first Create to fail")
 	}
-	if d.reservedMB != 0 {
-		t.Fatalf("reservedMB after a failed Create = %d, want 0 (must not leak)", d.reservedMB)
+	if d.reservedMB == 0 {
+		t.Fatal("expected reservedMB to still be held immediately after a failed Create (grace period)")
 	}
 
-	// A second Create must still be able to reserve the same memory.
+	time.Sleep(reservationGraceInterval + 200*time.Millisecond)
+	if d.reservedMB != 0 {
+		t.Fatalf("reservedMB after the grace period = %d, want 0 (must not leak permanently)", d.reservedMB)
+	}
+
+	// A second reservation must succeed once the grace period has elapsed.
 	release, err := d.reserveMemory(context.Background(), 2048)
 	if err != nil {
 		t.Fatalf("second reservation unexpectedly failed: %v", err)

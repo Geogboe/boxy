@@ -91,6 +91,14 @@ const (
 	// magnitude as defaultDeleteWaitInterval.
 	deleteBestEffortAttempts        = 3
 	defaultDeleteBestEffortInterval = 2 * time.Second
+
+	// reservationGraceInterval delays reserveMemory's release() decrement
+	// past Create's return, biasing #183's under-/over-reservation tradeoff
+	// toward the safe direction: a stale-high reservedMB can only cause a
+	// spurious CapacityError on an immediately-following sequential Create
+	// (annoying, safe), never let one overcommit the host (dangerous). Same
+	// order of magnitude as defaultDeleteWaitInterval.
+	reservationGraceInterval = 5 * time.Second
 )
 
 // vmTransitionalStates are Hyper-V VMState values that mean "still moving
@@ -185,7 +193,8 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 	if err != nil {
 		return nil, err
 	}
-	defer release()
+	releaseOnce := sync.OnceFunc(release)
+	defer releaseOnce()
 
 	vhdDir := cc.VHDDir
 	if vhdDir == "" {
@@ -220,7 +229,6 @@ New-VM -Name '%s' -Generation %d -MemoryStartupBytes %d -VHDPath '%s' | Out-Null
 Set-VM -Name '%s' -ProcessorCount %d | Out-Null
 Set-VM -Name '%s' -Notes '%s' | Out-Null
 Start-VM -Name '%s' | Out-Null
-(Get-VM -Name '%s').Id.ToString()
 `,
 		psq(cc.TemplateVHD),
 		psq(diffPath),
@@ -229,17 +237,24 @@ Start-VM -Name '%s' | Out-Null
 		psq(vmName), cc.CPUCount,
 		psq(vmName), psq(notes),
 		psq(vmName),
-		psq(vmName),
 	)
 
-	out, err := d.ps(ctx, createScript)
-	if err != nil {
+	if _, err := d.ps(ctx, createScript); err != nil {
 		return nil, d.createFailure(ctx, vmName, diffPath, fmt.Errorf("hyperv create VM %q: %w", vmName, err))
 	}
+	// Memory is committed once Start-VM above returns — stop holding the
+	// reservation before the trailing (unguarded) ID lookup, narrowing the
+	// over-reservation window described in #183 down to this one fast call
+	// instead of the whole Create duration.
+	releaseOnce()
 
-	vmGUID := strings.TrimSpace(out)
-	if vmGUID == "" {
-		return nil, d.createFailure(ctx, vmName, diffPath, fmt.Errorf("hyperv create: empty VM GUID returned"))
+	vmGUID, err := d.resolveCreatedVMID(ctx, vmName)
+	if err != nil {
+		// The VM is healthy and running — Start-VM already succeeded above.
+		// Do NOT clean it up: that would destroy a good VM over a metadata
+		// lookup hiccup. Leave it for the periodic ResourceLister sweep
+		// (#174, Task 7) to pick up later.
+		return nil, fmt.Errorf("hyperv create VM %q: resolve id: %w", vmName, err)
 	}
 
 	return &providersdk.Resource{
@@ -604,9 +619,14 @@ func (d *Driver) reserveMemory(ctx context.Context, requestedMB int64) (release 
 
 	d.reservedMB += requestedMB
 	return func() {
-		d.mu.Lock()
-		d.reservedMB -= requestedMB
-		d.mu.Unlock()
+		// Independent of the caller's ctx (which may already be cancelled
+		// by the time Create returns) — this is pure in-process bookkeeping,
+		// not I/O, so it doesn't need one.
+		time.AfterFunc(reservationGraceInterval, func() {
+			d.mu.Lock()
+			d.reservedMB -= requestedMB
+			d.mu.Unlock()
+		})
 	}, nil
 }
 
@@ -923,6 +943,45 @@ if ($null -eq $vm) { '' } else { $vm.Id.ToString() }
 		}
 	}
 	return guid, lastErr
+}
+
+// resolveVMIDAttempts bounds resolveCreatedVMID's retry of a transient
+// Get-VM hiccup. Its interval reuses d.bestEffortInterval() (see Task 3)
+// rather than adding a third overridable interval field — both are "cheap
+// bounded retry, 2s apart" by default, and tests already override the one
+// field.
+const resolveVMIDAttempts = 3
+
+// resolveCreatedVMID looks up a just-started VM's GUID in a call separate
+// from the create script (see #183's script split) — read-only, retried a
+// few times for a transient Get-VM hiccup, never mutating anything, so a
+// failure here never implies the VM itself is unhealthy.
+func (d *Driver) resolveCreatedVMID(ctx context.Context, vmName string) (string, error) {
+	script := fmt.Sprintf(`
+$ErrorActionPreference = 'Stop'
+(Get-VM -Name '%s').Id.ToString()
+`, psq(vmName))
+
+	var lastErr error
+	for attempt := 1; attempt <= resolveVMIDAttempts; attempt++ {
+		out, err := d.ps(ctx, script)
+		if err == nil {
+			if guid := strings.TrimSpace(out); guid != "" {
+				return guid, nil
+			}
+			lastErr = fmt.Errorf("empty VM GUID returned")
+		} else {
+			lastErr = err
+		}
+		if attempt < resolveVMIDAttempts {
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(d.bestEffortInterval()):
+			}
+		}
+	}
+	return "", lastErr
 }
 
 // createFailure builds Create's return error after a failed create attempt,

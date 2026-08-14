@@ -1450,7 +1450,7 @@ Claude-Session: https://claude.ai/code/session_01WrFcL5kHN8FTgqZqBqWRQm"
 - Consumes: `createFailure` (Task 3), `release func()` from `reserveMemory` (existing).
 - Produces: `(d *Driver) resolveCreatedVMID(ctx context.Context, vmName string) (string, error)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```go
 // pkg/providersdk/providers/hyperv/driver_test.go — add
@@ -1526,12 +1526,12 @@ func TestDriver_Create_IDLookupFailureDoesNotTriggerCleanup(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `task test`
 Expected: FAIL — `Create` still issues one combined script.
 
-- [ ] **Step 3: Split the create script and add `resolveCreatedVMID`**
+- [x] **Step 3: Split the create script and add `resolveCreatedVMID`**
 
 In `Create`, replace the single `createScript`/`d.ps(ctx, createScript)` block with two calls. The setup script drops its trailing `(Get-VM -Name '%s').Id.ToString()` line and its final `%s` verb/argument:
 
@@ -1642,12 +1642,12 @@ $ErrorActionPreference = 'Stop'
 
 Add `"sync"` to the file's imports if not already present (it is — `Driver.mu sync.Mutex` already imports it).
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `task test`
 Expected: PASS — including all of Task 3's existing tests, which must still pass since `createFailure`'s behavior on a call-1 failure is unchanged.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add pkg/providersdk/providers/hyperv/driver.go pkg/providersdk/providers/hyperv/driver_test.go
@@ -1669,7 +1669,7 @@ Claude-Session: https://claude.ai/code/session_01WrFcL5kHN8FTgqZqBqWRQm"
 - Consumes: none new.
 - Produces: `reservationGraceInterval` constant.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 // pkg/providersdk/providers/hyperv/driver_test.go — add
@@ -1703,12 +1703,12 @@ func TestDriver_ReserveMemory_ReleaseHasGracePeriod(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `task test`
 Expected: FAIL — today's `release()` decrements `reservedMB` synchronously, so `immediatelyAfter` would already be 0.
 
-- [ ] **Step 3: Add the grace period**
+- [x] **Step 3: Add the grace period**
 
 In the `const` block, add:
 
@@ -1749,7 +1749,7 @@ with:
 	}, nil
 ```
 
-- [ ] **Step 4: Update three existing tests whose premise the grace period changes**
+- [x] **Step 4: Update three existing tests whose premise the grace period changes**
 
 Three existing tests assert `reservedMB == 0` immediately after calling
 `release()` — all three now need to reflect that the decrement is delayed,
@@ -1847,12 +1847,12 @@ func TestDriver_Create_ReservationHeldThroughGracePeriodAfterFailure(t *testing.
 }
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `task test`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add pkg/providersdk/providers/hyperv/driver.go pkg/providersdk/providers/hyperv/driver_test.go
