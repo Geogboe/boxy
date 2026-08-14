@@ -1267,7 +1267,7 @@ Claude-Session: https://claude.ai/code/session_01WrFcL5kHN8FTgqZqBqWRQm"
 - Consumes: `ReconcileAgent` (existing, `reconcile.go:36`), `store.Store`, `*AgentRegistry`.
 - Produces: `RunAgentReconciliation(ctx context.Context, st store.Store, registry *AgentRegistry, agentID string, interval, passTimeout time.Duration, logger *slog.Logger)`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 // internal/pool/reconcile_test.go — add
@@ -1335,12 +1335,12 @@ func TestRunAgentReconciliation_ContinuesPastAPassError(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `task test`
 Expected: FAIL — `RunAgentReconciliation` undefined.
 
-- [ ] **Step 3: Implement `RunAgentReconciliation`**
+- [x] **Step 3: Implement `RunAgentReconciliation`**
 
 Add to `internal/pool/reconcile.go`, after `ReconcileAgent`:
 
@@ -1387,7 +1387,7 @@ func RunAgentReconciliation(ctx context.Context, st store.Store, registry *Agent
 const defaultReconciliationInterval = 15 * time.Second
 ```
 
-- [ ] **Step 4: Wire it into `internal/agentserver/server.go`**
+- [x] **Step 4: Wire it into `internal/agentserver/server.go`**
 
 Replace lines 227-239:
 
@@ -1423,12 +1423,12 @@ with:
 	go pool.RunAgentReconciliation(ctx, s.store, s.registry, agentID, s.heartbeatInterval, reconciliationTimeout, s.log())
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `task test`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add internal/pool/reconcile.go internal/pool/reconcile_test.go internal/agentserver/server.go

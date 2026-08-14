@@ -48,6 +48,47 @@ func ReconcileAgent(ctx context.Context, st store.Store, registry *AgentRegistry
 	return err
 }
 
+// RunAgentReconciliation runs ReconcileAgent's Observe/Decide/Act cycle
+// immediately, then repeatedly on interval, until ctx is cancelled —
+// defense-in-depth for orphans #174's inline Create-failure handling can't
+// see (e.g. an agent crash between New-VM succeeding and the failure branch
+// running). Each pass is bounded by passTimeout, applied on top of (never
+// beyond) ctx. A failed pass is logged and skipped rather than ending the
+// loop, matching the previous one-shot call's guarantee that reconciliation
+// trouble must never take down agent connectivity. interval is expected to
+// be the connection's own heartbeat interval (see
+// internal/agentserver/server.go) rather than a new standalone constant.
+func RunAgentReconciliation(ctx context.Context, st store.Store, registry *AgentRegistry, agentID string, interval, passTimeout time.Duration, logger *slog.Logger) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if interval <= 0 {
+		interval = defaultReconciliationInterval
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		pctx, cancel := context.WithTimeout(ctx, passTimeout)
+		if err := ReconcileAgent(pctx, st, registry, agentID, logger); err != nil {
+			logger.Warn("periodic reconciliation failed", "agent_id", agentID, "error", err)
+		}
+		cancel()
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// defaultReconciliationInterval is RunAgentReconciliation's fallback when no
+// interval is supplied (interval <= 0) — production callers pass the
+// connection's own heartbeat interval instead.
+const defaultReconciliationInterval = 15 * time.Second
+
 // remoteEntry pairs a driver-reported resource with the provider type it
 // came from, since providersdk.ResourceStatus itself carries no provider
 // identity.

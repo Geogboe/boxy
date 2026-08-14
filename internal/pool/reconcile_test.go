@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Geogboe/boxy/pkg/agentsdk"
 	"github.com/Geogboe/boxy/pkg/model"
@@ -311,5 +313,70 @@ func TestReconcileAgent_UnregisteredAgentErrors(t *testing.T) {
 
 	if err := ReconcileAgent(ctx, st, registry, "does-not-exist", slog.Default()); err == nil {
 		t.Fatal("expected an error for an unregistered agent")
+	}
+}
+
+// --- RunAgentReconciliation ---
+
+func TestRunAgentReconciliation_RunsImmediatelyThenOnEachTick(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := store.NewMemoryStore()
+
+	var callCount atomic.Int32
+	agent := &fakeListingAgent{
+		info: agentsdk.AgentInfo{ID: "agent-1", Providers: []providersdk.Type{"docker"}},
+		listResults: map[providersdk.Type][]providersdk.ResourceStatus{
+			"docker": {{ID: "orphan-1", State: "running"}},
+		},
+	}
+	registry := registryWith(t, agent)
+
+	done := make(chan struct{})
+	go func() {
+		RunAgentReconciliation(ctx, st, registry, "agent-1", 10*time.Millisecond, time.Second, slog.Default())
+		close(done)
+	}()
+
+	// Wait for at least two passes (immediate + one tick), then cancel.
+	deadline := time.After(time.Second)
+	for {
+		if res, err := st.GetResource(context.Background(), "orphan-1"); err == nil && res.ID == "orphan-1" {
+			callCount.Add(1)
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for the first reconciliation pass to adopt orphan-1")
+		case <-time.After(time.Millisecond):
+		}
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("RunAgentReconciliation did not return after ctx cancellation")
+	}
+}
+
+func TestRunAgentReconciliation_ContinuesPastAPassError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := store.NewMemoryStore()
+	registry := NewAgentRegistry() // "agent-1" never registered -> every ReconcileAgent call errors
+
+	done := make(chan struct{})
+	go func() {
+		RunAgentReconciliation(ctx, st, registry, "agent-1", 5*time.Millisecond, time.Second, slog.Default())
+		close(done)
+	}()
+
+	time.Sleep(30 * time.Millisecond) // let several failing passes tick without the loop exiting
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("RunAgentReconciliation should return promptly on ctx cancellation even after repeated pass errors")
 	}
 }

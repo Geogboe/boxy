@@ -226,17 +226,15 @@ func (s *Server) Connect(stream boxyagentv1.AgentTransportService_ConnectServer)
 
 	// The #133 reconciliation sweep needs Serve() already pumping the
 	// stream (List is itself a command sent down it), so it can only start
-	// here, not before. Runs on every successful registration, not just
-	// reconnects — see pool.ReconcileAgent's doc comment. Bounded and
-	// logged-only: reconciliation trouble must never take down agent
-	// connectivity.
-	go func() {
-		rctx, cancel := context.WithTimeout(ctx, reconciliationTimeout)
-		defer cancel()
-		if err := pool.ReconcileAgent(rctx, s.store, s.registry, agentID, s.log()); err != nil {
-			s.log().Warn("post-registration reconciliation failed", "agent_id", agentID, "error", err)
-		}
-	}()
+	// here, not before. Runs immediately on every successful registration,
+	// not just reconnects, then repeatedly on the connection's heartbeat
+	// cadence for as long as the connection lasts — see #174's periodic
+	// defense-in-depth sweep. ctx is the connection-scoped context already
+	// used by this handler's own select below, so the loop stops naturally
+	// on disconnect; each pass stays bounded by reconciliationTimeout,
+	// logged-only on failure: reconciliation trouble must never take down
+	// agent connectivity.
+	go pool.RunAgentReconciliation(ctx, s.store, s.registry, agentID, s.heartbeatInterval, reconciliationTimeout, s.log())
 
 	select {
 	case err := <-serveDone:
