@@ -918,7 +918,7 @@ Claude-Session: https://claude.ai/code/session_01WrFcL5kHN8FTgqZqBqWRQm"
 - Consumes: `model.ResourceStateError` (existing), the quarantine-record shape from Task 4.
 - Produces: `quarantinedOrphans(poolName model.PoolName, resources []model.Resource) []model.Resource`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```go
 // internal/pool/manager_test.go — add
@@ -1010,12 +1010,12 @@ func TestManager_Reconcile_SweepsQuarantinedOrphan(t *testing.T) {
 
 Add the `provisionResultOnErr model.Resource` field to `fakeProvisioner` and update its `Provision` method: when `p.provisionErr != nil`, return `(p.provisionResultOnErr, p.provisionErr)` instead of `(model.Resource{}, p.provisionErr)`.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `task test`
 Expected: FAIL — `quarantinedOrphans` undefined; the actuator doesn't write a resource on provision failure yet.
 
-- [ ] **Step 3: Add `quarantinedOrphans`**
+- [x] **Step 3: Add `quarantinedOrphans`**
 
 Add near `orphanedTransientResources` (after it, around line 732):
 
@@ -1039,7 +1039,7 @@ func quarantinedOrphans(poolName model.PoolName, resources []model.Resource) []m
 }
 ```
 
-- [ ] **Step 4: Merge `quarantinedOrphans` into the evaluator's stale/drain lists**
+- [x] **Step 4: Merge `quarantinedOrphans` into the evaluator's stale/drain lists**
 
 In `reconcileLocked`'s evaluator, immediately after the existing:
 
@@ -1094,7 +1094,7 @@ to:
 
 No change is needed to the actuator's stale-destroy loop (`m.destroyAndMark(ctx, p, res, model.ResourceStateRecycling, pl.now)`) — `quarantinedOrphans`' results flow through it unmodified, exactly like `orphanedTransientResources`' results already do.
 
-- [ ] **Step 5: Write quarantined resources on provision failure in the actuator**
+- [x] **Step 5: Write quarantined resources on provision failure in the actuator**
 
 Change:
 
@@ -1123,12 +1123,12 @@ to:
 				}
 ```
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 Run: `task test`
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add internal/pool/manager.go internal/pool/manager_test.go

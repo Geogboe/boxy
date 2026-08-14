@@ -14,8 +14,12 @@ type fakeProvisioner struct {
 	n              int
 	provisionCalls int
 	provisionErr   error
-	destroyed      []model.ResourceID
-	destroyErr     error
+	// provisionResultOnErr, when provisionErr is set, is returned alongside
+	// it instead of the zero Resource — mirrors DriverProvisioner/
+	// AgentProvisioner's quarantine contract (see #174 Task 4).
+	provisionResultOnErr model.Resource
+	destroyed            []model.ResourceID
+	destroyErr           error
 	// onDestroy, if set, is called at the top of Destroy — before the
 	// (possibly failing) provider call — so a test can observe state
 	// persisted just before teardown (e.g. via the store).
@@ -26,7 +30,7 @@ func (p *fakeProvisioner) Provision(ctx context.Context, pool model.Pool) (model
 	_ = ctx
 	p.provisionCalls++
 	if p.provisionErr != nil {
-		return model.Resource{}, p.provisionErr
+		return p.provisionResultOnErr, p.provisionErr
 	}
 	p.n++
 	return model.Resource{
@@ -1607,5 +1611,89 @@ func TestManager_Reconcile_DrainEmptyInventoryIsIdempotent(t *testing.T) {
 	}
 	if len(prov.destroyed) != 0 || prov.n != 0 {
 		t.Fatalf("destroyed=%v provisioned=%d, want no operations", prov.destroyed, prov.n)
+	}
+}
+
+func TestQuarantinedOrphans_MatchesErrorStateWithMatchingOriginPool(t *testing.T) {
+	resources := []model.Resource{
+		{ID: "q1", OriginPool: "p1", State: model.ResourceStateError},
+		{ID: "ready1", OriginPool: "p1", State: model.ResourceStateReady},
+		{ID: "q2", OriginPool: "p2", State: model.ResourceStateError}, // different pool
+	}
+	got := quarantinedOrphans("p1", resources)
+	if len(got) != 1 || got[0].ID != "q1" {
+		t.Fatalf("quarantinedOrphans = %+v, want only q1", got)
+	}
+}
+
+func TestManager_Reconcile_ProvisionFailureWritesQuarantinedResource(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	pool := model.Pool{
+		Name:      "p1",
+		Policies:  model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 1, MaxTotal: 5}},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &fakeProvisioner{
+		provisionErr:         errors.New("driver create for pool \"p1\": boom"),
+		provisionResultOnErr: model.Resource{ID: "quarantine-1", OriginPool: "p1", Provider: model.ProviderRef{Name: "prov_1"}, State: model.ResourceStateError, Properties: map[string]any{"quarantine_reason": "boom"}},
+	}
+	mgr := New(st, prov)
+
+	if err := mgr.Reconcile(ctx, "p1"); err == nil {
+		t.Fatal("expected Reconcile to surface the provision failure")
+	}
+
+	res, err := st.GetResource(ctx, "quarantine-1")
+	if err != nil {
+		t.Fatalf("expected the quarantined resource to be written to the store: %v", err)
+	}
+	if res.State != model.ResourceStateError || res.OriginPool != "p1" {
+		t.Fatalf("quarantined resource = %+v, want State=Error OriginPool=p1", res)
+	}
+}
+
+func TestManager_Reconcile_SweepsQuarantinedOrphan(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	quarantined := model.Resource{
+		ID:         "quarantine-1",
+		OriginPool: "p1",
+		Provider:   model.ProviderRef{Name: "prov_1"},
+		State:      model.ResourceStateError,
+		CreatedAt:  time.Unix(0, 0).UTC(),
+	}
+	pool := model.Pool{
+		Name:      "p1",
+		Policies:  model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 0, MaxTotal: 5}},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+	if err := st.PutResource(ctx, quarantined); err != nil {
+		t.Fatalf("put resource: %v", err)
+	}
+
+	prov := &fakeProvisioner{}
+	mgr := New(st, prov)
+
+	if err := mgr.Reconcile(ctx, "p1"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if len(prov.destroyed) != 1 || prov.destroyed[0] != quarantined.ID {
+		t.Fatalf("destroyed = %v, want quarantined resource %q swept", prov.destroyed, quarantined.ID)
+	}
+	final, err := st.GetResource(ctx, quarantined.ID)
+	if err != nil {
+		t.Fatalf("get resource: %v", err)
+	}
+	if final.State != model.ResourceStateDestroyed {
+		t.Fatalf("final state = %q, want %q", final.State, model.ResourceStateDestroyed)
 	}
 }
