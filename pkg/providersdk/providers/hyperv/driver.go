@@ -97,6 +97,13 @@ const (
 	deleteBestEffortAttempts        = 3
 	defaultDeleteBestEffortInterval = 2 * time.Second
 
+	// defaultCleanupTimeout bounds createFailure's cleanup, run on a context
+	// detached from Create's caller (see createFailure's doc comment) —
+	// generous enough for deleteBestEffortAttempts full retries plus real
+	// PowerShell call latency, not just the retry-wait intervals between
+	// them.
+	defaultCleanupTimeout = 45 * time.Second
+
 	// defaultReservationGraceInterval delays reserveMemory's release()
 	// decrement past Create's return, biasing #183's under-/over-reservation
 	// tradeoff toward the safe direction: a stale-high reservedMB can only
@@ -1006,8 +1013,27 @@ $ErrorActionPreference = 'Stop'
 // (carrying the real GUID, resolved by deleteBestEffort's own existence
 // check) when cleanup couldn't confirm the VM is gone. cause is the
 // original failure that triggered cleanup.
-func (d *Driver) createFailure(ctx context.Context, vmName, diffPath string, cause error) error {
-	guid, cleanupErr := d.deleteBestEffort(ctx, vmName, diffPath)
+//
+// Cleanup runs on a context detached from Create's caller (a fresh
+// context.Background, bounded by defaultCleanupTimeout) rather than the ctx
+// Create was called with. If that ctx is already cancelled or past its
+// deadline — the same ctx whose expiry may be exactly why createScript just
+// failed — deleteBestEffort's first PowerShell call would fail immediately
+// and its retry loop would return before ever running the existence check,
+// leaving guid empty and this function silently returning cause as a plain
+// error instead of *OrphanedResourceError: a VM that New-VM actually
+// created goes untracked with no ID recorded anywhere. That's tolerable for
+// AgentProvisioner (RemoteAgent), where the periodic ResourceLister sweep
+// (#174, Task 7) eventually adopts it as an ordinary orphan — but
+// DriverProvisioner has no such sweep at all, so for that deployment
+// topology it would be permanently lost. Detaching cleanup from ctx costs
+// Create extra latency on this one failure path in exchange for a real
+// chance to confirm and quarantine — the same latency-for-safety trade this
+// package already makes elsewhere (see ADR-0004's teardown guard).
+func (d *Driver) createFailure(_ context.Context, vmName, diffPath string, cause error) error {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), defaultCleanupTimeout)
+	defer cancel()
+	guid, cleanupErr := d.deleteBestEffort(cleanupCtx, vmName, diffPath)
 	if cleanupErr != nil && guid != "" {
 		return &providersdk.OrphanedResourceError{
 			ID:           guid,

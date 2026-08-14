@@ -215,6 +215,33 @@ func TestDriver_Create_ReturnsOrphanedResourceErrorWhenCleanupFails(t *testing.T
 	}
 }
 
+func TestDriver_CreateFailure_CleanupDetachedFromCancelledCallerContext(t *testing.T) {
+	// psExec deliberately checks ctx itself (unlike most mocks here) to
+	// simulate a real d.ps call failing on an already-cancelled context —
+	// reproduces the exact scenario where deleteBestEffort's first
+	// PowerShell call fails immediately with the caller's ctx error, before
+	// any existence check ever runs.
+	d := mockDriver(func(ctx context.Context, _ string) (string, error) {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return fakeGUID + "\n", nil // existence check: still present
+	})
+	d.deleteBestEffortInterval = time.Millisecond
+
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled before createFailure is even called
+
+	err := d.createFailure(cancelledCtx, "boxy-abc123", `C:\VMs\boxy-abc123.vhdx`, fmt.Errorf("original cause"))
+	var orphanErr *providersdk.OrphanedResourceError
+	if !errors.As(err, &orphanErr) {
+		t.Fatalf("expected *providersdk.OrphanedResourceError despite a cancelled caller ctx (cleanup must run detached), got %#v", err)
+	}
+	if orphanErr.ID != fakeGUID {
+		t.Errorf("ID = %q, want %q", orphanErr.ID, fakeGUID)
+	}
+}
+
 func TestDriver_Create_PlainErrorWhenCleanupSucceeds(t *testing.T) {
 	d := mockDriver(func(_ context.Context, script string) (string, error) {
 		switch {
