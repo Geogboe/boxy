@@ -33,11 +33,6 @@ import (
 // intervals mark an agent unavailable for new provisioning.
 const DefaultMissedHeartbeatLimit = 3
 
-// reconciliationTimeout bounds the #133 post-registration reconciliation
-// sweep so a slow or hung List call can't hold resources indefinitely; the
-// sweep is best-effort and logs rather than fails the connection either way.
-const reconciliationTimeout = 30 * time.Second
-
 // ResourceForceOrphaner force-orphans every resource attributed to a
 // permanently-gone agent. Implemented by pool.Manager. A narrow seam so
 // agentserver does not need pool.Manager's full surface.
@@ -226,17 +221,15 @@ func (s *Server) Connect(stream boxyagentv1.AgentTransportService_ConnectServer)
 
 	// The #133 reconciliation sweep needs Serve() already pumping the
 	// stream (List is itself a command sent down it), so it can only start
-	// here, not before. Runs on every successful registration, not just
-	// reconnects — see pool.ReconcileAgent's doc comment. Bounded and
-	// logged-only: reconciliation trouble must never take down agent
-	// connectivity.
-	go func() {
-		rctx, cancel := context.WithTimeout(ctx, reconciliationTimeout)
-		defer cancel()
-		if err := pool.ReconcileAgent(rctx, s.store, s.registry, agentID, s.log()); err != nil {
-			s.log().Warn("post-registration reconciliation failed", "agent_id", agentID, "error", err)
-		}
-	}()
+	// here, not before. Runs immediately on every successful registration,
+	// not just reconnects, then repeatedly on the connection's heartbeat
+	// cadence for as long as the connection lasts — see #174's periodic
+	// defense-in-depth sweep. ctx is the connection-scoped context already
+	// used by this handler's own select below, so the loop stops naturally
+	// on disconnect; each pass stays bounded by
+	// pool.DefaultReconciliationPassTimeout, logged-only on failure:
+	// reconciliation trouble must never take down agent connectivity.
+	go pool.RunAgentReconciliation(ctx, s.store, s.registry, agentID, s.heartbeatInterval, pool.DefaultReconciliationPassTimeout, s.log())
 
 	select {
 	case err := <-serveDone:
@@ -305,7 +298,8 @@ func (s *Server) Revoke(ctx context.Context, agentID, reason string, forceOrphan
 	// disconnected), and the sweep is best-effort cleanup that can be
 	// retried by re-running the command — mirroring this file's existing
 	// "best-effort, logs rather than fails" precedent for the #133
-	// reconciliation sweep (see reconciliationTimeout's doc comment).
+	// reconciliation sweep (see pool.DefaultReconciliationPassTimeout's doc
+	// comment).
 	if forceOrphanResources {
 		if s.forceOrphaner == nil {
 			s.log().Warn("force-orphan-resources requested but not configured; no resources swept", "agent_id", agentID)

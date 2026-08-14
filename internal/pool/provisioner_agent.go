@@ -2,6 +2,7 @@ package pool
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -49,13 +50,15 @@ func (ap *AgentProvisioner) Provision(ctx context.Context, pool model.Pool) (mod
 
 	res, err := agent.Create(ctx, driverType, spec.Config)
 	if err != nil {
-		return model.Resource{}, fmt.Errorf("agent create for pool %q: %w", pool.Name, err)
+		wrapped := fmt.Errorf("agent create for pool %q: %w", pool.Name, err)
+		var orphanErr *providersdk.OrphanedResourceError
+		if errors.As(err, &orphanErr) {
+			return newQuarantinedResource(pool.Name, string(driverType), agent.Info().ID, orphanErr, ap.now()), wrapped
+		}
+		return model.Resource{}, wrapped
 	}
 
-	now := time.Now().UTC()
-	if ap.Now != nil {
-		now = ap.Now().UTC()
-	}
+	now := ap.now()
 
 	// Merge connection info and metadata into properties.
 	props := make(map[string]any, len(res.ConnectionInfo)+len(res.Metadata))
@@ -77,6 +80,14 @@ func (ap *AgentProvisioner) Provision(ctx context.Context, pool model.Pool) (mod
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}, nil
+}
+
+// now resolves ap.Now, defaulting to time.Now().UTC() when unset.
+func (ap *AgentProvisioner) now() time.Time {
+	if ap.Now != nil {
+		return ap.Now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 func (ap *AgentProvisioner) Allocate(ctx context.Context, pool model.Pool, res model.Resource) (map[string]any, error) {

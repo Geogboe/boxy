@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Geogboe/boxy/pkg/agentsdk"
 	"github.com/Geogboe/boxy/pkg/model"
@@ -132,6 +134,10 @@ type fakeListingAgent struct {
 	info        agentsdk.AgentInfo
 	listResults map[providersdk.Type][]providersdk.ResourceStatus
 	listErrs    map[providersdk.Type]error
+	// listCalls counts List invocations across all providers — used by
+	// TestRunAgentReconciliation_RunsImmediatelyThenOnEachTick to prove a
+	// second (ticked) pass actually ran, not just the immediate one.
+	listCalls atomic.Int32
 }
 
 func (a *fakeListingAgent) Info() agentsdk.AgentInfo { return a.info }
@@ -151,6 +157,7 @@ func (a *fakeListingAgent) Allocate(context.Context, providersdk.Type, string) (
 	return nil, errors.New("not implemented")
 }
 func (a *fakeListingAgent) List(_ context.Context, provider providersdk.Type) ([]providersdk.ResourceStatus, error) {
+	a.listCalls.Add(1)
 	if err, ok := a.listErrs[provider]; ok {
 		return nil, err
 	}
@@ -311,5 +318,71 @@ func TestReconcileAgent_UnregisteredAgentErrors(t *testing.T) {
 
 	if err := ReconcileAgent(ctx, st, registry, "does-not-exist", slog.Default()); err == nil {
 		t.Fatal("expected an error for an unregistered agent")
+	}
+}
+
+// --- RunAgentReconciliation ---
+
+func TestRunAgentReconciliation_RunsImmediatelyThenOnEachTick(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := store.NewMemoryStore()
+
+	agent := &fakeListingAgent{
+		info: agentsdk.AgentInfo{ID: "agent-1", Providers: []providersdk.Type{"docker"}},
+		listResults: map[providersdk.Type][]providersdk.ResourceStatus{
+			"docker": {{ID: "orphan-1", State: "running"}},
+		},
+	}
+	registry := registryWith(t, agent)
+
+	done := make(chan struct{})
+	go func() {
+		RunAgentReconciliation(ctx, st, registry, "agent-1", 10*time.Millisecond, time.Second, slog.Default())
+		close(done)
+	}()
+
+	// Wait for at least two List calls (the immediate pass plus one tick) —
+	// polling for the adopted resource alone would also pass against the
+	// old one-shot call, since a single immediate pass already adopts it.
+	// Only the call count proves the ticker actually fired again.
+	deadline := time.After(time.Second)
+	for agent.listCalls.Load() < 2 {
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for a second reconciliation pass; listCalls=%d", agent.listCalls.Load())
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if _, err := st.GetResource(context.Background(), "orphan-1"); err != nil {
+		t.Fatalf("expected the immediate pass to have adopted orphan-1: %v", err)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("RunAgentReconciliation did not return after ctx cancellation")
+	}
+}
+
+func TestRunAgentReconciliation_ContinuesPastAPassError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := store.NewMemoryStore()
+	registry := NewAgentRegistry() // "agent-1" never registered -> every ReconcileAgent call errors
+
+	done := make(chan struct{})
+	go func() {
+		RunAgentReconciliation(ctx, st, registry, "agent-1", 5*time.Millisecond, time.Second, slog.Default())
+		close(done)
+	}()
+
+	time.Sleep(30 * time.Millisecond) // let several failing passes tick without the loop exiting
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("RunAgentReconciliation should return promptly on ctx cancellation even after repeated pass errors")
 	}
 }

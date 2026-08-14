@@ -108,8 +108,10 @@ func TestDriver_Create_CleanupOnFailure(t *testing.T) {
 		case strings.Contains(script, "New-VM"):
 			return "", fmt.Errorf("New-VHD failed")
 		default:
-			// Cleanup script succeeds.
-			return "", nil
+			// Cleanup script's existence check: empty output = confirmed gone.
+			// deleteBestEffort makes exactly one round-trip in this case (no
+			// retry needed since the VM is confirmed gone on the first attempt).
+			return "\n", nil
 		}
 	})
 
@@ -121,6 +123,254 @@ func TestDriver_Create_CleanupOnFailure(t *testing.T) {
 	}
 	if callCount < 4 {
 		t.Errorf("expected health check + memory query + create + cleanup calls, callCount = %d", callCount)
+	}
+}
+
+func TestDriver_DeleteBestEffort_RetriesAndResolvesGUIDOnPersistentFailure(t *testing.T) {
+	callCount := 0
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		callCount++
+		// Every attempt's existence check reports the VM still present.
+		return fakeGUID + "\n", nil
+	})
+	d.deleteBestEffortInterval = time.Millisecond // avoid real sleeps in the test
+
+	guid, err := d.deleteBestEffort(context.Background(), "boxy-abc123", `C:\VMs\boxy-abc123.vhdx`)
+	if err == nil {
+		t.Fatal("expected error when the VM is still present after all attempts")
+	}
+	if guid != fakeGUID {
+		t.Errorf("guid = %q, want %q", guid, fakeGUID)
+	}
+	if callCount != deleteBestEffortAttempts {
+		t.Errorf("callCount = %d, want %d attempts", callCount, deleteBestEffortAttempts)
+	}
+}
+
+func TestDriver_DeleteBestEffort_SucceedsAfterRetry(t *testing.T) {
+	callCount := 0
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		callCount++
+		if callCount == 1 {
+			return fakeGUID + "\n", nil // still present on the first attempt
+		}
+		return "\n", nil // confirmed gone on the second attempt
+	})
+	d.deleteBestEffortInterval = time.Millisecond
+
+	guid, err := d.deleteBestEffort(context.Background(), "boxy-abc123", `C:\VMs\boxy-abc123.vhdx`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if guid != "" {
+		t.Errorf("guid = %q, want empty once confirmed gone, even though an earlier attempt saw it present", guid)
+	}
+	if callCount != 2 {
+		t.Errorf("callCount = %d, want exactly 2 (one retry before confirmation)", callCount)
+	}
+}
+
+func TestDriver_DeleteBestEffort_SucceedsWhenVMConfirmedGone(t *testing.T) {
+	callCount := 0
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		callCount++
+		return "\n", nil // empty output = Get-VM found nothing
+	})
+
+	guid, err := d.deleteBestEffort(context.Background(), "boxy-abc123", `C:\VMs\boxy-abc123.vhdx`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if guid != "" {
+		t.Errorf("guid = %q, want empty on confirmed cleanup", guid)
+	}
+	if callCount != 1 {
+		t.Errorf("callCount = %d, want exactly 1 (no retry needed once confirmed gone)", callCount)
+	}
+}
+
+func TestDriver_Create_ReturnsOrphanedResourceErrorWhenCleanupFails(t *testing.T) {
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		switch {
+		case strings.Contains(script, "Get-VMHost"):
+			return "OK\n", nil
+		case strings.Contains(script, hyperVAvailableMemoryScript):
+			return "16384\n", nil
+		case strings.Contains(script, "New-VM"):
+			return "", fmt.Errorf("New-VHD failed")
+		default:
+			// deleteBestEffort's script: existence check reports still present.
+			return fakeGUID + "\n", nil
+		}
+	})
+	d.deleteBestEffortInterval = time.Millisecond
+
+	_, err := d.Create(context.Background(), &CreateConfig{TemplateVHD: `C:\t.vhdx`})
+	var orphanErr *providersdk.OrphanedResourceError
+	if !errors.As(err, &orphanErr) {
+		t.Fatalf("expected *providersdk.OrphanedResourceError, got %#v", err)
+	}
+	if orphanErr.ID != fakeGUID {
+		t.Errorf("ID = %q, want %q", orphanErr.ID, fakeGUID)
+	}
+}
+
+func TestDriver_Create_CleanupFailureSurfacedWhenNoGUIDResolved(t *testing.T) {
+	// Every deleteBestEffort attempt's PowerShell call itself fails (e.g.
+	// host unreachable), so guid never resolves — deleteBestEffort returns
+	// ("", lastErr). createFailure must not drop lastErr silently in this
+	// case: there's no GUID to quarantine under, so the cleanup failure is
+	// the only signal an operator has that a VM might be orphaned.
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		switch {
+		case strings.Contains(script, "Get-VMHost"):
+			return "OK\n", nil
+		case strings.Contains(script, hyperVAvailableMemoryScript):
+			return "16384\n", nil
+		case strings.Contains(script, "New-VM"):
+			return "", fmt.Errorf("New-VHD failed")
+		default:
+			// deleteBestEffort: every attempt's PS call fails outright.
+			return "", fmt.Errorf("host unreachable")
+		}
+	})
+	d.deleteBestEffortInterval = time.Millisecond
+
+	_, err := d.Create(context.Background(), &CreateConfig{TemplateVHD: `C:\t.vhdx`})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	var orphanErr *providersdk.OrphanedResourceError
+	if errors.As(err, &orphanErr) {
+		t.Fatalf("expected a plain error, not *OrphanedResourceError, when no GUID could be resolved: %#v", orphanErr)
+	}
+	if !strings.Contains(err.Error(), "New-VHD failed") {
+		t.Errorf("error = %q, want it to contain the original cause", err.Error())
+	}
+	if !strings.Contains(err.Error(), "host unreachable") {
+		t.Errorf("error = %q, want it to also contain the cleanup failure instead of dropping it", err.Error())
+	}
+}
+
+func TestDriver_CreateFailure_CleanupDetachedFromCancelledCallerContext(t *testing.T) {
+	// psExec deliberately checks ctx itself (unlike most mocks here) to
+	// simulate a real d.ps call failing on an already-cancelled context —
+	// reproduces the exact scenario where deleteBestEffort's first
+	// PowerShell call fails immediately with the caller's ctx error, before
+	// any existence check ever runs.
+	d := mockDriver(func(ctx context.Context, _ string) (string, error) {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return fakeGUID + "\n", nil // existence check: still present
+	})
+	d.deleteBestEffortInterval = time.Millisecond
+
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled before createFailure is even called
+
+	err := d.createFailure(cancelledCtx, "boxy-abc123", `C:\VMs\boxy-abc123.vhdx`, fmt.Errorf("original cause"))
+	var orphanErr *providersdk.OrphanedResourceError
+	if !errors.As(err, &orphanErr) {
+		t.Fatalf("expected *providersdk.OrphanedResourceError despite a cancelled caller ctx (cleanup must run detached), got %#v", err)
+	}
+	if orphanErr.ID != fakeGUID {
+		t.Errorf("ID = %q, want %q", orphanErr.ID, fakeGUID)
+	}
+}
+
+func TestDriver_Create_PlainErrorWhenCleanupSucceeds(t *testing.T) {
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		switch {
+		case strings.Contains(script, "Get-VMHost"):
+			return "OK\n", nil
+		case strings.Contains(script, hyperVAvailableMemoryScript):
+			return "16384\n", nil
+		case strings.Contains(script, "New-VM"):
+			return "", fmt.Errorf("New-VHD failed")
+		default:
+			return "\n", nil // deleteBestEffort's existence check: confirmed gone
+		}
+	})
+
+	_, err := d.Create(context.Background(), &CreateConfig{TemplateVHD: `C:\t.vhdx`})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	var orphanErr *providersdk.OrphanedResourceError
+	if errors.As(err, &orphanErr) {
+		t.Fatalf("expected a plain error, not *OrphanedResourceError, when cleanup succeeded: %#v", orphanErr)
+	}
+}
+
+func TestDriver_Create_SplitsSetupAndIDLookupCalls(t *testing.T) {
+	var sawStartVMCall, sawIDLookupCall bool
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		switch {
+		case strings.Contains(script, "Get-VMHost"):
+			return "OK\n", nil
+		case strings.Contains(script, hyperVAvailableMemoryScript):
+			return "16384\n", nil
+		case strings.Contains(script, "Start-VM"):
+			sawStartVMCall = true
+			if strings.Contains(script, ".Id.ToString()") {
+				t.Error("expected the ID lookup NOT to be in the same call as Start-VM")
+			}
+			return "", nil
+		case strings.Contains(script, ".Id.ToString()"):
+			sawIDLookupCall = true
+			if strings.Contains(script, "Start-VM") {
+				t.Error("expected Start-VM NOT to be in the same call as the ID lookup")
+			}
+			return fakeGUID + "\n", nil
+		default:
+			return "", nil
+		}
+	})
+
+	res, err := d.Create(context.Background(), &CreateConfig{TemplateVHD: `C:\t.vhdx`})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.ID != fakeGUID {
+		t.Errorf("ID = %q, want %q", res.ID, fakeGUID)
+	}
+	if !sawStartVMCall || !sawIDLookupCall {
+		t.Fatalf("expected both a setup+Start-VM call and a separate ID lookup call, got startVM=%v idLookup=%v", sawStartVMCall, sawIDLookupCall)
+	}
+}
+
+func TestDriver_Create_IDLookupFailureDoesNotTriggerCleanup(t *testing.T) {
+	cleanupScriptSeen := false
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		switch {
+		case strings.Contains(script, "Get-VMHost"):
+			return "OK\n", nil
+		case strings.Contains(script, hyperVAvailableMemoryScript):
+			return "16384\n", nil
+		case strings.Contains(script, "Start-VM"):
+			return "", nil // setup + Start-VM succeeds
+		case strings.Contains(script, ".Id.ToString()"):
+			return "", fmt.Errorf("transient Get-VM failure")
+		case strings.Contains(script, "Remove-VM"):
+			cleanupScriptSeen = true
+			return "", nil
+		default:
+			return "", nil
+		}
+	})
+	d.deleteBestEffortInterval = time.Millisecond
+
+	_, err := d.Create(context.Background(), &CreateConfig{TemplateVHD: `C:\t.vhdx`})
+	if err == nil {
+		t.Fatal("expected an error when the ID lookup fails")
+	}
+	var orphanErr *providersdk.OrphanedResourceError
+	if errors.As(err, &orphanErr) {
+		t.Fatalf("expected a plain error, not *OrphanedResourceError, when only the ID lookup fails: %#v", orphanErr)
+	}
+	if cleanupScriptSeen {
+		t.Error("expected NO cleanup (Stop-VM/Remove-VM) when only the ID lookup failed — the VM is healthy and running")
 	}
 }
 
@@ -280,6 +530,7 @@ func TestDriver_ReserveMemory_SufficientCapacitySucceeds(t *testing.T) {
 	d := mockDriver(func(_ context.Context, _ string) (string, error) {
 		return "16384\n", nil // 16 GB
 	})
+	d.reservationGraceInterval = 50 * time.Millisecond
 
 	release, err := d.reserveMemory(context.Background(), 2048)
 	if err != nil {
@@ -293,8 +544,51 @@ func TestDriver_ReserveMemory_SufficientCapacitySucceeds(t *testing.T) {
 	}
 
 	release()
-	if d.reservedMB != 0 {
-		t.Errorf("reservedMB after release = %d, want 0", d.reservedMB)
+	// Reads after release() race the grace-period goroutine's mutex-guarded
+	// write (driver.go's reserveMemory), so they must take the same lock —
+	// see TestDriver_ReserveMemory_ReleaseHasGracePeriod for the pattern.
+	d.mu.Lock()
+	immediatelyAfter := d.reservedMB
+	d.mu.Unlock()
+	if immediatelyAfter != 2048 {
+		t.Errorf("reservedMB immediately after release() = %d, want 2048 (grace period still holding it)", immediatelyAfter)
+	}
+	time.Sleep(150 * time.Millisecond)
+	d.mu.Lock()
+	afterGracePeriod := d.reservedMB
+	d.mu.Unlock()
+	if afterGracePeriod != 0 {
+		t.Errorf("reservedMB after the grace period = %d, want 0", afterGracePeriod)
+	}
+}
+
+func TestDriver_ReserveMemory_ReleaseHasGracePeriod(t *testing.T) {
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		return "1024\n", nil // 1 GB available
+	})
+	d.reservationGraceInterval = 50 * time.Millisecond
+
+	release, err := d.reserveMemory(context.Background(), 512)
+	if err != nil {
+		t.Fatalf("reserveMemory: %v", err)
+	}
+	release()
+
+	// Immediately after release() returns, the reservation must still be
+	// counted — the decrement is scheduled, not synchronous.
+	d.mu.Lock()
+	immediatelyAfter := d.reservedMB
+	d.mu.Unlock()
+	if immediatelyAfter != 512 {
+		t.Fatalf("reservedMB immediately after release() = %d, want 512 (still held during the grace period)", immediatelyAfter)
+	}
+
+	time.Sleep(150 * time.Millisecond)
+	d.mu.Lock()
+	afterGracePeriod := d.reservedMB
+	d.mu.Unlock()
+	if afterGracePeriod != 0 {
+		t.Fatalf("reservedMB after the grace period = %d, want 0", afterGracePeriod)
 	}
 }
 
@@ -364,6 +658,7 @@ func TestDriver_ReserveMemory_ConcurrentCallsLimitToCapacity(t *testing.T) {
 	d := mockDriver(func(_ context.Context, _ string) (string, error) {
 		return "16384\n", nil
 	})
+	d.reservationGraceInterval = 50 * time.Millisecond
 
 	const callers = 8
 	const requestMB = 4096
@@ -408,12 +703,18 @@ func TestDriver_ReserveMemory_ConcurrentCallsLimitToCapacity(t *testing.T) {
 	for release := range releases {
 		release()
 	}
-	if d.reservedMB != 0 {
-		t.Errorf("reservedMB after releasing all = %d, want 0", d.reservedMB)
+	time.Sleep(150 * time.Millisecond)
+	// Races the grace-period goroutines' mutex-guarded writes; see the note
+	// in TestDriver_ReserveMemory_SufficientCapacitySucceeds.
+	d.mu.Lock()
+	afterGracePeriod := d.reservedMB
+	d.mu.Unlock()
+	if afterGracePeriod != 0 {
+		t.Errorf("reservedMB after releasing all and the grace period = %d, want %d", afterGracePeriod, 0)
 	}
 }
 
-func TestDriver_Create_ReservationReleasedAfterFailureAllowsNextCreate(t *testing.T) {
+func TestDriver_Create_ReservationHeldThroughGracePeriodAfterFailure(t *testing.T) {
 	callCount := 0
 	d := mockDriver(func(_ context.Context, script string) (string, error) {
 		callCount++
@@ -425,19 +726,32 @@ func TestDriver_Create_ReservationReleasedAfterFailureAllowsNextCreate(t *testin
 		case strings.Contains(script, "New-VM"):
 			return "", fmt.Errorf("New-VHD failed")
 		default:
-			return "", nil // cleanup
+			return "\n", nil // deleteBestEffort: confirmed gone on first attempt
 		}
 	})
+	d.reservationGraceInterval = 50 * time.Millisecond
 
-	// First Create fails after reserving memory.
 	if _, err := d.Create(context.Background(), &CreateConfig{TemplateVHD: `C:\t.vhdx`}); err == nil {
 		t.Fatal("expected the first Create to fail")
 	}
-	if d.reservedMB != 0 {
-		t.Fatalf("reservedMB after a failed Create = %d, want 0 (must not leak)", d.reservedMB)
+	// Races the grace-period goroutine's mutex-guarded write; see the note
+	// in TestDriver_ReserveMemory_SufficientCapacitySucceeds.
+	d.mu.Lock()
+	immediatelyAfter := d.reservedMB
+	d.mu.Unlock()
+	if immediatelyAfter == 0 {
+		t.Fatal("expected reservedMB to still be held immediately after a failed Create (grace period)")
 	}
 
-	// A second Create must still be able to reserve the same memory.
+	time.Sleep(150 * time.Millisecond)
+	d.mu.Lock()
+	afterGracePeriod := d.reservedMB
+	d.mu.Unlock()
+	if afterGracePeriod != 0 {
+		t.Fatalf("reservedMB after the grace period = %d, want 0 (must not leak permanently)", afterGracePeriod)
+	}
+
+	// A second reservation must succeed once the grace period has elapsed.
 	release, err := d.reserveMemory(context.Background(), 2048)
 	if err != nil {
 		t.Fatalf("second reservation unexpectedly failed: %v", err)
@@ -783,6 +1097,40 @@ func TestDriver_Allocate_Windows(t *testing.T) {
 	}
 }
 
+func TestDriver_List_FiltersToBoxyPrefixedVMs(t *testing.T) {
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		if !strings.Contains(script, "boxy-*") {
+			t.Errorf("expected script to filter by boxy-* prefix, got: %s", script)
+		}
+		return "guid-1|Running\nguid-2|Off\n", nil
+	})
+
+	statuses, err := d.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(statuses) != 2 {
+		t.Fatalf("statuses = %+v, want 2", statuses)
+	}
+	if statuses[0].ID != "guid-1" || statuses[0].State != "running" {
+		t.Errorf("statuses[0] = %+v, want {guid-1 running}", statuses[0])
+	}
+	if statuses[1].ID != "guid-2" || statuses[1].State != "stopped" {
+		t.Errorf("statuses[1] = %+v, want {guid-2 stopped}", statuses[1])
+	}
+}
+
+func TestDriver_List_EmptyHost(t *testing.T) {
+	d := mockDriver(func(_ context.Context, _ string) (string, error) { return "", nil })
+	statuses, err := d.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(statuses) != 0 {
+		t.Errorf("statuses = %+v, want empty", statuses)
+	}
+}
+
 // --- Helpers ---
 
 // fakeGuestExec is a test double for vmsdk.GuestExec.
@@ -802,4 +1150,5 @@ func (f *fakeGuestExec) Exec(_ context.Context, _ string, _ ...string) (*vmsdk.E
 // --- providersdk.Driver interface compliance ---
 
 var _ providersdk.Driver = (*Driver)(nil)
+var _ providersdk.ResourceLister = (*Driver)(nil)
 var _ providersdk.GuestPersonalizer = (*Driver)(nil)

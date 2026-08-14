@@ -253,6 +253,15 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		return err
 	}
 
+	// The embedded agent registers once above and, unlike a remote agent,
+	// never reconnects to trigger internal/agentserver's per-connection
+	// reconciliation sweep — without a sweep of its own it would never
+	// adopt an orphan the inline Create-failure path couldn't quarantine
+	// (e.g. resolveCreatedVMID failing after Start-VM succeeds; see #174).
+	// ctx is runServe's own context, so this stops on shutdown like every
+	// other server-lifetime goroutine here.
+	go pool.RunAgentReconciliation(ctx, st, agentRegistry, embeddedAgent.Info().ID, heartbeatInterval, pool.DefaultReconciliationPassTimeout, nil)
+
 	// Agent transport: private CA + mTLS gRPC listener (ADR-0005).
 	doneTLS, failTLS := ui.step("Setting up agent CA/TLS")
 	grpcSrv, agentSrv, err := buildAgentGRPCServer(st, agentRegistry, poolMgr, filepath.Dir(statePath), grpcListenAddr, heartbeatInterval, opts.insecure, certSANs)

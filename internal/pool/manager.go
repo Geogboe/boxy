@@ -492,6 +492,7 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 			// as soon as either retry succeeds and deletes the record.
 			inInventory := resourceIDSet(p.Inventory.Resources)
 			orphans := orphanedTransientResources(p.Name, obs.resources, inInventory, fallbackInventoryIDs)
+			quarantined := quarantinedOrphans(p.Name, obs.resources)
 
 			if p.EffectivelyDrained() {
 				if requireMinReady {
@@ -502,7 +503,8 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 				}
 				toDrain := append([]model.Resource(nil), p.Inventory.Resources...)
 				toDrain = append(toDrain, orphans...)
-				reason := fmt.Sprintf("drain inventory_rebuilt=%t ready=%d orphans=%d", rebuildReport.Changed, len(p.Inventory.Resources), len(orphans))
+				toDrain = append(toDrain, quarantined...)
+				reason := fmt.Sprintf("drain inventory_rebuilt=%t ready=%d orphans=%d quarantined=%d", rebuildReport.Changed, len(p.Inventory.Resources), len(orphans), len(quarantined))
 				return policycontroller.Decision[plan]{
 					ShouldAct: rebuildReport.Changed || len(toDrain) > 0,
 					Plan: plan{
@@ -522,6 +524,7 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 				return policycontroller.Decision[plan]{}, err
 			}
 			stale = append(stale, orphans...)
+			stale = append(stale, quarantined...)
 			p.Inventory.Resources = kept
 
 			readyCount := countReadyResources(p.Inventory.Resources)
@@ -583,7 +586,16 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 			for i := 0; i < pl.toProvision; i++ {
 				res, err := m.provisioner.Provision(ctx, p)
 				if err != nil {
+					// Record the failure before attempting the quarantine
+					// write below, so a pool whose store can't even persist
+					// the quarantine record still backs off instead of
+					// retrying on every reconcile tick.
 					m.recordProvisionFailure(p.Name, pl.now)
+					if res.ID != "" {
+						if putErr := m.store.PutResource(ctx, res); putErr != nil {
+							return fmt.Errorf("put quarantined resource %q: %w", res.ID, putErr)
+						}
+					}
 					return fmt.Errorf("provision resource for pool %q: %w", p.Name, err)
 				}
 				m.recordProvisionSuccess(p.Name)
@@ -729,6 +741,24 @@ func orphanedTransientResources(
 		orphans = append(orphans, res)
 	}
 	return orphans
+}
+
+// quarantinedOrphans finds resources this pool tried to provision that ended
+// up recorded as ResourceStateError — a Create failed and its cleanup also
+// failed (see #174, Task 4's Provisioner.Provision handling of
+// providersdk.OrphanedResourceError). Unlike orphanedTransientResources,
+// these haven't started teardown yet — isTransientDestroyState only covers
+// Recycling/Destroying — so this is a separate filter rather than
+// broadening that one; see the design spec's "Alternatives considered" for
+// why isTransientDestroyState itself isn't touched.
+func quarantinedOrphans(poolName model.PoolName, resources []model.Resource) []model.Resource {
+	var quarantined []model.Resource
+	for _, res := range resources {
+		if res.State == model.ResourceStateError && res.OriginPool == poolName {
+			quarantined = append(quarantined, res)
+		}
+	}
+	return quarantined
 }
 
 func computeToProvision(p model.Pool, minReady int, totalCount int) int {

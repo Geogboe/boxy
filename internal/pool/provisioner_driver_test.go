@@ -17,6 +17,7 @@ type driverProvisionerConfig struct {
 
 type fakeProviderDriver struct {
 	createCfg      any
+	createErr      error
 	deleted        []string
 	allocated      []string
 	personalized   []string
@@ -30,6 +31,9 @@ func (d *fakeProviderDriver) Type() providersdk.Type { return "fake" }
 func (d *fakeProviderDriver) Create(ctx context.Context, cfg any) (*providersdk.Resource, error) {
 	_ = ctx
 	d.createCfg = cfg
+	if d.createErr != nil {
+		return nil, d.createErr
+	}
 	image, _ := cfg.(map[string]any)["image"].(string)
 	return &providersdk.Resource{
 		ID:             "provider-res-1",
@@ -126,6 +130,44 @@ func TestDriverProvisioner_ProvisionMapsProviderResourceToPoolResource(t *testin
 	}
 	if cfg, ok := driver.createCfg.(map[string]any); !ok || cfg["image"] != "alpine" {
 		t.Fatalf("driver create config = %#v, want pool image config", driver.createCfg)
+	}
+}
+
+func TestDriverProvisioner_ProvisionQuarantinesOrphanedResource(t *testing.T) {
+	driver := &fakeProviderDriver{createErr: &providersdk.OrphanedResourceError{ID: "guid-1", CauseMessage: "remove-vm failed"}}
+	dp := newDriverProvisioner(t, driver)
+
+	res, err := dp.Provision(context.Background(), model.Pool{
+		Name:      "web",
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: "alpine"},
+	})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if res.ID != "guid-1" {
+		t.Errorf("ID = %q, want %q", res.ID, "guid-1")
+	}
+	if res.OriginPool != "web" {
+		t.Errorf("OriginPool = %q, want %q", res.OriginPool, "web")
+	}
+	if res.State != model.ResourceStateError {
+		t.Errorf("State = %q, want %q", res.State, model.ResourceStateError)
+	}
+	if res.Properties["quarantine_reason"] != "remove-vm failed" {
+		t.Errorf("quarantine_reason = %v, want %q", res.Properties["quarantine_reason"], "remove-vm failed")
+	}
+}
+
+func TestDriverProvisioner_ProvisionPlainErrorWithoutOrphan(t *testing.T) {
+	driver := &fakeProviderDriver{createErr: errors.New("boom")}
+	dp := newDriverProvisioner(t, driver)
+
+	res, err := dp.Provision(context.Background(), model.Pool{Name: "web"})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if res.ID != "" {
+		t.Errorf("expected zero-value Resource for a non-orphan failure, got %+v", res)
 	}
 }
 

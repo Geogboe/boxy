@@ -3,6 +3,7 @@ package pool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -35,13 +36,15 @@ func (dp *DriverProvisioner) Provision(ctx context.Context, pool model.Pool) (mo
 	spec := dp.Specs[pool.Name]
 	res, err := driver.Create(ctx, spec.Config)
 	if err != nil {
-		return model.Resource{}, fmt.Errorf("driver create for pool %q: %w", pool.Name, err)
+		wrapped := fmt.Errorf("driver create for pool %q: %w", pool.Name, err)
+		var orphanErr *providersdk.OrphanedResourceError
+		if errors.As(err, &orphanErr) {
+			return newQuarantinedResource(pool.Name, providerName, "", orphanErr, dp.now()), wrapped
+		}
+		return model.Resource{}, wrapped
 	}
 
-	now := time.Now().UTC()
-	if dp.Now != nil {
-		now = dp.Now().UTC()
-	}
+	now := dp.now()
 
 	props := make(map[string]any, len(res.ConnectionInfo)+len(res.Metadata))
 	for k, v := range res.ConnectionInfo {
@@ -62,6 +65,14 @@ func (dp *DriverProvisioner) Provision(ctx context.Context, pool model.Pool) (mo
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}, nil
+}
+
+// now resolves dp.Now, defaulting to time.Now().UTC() when unset.
+func (dp *DriverProvisioner) now() time.Time {
+	if dp.Now != nil {
+		return dp.Now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 func (dp *DriverProvisioner) Allocate(ctx context.Context, pool model.Pool, res model.Resource) (map[string]any, error) {
