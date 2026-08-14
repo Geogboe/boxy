@@ -4,12 +4,14 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Geogboe/boxy/internal/credentials"
+	"github.com/spf13/cobra"
 )
 
 func TestWrapConnError_ClassifiesDialFailure(t *testing.T) {
@@ -123,6 +125,47 @@ func TestAPIClientForServerAttachesStoredCredential(t *testing.T) {
 	_ = resp.Body.Close()
 	if got, want := gotAuth.Load().(string), "Bearer boxy_secret"; got != want {
 		t.Fatalf("Authorization = %q, want %q", got, want)
+	}
+}
+
+func TestAPIClientForCommandHonorsEnvironmentInsecureUnlessFlagOverrides(t *testing.T) {
+	t.Setenv("BOXY_API_INSECURE", "true")
+	t.Setenv("BOXY_CA_CERT", "")
+	cmd := &cobra.Command{}
+	cmd.Flags().Bool("insecure", false, "")
+
+	client, err := apiClientForCommand(cmd, "https://boxy.example:9090")
+	if err != nil {
+		t.Fatalf("apiClientForCommand (environment): %v", err)
+	}
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok || transport.TLSClientConfig == nil || !transport.TLSClientConfig.InsecureSkipVerify { //nolint:gosec // this asserts the explicit development setting
+		t.Fatal("environment BOXY_API_INSECURE=true should enable TLS verification bypass")
+	}
+
+	if err := cmd.Flags().Set("insecure", "false"); err != nil {
+		t.Fatalf("set explicit insecure flag: %v", err)
+	}
+	client, err = apiClientForCommand(cmd, "https://boxy.example:9090")
+	if err != nil {
+		t.Fatalf("apiClientForCommand (flag): %v", err)
+	}
+	transport, ok = client.Transport.(*http.Transport)
+	if !ok || transport.TLSClientConfig == nil || transport.TLSClientConfig.InsecureSkipVerify { //nolint:gosec // this asserts the explicit development setting
+		t.Fatal("explicit --insecure=false should override BOXY_API_INSECURE=true")
+	}
+}
+
+func TestAPIClientForServerSurfacesInvalidEnvironmentCACert(t *testing.T) {
+	t.Setenv("BOXY_CA_CERT", filepath.Join(t.TempDir(), "missing-ca.crt"))
+	client := apiClientForServer("https://boxy.example:9090")
+	req, err := http.NewRequest(http.MethodGet, "https://boxy.example:9090/healthz", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	_, err = client.Do(req) //nolint:bodyclose // the request fails before a response exists
+	if err == nil || !strings.Contains(err.Error(), "read CA certificate") {
+		t.Fatalf("client.Do error = %v, want invalid CA certificate error", err)
 	}
 }
 

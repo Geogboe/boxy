@@ -9,14 +9,15 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/Geogboe/boxy/internal/userconfig"
 )
 
 const (
-	SkillName        = "boxy-cli"
-	VersionFileName  = ".boxy-skill-version"
-	SourceFileName   = ".boxy-skill-source"
-	assetsRoot       = "assets"
-	defaultConfigDir = ".config"
+	SkillName       = "boxy-cli"
+	VersionFileName = ".boxy-skill-version"
+	SourceFileName  = ".boxy-skill-source"
+	assetsRoot      = "assets"
 )
 
 //go:embed all:assets
@@ -27,14 +28,11 @@ func AssetFS() fs.FS {
 }
 
 func CanonicalDir() (string, error) {
-	home, err := os.UserHomeDir()
+	root, err := userconfig.Dir()
 	if err != nil {
-		return "", fmt.Errorf("resolve user home: %w", err)
+		return "", err
 	}
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "boxy", "skills"), nil
-	}
-	return filepath.Join(home, defaultConfigDir, "boxy", "skills"), nil
+	return filepath.Join(root, "skills"), nil
 }
 
 func DefaultAgentDir() (string, error) {

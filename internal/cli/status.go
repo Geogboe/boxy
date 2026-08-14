@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 
 	boxyconfig "github.com/Geogboe/boxy/internal/config"
@@ -27,13 +28,16 @@ func newStatusCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.server, "server", "", "server address (default 127.0.0.1:9090)")
+	cmd.Flags().StringVar(&opts.server, "server", "", "server address (overrides BOXY_SERVER and the global client default)")
 	cmd.Flags().StringVar(&opts.configPath, "config", "", "config file to resolve server address")
 	return cmd
 }
 
 func runStatus(ctx context.Context, opts statusOpts, cmd *cobra.Command) error {
-	addr := resolveServerAddr(opts, cmd)
+	addr, err := resolveServerAddr(opts, cmd)
+	if err != nil {
+		return err
+	}
 	base := apiBaseURL(addr)
 
 	client := apiClientForServer(addr)
@@ -78,20 +82,32 @@ func runStatus(ctx context.Context, opts statusOpts, cmd *cobra.Command) error {
 }
 
 // resolveServerAddr determines the server address with precedence:
-// --server flag > config server.listen > default 127.0.0.1:9090
-func resolveServerAddr(opts statusOpts, cmd *cobra.Command) string {
-	if cmd.Flags().Changed("server") {
-		return opts.server
+// --server flag > BOXY_SERVER > --config server.listen > global client
+// default > 127.0.0.1:9090.
+func resolveServerAddr(opts statusOpts, cmd *cobra.Command) (string, error) {
+	if cmd.Flags().Changed("server") || strings.TrimSpace(opts.server) != "" {
+		return opts.server, nil
+	}
+
+	if raw := strings.TrimSpace(os.Getenv("BOXY_SERVER")); raw != "" {
+		return normalizeClientServer(raw)
 	}
 
 	if opts.configPath != "" {
 		cfg, err := boxyconfig.LoadFile(opts.configPath)
-		if err == nil && cfg.Server.Listen != "" {
-			return secureServerURL(displayAddr(cfg.Server.Listen))
+		if err != nil {
+			return "", err
+		}
+		if cfg.Server.Listen != "" {
+			return secureServerURL(displayAddr(cfg.Server.Listen)), nil
 		}
 	}
 
-	return "https://127.0.0.1:9090"
+	server, err := resolveClientServer(cmd, "")
+	if err != nil {
+		return "", err
+	}
+	return server, nil
 }
 
 func secureServerURL(addr string) string {

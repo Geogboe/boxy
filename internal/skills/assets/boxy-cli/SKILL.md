@@ -24,6 +24,8 @@ Core commands you will commonly use:
 - `boxy admin api-key list`
 - `boxy admin api-key revoke`
 - `boxy config validate`
+- `boxy config client show`
+- `boxy config client set-server <url>`
 - `boxy sandbox create`
 - `boxy sandbox list`
 - `boxy sandbox get`
@@ -62,6 +64,7 @@ Core commands you will commonly use:
 ## Operating Rules
 
 - Validate config with `boxy config validate` before telling the user to run `boxy serve`.
+- REST commands resolve their endpoint from an explicit `--server`, then `BOXY_SERVER`, then (for `status --config`) the project listener, then the global client default, and finally the local HTTPS default. Use `boxy config client show` and `boxy config client set-server <url>` to inspect or set that default; `boxy login` also persists the endpoint. `BOXY_CA_CERT` and `BOXY_API_INSECURE` provide environment-level TLS settings; named profiles are not supported yet.
 - Boxy serves REST and agent gRPC over TLS by default. Use `--ca-cert` for the generated Boxy CA; use `--insecure` only for explicit local development.
 - Run `boxy admin api-key bootstrap` locally once to create the first administrator key, then `boxy login --server <url> --ca-cert <path>` to store it in the OS keyring. The interactive login prompt masks the key and can be canceled with Ctrl+C. Raw keys are shown once and must not be written to config or state files.
 - Prefer `boxy serve --once` for smoke checks and `boxy serve` for daemon usage.

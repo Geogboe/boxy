@@ -20,7 +20,7 @@ func newAgentCommand() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.PersistentFlags().StringVar(&server, "server", "", "server address (default 127.0.0.1:9090)")
+	cmd.PersistentFlags().StringVar(&server, "server", "", "server address (overrides BOXY_SERVER and the global client default)")
 
 	serverAddr := func() string { return server }
 

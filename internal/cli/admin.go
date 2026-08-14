@@ -17,7 +17,7 @@ func newAdminCommand() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.PersistentFlags().StringVar(&server, "server", "", "server URL (default 127.0.0.1:9090)")
+	cmd.PersistentFlags().StringVar(&server, "server", "", "server URL (overrides BOXY_SERVER and the global client default)")
 	cmd.PersistentFlags().String("ca-cert", "", "Boxy CA certificate for a self-signed server")
 	cmd.PersistentFlags().Bool("insecure", false, "skip HTTPS certificate verification (development only)")
 	cmd.AddCommand(newAPIKeyAdminCommand(func() string { return server }))

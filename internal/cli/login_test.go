@@ -58,6 +58,7 @@ func TestPromptAPIKeyTerminalPropagatesCancellation(t *testing.T) {
 }
 
 func TestRunLoginStoresCredentialAfterVerification(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got, want := r.Header.Get("Authorization"), "Bearer boxy_test_key"; got != want {
 			t.Fatalf("Authorization = %q, want %q", got, want)
@@ -86,6 +87,13 @@ func TestRunLoginStoresCredentialAfterVerification(t *testing.T) {
 	}
 	if got != "boxy_test_key" {
 		t.Fatalf("stored credential = %q, want boxy_test_key", got)
+	}
+	cfg, err := loadClientConfig()
+	if err != nil {
+		t.Fatalf("load client config: %v", err)
+	}
+	if cfg.Server != server.URL {
+		t.Fatalf("client server default = %q, want %q", cfg.Server, server.URL)
 	}
 }
 

@@ -33,6 +33,15 @@ var loginIsTerminal = func(file *os.File) bool {
 	return term.IsTerminal(int(file.Fd()))
 }
 
+var loginClientConfigStore = func(server string) error {
+	cfg, err := loadClientConfig()
+	if err != nil {
+		return err
+	}
+	cfg.Server = server
+	return writeClientConfig(cfg)
+}
+
 func newLoginCommand() *cobra.Command {
 	var opts loginOptions
 	cmd := &cobra.Command{
@@ -47,10 +56,16 @@ func newLoginCommand() *cobra.Command {
 				}
 				opts.apiKey = key
 			}
+			if !cmd.Flags().Changed("insecure") {
+				opts.insecure = apiInsecureFromEnvironment()
+			}
+			if !cmd.Flags().Changed("ca-cert") {
+				opts.caCert = os.Getenv("BOXY_CA_CERT")
+			}
 			return runLogin(cmd.Context(), opts, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
-	cmd.Flags().StringVar(&opts.server, "server", "", "server URL (default 127.0.0.1:9090)")
+	cmd.Flags().StringVar(&opts.server, "server", "", "server URL (overrides BOXY_SERVER and the global client default)")
 	cmd.Flags().StringVar(&opts.apiKey, "api-key", "", "API key (prefer interactive prompt to avoid shell history/process-list exposure)")
 	cmd.Flags().StringVar(&opts.caCert, "ca-cert", "", "Boxy CA certificate for a self-signed server")
 	cmd.Flags().BoolVar(&opts.insecure, "insecure", false, "skip HTTPS certificate verification (development only)")
@@ -67,7 +82,7 @@ func newLogoutCommand() *cobra.Command {
 			return runLogout(cmd.Context(), server, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVar(&server, "server", "", "server URL (default 127.0.0.1:9090)")
+	cmd.Flags().StringVar(&server, "server", "", "server URL (overrides BOXY_SERVER and the global client default)")
 	return cmd
 }
 
@@ -135,6 +150,9 @@ func runLogin(ctx context.Context, opts loginOptions, out, errOut io.Writer) err
 		if err := store.SetCA(base, caPEM); err != nil {
 			return fmt.Errorf("store CA certificate: %w", err)
 		}
+	}
+	if err := loginClientConfigStore(base); err != nil {
+		return fmt.Errorf("store client server default (API key was stored successfully): %w", err)
 	}
 	_, _ = fmt.Fprintf(out, "Logged in to %s\n", base)
 	_ = errOut

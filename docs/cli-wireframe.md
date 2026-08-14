@@ -102,7 +102,7 @@ boxy
 │
 │
 ├── status                                     Check server health and summary
-│   ├── --server <addr>                          Server address (default 127.0.0.1:9090)
+│   ├── --server <addr>                          Server address (overrides env/global defaults)
 │   └── --config <path>                          Config to resolve server address
 │
 │   $ boxy status
@@ -116,7 +116,7 @@ boxy
 │
 │
 ├── login                                      Store an operator API key in the OS keyring
-│   ├── --server <url>                           Server URL (default 127.0.0.1:9090)
+│   ├── --server <url>                           Server URL (overrides env/global defaults)
 │   ├── --api-key <key>                          Optional non-interactive key input
 │   ├── --ca-cert <path>                         Trust a Boxy self-signed CA
 │   └── --insecure                               Skip HTTPS verification (development only)
@@ -127,11 +127,11 @@ boxy
 │
 │
 ├── logout                                     Remove the stored operator credential
-│   └── --server <url>                           Server URL (default 127.0.0.1:9090)
+│   └── --server <url>                           Server URL (overrides env/global defaults)
 │
 │
 ├── admin                                      Manage operator access and shared state
-│   ├── --server <url>                           Server URL (default 127.0.0.1:9090)
+│   ├── --server <url>                           Server URL (overrides env/global defaults)
 │   ├── --ca-cert <path>                         Trust a Boxy self-signed CA
 │   ├── --insecure                               Skip HTTPS verification (development only)
 │   │
@@ -145,15 +145,21 @@ boxy
 │
 │
 ├── config
-│   └── validate                               Validate config file and exit
-│       └── --config <path>
+│   ├── validate                               Validate config file and exit
+│   │   └── --config <path>
+│   └── client
+│       ├── show                               Show the global CLI server default
+│       └── set-server <url>                   Set the global CLI server default
 │
 │       $ boxy config validate
 │         config OK
 │
+│       $ boxy config client set-server boxy.example:9090
+│         server: https://boxy.example:9090
+│
 │
 ├── sandbox                                    Manage sandboxes
-│   ├── --server <addr>                          Server address (default 127.0.0.1:9090)
+│   ├── --server <addr>                          Server address (overrides env/global defaults)
 │   │
 │   ├── create -f <spec>                         Create sandbox from spec file
 │   │   ├── -f, --file <path>                      Sandbox spec file (required)
@@ -242,7 +248,7 @@ boxy
 │
 ├── debug
 │   ├── pool                                   Run daemon-backed pool maintenance
-│   │   ├── --server <addr>                      Server address (default 127.0.0.1:9090)
+│   │   ├── --server <addr>                      Server address (overrides env/global defaults)
 │   │   ├── drain <pool>                         Drain unused ready inventory
 │   │   │   $ boxy debug pool drain win-vm
 │   │   │     drained pool win-vm
@@ -264,7 +270,7 @@ boxy
 │
 │
 ├── agent                                      Manage remote agents and registration tokens
-│   ├── --server <addr>                          Server address (default 127.0.0.1:9090)
+│   ├── --server <addr>                          Server address (overrides env/global defaults)
 │   │
 │   ├── serve                                    Run this host as a remote agent (dials the server's
 │   │   │                                          gRPC listener, executes provider operations)

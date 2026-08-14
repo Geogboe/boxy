@@ -24,6 +24,9 @@ func NewRootCommand() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if err := resolveClientServerFlag(cmd); err != nil {
+				return err
+			}
 			return setupLogging(opts)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
