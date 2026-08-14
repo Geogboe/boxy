@@ -122,7 +122,7 @@ boxy
 │   └── --insecure                               Skip HTTPS verification (development only)
 │
 │   $ boxy login --server https://boxy.example:9090 --ca-cert .boxy/ca.crt
-│     API key: ********
+│     API key (hidden; Ctrl+C to cancel): ********
 │     Logged in to https://boxy.example:9090
 │
 │

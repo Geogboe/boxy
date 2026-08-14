@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/Geogboe/boxy/internal/credentials"
 	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -22,6 +24,14 @@ type loginOptions struct {
 }
 
 var loginCredentialsStore = credentials.New
+
+var errLoginPromptCanceled = errors.New("API key prompt canceled")
+
+var loginInteractivePrompt = promptAPIKeyInteractive
+
+var loginIsTerminal = func(file *os.File) bool {
+	return term.IsTerminal(int(file.Fd()))
+}
 
 func newLoginCommand() *cobra.Command {
 	var opts loginOptions
@@ -63,17 +73,8 @@ func newLogoutCommand() *cobra.Command {
 
 func promptAPIKey(cmd *cobra.Command) (string, error) {
 	in := cmd.InOrStdin()
-	if file, ok := in.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
-		_, _ = fmt.Fprint(cmd.ErrOrStderr(), "API key: ")
-		value, err := term.ReadPassword(int(file.Fd()))
-		_, _ = fmt.Fprintln(cmd.ErrOrStderr())
-		if err != nil {
-			return "", fmt.Errorf("read API key: %w", err)
-		}
-		if strings.TrimSpace(string(value)) == "" {
-			return "", fmt.Errorf("API key must not be empty")
-		}
-		return strings.TrimSpace(string(value)), nil
+	if file, ok := in.(*os.File); ok && loginIsTerminal(file) {
+		return loginInteractivePrompt(cmd)
 	}
 
 	_, _ = fmt.Fprint(cmd.ErrOrStderr(), "API key: ")
@@ -86,6 +87,25 @@ func promptAPIKey(cmd *cobra.Command) (string, error) {
 		return "", fmt.Errorf("API key must not be empty")
 	}
 	return line, nil
+}
+
+func promptAPIKeyInteractive(_ *cobra.Command) (string, error) {
+	interrupted := false
+	value, err := pterm.DefaultInteractiveTextInput.
+		WithMask("*").
+		WithOnInterruptFunc(func() { interrupted = true }).
+		Show("API key (hidden; Ctrl+C to cancel)")
+	if interrupted {
+		return "", errLoginPromptCanceled
+	}
+	if err != nil {
+		return "", fmt.Errorf("read API key: %w", err)
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("API key must not be empty")
+	}
+	return value, nil
 }
 
 func runLogin(ctx context.Context, opts loginOptions, out, errOut io.Writer) error {

@@ -63,7 +63,7 @@ Core commands you will commonly use:
 
 - Validate config with `boxy config validate` before telling the user to run `boxy serve`.
 - Boxy serves REST and agent gRPC over TLS by default. Use `--ca-cert` for the generated Boxy CA; use `--insecure` only for explicit local development.
-- Run `boxy admin api-key bootstrap` locally once to create the first administrator key, then `boxy login --server <url> --ca-cert <path>` to store it in the OS keyring. Raw keys are shown once and must not be written to config or state files.
+- Run `boxy admin api-key bootstrap` locally once to create the first administrator key, then `boxy login --server <url> --ca-cert <path>` to store it in the OS keyring. The interactive login prompt masks the key and can be canceled with Ctrl+C. Raw keys are shown once and must not be written to config or state files.
 - Prefer `boxy serve --once` for smoke checks and `boxy serve` for daemon usage.
 - Sandbox creation is asynchronous. Use `boxy sandbox create --no-wait` if you need the request accepted quickly, then poll with `boxy sandbox get`.
 - Sandbox deletion is asynchronous. `boxy sandbox delete <id>` waits until the daemon finishes cleanup; use `--no-wait` to return after acceptance.
