@@ -521,12 +521,17 @@ func errorResult(commandID, msg string, err error) *boxyagentv1.CommandResult {
 	ae := &boxyagentv1.AgentError{Message: msg}
 	var et providersdk.ErrorTyper
 	if err != nil && errors.As(err, &et) {
-		ae.ErrorType = et.ErrorType()
 		// Marshal et (what errors.As actually found), not err: err may be a
 		// wrapper (e.g. fmt.Errorf("...: %w", et)) with no exported fields
 		// of its own, which would silently JSON-marshal to "{}" and zero out
-		// every field on the far side of reconstructAgentError.
+		// every field on the far side of reconstructAgentError. ErrorType is
+		// only set alongside a successful marshal — an ErrorType with no
+		// usable ErrorDetailJson would make reconstructAgentError's
+		// json.Unmarshal fail and fall back to the plain message anyway, so
+		// leaving both unset keeps the two fields consistent instead of
+		// half-populating one of them.
 		if detail, jerr := json.Marshal(et); jerr == nil {
+			ae.ErrorType = et.ErrorType()
 			ae.ErrorDetailJson = detail
 		}
 	}
