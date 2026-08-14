@@ -31,7 +31,7 @@
 **Interfaces:**
 - Produces: `providersdk.CapacityError{RequestedMemoryMB, AvailableMemoryMB int64}`, `providersdk.OrphanedResourceError{ID, CauseMessage string}`, `providersdk.ErrorTyper` (interface: `ErrorType() string`), `hyperv.CapacityError` (type alias to `providersdk.CapacityError`, unchanged from the caller's perspective).
 
-- [ ] **Step 1: Write the failing test for the new types**
+- [x] **Step 1: Write the failing test for the new types**
 
 ```go
 // pkg/providersdk/errors_test.go
@@ -71,12 +71,12 @@ func TestOrphanedResourceError_ImplementsErrorTyper(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `task test`
 Expected: FAIL — `pkg/providersdk` doesn't compile (`CapacityError`, `OrphanedResourceError`, `ErrorTyper` undefined).
 
-- [ ] **Step 3: Add `ErrorTyper` to `pkg/providersdk/driver.go`**
+- [x] **Step 3: Add `ErrorTyper` to `pkg/providersdk/driver.go`**
 
 Insert immediately after the existing `ResourceLister` interface (currently ends at line 101):
 
@@ -92,7 +92,7 @@ type ErrorTyper interface {
 }
 ```
 
-- [ ] **Step 4: Write `pkg/providersdk/errors.go`**
+- [x] **Step 4: Write `pkg/providersdk/errors.go`**
 
 ```go
 package providersdk
@@ -140,7 +140,7 @@ func (e *OrphanedResourceError) Error() string {
 func (e *OrphanedResourceError) ErrorType() string { return "orphaned_resource" }
 ```
 
-- [ ] **Step 5: Alias `hyperv.CapacityError`, delete the local type**
+- [x] **Step 5: Alias `hyperv.CapacityError`, delete the local type**
 
 In `pkg/providersdk/providers/hyperv/driver.go`, delete lines 461-474 (the local `CapacityError` struct and its `Error()` method) and replace with:
 
@@ -152,12 +152,12 @@ type CapacityError = providersdk.CapacityError
 
 Place it where the old type was (just above `queryAvailableMemoryMB`, which references it in a doc comment).
 
-- [ ] **Step 6: Run tests to verify everything passes**
+- [x] **Step 6: Run tests to verify everything passes**
 
 Run: `task test`
 Expected: PASS — new tests pass, and every existing hyperv test using `*CapacityError`/`errors.As` (driver_test.go:168,308,391) still compiles and passes unmodified, since `hyperv.CapacityError` is still a valid local name.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add pkg/providersdk/errors.go pkg/providersdk/errors_test.go pkg/providersdk/driver.go pkg/providersdk/providers/hyperv/driver.go
@@ -181,7 +181,7 @@ Claude-Session: https://claude.ai/code/session_01WrFcL5kHN8FTgqZqBqWRQm"
 - Consumes: `providersdk.ErrorTyper`, `providersdk.CapacityError`, `providersdk.OrphanedResourceError` (Task 1).
 - Produces: `errorResult(commandID, msg string, err error) *boxyagentv1.AgentError` (signature changes — every existing call site updates), `reconstructAgentError(agentID string, ae *boxyagentv1.AgentError) error`.
 
-- [ ] **Step 1: Extend the proto message**
+- [x] **Step 1: Extend the proto message**
 
 In `proto/boxyagent/v1/agent.proto`, replace:
 
@@ -205,12 +205,12 @@ message AgentError {
 }
 ```
 
-- [ ] **Step 2: Regenerate protobuf stubs**
+- [x] **Step 2: Regenerate protobuf stubs**
 
 Run: `task proto:generate`
 Expected: `pkg/agentproto/boxyagent/v1/agent.pb.go` regenerates with `GetErrorType() string` and `GetErrorDetailJson() []byte` accessors on `AgentError`.
 
-- [ ] **Step 3: Write the failing round-trip test**
+- [x] **Step 3: Write the failing round-trip test**
 
 ```go
 // pkg/agentsdk/remoteclient_test.go — add
@@ -349,12 +349,12 @@ func TestRemoteAgent_Create_ReconstructsOrphanedResourceError(t *testing.T) {
 
 `remote_test.go` needs `"encoding/json"` added to its imports for these tests.
 
-- [ ] **Step 4: Run tests to verify they fail**
+- [x] **Step 4: Run tests to verify they fail**
 
 Run: `task test`
 Expected: FAIL — `errorResult` doesn't accept a third argument yet, `reconstructAgentError` is undefined.
 
-- [ ] **Step 5: Update `errorResult` and every call site in `remoteclient.go`**
+- [x] **Step 5: Update `errorResult` and every call site in `remoteclient.go`**
 
 ```go
 func errorResult(commandID, msg string, err error) *boxyagentv1.CommandResult {
@@ -374,7 +374,7 @@ Add `"errors"` to the file's imports. Update every call site: sites that already
 
 Also change the two direct-`AgentError` construction sites (`executeStreamingCommand`, line 251, and `remoteclient.go`'s streaming completion path) the same way — they already call `errorResult`, so they get the fix automatically once the signature change above lands; only their call sites' argument lists change as described.
 
-- [ ] **Step 6: Add `reconstructAgentError` and use it in `remote.go`**
+- [x] **Step 6: Add `reconstructAgentError` and use it in `remote.go`**
 
 ```go
 // reconstructAgentError rebuilds a typed error from an AgentError's
@@ -416,12 +416,12 @@ if agentErr := res.GetError(); agentErr != nil {
 
 adjusting the return arity to match each method (`Delete` returns just `reconstructAgentError(...)`, no `nil,`).
 
-- [ ] **Step 7: Run tests to verify they pass**
+- [x] **Step 7: Run tests to verify they pass**
 
 Run: `task test`
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add proto/boxyagent/v1/agent.proto pkg/agentproto/boxyagent/v1/agent.pb.go pkg/agentsdk/remoteclient.go pkg/agentsdk/remote.go pkg/agentsdk/remoteclient_test.go pkg/agentsdk/remote_test.go
@@ -443,7 +443,7 @@ Claude-Session: https://claude.ai/code/session_01WrFcL5kHN8FTgqZqBqWRQm"
 - Consumes: `providersdk.OrphanedResourceError` (Task 1).
 - Produces: `(d *Driver) deleteBestEffort(ctx context.Context, vmName, vhdPath string) (guid string, err error)` (signature changes from `error` to `(string, error)`), `(d *Driver) createFailure(ctx context.Context, vmName, diffPath string, cause error) error`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```go
 // pkg/providersdk/providers/hyperv/driver_test.go — add
@@ -540,12 +540,12 @@ func TestDriver_Create_PlainErrorWhenCleanupSucceeds(t *testing.T) {
 
 Note: `deleteWaitInterval` is reused as the retry-interval override field name is new (`deleteBestEffortInterval` is a package const, not overridable per-instance like `deleteWaitTimeout`/`deleteWaitInterval` are) — Step 3 below adds a `d.deleteBestEffortInterval time.Duration` field mirroring the existing override pattern so tests don't sleep for real; update the tests above to set `d.deleteBestEffortInterval = time.Millisecond` instead of `d.deleteWaitInterval`.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `task test`
 Expected: FAIL — `deleteBestEffort` still returns a single `error`, `deleteBestEffortAttempts`/`deleteBestEffortInterval`/`d.deleteBestEffortInterval` undefined, `createFailure` undefined.
 
-- [ ] **Step 3: Add the retry-interval override field and constants**
+- [x] **Step 3: Add the retry-interval override field and constants**
 
 In the `Driver` struct (after `memoryQueryTimeout`, around line 49), add:
 
@@ -579,7 +579,7 @@ func (d *Driver) bestEffortInterval() time.Duration {
 }
 ```
 
-- [ ] **Step 4: Rewrite `deleteBestEffort`**
+- [x] **Step 4: Rewrite `deleteBestEffort`**
 
 Replace the existing function (lines 836-848) with:
 
@@ -633,7 +633,7 @@ if ($null -eq $vm) { '' } else { $vm.Id.ToString() }
 }
 ```
 
-- [ ] **Step 5: Add `createFailure` and wire it into `Create`'s two failure branches**
+- [x] **Step 5: Add `createFailure` and wire it into `Create`'s two failure branches**
 
 Add near `deleteBestEffort`:
 
@@ -685,16 +685,16 @@ with:
 	}
 ```
 
-- [ ] **Step 6: Update `TestDriver_Create_CleanupOnFailure`'s mock**
+- [x] **Step 6: Update `TestDriver_Create_CleanupOnFailure`'s mock**
 
 The existing test at driver_test.go:99-125 has a `default:` branch returning `"", nil` for the cleanup script — with the new existence-check appended, that branch is now also deleteBestEffort's own retry loop (up to 3 calls). Update the mock's `default` case to return `"\n", nil` (empty existence check = confirmed gone, so the test's original "cleanup succeeds" intent still holds) and update the `callCount < 4` assertion's comment to note deleteBestEffort now makes exactly one round-trip when the VM is confirmed gone on the first attempt (no retry needed) — the assertion's numeric threshold does not need to change.
 
-- [ ] **Step 7: Run tests to verify they pass**
+- [x] **Step 7: Run tests to verify they pass**
 
 Run: `task test`
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add pkg/providersdk/providers/hyperv/driver.go pkg/providersdk/providers/hyperv/driver_test.go
@@ -717,7 +717,7 @@ Claude-Session: https://claude.ai/code/session_01WrFcL5kHN8FTgqZqBqWRQm"
 - Consumes: `providersdk.OrphanedResourceError` (Task 1), `model.ResourceStateError` (existing).
 - Produces: no new exported names — `Provision`'s existing signature (`(model.Resource, error)`) is unchanged; only its error-path return value changes shape (non-zero `Resource` alongside a non-nil `error` specifically for this case).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```go
 // internal/pool/provisioner_driver_test.go — add
@@ -796,12 +796,12 @@ func TestDriverProvisioner_ProvisionPlainErrorWithoutOrphan(t *testing.T) {
 
 Mirror both tests in `internal/pool/provisioner_agent_test.go` against `AgentProvisioner` — check that file's existing fake-agent helper for the right construction pattern, and assert `res.Provider.AgentID` is also populated on the quarantine path (unlike `DriverProvisioner`, which has no `AgentID` concept).
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `task test`
 Expected: FAIL — both `Provision` methods currently return `model.Resource{}, err` unconditionally on `Create`/`agent.Create` failure.
 
-- [ ] **Step 3: Update `DriverProvisioner.Provision`**
+- [x] **Step 3: Update `DriverProvisioner.Provision`**
 
 ```go
 func (dp *DriverProvisioner) Provision(ctx context.Context, pool model.Pool) (model.Resource, error) {
@@ -845,7 +845,7 @@ func (dp *DriverProvisioner) quarantinedResource(poolName model.PoolName, provid
 
 Add `"errors"` to the file's imports.
 
-- [ ] **Step 4: Update `AgentProvisioner.Provision`** the same way
+- [x] **Step 4: Update `AgentProvisioner.Provision`** the same way
 
 ```go
 func (ap *AgentProvisioner) Provision(ctx context.Context, pool model.Pool) (model.Resource, error) {
@@ -891,12 +891,12 @@ func (ap *AgentProvisioner) quarantinedResource(poolName model.PoolName, provide
 
 Add `"errors"` to the file's imports.
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `task test`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add internal/pool/provisioner_driver.go internal/pool/provisioner_agent.go internal/pool/provisioner_driver_test.go internal/pool/provisioner_agent_test.go
