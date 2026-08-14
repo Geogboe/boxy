@@ -309,12 +309,12 @@ func TestRenderUnit_ContainsExecStartAndRestart(t *testing.T) {
 		DisplayName: "Boxy Agent",
 		Description: "Boxy remote agent",
 		ExecPath:    "/usr/local/bin/boxy",
-		Args:        []string{"agent", "serve", "--service-config", "/home/u/.boxy-agent/service.yaml"},
+		Args:        []string{"agent", "serve", "--service-config", "/home/testuser/.boxy-agent/service.yaml"},
 	}
 	unit := renderUnit(spec)
 	want := []string{
 		"Description=Boxy remote agent",
-		`ExecStart=/usr/local/bin/boxy agent serve --service-config /home/u/.boxy-agent/service.yaml`,
+		`ExecStart=/usr/local/bin/boxy agent serve --service-config /home/testuser/.boxy-agent/service.yaml`,
 		"Restart=on-failure",
 	}
 	for _, w := range want {
@@ -351,7 +351,7 @@ func TestSystemdManager_Install_SystemMode_RunsExpectedCommands(t *testing.T) {
 
 func TestSystemdManager_Install_UserMode_EnablesLinger(t *testing.T) {
 	f := withFakeRunner(t)
-	t.Setenv("USER", "geo")
+	t.Setenv("USER", "testuser")
 	dir := t.TempDir()
 	m := &systemdManager{userMode: true, unitDir: dir}
 
@@ -361,7 +361,7 @@ func TestSystemdManager_Install_UserMode_EnablesLinger(t *testing.T) {
 
 	found := false
 	for _, c := range f.calls {
-		if strings.Join(c, " ") == "loginctl enable-linger geo" {
+		if strings.Join(c, " ") == "loginctl enable-linger testuser" {
 			found = true
 		}
 	}
@@ -745,16 +745,16 @@ func TestRenderTaskXML_ContainsLogonTriggerHiddenAndRestart(t *testing.T) {
 		Name:        "boxy-agent",
 		DisplayName: "Boxy Agent",
 		Description: "Boxy remote agent",
-		ExecPath:    `C:\Users\geo\.local\bin\boxy.exe`,
-		Args:        []string{"agent", "serve", "--service-config", `C:\Users\geo\.boxy-agent\service.yaml`},
+		ExecPath:    `C:\Users\testuser\.local\bin\boxy.exe`,
+		Args:        []string{"agent", "serve", "--service-config", `C:\Users\testuser\.boxy-agent\service.yaml`},
 	}
 	xml := renderTaskXML(spec)
 	for _, want := range []string{
 		"<LogonTrigger>",
 		"<Hidden>true</Hidden>",
 		"<RestartOnFailure>",
-		`<Command>C:\Users\geo\.local\bin\boxy.exe</Command>`,
-		`<Arguments>agent serve --service-config C:\Users\geo\.boxy-agent\service.yaml</Arguments>`,
+		`<Command>C:\Users\testuser\.local\bin\boxy.exe</Command>`,
+		`<Arguments>agent serve --service-config C:\Users\testuser\.boxy-agent\service.yaml</Arguments>`,
 	} {
 		if !strings.Contains(xml, want) {
 			t.Errorf("rendered task XML missing %q; got:\n%s", want, xml)

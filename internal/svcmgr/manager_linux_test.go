@@ -50,12 +50,12 @@ func TestRenderUnit_ContainsExecStartAndRestart(t *testing.T) {
 		DisplayName: "Boxy Agent",
 		Description: "Boxy remote agent",
 		ExecPath:    "/usr/local/bin/boxy",
-		Args:        []string{"agent", "serve", "--service-config", "/home/u/.boxy-agent/service.yaml"},
+		Args:        []string{"agent", "serve", "--service-config", "/home/testuser/.boxy-agent/service.yaml"},
 	}
 	unit := renderUnit(spec)
 	want := []string{
 		"Description=Boxy remote agent",
-		`ExecStart=/usr/local/bin/boxy agent serve --service-config /home/u/.boxy-agent/service.yaml`,
+		`ExecStart=/usr/local/bin/boxy agent serve --service-config /home/testuser/.boxy-agent/service.yaml`,
 		"Restart=on-failure",
 	}
 	for _, w := range want {
@@ -142,7 +142,7 @@ func TestSystemdManager_Install_SystemMode_RunsExpectedCommands(t *testing.T) {
 
 func TestSystemdManager_Install_UserMode_EnablesLinger(t *testing.T) {
 	f := withFakeRunner(t)
-	withFakeUsername(t, "geo")
+	withFakeUsername(t, "testuser")
 	dir := t.TempDir()
 	m := &systemdManager{userMode: true, unitDir: dir}
 
@@ -152,7 +152,7 @@ func TestSystemdManager_Install_UserMode_EnablesLinger(t *testing.T) {
 
 	found := false
 	for _, c := range f.calls {
-		if strings.Join(c, " ") == "loginctl enable-linger geo" {
+		if strings.Join(c, " ") == "loginctl enable-linger testuser" {
 			found = true
 		}
 	}
@@ -169,8 +169,8 @@ func TestSystemdManager_Install_UserMode_EnablesLinger(t *testing.T) {
 // failure.
 func TestSystemdManager_Install_UserMode_LingerFailure_StillSucceeds(t *testing.T) {
 	f := withFakeRunner(t)
-	withFakeUsername(t, "geo")
-	f.errs["loginctl enable-linger geo"] = fmt.Errorf("polkit: not authorized")
+	withFakeUsername(t, "testuser")
+	f.errs["loginctl enable-linger testuser"] = fmt.Errorf("polkit: not authorized")
 	dir := t.TempDir()
 	m := &systemdManager{userMode: true, unitDir: dir}
 
