@@ -277,4 +277,9 @@ that intentionally use zero-value provider configuration.
 Hyper-V's host memory reserve is now a provider-level setting,
 `providers[].config.host_reserve_mb`, with a 512 MiB default and explicit
 zero support. This keeps host capacity policy with the provider instance and
-makes the same setting available to embedded and remote agents.
+makes the same setting available to embedded and remote agents. Both the
+embedded daemon and remote-agent service paths now reject duplicate provider
+instances of one type instead of silently selecting an arbitrary config,
+because their driver maps are keyed by provider type. Provider-specific path
+fields inside the opaque config snapshot are not rewritten; service installs
+must use absolute values for those fields.

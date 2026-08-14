@@ -14,12 +14,15 @@ import (
 
 // agentServiceConfig is the on-disk shape of an installed agent service's
 // resolved configuration (written by `boxy agent service install`, read by
-// `boxy agent serve --service-config <path>`). All paths are stored
-// absolute — a service has no predictable working directory to resolve a
-// relative path against. Token is the agent's single-use bootstrap token,
-// base64(svcmgr.EncryptToken(...))-encoded at rest and scrubbed to empty
-// once the agent successfully registers (see scrubAgentServiceConfigToken
-// and its call site in agent_serve.go's OnRegistered callback).
+// `boxy agent serve --service-config <path>`). Paths owned by the service
+// invocation (data dir, CA cert, and log file) are stored absolute because a
+// service has no predictable working directory. ProviderConfigs remain
+// opaque provider-specific values; path fields inside them must be made
+// absolute by the operator when the provider requires it. Token is the
+// agent's single-use bootstrap token, base64(svcmgr.EncryptToken(...))-encoded
+// at rest and scrubbed to empty once the agent successfully registers (see
+// scrubAgentServiceConfigToken and its call site in agent_serve.go's
+// OnRegistered callback).
 type agentServiceConfig struct {
 	Server          string                 `yaml:"server"`
 	Providers       []string               `yaml:"providers"`
