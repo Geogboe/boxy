@@ -58,6 +58,12 @@ type Driver struct {
 	// sleeps. See #183.
 	reservationGraceInterval time.Duration
 
+	// hostReserveMB is host-wide headroom subtracted from available memory.
+	// hostReserveConfigured distinguishes an explicit zero from an unconfigured
+	// Driver built directly by older callers/tests.
+	hostReserveMB         int64
+	hostReserveConfigured bool
+
 	// mu guards reservedMB, the memory (in MB) committed to in-flight Create
 	// calls that a live host query doesn't reflect yet. See reserveMemory.
 	mu         sync.Mutex
@@ -82,12 +88,6 @@ const (
 	// vmStateNotFound is a sentinel returned by state-polling scripts when
 	// the VM has disappeared (e.g. it finished tearing down on its own).
 	vmStateNotFound = "__BOXY_NOT_FOUND__"
-
-	// defaultHostReserveMB is headroom subtracted from the host's available
-	// memory before it's offered to a new Create request, protecting the host OS and
-	// other processes. Not currently user-configurable — see #173's design
-	// spec, "Known gap surfaced by this work."
-	defaultHostReserveMB = 512
 
 	// deleteBestEffortAttempts/defaultDeleteBestEffortInterval bound
 	// deleteBestEffort's cleanup retry: Remove-VM's -ErrorAction
@@ -164,9 +164,20 @@ func (d *Driver) gracePeriod() time.Duration {
 	return defaultReservationGraceInterval
 }
 
-// New creates a Hyper-V driver.
-func New(_ *Config) *Driver {
-	return &Driver{}
+func (d *Driver) hostReserve() int64 {
+	if !d.hostReserveConfigured {
+		return DefaultHostReserveMB
+	}
+	return d.hostReserveMB
+}
+
+// New creates a Hyper-V driver and validates its host-wide configuration.
+func New(cfg *Config) (*Driver, error) {
+	reserve, err := cfg.effectiveHostReserveMB()
+	if err != nil {
+		return nil, err
+	}
+	return &Driver{hostReserveMB: reserve, hostReserveConfigured: true}, nil
 }
 
 func (d *Driver) Type() providersdk.Type { return ProviderType }
@@ -597,7 +608,7 @@ func (d *Driver) Availability(ctx context.Context) (*providersdk.ResourceAvailab
 	reserved := d.reservedMB
 	d.mu.Unlock()
 
-	avail := availableMB - defaultHostReserveMB - reserved
+	avail := availableMB - d.hostReserve() - reserved
 	if avail < 0 {
 		avail = 0
 	}
@@ -631,7 +642,7 @@ func (d *Driver) reserveMemory(ctx context.Context, requestedMB int64) (release 
 		return nil, err
 	}
 
-	available := availableMB - defaultHostReserveMB - d.reservedMB
+	available := availableMB - d.hostReserve() - d.reservedMB
 	if available < requestedMB {
 		// Clamp to 0 for the error message, matching Availability()'s clamp
 		// for the same computation — a negative "available" (e.g. reservedMB

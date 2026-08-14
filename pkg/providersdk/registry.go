@@ -2,19 +2,22 @@ package providersdk
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 )
 
 // Registration bundles everything a provider type contributes to the system:
-// a config prototype for unmarshaling pool config blocks, and a factory
-// that produces a Driver from parsed config.
+// a config prototype for unmarshaling provider-instance config, and a factory
+// that produces a Driver from parsed config. Pool-level create settings are
+// decoded separately by each driver's Create method.
 type Registration struct {
 	// Type is the provider type identifier (e.g. "docker", "hyperv").
 	Type Type
 
 	// ConfigProto returns a zero-value config struct for this driver type.
-	// The system unmarshals the pool's config: YAML block into this struct.
+	// The system unmarshals a provider instance's config YAML block into this
+	// struct before calling NewDriver.
 	ConfigProto func() any
 
 	// NewDriver creates a Driver instance from a parsed config struct.
@@ -84,12 +87,46 @@ func (r *Registry) Types() []Type {
 	return types
 }
 
-// ValidateInstances checks that every instance references a registered provider type.
+// NewDriverFromInstance decodes a configured provider instance and creates its
+// driver. An instance with an empty config receives the registration's
+// zero-value configuration. This keeps provider configuration plumbing in the
+// provider-agnostic registry rather than duplicating it in each application
+// entrypoint.
+func (r *Registry) NewDriverFromInstance(instance Instance) (Driver, error) {
+	registration, ok := r.Get(instance.Type)
+	if !ok {
+		return nil, fmt.Errorf("provider type %q not found in registry", instance.Type)
+	}
+	cfg := registration.ConfigProto()
+	if len(instance.Config) != 0 {
+		b, err := json.Marshal(instance.Config)
+		if err != nil {
+			return nil, fmt.Errorf("marshal config for provider type %q: %w", instance.Type, err)
+		}
+		if err := json.Unmarshal(b, cfg); err != nil {
+			return nil, fmt.Errorf("unmarshal config for provider type %q: %w", instance.Type, err)
+		}
+	}
+	driver, err := registration.NewDriver(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("create driver for provider type %q: %w", instance.Type, err)
+	}
+	return driver, nil
+}
+
+// ValidateInstances checks that every instance references a registered provider type
+// and that each provider type is configured at most once. Driver lookup is keyed
+// by provider type, so duplicate instances would otherwise be ambiguous.
 func (r *Registry) ValidateInstances(_ context.Context, instances []Instance) error {
+	seen := make(map[Type]string, len(instances))
 	for _, inst := range instances {
 		if _, ok := r.Get(inst.Type); !ok {
 			return fmt.Errorf("provider %q: unknown type %q", inst.Name, inst.Type)
 		}
+		if previous, ok := seen[inst.Type]; ok {
+			return fmt.Errorf("provider type %q has multiple configured instances %q and %q; drivers are keyed by provider type", inst.Type, previous, inst.Name)
+		}
+		seen[inst.Type] = inst.Name
 	}
 	return nil
 }

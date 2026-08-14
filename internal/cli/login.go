@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/Geogboe/boxy/internal/credentials"
 	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -22,6 +24,23 @@ type loginOptions struct {
 }
 
 var loginCredentialsStore = credentials.New
+
+var errLoginPromptCanceled = errors.New("API key prompt canceled")
+
+var loginInteractivePrompt = promptAPIKeyInteractive
+
+var loginIsTerminal = func(file *os.File) bool {
+	return term.IsTerminal(int(file.Fd()))
+}
+
+var loginClientConfigStore = func(server string) error {
+	cfg, err := loadClientConfig()
+	if err != nil {
+		return err
+	}
+	cfg.Server = server
+	return writeClientConfig(cfg)
+}
 
 func newLoginCommand() *cobra.Command {
 	var opts loginOptions
@@ -37,10 +56,16 @@ func newLoginCommand() *cobra.Command {
 				}
 				opts.apiKey = key
 			}
+			if !cmd.Flags().Changed("insecure") {
+				opts.insecure = apiInsecureFromEnvironment()
+			}
+			if !cmd.Flags().Changed("ca-cert") {
+				opts.caCert = os.Getenv("BOXY_CA_CERT")
+			}
 			return runLogin(cmd.Context(), opts, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
-	cmd.Flags().StringVar(&opts.server, "server", "", "server URL (default 127.0.0.1:9090)")
+	cmd.Flags().StringVar(&opts.server, "server", "", "server URL (overrides BOXY_SERVER and the global client default)")
 	cmd.Flags().StringVar(&opts.apiKey, "api-key", "", "API key (prefer interactive prompt to avoid shell history/process-list exposure)")
 	cmd.Flags().StringVar(&opts.caCert, "ca-cert", "", "Boxy CA certificate for a self-signed server")
 	cmd.Flags().BoolVar(&opts.insecure, "insecure", false, "skip HTTPS certificate verification (development only)")
@@ -57,23 +82,14 @@ func newLogoutCommand() *cobra.Command {
 			return runLogout(cmd.Context(), server, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVar(&server, "server", "", "server URL (default 127.0.0.1:9090)")
+	cmd.Flags().StringVar(&server, "server", "", "server URL (overrides BOXY_SERVER and the global client default)")
 	return cmd
 }
 
 func promptAPIKey(cmd *cobra.Command) (string, error) {
 	in := cmd.InOrStdin()
-	if file, ok := in.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
-		_, _ = fmt.Fprint(cmd.ErrOrStderr(), "API key: ")
-		value, err := term.ReadPassword(int(file.Fd()))
-		_, _ = fmt.Fprintln(cmd.ErrOrStderr())
-		if err != nil {
-			return "", fmt.Errorf("read API key: %w", err)
-		}
-		if strings.TrimSpace(string(value)) == "" {
-			return "", fmt.Errorf("API key must not be empty")
-		}
-		return strings.TrimSpace(string(value)), nil
+	if file, ok := in.(*os.File); ok && loginIsTerminal(file) {
+		return loginInteractivePrompt(cmd)
 	}
 
 	_, _ = fmt.Fprint(cmd.ErrOrStderr(), "API key: ")
@@ -86,6 +102,25 @@ func promptAPIKey(cmd *cobra.Command) (string, error) {
 		return "", fmt.Errorf("API key must not be empty")
 	}
 	return line, nil
+}
+
+func promptAPIKeyInteractive(_ *cobra.Command) (string, error) {
+	interrupted := false
+	value, err := pterm.DefaultInteractiveTextInput.
+		WithMask("*").
+		WithOnInterruptFunc(func() { interrupted = true }).
+		Show("API key (hidden; Ctrl+C to cancel)")
+	if interrupted {
+		return "", errLoginPromptCanceled
+	}
+	if err != nil {
+		return "", fmt.Errorf("read API key: %w", err)
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("API key must not be empty")
+	}
+	return value, nil
 }
 
 func runLogin(ctx context.Context, opts loginOptions, out, errOut io.Writer) error {
@@ -115,6 +150,9 @@ func runLogin(ctx context.Context, opts loginOptions, out, errOut io.Writer) err
 		if err := store.SetCA(base, caPEM); err != nil {
 			return fmt.Errorf("store CA certificate: %w", err)
 		}
+	}
+	if err := loginClientConfigStore(base); err != nil {
+		return fmt.Errorf("store client server default (API key was stored successfully): %w", err)
 	}
 	_, _ = fmt.Fprintf(out, "Logged in to %s\n", base)
 	_ = errOut

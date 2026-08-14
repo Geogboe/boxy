@@ -37,16 +37,16 @@ func TestRenderTaskXML_ContainsLogonTriggerHiddenAndRestart(t *testing.T) {
 		Name:        "boxy-agent",
 		DisplayName: "Boxy Agent",
 		Description: "Boxy remote agent",
-		ExecPath:    `C:\Users\geo\.local\bin\boxy.exe`,
-		Args:        []string{"agent", "serve", "--service-config", `C:\Users\geo\.boxy-agent\service.yaml`},
+		ExecPath:    `C:\Users\testuser\.local\bin\boxy.exe`,
+		Args:        []string{"agent", "serve", "--service-config", `C:\Users\testuser\.boxy-agent\service.yaml`},
 	}
 	xml := renderTaskXML(spec)
 	for _, want := range []string{
 		"<LogonTrigger>",
 		"<Hidden>true</Hidden>",
 		"<RestartOnFailure>",
-		`<Command>C:\Users\geo\.local\bin\boxy.exe</Command>`,
-		`<Arguments>agent serve --service-config C:\Users\geo\.boxy-agent\service.yaml</Arguments>`,
+		`<Command>C:\Users\testuser\.local\bin\boxy.exe</Command>`,
+		`<Arguments>agent serve --service-config C:\Users\testuser\.boxy-agent\service.yaml</Arguments>`,
 	} {
 		if !strings.Contains(xml, want) {
 			t.Errorf("rendered task XML missing %q; got:\n%s", want, xml)
@@ -140,7 +140,7 @@ func parseWindowsArgsForTest(cmd string) []string {
 }
 
 func TestRenderTaskXML_ArgumentsWithSpacesRoundTrip(t *testing.T) {
-	pathWithSpace := `C:\Users\John Doe\.boxy-agent\service.yaml`
+	pathWithSpace := `C:\Users\Test User\.boxy-agent\service.yaml`
 	spec := Spec{
 		Name:     "boxy-agent",
 		ExecPath: `C:\boxy.exe`,

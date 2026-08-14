@@ -73,14 +73,13 @@ also given, a distinctly named default data directory
 	cmd.Flags().BoolVar(&opts.userMode, "user", false, "install the unprivileged fallback (no admin/root required) instead of a real service")
 	cmd.Flags().StringVar(&opts.instanceName, "instance-name", "", "install as a named instance (produces boxy-agent-<name> and .boxy-agent-<name>) instead of the default single instance")
 	cmd.Flags().StringVar(&opts.agentOpts.server, "server", "", "boxy server gRPC address (host:port), required")
-	cmd.Flags().StringSliceVar(&opts.agentOpts.providers, "providers", nil, "provider types this agent hosts (e.g. docker,hyperv), required")
+	cmd.Flags().StringSliceVar(&opts.agentOpts.providers, "providers", nil, "provider types this agent hosts (e.g. docker,hyperv); optional with --config")
+	cmd.Flags().StringVar(&opts.agentOpts.configPath, "config", "", "Boxy config file supplying provider instances")
 	cmd.Flags().StringVar(&opts.agentOpts.token, "token", "", "single-use registration token (first connection only)")
 	cmd.Flags().StringVar(&opts.agentOpts.name, "name", "", "human-readable agent name (default: hostname)")
 	cmd.Flags().StringVar(&opts.agentOpts.caCert, "ca-cert", "", "path to the server's CA certificate, required for the first (token) connection unless --insecure")
 	cmd.Flags().StringVar(&opts.agentOpts.dataDir, "data-dir", "", "directory for the agent's issued credentials (default .boxy-agent[-<instance-name>] in cwd)")
 	cmd.Flags().BoolVar(&opts.agentOpts.insecure, "insecure", false, "connect without TLS (local development only)")
-	_ = cmd.MarkFlagRequired("server")
-	_ = cmd.MarkFlagRequired("providers")
 	return cmd
 }
 
@@ -88,6 +87,11 @@ func runAgentServiceInstall(cmd *cobra.Command, opts agentServiceInstallOpts) er
 	if err := validateInstanceName(opts.instanceName); err != nil {
 		return err
 	}
+	resolvedAgentOpts, err := resolveAgentServeOpts(opts.agentOpts)
+	if err != nil {
+		return err
+	}
+	opts.agentOpts = resolvedAgentOpts
 	svcName := serviceInstanceName(agentServiceName, opts.instanceName)
 
 	if !opts.userMode {
@@ -119,14 +123,15 @@ func runAgentServiceInstall(cmd *cobra.Command, opts agentServiceInstallOpts) er
 	logFile := filepath.Join(absDataDir, "service.log")
 
 	cfg := agentServiceConfig{
-		Server:    opts.agentOpts.server,
-		Providers: stringsOf(opts.agentOpts.providers),
-		Token:     opts.agentOpts.token,
-		Name:      opts.agentOpts.name,
-		CACert:    absCACert,
-		DataDir:   absDataDir,
-		Insecure:  opts.agentOpts.insecure,
-		LogFile:   logFile,
+		Server:          opts.agentOpts.server,
+		Providers:       stringsOf(opts.agentOpts.providers),
+		ProviderConfigs: opts.agentOpts.providerConfigs,
+		Token:           opts.agentOpts.token,
+		Name:            opts.agentOpts.name,
+		CACert:          absCACert,
+		DataDir:         absDataDir,
+		Insecure:        opts.agentOpts.insecure,
+		LogFile:         logFile,
 	}
 	cfgPath := filepath.Join(absDataDir, "service.yaml")
 	if err := saveAgentServiceConfig(cfgPath, cfg); err != nil {

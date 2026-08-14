@@ -6,12 +6,14 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/Geogboe/boxy/internal/agentserver"
 	"github.com/Geogboe/boxy/internal/pool"
 	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
+	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
@@ -236,5 +238,80 @@ func TestRunAgentServe_NoServiceConfigAndNoServer_ErrorsClearly(t *testing.T) {
 	_, err := resolveAgentServeOpts(agentServeOpts{})
 	if err == nil {
 		t.Fatal("expected an error when neither --server nor --service-config is given")
+	}
+}
+
+func TestSelectAgentProviderInstancesFromConfig(t *testing.T) {
+	instances := []providersdk.Instance{
+		{Name: "docker-local", Type: "docker", Config: map[string]any{"host": "unix:///tmp/docker.sock"}},
+		{Name: "hyperv-local", Type: "hyperv"},
+	}
+	selected, err := selectAgentProviderInstances(instances, nil)
+	if err != nil {
+		t.Fatalf("select all: %v", err)
+	}
+	if len(selected) != 2 || selected[0].Name != "docker-local" {
+		t.Fatalf("selected = %+v, want both configured instances", selected)
+	}
+	selected, err = selectAgentProviderInstances(instances, []string{"docker"})
+	if err != nil {
+		t.Fatalf("select docker: %v", err)
+	}
+	if len(selected) != 1 || selected[0].Type != "docker" {
+		t.Fatalf("selected = %+v, want docker instance", selected)
+	}
+}
+
+func TestSelectAgentProviderInstancesRejectsDuplicateType(t *testing.T) {
+	instances := []providersdk.Instance{
+		{Name: "docker-a", Type: "docker"},
+		{Name: "docker-b", Type: "docker"},
+	}
+	if _, err := selectAgentProviderInstances(instances, nil); err == nil {
+		t.Fatal("duplicate provider type error = nil")
+	}
+	if _, err := selectAgentProviderInstances(instances, []string{"docker"}); err == nil {
+		t.Fatal("duplicate selected provider type error = nil")
+	}
+}
+
+func TestNormalizeProviderStringsTrimsAndDeduplicates(t *testing.T) {
+	got := normalizeProviderStrings([]string{" docker ", "", "docker", "hyperv", " hyperv "})
+	want := []string{"docker", "hyperv"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("normalizeProviderStrings = %v, want %v", got, want)
+	}
+}
+
+func TestResolveAgentServeOptsRejectsDuplicateServiceProviderConfigs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "service.yaml")
+	if err := saveAgentServiceConfig(path, agentServiceConfig{
+		Server: "host:9091",
+		ProviderConfigs: []providersdk.Instance{
+			{Name: "docker-a", Type: "docker"},
+			{Name: "docker-b", Type: "docker"},
+		},
+	}); err != nil {
+		t.Fatalf("saveAgentServiceConfig: %v", err)
+	}
+	if _, err := resolveAgentServeOpts(agentServeOpts{serviceConfigPath: path}); err == nil {
+		t.Fatal("resolveAgentServeOpts duplicate service configs error = nil")
+	}
+}
+
+func TestResolveAgentServeOptsLoadsProviderConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "boxy.yaml")
+	if err := os.WriteFile(path, []byte("providers:\n  - name: docker-local\n    type: docker\n    config:\n      host: unix:///tmp/docker.sock\npools: []\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	opts, err := resolveAgentServeOpts(agentServeOpts{server: "host:9091", configPath: path})
+	if err != nil {
+		t.Fatalf("resolveAgentServeOpts: %v", err)
+	}
+	if len(opts.providers) != 1 || opts.providers[0] != "docker" {
+		t.Fatalf("providers = %v, want docker", opts.providers)
+	}
+	if len(opts.providerConfigs) != 1 || opts.providerConfigs[0].Config["host"] != "unix:///tmp/docker.sock" {
+		t.Fatalf("providerConfigs = %+v, want decoded docker config", opts.providerConfigs)
 	}
 }

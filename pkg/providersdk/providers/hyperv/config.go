@@ -3,12 +3,31 @@
 // no remote connection config is needed.
 package hyperv
 
+import "fmt"
+
 // ProviderType is the registry key for Hyper-V providers.
 const ProviderType = "hyperv"
 
-// Config holds provider-level settings. Currently empty because the agent
-// runs directly on the Hyper-V host and uses the local PowerShell module.
-type Config struct{}
+// Config holds provider-level settings. These settings apply to the entire
+// Hyper-V host, not to an individual pool or VM.
+type Config struct {
+	// HostReserveMB is the memory headroom kept available for the host OS and
+	// other processes. nil uses the safe 512 MB default; a pointer preserves
+	// the explicit zero value, which disables the reserve.
+	HostReserveMB *int64 `json:"host_reserve_mb,omitempty" yaml:"host_reserve_mb,omitempty"`
+}
+
+const DefaultHostReserveMB int64 = 512
+
+func (c *Config) effectiveHostReserveMB() (int64, error) {
+	if c == nil || c.HostReserveMB == nil {
+		return DefaultHostReserveMB, nil
+	}
+	if *c.HostReserveMB < 0 {
+		return 0, fmt.Errorf("host_reserve_mb must not be negative, got %d", *c.HostReserveMB)
+	}
+	return *c.HostReserveMB, nil
+}
 
 // CreateConfig holds pool-level settings for creating a Hyper-V VM.
 type CreateConfig struct {

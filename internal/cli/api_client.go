@@ -165,13 +165,35 @@ func defaultAPIClient() *http.Client {
 }
 
 func apiClientForServer(server string) *http.Client {
-	client, _ := apiClientForSettings(server, "", apiInsecureFromEnvironment())
+	client, err := apiClientForSettings(server, os.Getenv("BOXY_CA_CERT"), apiInsecureFromEnvironment())
+	if err != nil {
+		// Most command paths use this helper from a RunE that already has a
+		// useful output channel, but the helper's historical signature cannot
+		// return an error. Preserve that contract without ever returning a nil
+		// client (which would turn a bad BOXY_CA_CERT path into a panic).
+		return &http.Client{
+			Transport: errorRoundTripper{err: err},
+			Timeout:   defaultAPIClient().Timeout,
+		}
+	}
 	return client
+}
+
+type errorRoundTripper struct{ err error }
+
+func (t errorRoundTripper) RoundTrip(_ *http.Request) (*http.Response, error) {
+	return nil, t.err
 }
 
 func apiClientForCommand(cmd *cobra.Command, server string) (*http.Client, error) {
 	caCertPath, _ := cmd.Flags().GetString("ca-cert")
-	insecure, _ := cmd.Flags().GetBool("insecure")
+	if flag := cmd.Flags().Lookup("ca-cert"); flag == nil || !flag.Changed {
+		caCertPath = os.Getenv("BOXY_CA_CERT")
+	}
+	insecure := apiInsecureFromEnvironment()
+	if flag := cmd.Flags().Lookup("insecure"); flag != nil && flag.Changed {
+		insecure, _ = cmd.Flags().GetBool("insecure")
+	}
 	return apiClientForSettings(server, caCertPath, insecure)
 }
 
@@ -180,7 +202,7 @@ func apiClientForSettings(server, caCertPath string, insecure bool) (*http.Clien
 	key, _ := creds.Get(apiBaseURL(server))
 	caPEM, _ := creds.GetCA(apiBaseURL(server))
 	if caCertPath != "" {
-		data, err := os.ReadFile(caCertPath)
+		data, err := os.ReadFile(caCertPath) //nolint:gosec // the path is explicitly supplied by --ca-cert or BOXY_CA_CERT.
 		if err != nil {
 			return nil, fmt.Errorf("read CA certificate: %w", err)
 		}

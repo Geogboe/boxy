@@ -8,26 +8,31 @@ import (
 	"path/filepath"
 
 	"github.com/Geogboe/boxy/internal/svcmgr"
+	"github.com/Geogboe/boxy/pkg/providersdk"
 	"gopkg.in/yaml.v3"
 )
 
 // agentServiceConfig is the on-disk shape of an installed agent service's
 // resolved configuration (written by `boxy agent service install`, read by
-// `boxy agent serve --service-config <path>`). All paths are stored
-// absolute — a service has no predictable working directory to resolve a
-// relative path against. Token is the agent's single-use bootstrap token,
-// base64(svcmgr.EncryptToken(...))-encoded at rest and scrubbed to empty
-// once the agent successfully registers (see scrubAgentServiceConfigToken
-// and its call site in agent_serve.go's OnRegistered callback).
+// `boxy agent serve --service-config <path>`). Paths owned by the service
+// invocation (data dir, CA cert, and log file) are stored absolute because a
+// service has no predictable working directory. ProviderConfigs remain
+// opaque provider-specific values; path fields inside them must be made
+// absolute by the operator when the provider requires it. Token is the
+// agent's single-use bootstrap token, base64(svcmgr.EncryptToken(...))-encoded
+// at rest and scrubbed to empty once the agent successfully registers (see
+// scrubAgentServiceConfigToken and its call site in agent_serve.go's
+// OnRegistered callback).
 type agentServiceConfig struct {
-	Server    string   `yaml:"server"`
-	Providers []string `yaml:"providers"`
-	Token     string   `yaml:"token,omitempty"`
-	Name      string   `yaml:"name,omitempty"`
-	CACert    string   `yaml:"ca_cert,omitempty"`
-	DataDir   string   `yaml:"data_dir"`
-	Insecure  bool     `yaml:"insecure,omitempty"`
-	LogFile   string   `yaml:"log_file"`
+	Server          string                 `yaml:"server"`
+	Providers       []string               `yaml:"providers"`
+	ProviderConfigs []providersdk.Instance `yaml:"provider_configs,omitempty"`
+	Token           string                 `yaml:"token,omitempty"`
+	Name            string                 `yaml:"name,omitempty"`
+	CACert          string                 `yaml:"ca_cert,omitempty"`
+	DataDir         string                 `yaml:"data_dir"`
+	Insecure        bool                   `yaml:"insecure,omitempty"`
+	LogFile         string                 `yaml:"log_file"`
 }
 
 func saveAgentServiceConfig(path string, cfg agentServiceConfig) error {

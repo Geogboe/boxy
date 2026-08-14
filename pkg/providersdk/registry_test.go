@@ -112,6 +112,44 @@ func TestRegistryValidateInstances(t *testing.T) {
 	if !strings.Contains(err.Error(), `provider "bad": unknown type "missing"`) {
 		t.Fatalf("ValidateInstances error = %q, want unknown provider message", err.Error())
 	}
+
+	err = registry.ValidateInstances(context.Background(), []Instance{
+		{Name: "first", Type: "fake"},
+		{Name: "second", Type: "fake"},
+	})
+	if err == nil {
+		t.Fatal("ValidateInstances duplicate error = nil")
+	}
+	if !strings.Contains(err.Error(), `provider type "fake" has multiple configured instances "first" and "second"`) {
+		t.Fatalf("ValidateInstances duplicate error = %q, want duplicate provider message", err.Error())
+	}
+}
+
+func TestRegistryNewDriverFromInstanceDecodesConfig(t *testing.T) {
+	var got string
+	registry := NewRegistry()
+	if err := registry.Register(Registration{
+		Type: "fake",
+		ConfigProto: func() any {
+			return &struct {
+				Host string `json:"host"`
+			}{}
+		},
+		NewDriver: func(cfg any) (Driver, error) {
+			got = cfg.(*struct {
+				Host string `json:"host"`
+			}).Host
+			return registryDriver{}, nil
+		},
+	}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if _, err := registry.NewDriverFromInstance(Instance{Type: "fake", Config: map[string]any{"host": "remote"}}); err != nil {
+		t.Fatalf("NewDriverFromInstance: %v", err)
+	}
+	if got != "remote" {
+		t.Fatalf("decoded host = %q, want remote", got)
+	}
 }
 
 func TestNilRegistryBehaviors(t *testing.T) {

@@ -36,11 +36,11 @@ needed:
 ## Usage
 
 ```bash
-# Agent — real service, requires elevation
-boxy agent service install --server boxy-server:9091 --providers docker --token <token> --ca-cert ca.crt
+# Agent — real service, requires elevation (provider instances from boxy.yaml)
+boxy agent service install --config boxy.yaml --server boxy-server:9091 --token <token> --ca-cert ca.crt
 
-# Agent — unprivileged fallback
-boxy agent service install --user --server boxy-server:9091 --providers docker --token <token> --ca-cert ca.crt
+# Agent — unprivileged fallback (select only hyperv, if desired)
+boxy agent service install --user --config boxy.yaml --providers hyperv --server boxy-server:9091 --token <token> --ca-cert ca.crt
 
 boxy agent service status
 boxy agent service stop
@@ -56,11 +56,19 @@ boxy serve service uninstall
 
 ## What gets written
 
-`install` resolves every path it's given (`--data-dir`, `--config`,
-`--ca-cert`) to an absolute path and writes a small `service.yaml` file
+`install` resolves every path it owns (`--data-dir`, `--config`, `--ca-cert`,
+and the log file) to an absolute path and writes a small `service.yaml` file
 next to the process's existing state directory (`.boxy-agent/` for the
-agent, `.boxy/` for `serve`) — a running service has no predictable
-working directory, so nothing in the installed invocation depends on cwd.
+agent, `.boxy/` for `serve`) — a running service has no predictable working
+directory, so these top-level invocation paths do not depend on cwd.
+
+For an agent, `--config` selects provider instances from the normal Boxy
+configuration and snapshots them into `service.yaml`; `--providers` may
+filter that set by provider type. Without `--config`, the legacy
+`--providers` list remains supported and creates zero-value provider configs.
+Provider configuration is intentionally opaque to the service installer. If
+a provider-specific field contains a filesystem path (for example,
+`devfactory.data_dir`), pass an absolute path when installing a service.
 
 The agent's `service.yaml` briefly holds the single-use bootstrap
 `--token`: encrypted at rest with DPAPI (machine-scope) on Windows, and
