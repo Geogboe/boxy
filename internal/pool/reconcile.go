@@ -89,6 +89,16 @@ func RunAgentReconciliation(ctx context.Context, st store.Store, registry *Agent
 // connection's own heartbeat interval instead.
 const defaultReconciliationInterval = 15 * time.Second
 
+// DefaultReconciliationPassTimeout bounds a single ReconcileAgent pass
+// inside RunAgentReconciliation so a slow or hung List call can't run
+// forever; each pass is best-effort and logs rather than fails the caller
+// either way. Shared by every RunAgentReconciliation caller — currently
+// internal/agentserver (one goroutine per connected remote agent) and
+// internal/cli's `boxy serve` (one goroutine for the embedded agent, so the
+// in-process deployment topology gets the same #174 defense-in-depth sweep
+// a remote agent gets on every connection).
+const DefaultReconciliationPassTimeout = 30 * time.Second
+
 // remoteEntry pairs a driver-reported resource with the provider type it
 // came from, since providersdk.ResourceStatus itself carries no provider
 // identity.
