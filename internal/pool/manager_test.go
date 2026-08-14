@@ -1697,3 +1697,48 @@ func TestManager_Reconcile_SweepsQuarantinedOrphan(t *testing.T) {
 		t.Fatalf("final state = %q, want %q", final.State, model.ResourceStateDestroyed)
 	}
 }
+
+// TestManager_Reconcile_PersistentQuarantineDestroyFailureBlocksProvisioning
+// documents a known tradeoff, not desired behavior: the actuator's stale-
+// destroy loop runs before its provision loop and returns on the first
+// error (manager.go's reconcileLocked Actuator), a pre-existing property
+// this plan's quarantinedOrphans sweep (#174 Task 5) inherits unchanged —
+// see quarantinedOrphans' doc comment and the design spec's Fix 3. A
+// quarantined resource is quarantined precisely because deleteBestEffort
+// already retried and failed, so if the provider keeps failing to destroy
+// it, every reconcile pass for that pool aborts here before provisioning
+// anything, until either the destroy eventually succeeds or an operator
+// intervenes. Not addressed by this plan; flagged here so a regression in
+// this specific interaction is caught by CI rather than only in review.
+func TestManager_Reconcile_PersistentQuarantineDestroyFailureBlocksProvisioning(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	quarantined := model.Resource{
+		ID:         "quarantine-1",
+		OriginPool: "p1",
+		Provider:   model.ProviderRef{Name: "prov_1"},
+		State:      model.ResourceStateError,
+		CreatedAt:  time.Unix(0, 0).UTC(),
+	}
+	pool := model.Pool{
+		Name:      "p1",
+		Policies:  model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 1, MaxTotal: 5}},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+	if err := st.PutResource(ctx, quarantined); err != nil {
+		t.Fatalf("put resource: %v", err)
+	}
+
+	prov := &fakeProvisioner{destroyErr: errors.New("hyperv cleanup: VM still present")}
+	mgr := New(st, prov)
+
+	if err := mgr.Reconcile(ctx, "p1"); err == nil {
+		t.Fatal("expected reconcile to surface the persistent destroy failure")
+	}
+	if prov.provisionCalls != 0 {
+		t.Fatalf("provisionCalls = %d, want 0 — the pool should not fill while the quarantined resource blocks the stale-destroy loop", prov.provisionCalls)
+	}
+}
