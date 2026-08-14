@@ -86,6 +86,67 @@ provider, not just Hyper-V — see the design spec's "Known gap").
 
 Full design: `docs/superpowers/specs/2026-08-12-hyperv-memory-preflight-design.md`.
 
+### Create-failure cleanup, quarantine, and typed error propagation (#174, #185, #183)
+
+`Create`'s cleanup-on-failure path (`deleteBestEffort`) now retries up to 3
+times, 2s apart, and its own existence re-check (needed anyway, since
+`-ErrorAction SilentlyContinue` masked whether `Remove-VM` actually worked)
+resolves the VM's real GUID when cleanup still can't confirm it's gone.
+`Create` returns a typed `*providersdk.OrphanedResourceError{ID, CauseMessage}`
+in that case instead of a plain error. `Provisioner.Provision` (both the
+embedded-driver and remote-agent variants) recognizes this type and writes a
+`ResourceStateError` resource record — carrying the real GUID and the
+originating pool — instead of the failure vanishing with no ID anywhere in
+Boxy's store, which was the root cause of #174's "orphaned VMs the host
+accumulates but Boxy never learns about." `pool.Manager`'s reconcile loop
+picks up these quarantined records automatically via a new
+`quarantinedOrphans` filter (parallel to, not a change to,
+`orphanedTransientResources`/`isTransientDestroyState` — a quarantined
+resource hasn't started teardown yet, which is that helper's documented
+meaning) and retries destroying them the same way any other stale resource
+is retried. If the underlying `Destroy` call keeps failing for a quarantined
+resource, the pool's provision loop is blocked behind it until it either
+succeeds or an operator intervenes — a known, deliberately undesigned
+tradeoff, not a fix (see the design spec's Section 2, Fix 3).
+
+As defense-in-depth for orphans this inline path can't see (e.g. an agent
+crash between `New-VM` succeeding and the failure branch running), the
+Hyper-V driver now implements `providersdk.ResourceLister` (same convention
+docker already used for #133), and the post-registration reconciliation
+sweep (`pool.ReconcileAgent`) now runs periodically for the life of an
+agent's connection (`pool.RunAgentReconciliation`, on the connection's
+heartbeat cadence) instead of once at registration only — closing the gap
+where a long-connected agent (the realistic Hyper-V deployment topology; see
+ADR-0005) never got re-audited.
+
+`CapacityError` moved from `hyperv` to `providersdk` (aliased back for
+compatibility) since it's not intrinsically Hyper-V-specific, alongside a new
+`OrphanedResourceError` and a small `providersdk.ErrorTyper` interface. Both
+typed errors now survive the `RemoteAgent`/gRPC boundary (#185): `AgentError`
+gained `error_type`/`error_detail_json` fields (opaque JSON, mirroring
+`CreateCommand.config_json`'s existing rationale, so a future typed error
+never needs another proto change), and the quarantine mechanism above works
+identically over that boundary — without it, quarantine would only have
+worked for the in-process embedded-agent path, silently doing nothing on the
+realistic remote-agent deployment.
+
+Finally, #183's in-process memory-reservation window (the tension between
+`Driver.reservedMB` and the live host-memory query around a `Create` call's
+boundary) is narrowed, not closed — the issue's own analysis found no clean
+full fix. The create script now releases its reservation immediately after
+`Start-VM` succeeds rather than holding it through a trailing, now-separate
+ID-lookup call, shrinking the over-reservation window from the whole `Create`
+duration to one fast `Get-VM` call; and `release()` now delays its decrement
+by a 5s grace period, deliberately biasing toward the safer failure direction
+(a stale-high reservation can only cause a spurious, harmless
+`CapacityError` on an immediately-following sequential `Create`, never let
+one overcommit the host). A sequential `Create` arriving after that grace
+period but before the OS counter catches up can still overcommit — #183
+stays open, documenting this residual gap rather than being closed as fully
+fixed.
+
+Full design: `docs/superpowers/specs/2026-08-13-hyperv-create-failure-hardening-design.md`.
+
 ## Consequences
 
 - Deleting a VM stuck in transition now takes up to ~30s longer (the wait

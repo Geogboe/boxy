@@ -1871,7 +1871,7 @@ Claude-Session: https://claude.ai/code/session_01WrFcL5kHN8FTgqZqBqWRQm"
 
 **Interfaces:** None (docs only).
 
-- [ ] **Step 1: Append a new section to ADR-0004**
+- [x] **Step 1: Append a new section to ADR-0004**
 
 After the existing "Memory preflight and reservation (#173)" section (ends around line 87, before "## Consequences"), add:
 
@@ -1935,7 +1935,7 @@ fixed.
 Full design: `docs/superpowers/specs/2026-08-13-hyperv-create-failure-hardening-design.md`.
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add docs/adr/0004-hyperv-teardown-guard-and-provisioning-backoff.md
