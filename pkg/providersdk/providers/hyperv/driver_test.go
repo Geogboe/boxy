@@ -898,6 +898,40 @@ func TestDriver_Allocate_Windows(t *testing.T) {
 	}
 }
 
+func TestDriver_List_FiltersToBoxyPrefixedVMs(t *testing.T) {
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		if !strings.Contains(script, "boxy-*") {
+			t.Errorf("expected script to filter by boxy-* prefix, got: %s", script)
+		}
+		return "guid-1|Running\nguid-2|Off\n", nil
+	})
+
+	statuses, err := d.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(statuses) != 2 {
+		t.Fatalf("statuses = %+v, want 2", statuses)
+	}
+	if statuses[0].ID != "guid-1" || statuses[0].State != "running" {
+		t.Errorf("statuses[0] = %+v, want {guid-1 running}", statuses[0])
+	}
+	if statuses[1].ID != "guid-2" || statuses[1].State != "stopped" {
+		t.Errorf("statuses[1] = %+v, want {guid-2 stopped}", statuses[1])
+	}
+}
+
+func TestDriver_List_EmptyHost(t *testing.T) {
+	d := mockDriver(func(_ context.Context, _ string) (string, error) { return "", nil })
+	statuses, err := d.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(statuses) != 0 {
+		t.Errorf("statuses = %+v, want empty", statuses)
+	}
+}
+
 // --- Helpers ---
 
 // fakeGuestExec is a test double for vmsdk.GuestExec.
@@ -917,4 +951,5 @@ func (f *fakeGuestExec) Exec(_ context.Context, _ string, _ ...string) (*vmsdk.E
 // --- providersdk.Driver interface compliance ---
 
 var _ providersdk.Driver = (*Driver)(nil)
+var _ providersdk.ResourceLister = (*Driver)(nil)
 var _ providersdk.GuestPersonalizer = (*Driver)(nil)

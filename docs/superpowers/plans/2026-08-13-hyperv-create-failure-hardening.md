@@ -1150,7 +1150,7 @@ Claude-Session: https://claude.ai/code/session_01WrFcL5kHN8FTgqZqBqWRQm"
 - Consumes: `providersdk.ResourceLister`, `providersdk.ResourceStatus` (existing), `normalizeVMState` (existing, `driver.go:253-278`).
 - Produces: `(d *Driver) List(ctx context.Context) ([]providersdk.ResourceStatus, error)`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 // pkg/providersdk/providers/hyperv/driver_test.go — add
@@ -1191,12 +1191,12 @@ func TestDriver_List_EmptyHost(t *testing.T) {
 var _ providersdk.ResourceLister = (*Driver)(nil)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `task test`
 Expected: FAIL — `d.List` undefined; the `var _ providersdk.ResourceLister = (*Driver)(nil)` assertion fails to compile.
 
-- [ ] **Step 3: Implement `List`**
+- [x] **Step 3: Implement `List`**
 
 Add near `Read` (after line 251, before `normalizeVMState`):
 
@@ -1239,12 +1239,12 @@ Get-VM | Where-Object { $_.Name -like 'boxy-*' } | ForEach-Object { "$($_.Id)|$(
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `task test`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add pkg/providersdk/providers/hyperv/driver.go pkg/providersdk/providers/hyperv/driver_test.go

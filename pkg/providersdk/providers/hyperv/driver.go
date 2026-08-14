@@ -268,6 +268,43 @@ $ErrorActionPreference = 'Stop'
 	}, nil
 }
 
+// List satisfies providersdk.ResourceLister, enumerating every boxy-*-named
+// VM this driver's host currently has — including ones the store has no
+// record of, e.g. left behind by a crash between New-VM succeeding and
+// Create's failure branch running (see #174). Prefix-filtered inside the
+// PowerShell query itself, not client-side, so a host running unrelated VMs
+// alongside Boxy's never returns them to a caller that doesn't expect it.
+func (d *Driver) List(ctx context.Context) ([]providersdk.ResourceStatus, error) {
+	out, err := d.ps(ctx, `
+$ErrorActionPreference = 'Stop'
+Get-VM | Where-Object { $_.Name -like 'boxy-*' } | ForEach-Object { "$($_.Id)|$($_.State)" }
+`)
+	if err != nil {
+		return nil, fmt.Errorf("hyperv list: %w", err)
+	}
+	trimmed := strings.TrimSpace(out)
+	if trimmed == "" {
+		return nil, nil
+	}
+	lines := strings.Split(trimmed, "\n")
+	statuses := make([]providersdk.ResourceStatus, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "|", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		statuses = append(statuses, providersdk.ResourceStatus{
+			ID:    strings.TrimSpace(parts[0]),
+			State: normalizeVMState(strings.TrimSpace(parts[1])),
+		})
+	}
+	return statuses, nil
+}
+
 func normalizeVMState(s string) string {
 	switch strings.ToLower(s) {
 	case "running":
