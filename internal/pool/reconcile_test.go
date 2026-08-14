@@ -134,6 +134,10 @@ type fakeListingAgent struct {
 	info        agentsdk.AgentInfo
 	listResults map[providersdk.Type][]providersdk.ResourceStatus
 	listErrs    map[providersdk.Type]error
+	// listCalls counts List invocations across all providers — used by
+	// TestRunAgentReconciliation_RunsImmediatelyThenOnEachTick to prove a
+	// second (ticked) pass actually ran, not just the immediate one.
+	listCalls atomic.Int32
 }
 
 func (a *fakeListingAgent) Info() agentsdk.AgentInfo { return a.info }
@@ -153,6 +157,7 @@ func (a *fakeListingAgent) Allocate(context.Context, providersdk.Type, string) (
 	return nil, errors.New("not implemented")
 }
 func (a *fakeListingAgent) List(_ context.Context, provider providersdk.Type) ([]providersdk.ResourceStatus, error) {
+	a.listCalls.Add(1)
 	if err, ok := a.listErrs[provider]; ok {
 		return nil, err
 	}
@@ -323,7 +328,6 @@ func TestRunAgentReconciliation_RunsImmediatelyThenOnEachTick(t *testing.T) {
 	defer cancel()
 	st := store.NewMemoryStore()
 
-	var callCount atomic.Int32
 	agent := &fakeListingAgent{
 		info: agentsdk.AgentInfo{ID: "agent-1", Providers: []providersdk.Type{"docker"}},
 		listResults: map[providersdk.Type][]providersdk.ResourceStatus{
@@ -338,18 +342,20 @@ func TestRunAgentReconciliation_RunsImmediatelyThenOnEachTick(t *testing.T) {
 		close(done)
 	}()
 
-	// Wait for at least two passes (immediate + one tick), then cancel.
+	// Wait for at least two List calls (the immediate pass plus one tick) —
+	// polling for the adopted resource alone would also pass against the
+	// old one-shot call, since a single immediate pass already adopts it.
+	// Only the call count proves the ticker actually fired again.
 	deadline := time.After(time.Second)
-	for {
-		if res, err := st.GetResource(context.Background(), "orphan-1"); err == nil && res.ID == "orphan-1" {
-			callCount.Add(1)
-			break
-		}
+	for agent.listCalls.Load() < 2 {
 		select {
 		case <-deadline:
-			t.Fatal("timed out waiting for the first reconciliation pass to adopt orphan-1")
+			t.Fatalf("timed out waiting for a second reconciliation pass; listCalls=%d", agent.listCalls.Load())
 		case <-time.After(time.Millisecond):
 		}
+	}
+	if _, err := st.GetResource(context.Background(), "orphan-1"); err != nil {
+		t.Fatalf("expected the immediate pass to have adopted orphan-1: %v", err)
 	}
 
 	cancel()
