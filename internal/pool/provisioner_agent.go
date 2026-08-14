@@ -53,15 +53,12 @@ func (ap *AgentProvisioner) Provision(ctx context.Context, pool model.Pool) (mod
 		wrapped := fmt.Errorf("agent create for pool %q: %w", pool.Name, err)
 		var orphanErr *providersdk.OrphanedResourceError
 		if errors.As(err, &orphanErr) {
-			return ap.quarantinedResource(pool.Name, string(driverType), agent.Info().ID, orphanErr), wrapped
+			return newQuarantinedResource(pool.Name, string(driverType), agent.Info().ID, orphanErr, ap.now()), wrapped
 		}
 		return model.Resource{}, wrapped
 	}
 
-	now := time.Now().UTC()
-	if ap.Now != nil {
-		now = ap.Now().UTC()
-	}
+	now := ap.now()
 
 	// Merge connection info and metadata into properties.
 	props := make(map[string]any, len(res.ConnectionInfo)+len(res.Metadata))
@@ -85,22 +82,12 @@ func (ap *AgentProvisioner) Provision(ctx context.Context, pool model.Pool) (mod
 	}, nil
 }
 
-// quarantinedResource builds the ResourceStateError record written for a
-// Create failure whose cleanup also failed (see #174).
-func (ap *AgentProvisioner) quarantinedResource(poolName model.PoolName, providerName, agentID string, orphanErr *providersdk.OrphanedResourceError) model.Resource {
-	now := time.Now().UTC()
+// now resolves ap.Now, defaulting to time.Now().UTC() when unset.
+func (ap *AgentProvisioner) now() time.Time {
 	if ap.Now != nil {
-		now = ap.Now().UTC()
+		return ap.Now().UTC()
 	}
-	return model.Resource{
-		ID:         model.ResourceID(orphanErr.ID),
-		OriginPool: poolName,
-		Provider:   model.ProviderRef{Name: providerName, AgentID: agentID},
-		State:      model.ResourceStateError,
-		Properties: map[string]any{"quarantine_reason": orphanErr.CauseMessage},
-		CreatedAt:  now,
-		UpdatedAt:  now,
-	}
+	return time.Now().UTC()
 }
 
 func (ap *AgentProvisioner) Allocate(ctx context.Context, pool model.Pool, res model.Resource) (map[string]any, error) {

@@ -3,8 +3,10 @@ package pool
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
 // Provisioner is the execution seam for the pool subsystem.
@@ -47,4 +49,24 @@ func (UnimplementedProvisioner) Destroy(ctx context.Context, pool model.Pool, re
 	_ = pool
 	_ = res
 	return fmt.Errorf("pool provisioner not implemented")
+}
+
+// newQuarantinedResource builds the ResourceStateError record written for a
+// Create failure whose cleanup also failed (see #174). Shared by
+// DriverProvisioner and AgentProvisioner, whose Provision methods were
+// otherwise identical here except for how each resolves "now" (dp.Now/
+// ap.Now vs. time.Now) — now is a parameter rather than this function
+// reading a Now func itself, so it stays free of both provisioner types.
+// agentID is empty for DriverProvisioner (no agent concept); AgentProvisioner
+// passes its own.
+func newQuarantinedResource(poolName model.PoolName, providerName, agentID string, orphanErr *providersdk.OrphanedResourceError, now time.Time) model.Resource {
+	return model.Resource{
+		ID:         model.ResourceID(orphanErr.ID),
+		OriginPool: poolName,
+		Provider:   model.ProviderRef{Name: providerName, AgentID: agentID},
+		State:      model.ResourceStateError,
+		Properties: map[string]any{"quarantine_reason": orphanErr.CauseMessage},
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
 }
