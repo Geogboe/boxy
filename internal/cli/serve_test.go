@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	boxyconfig "github.com/Geogboe/boxy/internal/config"
@@ -328,6 +329,28 @@ func TestBuildDriversReportsDecodeAndFactoryErrors(t *testing.T) {
 
 	if _, err := buildDrivers(reg, nil); err == nil {
 		t.Fatal("buildDrivers factory error = nil")
+	}
+}
+
+func TestBuildDriversRejectsDuplicateConfiguredProviderTypes(t *testing.T) {
+	reg := providersdk.NewRegistry()
+	if err := reg.Register(providersdk.Registration{
+		Type:        "alpha",
+		ConfigProto: func() any { return &serveDriverConfig{} },
+		NewDriver:   func(any) (providersdk.Driver, error) { return serveDriver{providerType: "alpha"}, nil },
+	}); err != nil {
+		t.Fatalf("register alpha: %v", err)
+	}
+
+	_, err := buildDrivers(reg, []providersdk.Instance{
+		{Name: "alpha-a", Type: "alpha"},
+		{Name: "alpha-b", Type: "alpha"},
+	})
+	if err == nil {
+		t.Fatal("buildDrivers duplicate provider type error = nil")
+	}
+	if !strings.Contains(err.Error(), `provider type "alpha" has multiple configured instances`) {
+		t.Fatalf("buildDrivers error = %q, want duplicate provider type message", err)
 	}
 }
 

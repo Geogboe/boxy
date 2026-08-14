@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
 	"time"
 
@@ -271,6 +272,30 @@ func TestSelectAgentProviderInstancesRejectsDuplicateType(t *testing.T) {
 	}
 	if _, err := selectAgentProviderInstances(instances, []string{"docker"}); err == nil {
 		t.Fatal("duplicate selected provider type error = nil")
+	}
+}
+
+func TestNormalizeProviderStringsTrimsAndDeduplicates(t *testing.T) {
+	got := normalizeProviderStrings([]string{" docker ", "", "docker", "hyperv", " hyperv "})
+	want := []string{"docker", "hyperv"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("normalizeProviderStrings = %v, want %v", got, want)
+	}
+}
+
+func TestResolveAgentServeOptsRejectsDuplicateServiceProviderConfigs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "service.yaml")
+	if err := saveAgentServiceConfig(path, agentServiceConfig{
+		Server: "host:9091",
+		ProviderConfigs: []providersdk.Instance{
+			{Name: "docker-a", Type: "docker"},
+			{Name: "docker-b", Type: "docker"},
+		},
+	}); err != nil {
+		t.Fatalf("saveAgentServiceConfig: %v", err)
+	}
+	if _, err := resolveAgentServeOpts(agentServeOpts{serviceConfigPath: path}); err == nil {
+		t.Fatal("resolveAgentServeOpts duplicate service configs error = nil")
 	}
 }
 

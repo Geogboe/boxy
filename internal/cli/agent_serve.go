@@ -81,6 +81,7 @@ func newAgentServeCommand() *cobra.Command {
 // for the flags that used to be cobra-required (--server, --providers).
 func resolveAgentServeOpts(opts agentServeOpts) (agentServeOpts, error) {
 	if opts.serviceConfigPath == "" {
+		opts.providers = normalizeProviderStrings(opts.providers)
 		if opts.server == "" {
 			return agentServeOpts{}, fmt.Errorf("--server is required (or pass --service-config)")
 		}
@@ -111,13 +112,18 @@ func resolveAgentServeOpts(opts agentServeOpts) (agentServeOpts, error) {
 	if cfg.Server == "" {
 		return agentServeOpts{}, fmt.Errorf("invalid --service-config %q: missing server", opts.serviceConfigPath)
 	}
-	if len(cfg.ProviderConfigs) == 0 && len(cfg.Providers) == 0 {
-		return agentServeOpts{}, fmt.Errorf("invalid --service-config %q: missing providers", opts.serviceConfigPath)
-	}
-	providers := cfg.Providers
+	providers := normalizeProviderStrings(cfg.Providers)
 	providerConfigs := cfg.ProviderConfigs
 	if len(providerConfigs) != 0 {
+		selected, err := selectAgentProviderInstances(providerConfigs, nil)
+		if err != nil {
+			return agentServeOpts{}, fmt.Errorf("invalid --service-config %q: %w", opts.serviceConfigPath, err)
+		}
+		providerConfigs = selected
 		providers = providerTypesFromInstances(providerConfigs)
+	}
+	if len(providers) == 0 {
+		return agentServeOpts{}, fmt.Errorf("invalid --service-config %q: missing providers", opts.serviceConfigPath)
 	}
 	return agentServeOpts{
 		server:            cfg.Server,
@@ -136,6 +142,23 @@ func providerTypesFromInstances(instances []providersdk.Instance) []string {
 	providers := make([]string, 0, len(instances))
 	for _, instance := range instances {
 		providers = append(providers, string(instance.Type))
+	}
+	return providers
+}
+
+func normalizeProviderStrings(values []string) []string {
+	providers := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, raw := range values {
+		provider := strings.TrimSpace(raw)
+		if provider == "" {
+			continue
+		}
+		if _, ok := seen[provider]; ok {
+			continue
+		}
+		seen[provider] = struct{}{}
+		providers = append(providers, provider)
 	}
 	return providers
 }
@@ -208,11 +231,8 @@ func runAgentServe(ctx context.Context, opts agentServeOpts) error {
 	}
 
 	providerTypes := make([]providersdk.Type, 0, len(opts.providers))
-	for _, p := range opts.providers {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			providerTypes = append(providerTypes, providersdk.Type(p))
-		}
+	for _, p := range normalizeProviderStrings(opts.providers) {
+		providerTypes = append(providerTypes, providersdk.Type(p))
 	}
 	if len(providerTypes) == 0 {
 		return fmt.Errorf("--providers must name at least one provider type")

@@ -716,6 +716,9 @@ func buildDrivers(reg *providersdk.Registry, instances []providersdk.Instance) (
 	// Build a map of type -> configured instance for easy lookup.
 	configByType := make(map[providersdk.Type]providersdk.Instance)
 	for _, inst := range instances {
+		if previous, ok := configByType[inst.Type]; ok {
+			return nil, fmt.Errorf("provider type %q has multiple configured instances %q and %q; embedded agent drivers are keyed by provider type", inst.Type, previous.Name, inst.Name)
+		}
 		configByType[inst.Type] = inst
 	}
 
