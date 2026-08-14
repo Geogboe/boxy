@@ -122,13 +122,19 @@ ADR-0005) never got re-audited.
 `CapacityError` moved from `hyperv` to `providersdk` (aliased back for
 compatibility) since it's not intrinsically Hyper-V-specific, alongside a new
 `OrphanedResourceError` and a small `providersdk.ErrorTyper` interface. Both
-typed errors now survive the `RemoteAgent`/gRPC boundary (#185): `AgentError`
-gained `error_type`/`error_detail_json` fields (opaque JSON, mirroring
+typed errors now survive the `RemoteAgent`/gRPC boundary (#185) on the unary
+command path — the only one either type is produced on today, since both
+originate from `Create`, which is always unary: `AgentError` gained
+`error_type`/`error_detail_json` fields (opaque JSON, mirroring
 `CreateCommand.config_json`'s existing rationale, so a future typed error
 never needs another proto change), and the quarantine mechanism above works
 identically over that boundary — without it, quarantine would only have
 worked for the in-process embedded-agent path, silently doing nothing on the
-realistic remote-agent deployment.
+realistic remote-agent deployment. The streaming completion path
+(`OperationStreamEvent.error`, used by `UpdateStream`) still flattens any
+error to a plain string with no equivalent typed fields — fine while
+`Create` is the only producer, but worth a proto change of its own the day a
+streaming-originated operation needs to return a typed error.
 
 Finally, #183's in-process memory-reservation window (the tension between
 `Driver.reservedMB` and the live host-memory query around a `Create` call's
