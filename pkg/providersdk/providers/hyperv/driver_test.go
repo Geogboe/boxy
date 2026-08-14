@@ -507,12 +507,21 @@ func TestDriver_ReserveMemory_SufficientCapacitySucceeds(t *testing.T) {
 	}
 
 	release()
-	if d.reservedMB != 2048 {
-		t.Errorf("reservedMB immediately after release() = %d, want 2048 (grace period still holding it)", d.reservedMB)
+	// Reads after release() race the grace-period goroutine's mutex-guarded
+	// write (driver.go's reserveMemory), so they must take the same lock —
+	// see TestDriver_ReserveMemory_ReleaseHasGracePeriod for the pattern.
+	d.mu.Lock()
+	immediatelyAfter := d.reservedMB
+	d.mu.Unlock()
+	if immediatelyAfter != 2048 {
+		t.Errorf("reservedMB immediately after release() = %d, want 2048 (grace period still holding it)", immediatelyAfter)
 	}
 	time.Sleep(150 * time.Millisecond)
-	if d.reservedMB != 0 {
-		t.Errorf("reservedMB after the grace period = %d, want 0", d.reservedMB)
+	d.mu.Lock()
+	afterGracePeriod := d.reservedMB
+	d.mu.Unlock()
+	if afterGracePeriod != 0 {
+		t.Errorf("reservedMB after the grace period = %d, want 0", afterGracePeriod)
 	}
 }
 
@@ -658,8 +667,13 @@ func TestDriver_ReserveMemory_ConcurrentCallsLimitToCapacity(t *testing.T) {
 		release()
 	}
 	time.Sleep(150 * time.Millisecond)
-	if d.reservedMB != 0 {
-		t.Errorf("reservedMB after releasing all and the grace period = %d, want 0", d.reservedMB)
+	// Races the grace-period goroutines' mutex-guarded writes; see the note
+	// in TestDriver_ReserveMemory_SufficientCapacitySucceeds.
+	d.mu.Lock()
+	afterGracePeriod := d.reservedMB
+	d.mu.Unlock()
+	if afterGracePeriod != 0 {
+		t.Errorf("reservedMB after releasing all and the grace period = %d, want %d", afterGracePeriod, 0)
 	}
 }
 
@@ -683,13 +697,21 @@ func TestDriver_Create_ReservationHeldThroughGracePeriodAfterFailure(t *testing.
 	if _, err := d.Create(context.Background(), &CreateConfig{TemplateVHD: `C:\t.vhdx`}); err == nil {
 		t.Fatal("expected the first Create to fail")
 	}
-	if d.reservedMB == 0 {
+	// Races the grace-period goroutine's mutex-guarded write; see the note
+	// in TestDriver_ReserveMemory_SufficientCapacitySucceeds.
+	d.mu.Lock()
+	immediatelyAfter := d.reservedMB
+	d.mu.Unlock()
+	if immediatelyAfter == 0 {
 		t.Fatal("expected reservedMB to still be held immediately after a failed Create (grace period)")
 	}
 
 	time.Sleep(150 * time.Millisecond)
-	if d.reservedMB != 0 {
-		t.Fatalf("reservedMB after the grace period = %d, want 0 (must not leak permanently)", d.reservedMB)
+	d.mu.Lock()
+	afterGracePeriod := d.reservedMB
+	d.mu.Unlock()
+	if afterGracePeriod != 0 {
+		t.Fatalf("reservedMB after the grace period = %d, want 0 (must not leak permanently)", afterGracePeriod)
 	}
 
 	// A second reservation must succeed once the grace period has elapsed.
