@@ -53,6 +53,11 @@ type Driver struct {
 	// override it to avoid real sleeps. See #174.
 	deleteBestEffortInterval time.Duration
 
+	// reservationGraceInterval delays reserveMemory's released decrement.
+	// Zero uses the production default; tests override it to avoid real
+	// sleeps. See #183.
+	reservationGraceInterval time.Duration
+
 	// mu guards reservedMB, the memory (in MB) committed to in-flight Create
 	// calls that a live host query doesn't reflect yet. See reserveMemory.
 	mu         sync.Mutex
@@ -92,13 +97,18 @@ const (
 	deleteBestEffortAttempts        = 3
 	defaultDeleteBestEffortInterval = 2 * time.Second
 
-	// reservationGraceInterval delays reserveMemory's release() decrement
-	// past Create's return, biasing #183's under-/over-reservation tradeoff
-	// toward the safe direction: a stale-high reservedMB can only cause a
-	// spurious CapacityError on an immediately-following sequential Create
-	// (annoying, safe), never let one overcommit the host (dangerous). Same
-	// order of magnitude as defaultDeleteWaitInterval.
-	reservationGraceInterval = 5 * time.Second
+	// defaultReservationGraceInterval delays reserveMemory's release()
+	// decrement past Create's return, biasing #183's under-/over-reservation
+	// tradeoff toward the safe direction: a stale-high reservedMB can only
+	// cause a spurious CapacityError on an immediately-following sequential
+	// Create (annoying, safe), never let one overcommit the host
+	// (dangerous). Applied uniformly to every release() — including
+	// Create's failure path, where no VM ends up existing — rather than
+	// only the success path: the same "annoying, safe" tradeoff holds
+	// either way, and it's simpler than threading a second, ungraced
+	// release variant through Create's failure branches. Same order of
+	// magnitude as defaultDeleteWaitInterval.
+	defaultReservationGraceInterval = 5 * time.Second
 )
 
 // vmTransitionalStates are Hyper-V VMState values that mean "still moving
@@ -138,6 +148,13 @@ func (d *Driver) bestEffortInterval() time.Duration {
 		return d.deleteBestEffortInterval
 	}
 	return defaultDeleteBestEffortInterval
+}
+
+func (d *Driver) gracePeriod() time.Duration {
+	if d.reservationGraceInterval > 0 {
+		return d.reservationGraceInterval
+	}
+	return defaultReservationGraceInterval
 }
 
 // New creates a Hyper-V driver.
@@ -622,7 +639,7 @@ func (d *Driver) reserveMemory(ctx context.Context, requestedMB int64) (release 
 		// Independent of the caller's ctx (which may already be cancelled
 		// by the time Create returns) — this is pure in-process bookkeeping,
 		// not I/O, so it doesn't need one.
-		time.AfterFunc(reservationGraceInterval, func() {
+		time.AfterFunc(d.gracePeriod(), func() {
 			d.mu.Lock()
 			d.reservedMB -= requestedMB
 			d.mu.Unlock()

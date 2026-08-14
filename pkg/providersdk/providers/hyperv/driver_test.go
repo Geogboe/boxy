@@ -466,6 +466,7 @@ func TestDriver_ReserveMemory_SufficientCapacitySucceeds(t *testing.T) {
 	d := mockDriver(func(_ context.Context, _ string) (string, error) {
 		return "16384\n", nil // 16 GB
 	})
+	d.reservationGraceInterval = 50 * time.Millisecond
 
 	release, err := d.reserveMemory(context.Background(), 2048)
 	if err != nil {
@@ -482,7 +483,7 @@ func TestDriver_ReserveMemory_SufficientCapacitySucceeds(t *testing.T) {
 	if d.reservedMB != 2048 {
 		t.Errorf("reservedMB immediately after release() = %d, want 2048 (grace period still holding it)", d.reservedMB)
 	}
-	time.Sleep(reservationGraceInterval + 200*time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
 	if d.reservedMB != 0 {
 		t.Errorf("reservedMB after the grace period = %d, want 0", d.reservedMB)
 	}
@@ -492,6 +493,7 @@ func TestDriver_ReserveMemory_ReleaseHasGracePeriod(t *testing.T) {
 	d := mockDriver(func(_ context.Context, script string) (string, error) {
 		return "1024\n", nil // 1 GB available
 	})
+	d.reservationGraceInterval = 50 * time.Millisecond
 
 	release, err := d.reserveMemory(context.Background(), 512)
 	if err != nil {
@@ -508,7 +510,7 @@ func TestDriver_ReserveMemory_ReleaseHasGracePeriod(t *testing.T) {
 		t.Fatalf("reservedMB immediately after release() = %d, want 512 (still held during the grace period)", immediatelyAfter)
 	}
 
-	time.Sleep(reservationGraceInterval + 200*time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
 	d.mu.Lock()
 	afterGracePeriod := d.reservedMB
 	d.mu.Unlock()
@@ -583,6 +585,7 @@ func TestDriver_ReserveMemory_ConcurrentCallsLimitToCapacity(t *testing.T) {
 	d := mockDriver(func(_ context.Context, _ string) (string, error) {
 		return "16384\n", nil
 	})
+	d.reservationGraceInterval = 50 * time.Millisecond
 
 	const callers = 8
 	const requestMB = 4096
@@ -627,7 +630,7 @@ func TestDriver_ReserveMemory_ConcurrentCallsLimitToCapacity(t *testing.T) {
 	for release := range releases {
 		release()
 	}
-	time.Sleep(reservationGraceInterval + 200*time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
 	if d.reservedMB != 0 {
 		t.Errorf("reservedMB after releasing all and the grace period = %d, want 0", d.reservedMB)
 	}
@@ -648,6 +651,7 @@ func TestDriver_Create_ReservationHeldThroughGracePeriodAfterFailure(t *testing.
 			return "\n", nil // deleteBestEffort: confirmed gone on first attempt
 		}
 	})
+	d.reservationGraceInterval = 50 * time.Millisecond
 
 	if _, err := d.Create(context.Background(), &CreateConfig{TemplateVHD: `C:\t.vhdx`}); err == nil {
 		t.Fatal("expected the first Create to fail")
@@ -656,7 +660,7 @@ func TestDriver_Create_ReservationHeldThroughGracePeriodAfterFailure(t *testing.
 		t.Fatal("expected reservedMB to still be held immediately after a failed Create (grace period)")
 	}
 
-	time.Sleep(reservationGraceInterval + 200*time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
 	if d.reservedMB != 0 {
 		t.Fatalf("reservedMB after the grace period = %d, want 0 (must not leak permanently)", d.reservedMB)
 	}

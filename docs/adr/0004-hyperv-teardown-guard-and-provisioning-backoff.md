@@ -140,10 +140,16 @@ duration to one fast `Get-VM` call; and `release()` now delays its decrement
 by a 5s grace period, deliberately biasing toward the safer failure direction
 (a stale-high reservation can only cause a spurious, harmless
 `CapacityError` on an immediately-following sequential `Create`, never let
-one overcommit the host). A sequential `Create` arriving after that grace
-period but before the OS counter catches up can still overcommit — #183
-stays open, documenting this residual gap rather than being closed as fully
-fixed.
+one overcommit the host). The grace period applies uniformly to every
+`release()`, including `Create`'s failure path — where, unlike the success
+path, no VM ends up existing and there is no OS-counter lag to wait out — a
+deliberate simplification rather than an oversight: threading a second,
+ungraced release variant through `Create`'s failure branches would cost more
+in complexity than the ~9s of extra caller-visible over-reservation it would
+save, and the same "annoying, safe" tradeoff holds either way. A sequential
+`Create` arriving after the grace period but before the OS counter catches
+up can still overcommit — #183 stays open, documenting this residual gap
+rather than being closed as fully fixed.
 
 Full design: `docs/superpowers/specs/2026-08-13-hyperv-create-failure-hardening-design.md`.
 
