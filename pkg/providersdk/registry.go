@@ -8,14 +8,16 @@ import (
 )
 
 // Registration bundles everything a provider type contributes to the system:
-// a config prototype for unmarshaling pool config blocks, and a factory
-// that produces a Driver from parsed config.
+// a config prototype for unmarshaling provider-instance config, and a factory
+// that produces a Driver from parsed config. Pool-level create settings are
+// decoded separately by each driver's Create method.
 type Registration struct {
 	// Type is the provider type identifier (e.g. "docker", "hyperv").
 	Type Type
 
 	// ConfigProto returns a zero-value config struct for this driver type.
-	// The system unmarshals the pool's config: YAML block into this struct.
+	// The system unmarshals a provider instance's config YAML block into this
+	// struct before calling NewDriver.
 	ConfigProto func() any
 
 	// NewDriver creates a Driver instance from a parsed config struct.
