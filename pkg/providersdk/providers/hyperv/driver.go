@@ -266,10 +266,13 @@ Start-VM -Name '%s' | Out-Null
 	if _, err := d.ps(ctx, createScript); err != nil {
 		return nil, d.createFailure(ctx, vmName, diffPath, fmt.Errorf("hyperv create VM %q: %w", vmName, err))
 	}
-	// Memory is committed once Start-VM above returns — stop holding the
-	// reservation before the trailing (unguarded) ID lookup, narrowing the
-	// over-reservation window described in #183 down to this one fast call
-	// instead of the whole Create duration.
+	// Schedule the reservation's release now that Start-VM has committed the
+	// memory, rather than waiting for Create to fully return. release()
+	// defers the actual reservedMB decrement by a grace period (see
+	// reserveMemory) — it does not free the reservation synchronously — but
+	// calling it here still narrows the over-reservation window described in
+	// #183: the window no longer includes the trailing (unguarded) ID
+	// lookup below, only whatever grace period remains after it.
 	releaseOnce()
 
 	vmGUID, err := d.resolveCreatedVMID(ctx, vmName)
