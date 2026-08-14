@@ -586,12 +586,16 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 			for i := 0; i < pl.toProvision; i++ {
 				res, err := m.provisioner.Provision(ctx, p)
 				if err != nil {
+					// Record the failure before attempting the quarantine
+					// write below, so a pool whose store can't even persist
+					// the quarantine record still backs off instead of
+					// retrying on every reconcile tick.
+					m.recordProvisionFailure(p.Name, pl.now)
 					if res.ID != "" {
 						if putErr := m.store.PutResource(ctx, res); putErr != nil {
 							return fmt.Errorf("put quarantined resource %q: %w", res.ID, putErr)
 						}
 					}
-					m.recordProvisionFailure(p.Name, pl.now)
 					return fmt.Errorf("provision resource for pool %q: %w", p.Name, err)
 				}
 				m.recordProvisionSuccess(p.Name)

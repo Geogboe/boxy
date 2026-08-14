@@ -71,6 +71,17 @@ func (s *deleteFailStore) DeleteResource(ctx context.Context, id model.ResourceI
 	return s.err
 }
 
+type putResourceFailStore struct {
+	store.Store
+	err error
+}
+
+func (s *putResourceFailStore) PutResource(ctx context.Context, res model.Resource) error {
+	_ = ctx
+	_ = res
+	return s.err
+}
+
 func TestManager_Reconcile_PrefillMinReady(t *testing.T) {
 	st := store.NewMemoryStore()
 	pool := model.Pool{
@@ -1654,6 +1665,46 @@ func TestManager_Reconcile_ProvisionFailureWritesQuarantinedResource(t *testing.
 	}
 	if res.State != model.ResourceStateError || res.OriginPool != "p1" {
 		t.Fatalf("quarantined resource = %+v, want State=Error OriginPool=p1", res)
+	}
+}
+
+// TestManager_Reconcile_ProvisionFailureRecordsBackoffEvenIfQuarantineWriteFails
+// covers a gap Copilot flagged in review: the quarantine-record PutResource
+// call sits between Provision failing and recordProvisionFailure being
+// called, so if that store write itself fails (e.g. transient I/O), the
+// actuator returned before ever recording the failure — leaving backoff
+// inactive and the pool free to retry provisioning on every reconcile tick
+// instead of backing off.
+func TestManager_Reconcile_ProvisionFailureRecordsBackoffEvenIfQuarantineWriteFails(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	pool := model.Pool{
+		Name:      "p1",
+		Policies:  model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 1, MaxTotal: 5}},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	putErr := errors.New("transient store I/O error")
+	failingStore := &putResourceFailStore{Store: st, err: putErr}
+	prov := &fakeProvisioner{
+		provisionErr:         errors.New("driver create for pool \"p1\": boom"),
+		provisionResultOnErr: model.Resource{ID: "quarantine-1", OriginPool: "p1", Provider: model.ProviderRef{Name: "prov_1"}, State: model.ResourceStateError},
+	}
+	mgr := New(failingStore, prov)
+	now := time.Unix(2000, 0).UTC()
+	mgr.SetClock(fixedClock{t: now})
+
+	if err := mgr.Reconcile(ctx, "p1"); err == nil {
+		t.Fatal("expected Reconcile to surface the quarantine-record store failure")
+	} else if !errors.Is(err, putErr) {
+		t.Fatalf("Reconcile err = %v, want it to wrap the store's PutResource error", err)
+	}
+
+	if !mgr.provisionBackoffActive("p1", now) {
+		t.Fatal("expected the provision failure to be recorded for backoff even though the quarantine-record store write failed")
 	}
 }
 
