@@ -83,17 +83,20 @@ jobs:
       - name: Build
         run: go build ./cmd/boxy
 
-  gitleaks:
-    name: Gitleaks
+  betterleaks:
+    name: Betterleaks
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install Betterleaks
+        run: go install github.com/betterleaks/betterleaks@v1.7.4
+
+      - name: Scan git history for secrets
+        run: betterleaks git . --no-banner --redact

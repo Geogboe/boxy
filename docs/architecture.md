@@ -186,7 +186,7 @@ graph TB
 
     subgraph "providersdk/providers/ — Drivers"
         docker["docker/<br/>Docker driver"]
-        devfactorydrv["devfactory/<br/>DevFactory driver"]
+        devfactorydrv["devfactory/<br/>Generic provider simulator"]
     end
 
     boxy --> cli
@@ -286,7 +286,7 @@ graph TB
 
     subgraph "Concrete Drivers"
         DockerDriver["Docker Driver<br/>──────────<br/>Create → docker run<br/>Read → docker inspect<br/>Delete → docker rm"]
-        DevFactory["DevFactory Driver<br/>──────────<br/>Profile-based provisioning<br/>Store management"]
+        DevFactory["DevFactory simulator<br/>──────────<br/>Profile-based provisioning<br/>Store management"]
     end
 
     Registry -->|"Get('docker')"| Registration

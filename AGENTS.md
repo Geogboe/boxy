@@ -20,6 +20,7 @@ Features, bugs, and roadmap items are tracked as GitHub issues on `Geogboe/boxy`
 task build            # Build ./boxy binary
 task test             # Run all tests
 task lint             # Run golangci-lint (same as CI)
+task secrets:scan     # Scan the working tree with Betterleaks
 task fmt              # Format all Go source files
 task serve            # Run boxy serve (daemon mode)
 task serve:once       # Run boxy serve --once (single reconciliation pass)
@@ -95,6 +96,14 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
 - **`pkg/agentsdk` (live) vs. a config-declared `agents:` list (removed, 2026-07)**: don't confuse these. `pkg/agentsdk.EmbeddedAgent` is real, in-process code wired into `boxy serve` today. A separate `Config.Agents`/`AgentSpec` field once existed for a *pull-model* remote agent (server dials out to a static agent address) but was dead code — never read anywhere — and has been deleted. The actual remote-agent design is a *push* model, **implemented 2026-07** (#37/#62) per [ADR-0005](docs/adr/0005-remote-agent-transport-and-registration.md): `boxy agent serve` dials the daemon over gRPC bidirectional streaming with full mTLS from a boxy-owned private CA, bootstrapped by a single-use token exchanged for a client cert. Per-resource agent provenance (`ProviderRef.AgentID`) ensures `Destroy`/`Allocate` route to the exact agent that created a resource rather than any agent offering the same provider type; `PoolSpec.Agent` pins a pool to a specific agent.
 - `boxy debug provider *` (drives the in-process `devfactory` reference driver directly, bypassing the daemon) is compiled only with `-tags devtools` and is absent from release binaries. `boxy debug pool drain/fill` is a separate, always-available command that does go through the daemon's HTTP API.
 - Streaming is an optional `providersdk.StreamingDriver`/`agentsdk.StreamingAgent` capability routed through `pkg/eventstream`; Docker, devfactory, SSH guests, and PowerShell Direct guests can emit live events. Unsupported custom providers return a capability error instead of buffering unary output as a fake stream.
+- `devfactory` is the generic deterministic provider simulator: it exercises
+  Boxy's lifecycle, persistence, latency, failure, availability, and streaming
+  plumbing without claiming fidelity to a real provider. Future provider
+  simulators should implement the existing `providersdk.Driver` contract plus
+  the optional capabilities they model (for example `hyperv-sim` implementing
+  `GuestPersonalizer` and `ResourceLister`). Keep simulator provider types
+  explicit so they cannot be mistaken for the real provider; generate
+  conformance scaffolding and capability fixtures, not provider semantics.
 
 ### Bundled Agent Skill
 
@@ -252,7 +261,11 @@ it's no longer needed. See #100.
   Dependabot would have caught the same update.
 - `.github/CODEOWNERS` requires owner review on any `.github/workflows/`
   change.
-- A `gitleaks` job runs in `ci.yml` on every push/PR.
+- A `betterleaks` job runs in `ci.yml` on every push/PR and scans full Git
+  history with a pinned Betterleaks release. `task secrets:scan` scans the
+  current working tree locally; the directory mode is intentional because the
+  Betterleaks Git-history path currently fails on this Windows/Git combination
+  while trying to use `NUL` for isolated Git config.
 
 ### GoReleaser Signing Notes
 

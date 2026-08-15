@@ -67,7 +67,7 @@ func (d *Driver) Type() providersdk.Type {
 // static value configured via Config.AvailableMemoryMB — no per-call
 // memory-request modeling; devfactory's Create doesn't decode one today,
 // and adding it purely to enforce here would be scope creep unrelated to
-// what this stub is for (letting other code exercise the
+// what this simulator is for (letting other code exercise the
 // AvailabilityReporter interface without needing a real Hyper-V host).
 func (d *Driver) Availability(ctx context.Context) (*providersdk.ResourceAvailability, error) {
 	mb := d.cfg.AvailableMemoryMB
