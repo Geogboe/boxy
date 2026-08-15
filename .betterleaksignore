@@ -1,0 +1,9 @@
+# Historical documentation examples reviewed on 2026-08-15. These exact
+# fingerprints are synthetic token/password examples in retired docs; keep
+# future findings in the same files visible to Betterleaks.
+c9893c867c2b04497f79f0fff24b06d02e1ad0ba:docs/v1-prerelease/04-multi-tenancy.md:generic-api-key:106
+c9893c867c2b04497f79f0fff24b06d02e1ad0ba:docs/v1-prerelease/04-multi-tenancy.md:generic-api-key:111
+8945fdd8515b81404024b8da2b3c90f994223b46:docs/V1_IMPLEMENTATION_PLAN.md:generic-api-key:886
+8945fdd8515b81404024b8da2b3c90f994223b46:docs/V1_IMPLEMENTATION_PLAN.md:generic-api-key:939
+a241ee43e67d20992bebe8824e5685e8a39294d9:docs/architecture/MVP_DESIGN.md:generic-api-key:295
+e570819d3744b15a62854ebf6f925d33131a4c02:docs/guides/getting-started.md:generic-api-key:136

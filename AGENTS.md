@@ -20,7 +20,7 @@ Features, bugs, and roadmap items are tracked as GitHub issues on `Geogboe/boxy`
 task build            # Build ./boxy binary
 task test             # Run all tests
 task lint             # Run golangci-lint (same as CI)
-task secrets:scan     # Scan the working tree with Betterleaks
+task secrets:scan     # Scan git history with Betterleaks
 task fmt              # Format all Go source files
 task serve            # Run boxy serve (daemon mode)
 task serve:once       # Run boxy serve --once (single reconciliation pass)
@@ -262,10 +262,11 @@ it's no longer needed. See #100.
 - `.github/CODEOWNERS` requires owner review on any `.github/workflows/`
   change.
 - A `betterleaks` job runs in `ci.yml` on every push/PR and scans full Git
-  history with a pinned Betterleaks release. `task secrets:scan` scans the
-  current working tree locally; the directory mode is intentional because the
-  Betterleaks Git-history path currently fails on this Windows/Git combination
-  while trying to use `NUL` for isolated Git config.
+  history with a pinned Betterleaks release. `task secrets:scan` runs the same
+  history scan locally. On Windows, `scripts/betterleaks-git.ps1` prepends a
+  narrow Git shim that clears Betterleaks' invalid `NUL` config paths before
+  delegating to the real Git executable; CI and non-Windows hosts invoke
+  Betterleaks directly.
 
 ### GoReleaser Signing Notes
 

@@ -91,9 +91,12 @@ tasks:
     cmd: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...
 
   secrets:scan:
-    desc: Scan the working tree for secrets with Betterleaks
+    desc: Scan git history for secrets with Betterleaks
     cmds:
-      - betterleaks dir . --no-banner --redact
+      - cmd: pwsh -NoProfile -File scripts/betterleaks-git.ps1
+        if: '{{eq OS "windows"}}'
+      - cmd: betterleaks git . --no-banner --redact
+        if: '{{ne OS "windows"}}'
 
   proto:generate:
     desc: Generate gRPC/protobuf Go stubs from proto/ using the pinned buf CLI
