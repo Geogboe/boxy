@@ -182,6 +182,10 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   checking (see ADR-0009's file list for what #162 touched that #159 also
   touched: `internal/cli/agent_serve.go`, `agent.go`, `serve.go`, and the
   bundled skill all needed a real 3-way merge, not just a fast-forward).
+- **This development host cannot run Hyper-V VMs.** Use the `devfactory`
+  provider for control-plane, agent, and end-to-end orchestration tests, and
+  inject fake guest executors for Hyper-V rotation/exec behavior. Do not claim
+  live Hyper-V validation from this environment.
 
 ## ADRs
 
