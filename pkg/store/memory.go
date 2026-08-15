@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/Geogboe/boxy/pkg/model"
@@ -13,6 +14,7 @@ type MemoryStore struct {
 	mu sync.Mutex
 
 	pools                  map[model.PoolName]model.Pool
+	poolGuestCredentials   map[model.PoolName]string
 	resources              map[model.ResourceID]model.Resource
 	sandboxes              map[model.SandboxID]model.Sandbox
 	agentTokens            map[model.AgentTokenID]model.AgentRegistrationToken
@@ -24,6 +26,7 @@ type MemoryStore struct {
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		pools:                  make(map[model.PoolName]model.Pool),
+		poolGuestCredentials:   make(map[model.PoolName]string),
 		resources:              make(map[model.ResourceID]model.Resource),
 		sandboxes:              make(map[model.SandboxID]model.Sandbox),
 		agentTokens:            make(map[model.AgentTokenID]model.AgentRegistrationToken),
@@ -53,6 +56,31 @@ func (s *MemoryStore) PutPool(ctx context.Context, pool model.Pool) error {
 	}
 	s.pools[pool.Name] = pool
 	return nil
+}
+
+func (s *MemoryStore) PutPoolGuestCredential(ctx context.Context, poolName model.PoolName, credential string) error {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if poolName == "" {
+		return fmt.Errorf("pool name is required")
+	}
+	if strings.TrimSpace(credential) == "" {
+		return fmt.Errorf("pool guest credential is required")
+	}
+	s.poolGuestCredentials[poolName] = credential
+	return nil
+}
+
+func (s *MemoryStore) GetPoolGuestCredential(ctx context.Context, poolName model.PoolName) (string, error) {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	credential, ok := s.poolGuestCredentials[poolName]
+	if !ok {
+		return "", ErrNotFound
+	}
+	return credential, nil
 }
 
 func (s *MemoryStore) GetResource(ctx context.Context, id model.ResourceID) (model.Resource, error) {
