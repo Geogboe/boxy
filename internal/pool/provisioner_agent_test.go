@@ -202,8 +202,8 @@ func TestAgentProvisioner_Allocate_RemoteAgentPrefersTypedGuestPersonalization(t
 	}
 	resultCh := make(chan allocResult, 1)
 	go func() {
-		props, err := provisioner.Allocate(context.Background(), model.Pool{Name: "vm-pool"}, res)
-		resultCh <- allocResult{props, err}
+		allocation, err := provisioner.Allocate(context.Background(), model.Pool{Name: "vm-pool"}, res)
+		resultCh <- allocResult{allocation.Properties, err}
 	}()
 
 	cmd := recvCommand(t, stream.sentCh)
@@ -259,8 +259,8 @@ func TestAgentProvisioner_Allocate_RemoteAgentFallsBackWhenPersonalizationUnsupp
 	}
 	resultCh := make(chan allocResult, 1)
 	go func() {
-		props, err := provisioner.Allocate(context.Background(), model.Pool{Name: "vm-pool"}, res)
-		resultCh <- allocResult{props, err}
+		allocation, err := provisioner.Allocate(context.Background(), model.Pool{Name: "vm-pool"}, res)
+		resultCh <- allocResult{allocation.Properties, err}
 	}()
 
 	personalizeCmd := recvCommand(t, stream.sentCh)
@@ -496,10 +496,10 @@ func TestAgentProvisioner_Allocate_PrefersTypedGuestPersonalization(t *testing.T
 	if err != nil {
 		t.Fatalf("Allocate: %v", err)
 	}
-	if got["access"] != "winrm" {
-		t.Fatalf("access = %v, want winrm", got["access"])
+	if got.Properties["access"] != "winrm" {
+		t.Fatalf("access = %v, want winrm", got.Properties["access"])
 	}
-	if _, ok := got["legacy"]; ok {
+	if _, ok := got.Properties["legacy"]; ok {
 		t.Fatal("expected typed guest personalization to bypass legacy allocate result")
 	}
 }
@@ -522,7 +522,7 @@ func TestAgentProvisioner_Allocate_FallsBackWhenPersonalizationReturnsNil(t *tes
 	if err != nil {
 		t.Fatalf("Allocate: %v", err)
 	}
-	if got["legacy"] != "path" {
+	if got.Properties["legacy"] != "path" {
 		t.Fatalf("Allocate result = %+v, want legacy fallback result", got)
 	}
 	if len(mockAgent.allocateCalls) != 1 || mockAgent.allocateCalls[0].driverType != "hyperv" || mockAgent.allocateCalls[0].id != "vm-1" {

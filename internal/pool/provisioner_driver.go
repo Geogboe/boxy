@@ -75,21 +75,25 @@ func (dp *DriverProvisioner) now() time.Time {
 	return time.Now().UTC()
 }
 
-func (dp *DriverProvisioner) Allocate(ctx context.Context, pool model.Pool, res model.Resource) (map[string]any, error) {
+func (dp *DriverProvisioner) Allocate(ctx context.Context, pool model.Pool, res model.Resource) (providersdk.AllocationResult, error) {
 	driver, _, err := dp.driverForPool(pool.Name)
 	if err != nil {
-		return nil, fmt.Errorf("allocate pool %q: %w", pool.Name, err)
+		return providersdk.AllocationResult{}, fmt.Errorf("allocate pool %q: %w", pool.Name, err)
 	}
 	if gp, ok := driver.(providersdk.GuestPersonalizer); ok {
 		result, err := gp.PersonalizeGuest(ctx, string(res.ID))
 		if err != nil {
-			return nil, err
+			return providersdk.AllocationResult{}, err
 		}
 		if result != nil {
-			return result.AccessDetails.ToProperties(), nil
+			return providersdk.AllocationResult{
+				Properties:      result.AccessDetails.ToProperties(),
+				GuestCredential: result.EphemeralCredential,
+			}, nil
 		}
 	}
-	return driver.Allocate(ctx, string(res.ID))
+	properties, err := driver.Allocate(ctx, string(res.ID))
+	return providersdk.AllocationResult{Properties: properties}, err
 }
 
 func (dp *DriverProvisioner) Destroy(ctx context.Context, pool model.Pool, res model.Resource) error {

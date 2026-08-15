@@ -80,8 +80,9 @@ type Operation interface{}
 // ExecOperation is the provider-neutral command shape used by Boxy workflows.
 // Providers may alias or translate it into their native operation type.
 type ExecOperation struct {
-	Command []string
-	Env     map[string]string
+	Command         []string
+	Env             map[string]string
+	GuestCredential *GuestCredential
 }
 
 // Result is returned by Driver.Update.

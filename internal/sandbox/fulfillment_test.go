@@ -9,28 +9,29 @@ import (
 
 	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
 type fakeAllocator struct{}
 
-func (fakeAllocator) Allocate(ctx context.Context, p model.Pool, r model.Resource) (map[string]any, error) {
+func (fakeAllocator) Allocate(ctx context.Context, p model.Pool, r model.Resource) (providersdk.AllocationResult, error) {
 	_ = ctx
 	_ = p
-	return map[string]any{"allocated": true, "resource_id": string(r.ID)}, nil
+	return providersdk.AllocationResult{Properties: map[string]any{"allocated": true, "resource_id": string(r.ID)}}, nil
 }
 
 type failingAllocator struct {
 	failPool model.PoolName
 }
 
-func (a failingAllocator) Allocate(ctx context.Context, p model.Pool, r model.Resource) (map[string]any, error) {
+func (a failingAllocator) Allocate(ctx context.Context, p model.Pool, r model.Resource) (providersdk.AllocationResult, error) {
 	_ = ctx
 	_ = r
 	if p.Name == a.failPool {
-		return nil, fmt.Errorf("allocator failed for pool %s", p.Name)
+		return providersdk.AllocationResult{}, fmt.Errorf("allocator failed for pool %s", p.Name)
 	}
-	return map[string]any{"allocated": true}, nil
+	return providersdk.AllocationResult{Properties: map[string]any{"allocated": true}}, nil
 }
 
 type fakeFulfillProvisioner struct {
@@ -101,20 +102,20 @@ type deletingFailingAllocator struct {
 	failPool model.PoolName
 }
 
-func (a deletingFailingAllocator) Allocate(ctx context.Context, p model.Pool, r model.Resource) (map[string]any, error) {
+func (a deletingFailingAllocator) Allocate(ctx context.Context, p model.Pool, r model.Resource) (providersdk.AllocationResult, error) {
 	_ = r
 	if p.Name != a.failPool {
-		return map[string]any{"allocated": true}, nil
+		return providersdk.AllocationResult{Properties: map[string]any{"allocated": true}}, nil
 	}
 	sb, err := a.store.GetSandbox(ctx, "sb-1")
 	if err != nil {
-		return nil, err
+		return providersdk.AllocationResult{}, err
 	}
 	sb.Status = model.SandboxStatusDeleting
 	if err := a.store.PutSandbox(ctx, sb); err != nil {
-		return nil, err
+		return providersdk.AllocationResult{}, err
 	}
-	return nil, fmt.Errorf("allocator failed after delete request")
+	return providersdk.AllocationResult{}, fmt.Errorf("allocator failed after delete request")
 }
 
 func TestFulfiller_ReconcilePending_MarksSandboxReady(t *testing.T) {

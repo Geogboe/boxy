@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"sync"
 	"time"
 
 	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/resourcepool"
 	"github.com/Geogboe/boxy/pkg/store"
 )
@@ -36,12 +38,20 @@ type Manager struct {
 	store     store.Store
 	allocator SandboxAllocator
 	clock     Clock
+
+	guestCredentialsMu sync.Mutex
+	guestCredentials   map[model.SandboxID]map[model.ResourceID]*providersdk.GuestCredential
 }
 
 // New creates a Manager. allocator may be nil — if so, allocation-time hooks
 // are skipped and resource Properties are not updated at allocation time.
 func New(s store.Store, allocator SandboxAllocator) *Manager {
-	return &Manager{store: s, allocator: allocator, clock: realClock{}}
+	return &Manager{
+		store:            s,
+		allocator:        allocator,
+		clock:            realClock{},
+		guestCredentials: make(map[model.SandboxID]map[model.ResourceID]*providersdk.GuestCredential),
+	}
 }
 
 // SetClock overrides the manager's time source. Used by tests.
@@ -190,15 +200,18 @@ func (m *Manager) AddFromPool(
 			res.OriginPool = pool.Name
 		}
 		if m.allocator != nil {
-			extra, err := m.allocator.Allocate(ctx, pool, res)
+			allocation, err := m.allocator.Allocate(ctx, pool, res)
 			if err != nil {
 				return model.Sandbox{}, fmt.Errorf("allocate resource %q: %w", res.ID, err)
 			}
-			if extra != nil {
+			if allocation.Properties != nil {
 				if res.Properties == nil {
 					res.Properties = make(map[string]any)
 				}
-				maps.Copy(res.Properties, extra)
+				maps.Copy(res.Properties, allocation.Properties)
+			}
+			if allocation.GuestCredential != nil {
+				m.rememberGuestCredential(sb.ID, res.ID, allocation.GuestCredential)
 			}
 		}
 		res.State = model.ResourceStateAllocated
@@ -298,15 +311,18 @@ func (m *Manager) CreateFromPool(
 			res.OriginPool = pool.Name
 		}
 		if m.allocator != nil {
-			extra, err := m.allocator.Allocate(ctx, pool, res)
+			allocation, err := m.allocator.Allocate(ctx, pool, res)
 			if err != nil {
 				return model.Sandbox{}, fmt.Errorf("allocate resource %q: %w", res.ID, err)
 			}
-			if extra != nil {
+			if allocation.Properties != nil {
 				if res.Properties == nil {
 					res.Properties = make(map[string]any)
 				}
-				maps.Copy(res.Properties, extra)
+				maps.Copy(res.Properties, allocation.Properties)
+			}
+			if allocation.GuestCredential != nil {
+				m.rememberGuestCredential(sb.ID, res.ID, allocation.GuestCredential)
 			}
 		}
 		res.State = model.ResourceStateAllocated
@@ -392,6 +408,60 @@ func resourceIDs(rs []model.Resource) []model.ResourceID {
 		}
 	}
 	return ids
+}
+
+// GuestCredentialDelivery is the one-time, process-local credential returned
+// to a caller for a sandbox resource. It is deliberately not part of
+// model.Resource, so store persistence cannot accidentally retain it.
+type GuestCredentialDelivery struct {
+	ResourceID model.ResourceID
+	Credential *providersdk.GuestCredential
+}
+
+func (m *Manager) rememberGuestCredential(sbID model.SandboxID, resourceID model.ResourceID, credential *providersdk.GuestCredential) {
+	if credential == nil {
+		return
+	}
+	m.guestCredentialsMu.Lock()
+	defer m.guestCredentialsMu.Unlock()
+	if m.guestCredentials == nil {
+		m.guestCredentials = make(map[model.SandboxID]map[model.ResourceID]*providersdk.GuestCredential)
+	}
+	byResource := m.guestCredentials[sbID]
+	if byResource == nil {
+		byResource = make(map[model.ResourceID]*providersdk.GuestCredential)
+		m.guestCredentials[sbID] = byResource
+	}
+	copyCredential := *credential
+	copyCredential.Data = append([]byte(nil), credential.Data...)
+	byResource[resourceID] = &copyCredential
+}
+
+// TakeGuestCredentials returns and removes all credentials currently held for
+// a sandbox. The returned values are process-local and disappear on restart.
+func (m *Manager) TakeGuestCredentials(sbID model.SandboxID) []GuestCredentialDelivery {
+	m.guestCredentialsMu.Lock()
+	defer m.guestCredentialsMu.Unlock()
+	byResource := m.guestCredentials[sbID]
+	if len(byResource) == 0 {
+		return nil
+	}
+	delete(m.guestCredentials, sbID)
+	out := make([]GuestCredentialDelivery, 0, len(byResource))
+	for resourceID, credential := range byResource {
+		copyCredential := *credential
+		copyCredential.Data = append([]byte(nil), credential.Data...)
+		out = append(out, GuestCredentialDelivery{ResourceID: resourceID, Credential: &copyCredential})
+	}
+	return out
+}
+
+// ForgetGuestCredentials drops any not-yet-fetched credentials during sandbox
+// deletion. It is safe to call for a sandbox with no pending credentials.
+func (m *Manager) ForgetGuestCredentials(sbID model.SandboxID) {
+	m.guestCredentialsMu.Lock()
+	defer m.guestCredentialsMu.Unlock()
+	delete(m.guestCredentials, sbID)
 }
 
 func wrapResources(rs []model.Resource) []keyedResource {

@@ -90,26 +90,30 @@ func (ap *AgentProvisioner) now() time.Time {
 	return time.Now().UTC()
 }
 
-func (ap *AgentProvisioner) Allocate(ctx context.Context, pool model.Pool, res model.Resource) (map[string]any, error) {
+func (ap *AgentProvisioner) Allocate(ctx context.Context, pool model.Pool, res model.Resource) (providersdk.AllocationResult, error) {
 	spec, ok := ap.Specs[pool.Name]
 	if !ok {
-		return nil, fmt.Errorf("unknown pool %q", pool.Name)
+		return providersdk.AllocationResult{}, fmt.Errorf("unknown pool %q", pool.Name)
 	}
 	driverType := ap.driverTypeForPool(spec)
 	agent, err := ap.agentForResource(res)
 	if err != nil {
-		return nil, err
+		return providersdk.AllocationResult{}, err
 	}
 	if gp, ok := agent.(agentsdk.GuestPersonalizingAgent); ok {
 		result, err := gp.PersonalizeGuest(ctx, driverType, string(res.ID))
 		if err != nil {
-			return nil, err
+			return providersdk.AllocationResult{}, err
 		}
 		if result != nil {
-			return result.AccessDetails.ToProperties(), nil
+			return providersdk.AllocationResult{
+				Properties:      result.AccessDetails.ToProperties(),
+				GuestCredential: result.EphemeralCredential,
+			}, nil
 		}
 	}
-	return agent.Allocate(ctx, driverType, string(res.ID))
+	properties, err := agent.Allocate(ctx, driverType, string(res.ID))
+	return providersdk.AllocationResult{Properties: properties}, err
 }
 
 // ExecuteSandbox routes a provider-neutral command to the exact agent that

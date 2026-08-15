@@ -2,6 +2,7 @@ package providersdk
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -61,10 +62,28 @@ func (d GuestAccessDetails) ToProperties() map[string]any {
 	return props
 }
 
+// GuestCredential is an opaque, driver-defined credential payload. The
+// control plane relays it without interpreting Data; Kind is advisory for
+// clients that know how to render or persist a particular credential kind.
+type GuestCredential struct {
+	Kind string          `json:"kind"`
+	Data json.RawMessage `json:"data"`
+}
+
+// AllocationResult separates safe properties, which may be persisted on a
+// resource, from an ephemeral credential that must never enter resource
+// metadata or the durable store.
+type AllocationResult struct {
+	Properties      map[string]any
+	GuestCredential *GuestCredential
+}
+
 // GuestPersonalizationResult is the typed result of allocation-time guest
-// personalization. It intentionally exposes only safe access details.
+// personalization. AccessDetails may be persisted; EphemeralCredential must
+// remain process-local and be delivered to the caller exactly once.
 type GuestPersonalizationResult struct {
-	AccessDetails GuestAccessDetails
+	AccessDetails       GuestAccessDetails
+	EphemeralCredential *GuestCredential
 }
 
 // GuestPersonalizer is an optional provider capability for allocation-time
