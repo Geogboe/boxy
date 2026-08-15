@@ -28,9 +28,10 @@ const (
 )
 
 type execSandboxRequest struct {
-	Command    []string `json:"command"`
-	ResourceID string   `json:"resource_id,omitempty"`
-	Timeout    string   `json:"timeout,omitempty"`
+	Command         []string                     `json:"command"`
+	ResourceID      string                       `json:"resource_id,omitempty"`
+	Timeout         string                       `json:"timeout,omitempty"`
+	GuestCredential *providersdk.GuestCredential `json:"guest_credential,omitempty"`
 }
 
 type execSandboxResponse struct {
@@ -125,10 +126,10 @@ func (s *Server) handleSandboxExec(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if streaming {
-		s.handleStreamingExec(w, ctx, resource, req.Command)
+		s.handleStreamingExec(w, ctx, resource, providersdk.ExecOperation{Command: req.Command, GuestCredential: req.GuestCredential})
 		return
 	}
-	s.handleBufferedExec(w, ctx, resource, req.Command)
+	s.handleBufferedExec(w, ctx, resource, providersdk.ExecOperation{Command: req.Command, GuestCredential: req.GuestCredential})
 }
 
 func parseExecStreaming(r *http.Request) (bool, error) {
@@ -208,10 +209,10 @@ func (s *bufferedExecSink) Send(_ context.Context, event eventstream.Event) erro
 	return nil
 }
 
-func (s *Server) handleBufferedExec(w http.ResponseWriter, ctx context.Context, resource model.Resource, command []string) {
+func (s *Server) handleBufferedExec(w http.ResponseWriter, ctx context.Context, resource model.Resource, operation providersdk.ExecOperation) {
 	collector := new(bufferedExecSink)
 	publisher := eventstream.NewPublisher(collector, eventstream.Limits{MaxChunkBytes: maxExecChunk, MaxTotalBytes: maxExecOutput})
-	result, err := s.executor.ExecuteSandbox(ctx, resource, command, boundedEventSink{publisher: publisher})
+	result, err := s.executor.ExecuteSandbox(ctx, resource, operation, boundedEventSink{publisher: publisher})
 	if err != nil {
 		writeExecError(w, err)
 		return
@@ -225,12 +226,12 @@ func (s *Server) handleBufferedExec(w http.ResponseWriter, ctx context.Context, 
 	httpjson.Write(w, http.StatusOK, response)
 }
 
-func (s *Server) handleStreamingExec(w http.ResponseWriter, ctx context.Context, resource model.Resource, command []string) {
+func (s *Server) handleStreamingExec(w http.ResponseWriter, ctx context.Context, resource model.Resource, operation providersdk.ExecOperation) {
 	stream := &ndjsonExecSink{encoder: json.NewEncoder(w), flusher: http.NewResponseController(w)}
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.WriteHeader(http.StatusOK)
 	publisher := eventstream.NewPublisher(stream, eventstream.Limits{MaxChunkBytes: maxExecChunk, MaxTotalBytes: maxExecOutput})
-	result, err := s.executor.ExecuteSandbox(ctx, resource, command, boundedEventSink{publisher: publisher})
+	result, err := s.executor.ExecuteSandbox(ctx, resource, operation, boundedEventSink{publisher: publisher})
 	if err != nil {
 		_ = stream.Send(ctx, eventstream.Event{Kind: eventstream.Complete, Completion: &eventstream.Completion{Err: err}})
 		return

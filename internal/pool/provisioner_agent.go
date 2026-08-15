@@ -119,7 +119,7 @@ func (ap *AgentProvisioner) Allocate(ctx context.Context, pool model.Pool, res m
 // ExecuteSandbox routes a provider-neutral command to the exact agent that
 // owns a sandbox resource and requires that agent/provider to support live
 // streaming.
-func (ap *AgentProvisioner) ExecuteSandbox(ctx context.Context, res model.Resource, command []string, sink eventstream.Sink) (*providersdk.Result, error) {
+func (ap *AgentProvisioner) ExecuteSandbox(ctx context.Context, res model.Resource, operation providersdk.ExecOperation, sink eventstream.Sink) (*providersdk.Result, error) {
 	spec, ok := ap.Specs[model.PoolName(res.OriginPool)]
 	if !ok {
 		return nil, fmt.Errorf("unknown origin pool %q", res.OriginPool)
@@ -133,7 +133,8 @@ func (ap *AgentProvisioner) ExecuteSandbox(ctx context.Context, res model.Resour
 	if !ok {
 		return nil, fmt.Errorf("agent %q does not support streaming operations", agent.Info().ID)
 	}
-	return streamer.UpdateStream(ctx, driverType, string(res.ID), &providersdk.ExecOperation{Command: append([]string(nil), command...)}, sink)
+	operation.Command = append([]string(nil), operation.Command...)
+	return streamer.UpdateStream(ctx, driverType, string(res.ID), &operation, sink)
 }
 
 func (ap *AgentProvisioner) Destroy(ctx context.Context, pool model.Pool, res model.Resource) error {

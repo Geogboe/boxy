@@ -13,23 +13,28 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Geogboe/boxy/internal/credentials"
 	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
 type sandboxCreateTestServer struct {
 	server *httptest.Server
 
-	mu                 sync.Mutex
-	pools              []model.Pool
-	createStatus       int
-	createErrorMessage string
-	createBody         string
-	createdSandbox     model.Sandbox
-	sandboxStates      []model.Sandbox
-	resources          map[string]model.Resource
-	createCalls        int
-	getSandboxCalls    int
-	getResourceCalls   int
+	mu                    sync.Mutex
+	pools                 []model.Pool
+	createStatus          int
+	createErrorMessage    string
+	createBody            string
+	createdSandbox        model.Sandbox
+	sandboxStates         []model.Sandbox
+	resources             map[string]model.Resource
+	createCalls           int
+	getSandboxCalls       int
+	getResourceCalls      int
+	guestCredentialStatus int
+	guestCredentials      []sandboxGuestCredentialDelivery
+	guestCredentialCalls  int
 }
 
 func newSandboxCreateTestServer(t *testing.T) *sandboxCreateTestServer {
@@ -91,6 +96,7 @@ func newSandboxCreateTestServer(t *testing.T) *sandboxCreateTestServer {
 				},
 			},
 		},
+		guestCredentialStatus: http.StatusGone,
 	}
 
 	mux := http.NewServeMux()
@@ -144,6 +150,17 @@ func newSandboxCreateTestServer(t *testing.T) *sandboxCreateTestServer {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(res)
+	})
+	mux.HandleFunc("GET /api/v1/sandboxes/{id}/guest-credential", func(w http.ResponseWriter, r *http.Request) {
+		ts.mu.Lock()
+		defer ts.mu.Unlock()
+		ts.guestCredentialCalls++
+		if ts.guestCredentialStatus != http.StatusOK {
+			w.WriteHeader(ts.guestCredentialStatus)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(sandboxGuestCredentialResponse{Credentials: ts.guestCredentials})
 	})
 
 	ts.server = httptest.NewServer(mux)
@@ -259,6 +276,78 @@ func TestSandboxCreate_NoWait(t *testing.T) {
 	}
 	if srv.getResourceCalls != 0 {
 		t.Fatalf("getResourceCalls = %d, want 0", srv.getResourceCalls)
+	}
+}
+
+func TestSandboxCreate_PrintsGuestCredentialOnce(t *testing.T) {
+	srv := newSandboxCreateTestServer(t)
+	srv.guestCredentialStatus = http.StatusOK
+	srv.guestCredentials = []sandboxGuestCredentialDelivery{{
+		ResourceID: "res-1",
+		Credential: &providersdk.GuestCredential{Kind: "password", Data: json.RawMessage(`{"username":"Administrator","password":"rotated"}`)},
+	}}
+	defer srv.Close()
+
+	specPath := writeSandboxSpec(t, "name: lab\nresources:\n  - pool: web\n    count: 1\n")
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"sandbox", "--server", srv.server.URL, "create", "-f", specPath, "--no-env-file"})
+
+	output, err := captureSandboxStdout(t, func() error {
+		return cmd.ExecuteContext(context.Background())
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(output, "Guest credentials") || !strings.Contains(output, "rotated") {
+		t.Fatalf("output = %q, want one-time guest credential", output)
+	}
+}
+
+func TestSandboxCreate_SavesGuestCredential(t *testing.T) {
+	srv := newSandboxCreateTestServer(t)
+	srv.guestCredentialStatus = http.StatusOK
+	srv.guestCredentials = []sandboxGuestCredentialDelivery{{
+		ResourceID: "res-1",
+		Credential: &providersdk.GuestCredential{Kind: "password", Data: json.RawMessage(`{"password":"rotated"}`)},
+	}}
+	defer srv.Close()
+
+	backend := &sandboxCreateFakeBackend{values: make(map[string]string)}
+	previousStore := guestCredentialStore
+	guestCredentialStore = func() *credentials.Store { return credentials.NewWithBackend("test", backend) }
+	t.Cleanup(func() { guestCredentialStore = previousStore })
+
+	specPath := writeSandboxSpec(t, "name: lab\nresources:\n  - pool: web\n    count: 1\n")
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"sandbox", "--server", srv.server.URL, "create", "-f", specPath, "--save-guest-cred", "--no-env-file"})
+
+	output, err := captureSandboxStdout(t, func() error {
+		return cmd.ExecuteContext(context.Background())
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(output, "Saved guest credential for resource res-1") {
+		t.Fatalf("output = %q, want saved confirmation", output)
+	}
+	if strings.Contains(output, "rotated") {
+		t.Fatalf("output = %q, did not expect secret when saving", output)
+	}
+	stored, err := credentials.NewWithBackend("test", backend).GetGuestCredential(srv.server.URL, "sb-create", "res-1")
+	if err != nil {
+		t.Fatalf("GetGuestCredential: %v", err)
+	}
+	if string(stored.Data) != `{"password":"rotated"}` {
+		t.Fatalf("stored credential = %+v", stored)
+	}
+}
+
+func TestSandboxCreate_SaveGuestCredentialRequiresWait(t *testing.T) {
+	specPath := writeSandboxSpec(t, "name: lab\nresources:\n  - pool: web\n    count: 1\n")
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"sandbox", "--server", "127.0.0.1:1", "create", "-f", specPath, "--save-guest-cred", "--no-wait"})
+	if err := cmd.ExecuteContext(context.Background()); err == nil || !strings.Contains(err.Error(), "requires waiting") {
+		t.Fatalf("error = %v, want --save-guest-cred wait validation", err)
 	}
 }
 
@@ -446,4 +535,26 @@ func TestHydrateSandboxResourcesSkipsMissingResources(t *testing.T) {
 	if len(resources) != 1 || resources[0].ID != "res-1" {
 		t.Fatalf("resources = %+v, want only res-1", resources)
 	}
+}
+
+type sandboxCreateFakeBackend struct {
+	values map[string]string
+}
+
+func (b *sandboxCreateFakeBackend) Get(service, user string) (string, error) {
+	value, ok := b.values[service+"\x00"+user]
+	if !ok {
+		return "", credentials.ErrNotFound
+	}
+	return value, nil
+}
+
+func (b *sandboxCreateFakeBackend) Set(service, user, value string) error {
+	b.values[service+"\x00"+user] = value
+	return nil
+}
+
+func (b *sandboxCreateFakeBackend) Delete(service, user string) error {
+	delete(b.values, service+"\x00"+user)
+	return nil
 }

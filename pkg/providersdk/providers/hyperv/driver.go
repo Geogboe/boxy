@@ -13,6 +13,7 @@ import (
 
 	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/providersdk"
+	"github.com/Geogboe/boxy/pkg/providersdk/guestcred"
 	"github.com/Geogboe/boxy/pkg/psdirect"
 	"github.com/Geogboe/boxy/pkg/vmsdk"
 )
@@ -32,6 +33,11 @@ type Driver struct {
 	// resolveSecret resolves a persisted secret reference only when guest
 	// bootstrap access is needed.
 	resolveSecret func(ctx context.Context, ref providersdk.SecretRef) (string, error)
+
+	// resolveBootstrap supplies a control-plane-owned bootstrap credential for
+	// new VMs. A nil resolver preserves the explicit legacy env-ref fallback
+	// for local development and older VMs.
+	resolveBootstrap providersdk.GuestBootstrapResolver
 
 	// deleteWaitTimeout/deleteWaitInterval bound how long Delete waits for a
 	// VM stuck mid-transition (e.g. "Turning Off") to reach a terminal state
@@ -180,6 +186,14 @@ func New(cfg *Config) (*Driver, error) {
 	return &Driver{hostReserveMB: reserve, hostReserveConfigured: true}, nil
 }
 
+// SetGuestBootstrapResolver injects the control-plane lookup used for new
+// VMs. The callback is evaluated at personalization time so remote-agent
+// reconnects always use their current gRPC connection and the server's
+// current pool credential.
+func (d *Driver) SetGuestBootstrapResolver(resolver providersdk.GuestBootstrapResolver) {
+	d.resolveBootstrap = resolver
+}
+
 func (d *Driver) Type() providersdk.Type { return ProviderType }
 
 // --- Create ---
@@ -251,11 +265,9 @@ Connect-VMNetworkAdapter -VMName '%s' -SwitchName '%s' | Out-Null`,
 			psq(vmName), psq(cc.Switch))
 	}
 
-	// Store non-sensitive Boxy guest metadata in VM Notes for later guest access
-	// and allocation-time personalization. The bootstrap secret is looked up from
-	// its reference at use time instead of being persisted here.
-	notes := fmt.Sprintf("boxy_guest_os=%s;boxy_guest_user=%s;boxy_guest_password_ref=%s",
-		cc.GuestOS, guestUser, strings.TrimSpace(cc.GuestPasswordRef))
+	// Store only non-sensitive Boxy guest metadata in VM Notes. Bootstrap and
+	// rotated credentials are delivered out-of-band and never written to the VM.
+	notes := fmt.Sprintf("boxy_guest_os=%s;boxy_guest_user=%s", cc.GuestOS, guestUser)
 
 	createScript := fmt.Sprintf(`
 $ErrorActionPreference = 'Stop'
@@ -298,9 +310,10 @@ Start-VM -Name '%s' | Out-Null
 	return &providersdk.Resource{
 		ID: vmGUID,
 		ConnectionInfo: map[string]string{
-			"vm_name":  vmName,
-			"vm_id":    vmGUID,
-			"guest_os": cc.GuestOS,
+			"vm_name":    vmName,
+			"vm_id":      vmGUID,
+			"guest_os":   cc.GuestOS,
+			"guest_user": guestUser,
 		},
 	}, nil
 }
@@ -415,40 +428,14 @@ func (d *Driver) execOnGuest(ctx context.Context, id string, op *ExecOp) (*provi
 		guestOS = "windows"
 	}
 	guestUser := notes["boxy_guest_user"]
-	guestPassword, err := d.resolveGuestPassword(ctx, notes)
+	guestUser, guestPassword, err := decodeGuestPassword(op.GuestCredential, guestUser)
 	if err != nil {
-		return nil, fmt.Errorf("resolve guest password for %s: %w", id, err)
+		return nil, fmt.Errorf("decode guest credential for %s: %w", id, err)
 	}
 
-	var ge vmsdk.GuestExec
-	if d.guestExecFactory != nil {
-		sshHost := ""
-		if strings.EqualFold(guestOS, "linux") {
-			vmName, err := d.vmNameFromID(ctx, id)
-			if err != nil {
-				return nil, fmt.Errorf("resolve VM name for %s: %w", id, err)
-			}
-			sshHost, err = d.vmIP(ctx, vmName)
-			if err != nil {
-				return nil, fmt.Errorf("get VM IP for %s: %w", vmName, err)
-			}
-		}
-		ge = d.guestExecFactory(id, guestOS, guestUser, guestPassword, sshHost)
-	} else {
-		switch strings.ToLower(guestOS) {
-		case "linux":
-			vmName, err := d.vmNameFromID(ctx, id)
-			if err != nil {
-				return nil, fmt.Errorf("resolve VM name for %s: %w", id, err)
-			}
-			ip, err := d.vmIP(ctx, vmName)
-			if err != nil {
-				return nil, fmt.Errorf("get VM IP for %s: %w", vmName, err)
-			}
-			ge = &vmsdk.SSHExec{Host: ip, User: guestUser, Password: guestPassword}
-		default: // "windows"
-			ge = psdirect.New(id, guestUser, guestPassword)
-		}
+	ge, err := d.newGuestExec(ctx, id, guestOS, guestUser, guestPassword, "")
+	if err != nil {
+		return nil, err
 	}
 
 	cmd := op.Command[0]
@@ -491,40 +478,14 @@ func (d *Driver) UpdateStream(ctx context.Context, id string, op providersdk.Ope
 		guestOS = "windows"
 	}
 	guestUser := notes["boxy_guest_user"]
-	guestPassword, err := d.resolveGuestPassword(ctx, notes)
+	guestUser, guestPassword, err := decodeGuestPassword(execOp.GuestCredential, guestUser)
 	if err != nil {
-		return nil, fmt.Errorf("resolve guest password for %s: %w", id, err)
+		return nil, fmt.Errorf("decode guest credential for %s: %w", id, err)
 	}
 
-	var ge vmsdk.GuestExec
-	if d.guestExecFactory != nil {
-		sshHost := ""
-		if strings.EqualFold(guestOS, "linux") {
-			vmName, err := d.vmNameFromID(ctx, id)
-			if err != nil {
-				return nil, fmt.Errorf("resolve VM name for %s: %w", id, err)
-			}
-			sshHost, err = d.vmIP(ctx, vmName)
-			if err != nil {
-				return nil, fmt.Errorf("get VM IP for %s: %w", vmName, err)
-			}
-		}
-		ge = d.guestExecFactory(id, guestOS, guestUser, guestPassword, sshHost)
-	} else {
-		switch strings.ToLower(guestOS) {
-		case "linux":
-			vmName, err := d.vmNameFromID(ctx, id)
-			if err != nil {
-				return nil, fmt.Errorf("resolve VM name for %s: %w", id, err)
-			}
-			ip, err := d.vmIP(ctx, vmName)
-			if err != nil {
-				return nil, fmt.Errorf("get VM IP for %s: %w", vmName, err)
-			}
-			ge = &vmsdk.SSHExec{Host: ip, User: guestUser, Password: guestPassword}
-		default:
-			ge = psdirect.New(id, guestUser, guestPassword)
-		}
+	ge, err := d.newGuestExec(ctx, id, guestOS, guestUser, guestPassword, "")
+	if err != nil {
+		return nil, err
 	}
 
 	streamer, ok := ge.(vmsdk.GuestExecStreamer)
@@ -800,7 +761,7 @@ func (d *Driver) Allocate(ctx context.Context, id string) (map[string]any, error
 func (d *Driver) PersonalizeGuest(ctx context.Context, id string) (*providersdk.GuestPersonalizationResult, error) {
 	notes, err := d.readNotes(ctx, id)
 	if err != nil {
-		notes = map[string]string{}
+		return nil, fmt.Errorf("read VM notes for %s: %w", id, err)
 	}
 
 	guestOS := notes["boxy_guest_os"]
@@ -815,6 +776,18 @@ func (d *Driver) PersonalizeGuest(ctx context.Context, id string) (*providersdk.
 			guestUser = "Administrator"
 		}
 	}
+	bootstrap, err := d.resolveBootstrapCredential(ctx, id, notes, guestUser)
+	if err != nil {
+		return nil, fmt.Errorf("resolve guest bootstrap credential for %s: %w", id, err)
+	}
+	if strings.TrimSpace(bootstrap.Username) != "" {
+		guestUser = bootstrap.Username
+	}
+
+	newPassword, err := guestcred.GenerateRandomPassword()
+	if err != nil {
+		return nil, fmt.Errorf("generate guest credential for %s: %w", id, err)
+	}
 
 	vmName, err := d.vmNameFromID(ctx, id)
 	if err != nil {
@@ -826,34 +799,183 @@ func (d *Driver) PersonalizeGuest(ctx context.Context, id string) (*providersdk.
 		return nil, fmt.Errorf("get IP for VM %q: %w", vmName, err)
 	}
 
-	if strings.EqualFold(guestOS, "linux") {
-		return &providersdk.GuestPersonalizationResult{
-			AccessDetails: providersdk.GuestAccessDetails{
-				Properties: map[string]string{
-					"access":   "ssh",
-					"ssh_host": ip,
-					"ssh_port": "22",
-					"ssh_user": guestUser,
-					"ssh_cmd":  fmt.Sprintf("ssh %s@%s", guestUser, ip),
-				},
-			},
-		}, nil
+	bootstrapExec, err := d.newGuestExec(ctx, id, guestOS, guestUser, bootstrap.Password, ip)
+	if err != nil {
+		return nil, err
+	}
+	rotationCmd, rotationArgs := rotationCommand(guestOS, guestUser, newPassword)
+	rotationResult, err := bootstrapExec.Exec(ctx, rotationCmd, rotationArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("rotate guest credential for %s: %w", id, err)
+	}
+	if rotationResult == nil || rotationResult.ExitCode != 0 {
+		return nil, fmt.Errorf("rotate guest credential for %s failed with exit code %d: %s", id, resultExitCode(rotationResult), resultOutput(rotationResult))
 	}
 
-	// Windows: return WinRM/PSRP connection info.
+	verificationExec, err := d.newGuestExec(ctx, id, guestOS, guestUser, newPassword, ip)
+	if err != nil {
+		return nil, fmt.Errorf("reconnect with rotated guest credential for %s: %w", id, err)
+	}
+	probeCommand := []string{"whoami"}
+	if strings.EqualFold(guestOS, "linux") {
+		probeCommand = []string{"id", "-u"}
+	}
+	verificationResult, err := verificationExec.Exec(ctx, probeCommand[0], probeCommand[1:]...)
+	if err != nil {
+		return nil, fmt.Errorf("verify rotated guest credential for %s: %w", id, err)
+	}
+	if verificationResult == nil || verificationResult.ExitCode != 0 {
+		return nil, fmt.Errorf("verify rotated guest credential for %s failed with exit code %d: %s", id, resultExitCode(verificationResult), resultOutput(verificationResult))
+	}
+
+	credentialData, err := json.Marshal(struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}{Username: guestUser, Password: newPassword})
+	if err != nil {
+		return nil, fmt.Errorf("encode guest credential for %s: %w", id, err)
+	}
+
+	access := map[string]string{}
+
+	if strings.EqualFold(guestOS, "linux") {
+		access = map[string]string{
+			"access":   "ssh",
+			"ssh_host": ip,
+			"ssh_port": "22",
+			"ssh_user": guestUser,
+			"ssh_cmd":  fmt.Sprintf("ssh %s@%s", guestUser, ip),
+		}
+	} else {
+		access = map[string]string{
+			"access":    "winrm",
+			"host":      ip,
+			"user":      guestUser,
+			"psrp_vmid": id,
+		}
+	}
+
 	return &providersdk.GuestPersonalizationResult{
-		AccessDetails: providersdk.GuestAccessDetails{
-			Properties: map[string]string{
-				"access":    "winrm",
-				"host":      ip,
-				"user":      guestUser,
-				"psrp_vmid": id,
-			},
-		},
+		AccessDetails:       providersdk.GuestAccessDetails{Properties: access},
+		EphemeralCredential: &providersdk.GuestCredential{Kind: "password", Data: credentialData},
 	}, nil
 }
 
 // --- Helpers ---
+
+func (d *Driver) resolveBootstrapCredential(ctx context.Context, id string, notes map[string]string, guestUser string) (providersdk.GuestBootstrapCredential, error) {
+	var resolverErr error
+	if d.resolveBootstrap != nil {
+		bootstrap, err := d.resolveBootstrap(ctx, id)
+		if err == nil {
+			if strings.TrimSpace(bootstrap.Password) == "" {
+				resolverErr = fmt.Errorf("resolver returned an empty password")
+			} else {
+				if strings.TrimSpace(bootstrap.Username) == "" {
+					bootstrap.Username = guestUser
+				}
+				return bootstrap, nil
+			}
+		} else {
+			resolverErr = err
+		}
+	}
+
+	if strings.TrimSpace(notes["boxy_guest_password_ref"]) != "" {
+		password, err := d.resolveGuestPassword(ctx, notes)
+		if err != nil {
+			return providersdk.GuestBootstrapCredential{}, err
+		}
+		return providersdk.GuestBootstrapCredential{Username: guestUser, Password: password}, nil
+	}
+	if resolverErr != nil {
+		return providersdk.GuestBootstrapCredential{}, resolverErr
+	}
+	return providersdk.GuestBootstrapCredential{}, fmt.Errorf("no control-plane resolver or legacy guest_password_ref is configured")
+}
+
+func decodeGuestPassword(credential *providersdk.GuestCredential, defaultUser string) (string, string, error) {
+	if credential == nil {
+		return "", "", fmt.Errorf("guest credential is required")
+	}
+	if credential.Kind != "" && credential.Kind != "password" {
+		return "", "", fmt.Errorf("unsupported guest credential kind %q", credential.Kind)
+	}
+	var payload struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.Unmarshal(credential.Data, &payload); err != nil {
+		return "", "", fmt.Errorf("decode password payload: %w", err)
+	}
+	if strings.TrimSpace(payload.Password) == "" {
+		return "", "", fmt.Errorf("password payload is empty")
+	}
+	if strings.TrimSpace(payload.Username) == "" {
+		payload.Username = defaultUser
+	}
+	return payload.Username, payload.Password, nil
+}
+
+func (d *Driver) newGuestExec(ctx context.Context, id, guestOS, guestUser, guestPassword, sshHost string) (vmsdk.GuestExec, error) {
+	if d.guestExecFactory != nil {
+		if strings.EqualFold(guestOS, "linux") && sshHost == "" {
+			vmName, err := d.vmNameFromID(ctx, id)
+			if err != nil {
+				return nil, fmt.Errorf("resolve VM name for %s: %w", id, err)
+			}
+			sshHost, err = d.vmIP(ctx, vmName)
+			if err != nil {
+				return nil, fmt.Errorf("get VM IP for %s: %w", vmName, err)
+			}
+		}
+		return d.guestExecFactory(id, guestOS, guestUser, guestPassword, sshHost), nil
+	}
+
+	switch strings.ToLower(guestOS) {
+	case "linux":
+		if sshHost == "" {
+			vmName, err := d.vmNameFromID(ctx, id)
+			if err != nil {
+				return nil, fmt.Errorf("resolve VM name for %s: %w", id, err)
+			}
+			sshHost, err = d.vmIP(ctx, vmName)
+			if err != nil {
+				return nil, fmt.Errorf("get VM IP for %s: %w", vmName, err)
+			}
+		}
+		return &vmsdk.SSHExec{Host: sshHost, User: guestUser, Password: guestPassword}, nil
+	default:
+		return psdirect.New(id, guestUser, guestPassword), nil
+	}
+}
+
+func rotationCommand(guestOS, username, password string) (string, []string) {
+	if strings.EqualFold(guestOS, "linux") {
+		script := fmt.Sprintf("printf '%%s:%%s\\n' %s %s | chpasswd", shellQuote(username), shellQuote(password))
+		return "sh", []string{"-c", script}
+	}
+	script := fmt.Sprintf("$p=ConvertTo-SecureString '%s' -AsPlainText -Force; Set-LocalUser -Name '%s' -Password $p", psq(password), psq(username))
+	return "powershell.exe", []string{"-NoProfile", "-NonInteractive", "-Command", script}
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\\"'\\\"'") + "'"
+}
+
+func resultExitCode(result *vmsdk.ExecResult) int {
+	if result == nil {
+		return -1
+	}
+	return result.ExitCode
+}
+
+func resultOutput(result *vmsdk.ExecResult) string {
+	if result == nil {
+		return "no result"
+	}
+	return strings.TrimSpace(result.Stderr + " " + result.Stdout)
+}
 
 func (d *Driver) ps(ctx context.Context, script string) (string, error) {
 	if d.psExec != nil {

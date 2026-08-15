@@ -45,6 +45,7 @@ API-key roles:
 | GET | `/api/v1/pools/{name}` | auditor/admin | Inspect one pool. |
 | POST | `/api/v1/pools/{name}/drain` | admin | Drain unused ready inventory. |
 | POST | `/api/v1/pools/{name}/fill` | admin | Reconcile a pool to its configured target. |
+| POST | `/api/v1/pools/{name}/guest-credential` | admin | Set a pool's guest bootstrap credential from a request body; the raw value is never returned. |
 
 ### Resources
 
@@ -62,6 +63,7 @@ API-key roles:
 | POST | `/api/v1/sandboxes` | user/admin | Create an owned asynchronous sandbox request. |
 | DELETE | `/api/v1/sandboxes/{id}` | user/admin | Request asynchronous deletion. |
 | POST | `/api/v1/sandboxes/{id}/extend` | user/admin | Extend an owned sandbox expiry. |
+| GET | `/api/v1/sandboxes/{id}/guest-credential` | user/admin | Fetch process-local guest credentials once; subsequent fetches return 410 Gone. |
 | POST | `/api/v1/sandboxes/{id}/exec` | user/admin | Execute a one-shot command; use stream=true for NDJSON events. |
 
 ### Agents

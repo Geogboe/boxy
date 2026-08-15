@@ -83,6 +83,21 @@ func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 
 	printConnectionInfo(sb, resources)
 
+	guestCredentials, err := fetchGuestCredentials(ctx, client, base, sb.ID)
+	if err != nil {
+		return fmt.Errorf("get guest credentials for sandbox %q: %w", sb.ID, err)
+	}
+	if len(guestCredentials) != 0 {
+		if opts.saveGuestCred {
+			if err := saveGuestCredentials(opts.server, sb.ID, guestCredentials); err != nil {
+				return err
+			}
+			printSavedGuestCredentials(guestCredentials)
+		} else if err := printGuestCredentials(sb.ID, guestCredentials); err != nil {
+			return err
+		}
+	}
+
 	if !opts.noEnvFile && term.IsTerminal(int(os.Stdin.Fd())) { //nolint:gosec // Fd() fits in int on all supported platforms
 		if err := promptEnvFile(sb, resources); err != nil {
 			return err

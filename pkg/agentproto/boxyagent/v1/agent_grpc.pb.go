@@ -19,7 +19,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AgentTransportService_Connect_FullMethodName = "/boxyagent.v1.AgentTransportService/Connect"
+	AgentTransportService_Connect_FullMethodName                         = "/boxyagent.v1.AgentTransportService/Connect"
+	AgentTransportService_ResolveGuestBootstrapCredential_FullMethodName = "/boxyagent.v1.AgentTransportService/ResolveGuestBootstrapCredential"
 )
 
 // AgentTransportServiceClient is the client API for AgentTransportService service.
@@ -33,6 +34,7 @@ const (
 // back. See docs/adr/0005-remote-agent-transport-and-registration.md.
 type AgentTransportServiceClient interface {
 	Connect(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AgentMessage, ServerMessage], error)
+	ResolveGuestBootstrapCredential(ctx context.Context, in *ResolveGuestBootstrapCredentialRequest, opts ...grpc.CallOption) (*ResolveGuestBootstrapCredentialResponse, error)
 }
 
 type agentTransportServiceClient struct {
@@ -56,6 +58,16 @@ func (c *agentTransportServiceClient) Connect(ctx context.Context, opts ...grpc.
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type AgentTransportService_ConnectClient = grpc.BidiStreamingClient[AgentMessage, ServerMessage]
 
+func (c *agentTransportServiceClient) ResolveGuestBootstrapCredential(ctx context.Context, in *ResolveGuestBootstrapCredentialRequest, opts ...grpc.CallOption) (*ResolveGuestBootstrapCredentialResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResolveGuestBootstrapCredentialResponse)
+	err := c.cc.Invoke(ctx, AgentTransportService_ResolveGuestBootstrapCredential_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AgentTransportServiceServer is the server API for AgentTransportService service.
 // All implementations must embed UnimplementedAgentTransportServiceServer
 // for forward compatibility.
@@ -67,6 +79,7 @@ type AgentTransportService_ConnectClient = grpc.BidiStreamingClient[AgentMessage
 // back. See docs/adr/0005-remote-agent-transport-and-registration.md.
 type AgentTransportServiceServer interface {
 	Connect(grpc.BidiStreamingServer[AgentMessage, ServerMessage]) error
+	ResolveGuestBootstrapCredential(context.Context, *ResolveGuestBootstrapCredentialRequest) (*ResolveGuestBootstrapCredentialResponse, error)
 	mustEmbedUnimplementedAgentTransportServiceServer()
 }
 
@@ -79,6 +92,9 @@ type UnimplementedAgentTransportServiceServer struct{}
 
 func (UnimplementedAgentTransportServiceServer) Connect(grpc.BidiStreamingServer[AgentMessage, ServerMessage]) error {
 	return status.Error(codes.Unimplemented, "method Connect not implemented")
+}
+func (UnimplementedAgentTransportServiceServer) ResolveGuestBootstrapCredential(context.Context, *ResolveGuestBootstrapCredentialRequest) (*ResolveGuestBootstrapCredentialResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResolveGuestBootstrapCredential not implemented")
 }
 func (UnimplementedAgentTransportServiceServer) mustEmbedUnimplementedAgentTransportServiceServer() {}
 func (UnimplementedAgentTransportServiceServer) testEmbeddedByValue()                               {}
@@ -108,13 +124,36 @@ func _AgentTransportService_Connect_Handler(srv interface{}, stream grpc.ServerS
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type AgentTransportService_ConnectServer = grpc.BidiStreamingServer[AgentMessage, ServerMessage]
 
+func _AgentTransportService_ResolveGuestBootstrapCredential_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResolveGuestBootstrapCredentialRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentTransportServiceServer).ResolveGuestBootstrapCredential(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentTransportService_ResolveGuestBootstrapCredential_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentTransportServiceServer).ResolveGuestBootstrapCredential(ctx, req.(*ResolveGuestBootstrapCredentialRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AgentTransportService_ServiceDesc is the grpc.ServiceDesc for AgentTransportService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var AgentTransportService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "boxyagent.v1.AgentTransportService",
 	HandlerType: (*AgentTransportServiceServer)(nil),
-	Methods:     []grpc.MethodDesc{},
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ResolveGuestBootstrapCredential",
+			Handler:    _AgentTransportService_ResolveGuestBootstrapCredential_Handler,
+		},
+	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "Connect",

@@ -10,10 +10,11 @@ import (
 )
 
 type sandboxCreateOpts struct {
-	file      string
-	server    string
-	noEnvFile bool
-	noWait    bool
+	file          string
+	server        string
+	noEnvFile     bool
+	noWait        bool
+	saveGuestCred bool
 }
 
 func newSandboxCommand() *cobra.Command {
@@ -30,22 +31,24 @@ func newSandboxCommand() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&server, "server", "", "server address (overrides BOXY_SERVER and the global client default)")
 	cmd.PersistentFlags().StringVarP(&file, "file", "f", "", "sandbox spec file (default: sandbox.yaml in cwd)")
 
-	var noEnvFile, noWait bool
+	var noEnvFile, noWait, saveGuestCred bool
 	create := &cobra.Command{
 		Use:   "create",
 		Short: "Create a sandbox from a spec file",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSandboxCreate(cmd.Context(), sandboxCreateOpts{
-				file:      file,
-				server:    server,
-				noEnvFile: noEnvFile,
-				noWait:    noWait,
+				file:          file,
+				server:        server,
+				noEnvFile:     noEnvFile,
+				noWait:        noWait,
+				saveGuestCred: saveGuestCred,
 			})
 		},
 	}
 	create.Flags().BoolVar(&noEnvFile, "no-env-file", false, "skip writing connection info to a .sandbox-<name>.env file")
 	create.Flags().BoolVar(&noWait, "no-wait", false, "return immediately after the sandbox request is accepted")
+	create.Flags().BoolVar(&saveGuestCred, "save-guest-cred", false, "save one-time guest credentials in the OS keyring instead of printing them")
 	cmd.AddCommand(create)
 
 	serverAddr := func() string { return server }
@@ -60,6 +63,9 @@ func newSandboxCommand() *cobra.Command {
 }
 
 func runSandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
+	if opts.noWait && opts.saveGuestCred {
+		return fmt.Errorf("--save-guest-cred requires waiting for the sandbox to become ready")
+	}
 	if opts.file == "" {
 		opts.file = findDefaultSandboxFile()
 	}

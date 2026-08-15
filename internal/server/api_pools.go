@@ -1,8 +1,10 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/pkg/httpjson"
@@ -20,6 +22,7 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/pools/{name}", s.handleGetPool)
 	mux.HandleFunc("POST /api/v1/pools/{name}/drain", s.handleDrainPool)
 	mux.HandleFunc("POST /api/v1/pools/{name}/fill", s.handleFillPool)
+	mux.HandleFunc("POST /api/v1/pools/{name}/guest-credential", s.handleSetPoolGuestCredential)
 	mux.HandleFunc("GET /api/v1/resources", s.handleListResources)
 	mux.HandleFunc("GET /api/v1/resources/{id}", s.handleGetResource)
 	mux.HandleFunc("GET /api/v1/sandboxes", s.handleListSandboxes)
@@ -28,11 +31,47 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/sandboxes/{id}", s.handleDeleteSandbox)
 	mux.HandleFunc("POST /api/v1/sandboxes/{id}/extend", s.handleExtendSandbox)
 	mux.HandleFunc("POST /api/v1/sandboxes/{id}/exec", s.handleSandboxExec)
+	mux.HandleFunc("GET /api/v1/sandboxes/{id}/guest-credential", s.handleGuestCredential)
 	mux.HandleFunc("POST /api/v1/agent-tokens", s.handleCreateAgentToken)
 	mux.HandleFunc("GET /api/v1/agent-tokens", s.handleListAgentTokens)
 	mux.HandleFunc("DELETE /api/v1/agent-tokens/{id}", s.handleDeleteAgentToken)
 	mux.HandleFunc("GET /api/v1/agents", s.handleListAgents)
 	mux.HandleFunc("DELETE /api/v1/agents/{id}", s.handleRevokeAgent)
+}
+
+type setPoolGuestCredentialRequest struct {
+	Value string `json:"value"`
+}
+
+func (s *Server) handleSetPoolGuestCredential(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRole(w, r, model.APIKeyRoleAdmin) {
+		return
+	}
+	name := model.PoolName(r.PathValue("name"))
+	if _, err := s.store.GetPool(r.Context(), name); errors.Is(err, store.ErrNotFound) {
+		httpjson.Error(w, http.StatusNotFound, "pool not found")
+		return
+	} else if err != nil {
+		httpjson.Error(w, http.StatusInternalServerError, "failed to get pool")
+		return
+	}
+
+	var req setPoolGuestCredentialRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		httpjson.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if strings.TrimSpace(req.Value) == "" {
+		httpjson.Error(w, http.StatusBadRequest, "guest credential value must not be blank")
+		return
+	}
+	if err := s.store.PutPoolGuestCredential(r.Context(), name, req.Value); err != nil {
+		httpjson.Error(w, http.StatusInternalServerError, "failed to store pool guest credential")
+		return
+	}
+	httpjson.Write(w, http.StatusOK, map[string]any{"pool": name, "configured": true})
 }
 
 // handleListPools returns all pools as JSON.

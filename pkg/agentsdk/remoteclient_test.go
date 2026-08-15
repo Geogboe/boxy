@@ -306,10 +306,12 @@ func TestExecuteCommand(t *testing.T) {
 	})
 
 	t.Run("personalize guest success round-trips typed properties", func(t *testing.T) {
+		credential := &providersdk.GuestCredential{Kind: "password", Data: json.RawMessage(`{"username":"admin","password":"rotated"}`)}
 		drivers := DriverSet{"hyperv": &fakePersonalizingDriver{
 			fakeDriver: &fakeDriver{providerType: "hyperv"},
 			personalizeRes: &providersdk.GuestPersonalizationResult{
-				AccessDetails: providersdk.GuestAccessDetails{Properties: map[string]string{"access": "ssh", "host": "192.0.2.9"}},
+				AccessDetails:       providersdk.GuestAccessDetails{Properties: map[string]string{"access": "ssh", "host": "192.0.2.9"}},
+				EphemeralCredential: credential,
 			},
 		}}
 		cmd := &boxyagentv1.Command{
@@ -324,6 +326,13 @@ func TestExecuteCommand(t *testing.T) {
 		got := res.GetPersonalizeGuest().GetProperties()
 		if got["access"] != "ssh" || got["host"] != "192.0.2.9" {
 			t.Fatalf("expected typed properties to round-trip, got %#v", got)
+		}
+		var gotCredential providersdk.GuestCredential
+		if err := json.Unmarshal(res.GetPersonalizeGuest().GetGuestCredentialJson(), &gotCredential); err != nil {
+			t.Fatalf("unmarshal guest credential: %v", err)
+		}
+		if gotCredential.Kind != credential.Kind || string(gotCredential.Data) != string(credential.Data) {
+			t.Fatalf("guest credential = %+v, want %+v", gotCredential, *credential)
 		}
 	})
 

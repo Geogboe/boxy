@@ -163,7 +163,8 @@ boxy
 │   │
 │   ├── create -f <spec>                         Create sandbox from spec file
 │   │   ├── -f, --file <path>                      Sandbox spec file (required)
-│   │   └── --no-wait                              Return after request is accepted
+│   │   ├── --no-wait                              Return after request is accepted
+│   │   └── --save-guest-cred                      Save one-time guest credentials in the OS keyring
 │   │
 │   │   $ boxy sandbox create -f lab.sandbox.yaml
 │   │     Waiting for sandbox "pentest-lab"  sb-a1b2c3 · 3 resource(s)
@@ -209,10 +210,23 @@ boxy
 │   └── exec <id> -- <command> [args...]         Execute a one-shot command
 │       ├── --resource <id>                        Required for multi-resource sandboxes
 │       ├── --timeout <duration>                   Default 30s, maximum 5m
-│       └── --stream                              Stream NDJSON events to stdout/stderr
+│       ├── --stream                              Stream NDJSON events to stdout/stderr
+│       └── --guest-password-stdin                  Read a guest password from stdin (never a flag value)
 │
 │       $ boxy sandbox exec sb-a1b2c3 -- hostname
 │         sandbox output...
+│
+│
+├── pool                                      Manage pools
+│   ├── --server <url>                           Server URL (default 127.0.0.1:9090)
+│   ├── --ca-cert <path>                         Trust a Boxy self-signed CA
+│   ├── --insecure                               Skip HTTPS verification (development only)
+│   │
+│   └── set-guest-credential <pool> --value -    Set a pool bootstrap credential from stdin
+│       │                                          (the raw value is never returned)
+│       │
+│       │   $ boxy pool set-guest-credential win-vm --value - < bootstrap.txt
+│       │     guest bootstrap credential configured for pool win-vm
 │
 │
 ├── skills                                     Install bundled coding-agent skills

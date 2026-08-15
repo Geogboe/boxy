@@ -490,10 +490,19 @@ func executeCommand(ctx context.Context, drivers DriverSet, cmd *boxyagentv1.Com
 				Outcome:   &boxyagentv1.CommandResult_PersonalizeGuest{PersonalizeGuest: &boxyagentv1.PersonalizeGuestResult{}},
 			}
 		}
+		var credentialJSON []byte
+		if result.EphemeralCredential != nil {
+			var marshalErr error
+			credentialJSON, marshalErr = json.Marshal(result.EphemeralCredential)
+			if marshalErr != nil {
+				return errorResult(cmd.GetCommandId(), fmt.Sprintf("marshal guest credential: %v", marshalErr), marshalErr)
+			}
+		}
 		return &boxyagentv1.CommandResult{
 			CommandId: cmd.GetCommandId(),
 			Outcome: &boxyagentv1.CommandResult_PersonalizeGuest{PersonalizeGuest: &boxyagentv1.PersonalizeGuestResult{
-				Properties: result.AccessDetails.Properties,
+				Properties:          result.AccessDetails.Properties,
+				GuestCredentialJson: credentialJSON,
 			}},
 		}
 

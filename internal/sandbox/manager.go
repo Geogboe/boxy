@@ -359,6 +359,7 @@ func (m *Manager) RequestDelete(ctx context.Context, sbID model.SandboxID) (mode
 	if err := m.store.PutSandbox(ctx, sb); err != nil {
 		return model.Sandbox{}, fmt.Errorf("mark sandbox %q deleting: %w", sb.ID, err)
 	}
+	m.ForgetGuestCredentials(sb.ID)
 	return sb, nil
 }
 
@@ -414,8 +415,8 @@ func resourceIDs(rs []model.Resource) []model.ResourceID {
 // to a caller for a sandbox resource. It is deliberately not part of
 // model.Resource, so store persistence cannot accidentally retain it.
 type GuestCredentialDelivery struct {
-	ResourceID model.ResourceID
-	Credential *providersdk.GuestCredential
+	ResourceID model.ResourceID             `json:"resource_id"`
+	Credential *providersdk.GuestCredential `json:"credential"`
 }
 
 func (m *Manager) rememberGuestCredential(sbID model.SandboxID, resourceID model.ResourceID, credential *providersdk.GuestCredential) {

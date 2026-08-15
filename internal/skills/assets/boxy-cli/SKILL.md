@@ -27,6 +27,7 @@ Core commands you will commonly use:
 - `boxy config client show`
 - `boxy config client set-server <url>`
 - `boxy sandbox create`
+- `boxy pool set-guest-credential`
 - `boxy sandbox list`
 - `boxy sandbox get`
 - `boxy sandbox delete`
@@ -68,10 +69,11 @@ Core commands you will commonly use:
 - Boxy serves REST and agent gRPC over TLS by default. Use `--ca-cert` for the generated Boxy CA; use `--insecure` only for explicit local development.
 - Run `boxy admin api-key bootstrap` locally once to create the first administrator key, then `boxy login --server <url> --ca-cert <path>` to store it in the OS keyring. The interactive login prompt masks the key and can be canceled with Ctrl+C. Raw keys are shown once and must not be written to config or state files.
 - Prefer `boxy serve --once` for smoke checks and `boxy serve` for daemon usage.
-- Sandbox creation is asynchronous. Use `boxy sandbox create --no-wait` if you need the request accepted quickly, then poll with `boxy sandbox get`.
+- Sandbox creation is asynchronous. Use `boxy sandbox create --no-wait` if you need the request accepted quickly, then poll with `boxy sandbox get`. A ready sandbox's guest credential is delivered once: it is printed once by default, or `--save-guest-cred` stores it in the OS keyring.
 - Sandbox deletion is asynchronous. `boxy sandbox delete <id>` waits until the daemon finishes cleanup; use `--no-wait` to return after acceptance.
 - `boxy sandbox extend <id> <duration>` only works on sandboxes created with `policies.auto_destroy_after` set; it pushes that expiry out by `<duration>` and fails if the sandbox has no expiry to extend or is already being deleted.
-- `boxy sandbox exec <id> -- <command> [args...]` runs a one-shot command only in a ready sandbox. It selects the only resource automatically; pass `--resource` for multi-resource sandboxes. Use `--stream` for live NDJSON events. Interactive stdin/PTY sessions are not supported.
+- `boxy sandbox exec <id> -- <command> [args...]` runs a one-shot command only in a ready sandbox. It selects the only resource automatically; pass `--resource` for multi-resource sandboxes. Saved guest credentials are loaded from the OS keyring when the resource is unambiguous. Use `--guest-password-stdin` or `BOXY_GUEST_PASSWORD` for an explicit password, never a plain command-line flag. Use `--stream` for live NDJSON events. Interactive stdin/PTY sessions are not supported.
+- `boxy pool set-guest-credential <pool> --value -` reads a Hyper-V pool's bootstrap credential from stdin and stores it server-side; never place that secret in a config file, environment variable, or command-line argument for a remote agent.
 - Use `boxy debug pool drain <pool>` and `boxy debug pool fill <pool>` for daemon-backed operator maintenance of unused ready pool inventory.
 - Remote agents register with a single-use token: `boxy agent token create` prints the raw token exactly once (never stored or retrievable again); the agent redeems it on first connect and authenticates with an issued mTLS client certificate afterward. `boxy agent list` shows registered agents and availability; `boxy agent revoke <id>` deny-lists an agent's certificate and tears down its live connection. If the agent is permanently gone, `boxy agent revoke <id> --force-orphan-resources` also detaches every resource still attributed to it (pool inventory + store) without contacting the agent — resources otherwise stay un-`Destroy`able through the normal path since `Destroy` always routes to the exact agent that created them.
 - `boxy agent serve --server <host:port> --providers <list> --token <token> --ca-cert <path>` runs a host as a remote agent. The `--server` address is the daemon's gRPC listener (default `:9091`), not its REST port. Use `--config boxy.yaml` to load configured provider instances (and optionally `--providers` to select a subset); without `--config`, `--providers` remains required. `--ca-cert` (the server's `.boxy/ca.crt`, copied out-of-band) is required for the first connection; after registration the issued credentials in `.boxy-agent/` are used automatically and neither flag is needed again.

@@ -10,22 +10,27 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
+	"strings"
 
+	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/spf13/cobra"
 )
 
 type sandboxExecOptions struct {
-	server     string
-	resourceID string
-	timeout    string
-	stream     bool
+	server             string
+	resourceID         string
+	timeout            string
+	stream             bool
+	guestPasswordStdin bool
 }
 
 type sandboxExecRequest struct {
-	Command    []string `json:"command"`
-	ResourceID string   `json:"resource_id,omitempty"`
-	Timeout    string   `json:"timeout,omitempty"`
+	Command         []string                     `json:"command"`
+	ResourceID      string                       `json:"resource_id,omitempty"`
+	Timeout         string                       `json:"timeout,omitempty"`
+	GuestCredential *providersdk.GuestCredential `json:"guest_credential,omitempty"`
 }
 
 type sandboxExecResponse struct {
@@ -46,7 +51,7 @@ type sandboxExecStreamEvent struct {
 
 func newSandboxExecCommand(serverAddr func() string) *cobra.Command {
 	var resourceID, timeout string
-	var stream bool
+	var stream, guestPasswordStdin bool
 	cmd := &cobra.Command{
 		Use:   "exec <id> -- <command> [args...]",
 		Short: "Execute a one-shot command in a ready sandbox",
@@ -62,22 +67,34 @@ func newSandboxExecCommand(serverAddr func() string) *cobra.Command {
 				return err
 			}
 			return runSandboxExec(cmd.Context(), sandboxExecOptions{
-				server:     serverAddr(),
-				resourceID: resourceID,
-				timeout:    timeout,
-				stream:     stream,
-			}, id, args[1:], cmd.OutOrStdout(), cmd.ErrOrStderr())
+				server:             serverAddr(),
+				resourceID:         resourceID,
+				timeout:            timeout,
+				stream:             stream,
+				guestPasswordStdin: guestPasswordStdin,
+			}, id, args[1:], cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	cmd.Flags().StringVar(&resourceID, "resource", "", "resource ID (required for multi-resource sandboxes)")
 	cmd.Flags().StringVar(&timeout, "timeout", "", "execution timeout (default 30s, maximum 5m)")
 	cmd.Flags().BoolVar(&stream, "stream", false, "stream output as NDJSON-backed live events")
+	cmd.Flags().BoolVar(&guestPasswordStdin, "guest-password-stdin", false, "read the guest password from stdin (never pass it as a flag value)")
 	return cmd
 }
 
-func runSandboxExec(ctx context.Context, opts sandboxExecOptions, id string, command []string, out, errOut io.Writer) error {
+func runSandboxExec(ctx context.Context, opts sandboxExecOptions, id string, command []string, in io.Reader, out, errOut io.Writer) error {
 	base := apiBaseURL(opts.server)
-	request := sandboxExecRequest{Command: command, ResourceID: opts.resourceID, Timeout: opts.timeout}
+	credential, err := guestCredentialFromCLI(in, opts.guestPasswordStdin)
+	if err != nil {
+		return err
+	}
+	if credential == nil {
+		credential, err = guestCredentialFromKeyring(ctx, opts.server, id, opts.resourceID)
+		if err != nil {
+			return err
+		}
+	}
+	request := sandboxExecRequest{Command: command, ResourceID: opts.resourceID, Timeout: opts.timeout, GuestCredential: credential}
 	// The default client's 5s http.Client.Timeout bounds the whole request
 	// (including reading a --stream response body), but the server accepts
 	// exec timeouts up to 5 minutes — see execAPIClientForServer's doc
@@ -166,4 +183,27 @@ func runSandboxExec(ctx context.Context, opts sandboxExecOptions, id string, com
 		return fmt.Errorf("read exec stream: %w", err)
 	}
 	return nil
+}
+
+func guestCredentialFromCLI(in io.Reader, readStdin bool) (*providersdk.GuestCredential, error) {
+	password, fromEnv := os.LookupEnv("BOXY_GUEST_PASSWORD")
+	if readStdin {
+		if fromEnv {
+			return nil, fmt.Errorf("use either --guest-password-stdin or BOXY_GUEST_PASSWORD, not both")
+		}
+		data, err := io.ReadAll(in)
+		if err != nil {
+			return nil, fmt.Errorf("read guest password from stdin: %w", err)
+		}
+		password = string(data)
+		fromEnv = true
+	}
+	if !fromEnv || strings.TrimSpace(password) == "" {
+		return nil, nil
+	}
+	data, err := json.Marshal(map[string]string{"password": strings.TrimSpace(password)})
+	if err != nil {
+		return nil, fmt.Errorf("encode guest credential: %w", err)
+	}
+	return &providersdk.GuestCredential{Kind: "password", Data: data}, nil
 }

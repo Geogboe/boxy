@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
@@ -242,6 +243,8 @@ func runAgentServe(ctx context.Context, opts agentServeOpts) error {
 	if err != nil {
 		return err
 	}
+	connectionHolder := &agentConnectionHolder{}
+	configureRemoteGuestBootstrapResolvers(drivers, connectionHolder)
 
 	hasCert := agentCredentialsExist(dataDir)
 	if !opts.insecure && !hasCert && opts.token == "" {
@@ -260,7 +263,7 @@ func runAgentServe(ctx context.Context, opts agentServeOpts) error {
 
 	slog.Info("starting boxy agent", "server", opts.server, "providers", providerTypes, "data_dir", dataDir, "insecure", opts.insecure)
 
-	dial := newAgentDialer(opts.server, dataDir, opts.caCert, opts.insecure)
+	dial := newAgentDialer(opts.server, dataDir, opts.caCert, opts.insecure, connectionHolder)
 	return agentsdk.Run(ctx, dial, agentsdk.RemoteClientConfig{
 		AgentName:     name,
 		Token:         token,
@@ -321,10 +324,58 @@ func buildAgentDrivers(types []providersdk.Type, instances []providersdk.Instanc
 // every attempt, so a reconnect after the first (token-based) registration
 // picks up the freshly persisted client certificate without restarting the
 // process. The previous connection is closed before each new dial.
-func newAgentDialer(serverAddr, dataDir, caCertPath string, insecureMode bool) agentsdk.Dialer {
+type agentConnectionHolder struct {
+	mu   sync.RWMutex
+	conn *grpc.ClientConn
+}
+
+func (h *agentConnectionHolder) set(conn *grpc.ClientConn) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.conn = conn
+}
+
+func (h *agentConnectionHolder) clear(conn *grpc.ClientConn) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.conn == conn {
+		h.conn = nil
+	}
+}
+
+func (h *agentConnectionHolder) resolve(ctx context.Context, resourceID string) (providersdk.GuestBootstrapCredential, error) {
+	h.mu.RLock()
+	conn := h.conn
+	h.mu.RUnlock()
+	if conn == nil {
+		return providersdk.GuestBootstrapCredential{}, fmt.Errorf("agent gRPC connection is not ready")
+	}
+	response, err := boxyagentv1.NewAgentTransportServiceClient(conn).ResolveGuestBootstrapCredential(ctx, &boxyagentv1.ResolveGuestBootstrapCredentialRequest{ResourceId: resourceID})
+	if err != nil {
+		return providersdk.GuestBootstrapCredential{}, fmt.Errorf("resolve guest bootstrap credential: %w", err)
+	}
+	if strings.TrimSpace(response.GetPassword()) == "" {
+		return providersdk.GuestBootstrapCredential{}, fmt.Errorf("server returned an empty guest bootstrap password")
+	}
+	return providersdk.GuestBootstrapCredential{Username: response.GetUsername(), Password: response.GetPassword()}, nil
+}
+
+func configureRemoteGuestBootstrapResolvers(drivers agentsdk.DriverSet, holder *agentConnectionHolder) {
+	for _, driver := range drivers {
+		configurer, ok := driver.(interface {
+			SetGuestBootstrapResolver(providersdk.GuestBootstrapResolver)
+		})
+		if ok {
+			configurer.SetGuestBootstrapResolver(holder.resolve)
+		}
+	}
+}
+
+func newAgentDialer(serverAddr, dataDir, caCertPath string, insecureMode bool, holder *agentConnectionHolder) agentsdk.Dialer {
 	var prevConn *grpc.ClientConn
 	return func(ctx context.Context) (boxyagentv1.AgentTransportService_ConnectClient, error) {
 		if prevConn != nil {
+			holder.clear(prevConn)
 			_ = prevConn.Close()
 			prevConn = nil
 		}
@@ -345,6 +396,7 @@ func newAgentDialer(serverAddr, dataDir, caCertPath string, insecureMode bool) a
 			return nil, fmt.Errorf("open agent stream: %w", err)
 		}
 		prevConn = conn
+		holder.set(conn)
 		return stream, nil
 	}
 }

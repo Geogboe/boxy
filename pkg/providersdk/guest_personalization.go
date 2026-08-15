@@ -70,6 +70,19 @@ type GuestCredential struct {
 	Data json.RawMessage `json:"data"`
 }
 
+// GuestBootstrapCredential is the short-lived input used by a provider to
+// authenticate to a freshly provisioned guest before rotating its password.
+// It is never persisted in resource metadata.
+type GuestBootstrapCredential struct {
+	Username string
+	Password string
+}
+
+// GuestBootstrapResolver supplies the server-owned bootstrap credential for a
+// resource. Providers receive it as a callback so embedded and remote agents
+// can use different transport implementations without changing driver APIs.
+type GuestBootstrapResolver func(ctx context.Context, resourceID string) (GuestBootstrapCredential, error)
+
 // AllocationResult separates safe properties, which may be persisted on a
 // resource, from an ephemeral credential that must never enter resource
 // metadata or the durable store.

@@ -139,6 +139,46 @@ type extendSandboxRequest struct {
 	Duration string `json:"duration"`
 }
 
+type guestCredentialResponse struct {
+	Credentials []sandbox.GuestCredentialDelivery `json:"credentials"`
+}
+
+// handleGuestCredential returns the process-local credential(s) produced by
+// sandbox allocation and consumes them immediately. The response is never
+// backed by durable resource state; a second fetch returns Gone.
+func (s *Server) handleGuestCredential(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRole(w, r, model.APIKeyRoleUser, model.APIKeyRoleAdmin) {
+		return
+	}
+	id := model.SandboxID(r.PathValue("id"))
+	sb, err := s.store.GetSandbox(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		httpjson.Error(w, http.StatusNotFound, "sandbox not found")
+		return
+	}
+	if err != nil {
+		httpjson.Error(w, http.StatusInternalServerError, "failed to get sandbox")
+		return
+	}
+	if !s.authorizeSandbox(w, r, sb, true) {
+		return
+	}
+	if sb.Status != model.SandboxStatusReady {
+		httpjson.Error(w, http.StatusConflict, "sandbox is not ready for guest credential delivery")
+		return
+	}
+	if s.sandboxMgr == nil {
+		httpjson.Error(w, http.StatusServiceUnavailable, "guest credential delivery is not available")
+		return
+	}
+	deliveries := s.sandboxMgr.TakeGuestCredentials(id)
+	if len(deliveries) == 0 {
+		httpjson.Error(w, http.StatusGone, "guest credential was already fetched or is unavailable")
+		return
+	}
+	httpjson.Write(w, http.StatusOK, guestCredentialResponse{Credentials: deliveries})
+}
+
 // handleExtendSandbox pushes a sandbox's auto-destroy expiry further out.
 // Fails with 409 if the sandbox has no expiry to extend (its policy never
 // set auto_destroy_after) or is already being deleted.

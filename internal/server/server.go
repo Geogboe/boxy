@@ -42,7 +42,7 @@ type AgentAdmin interface {
 // Implementations own provider-specific operation construction and agent
 // routing; the server owns request validation and HTTP event encoding.
 type SandboxExecutor interface {
-	ExecuteSandbox(ctx context.Context, resource model.Resource, command []string, sink eventstream.Sink) (*providersdk.Result, error)
+	ExecuteSandbox(ctx context.Context, resource model.Resource, operation providersdk.ExecOperation, sink eventstream.Sink) (*providersdk.Result, error)
 }
 
 // Server is the HTTP server for the Boxy REST API and optional web UI.

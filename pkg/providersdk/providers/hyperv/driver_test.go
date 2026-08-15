@@ -2,6 +2,7 @@ package hyperv
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -898,7 +899,10 @@ func TestDriver_Update_ExecOp_Windows(t *testing.T) {
 		},
 	}
 
-	result, err := d.Update(context.Background(), fakeGUID, &ExecOp{Command: []string{"echo", "hello"}})
+	result, err := d.Update(context.Background(), fakeGUID, &ExecOp{
+		Command:         []string{"echo", "hello"},
+		GuestCredential: passwordCredential("Administrator", "pass"),
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -948,7 +952,10 @@ func TestDriver_Update_ExecOp_Linux(t *testing.T) {
 		},
 	}
 
-	result, err := d.Update(context.Background(), fakeGUID, &ExecOp{Command: []string{"uname", "-a"}})
+	result, err := d.Update(context.Background(), fakeGUID, &ExecOp{
+		Command:         []string{"uname", "-a"},
+		GuestCredential: passwordCredential("admin", "linux-pass"),
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1084,6 +1091,13 @@ func TestDriver_Allocate_Linux(t *testing.T) {
 		return "", fmt.Errorf("unexpected call %d", callNum)
 	})
 
+	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
+		return providersdk.GuestBootstrapCredential{Username: "ubuntu", Password: "bootstrap"}, nil
+	}
+	d.guestExecFactory = func(_, _, _, _, _ string) vmsdk.GuestExec {
+		return &fakeGuestExec{exitCode: 0}
+	}
+
 	info, err := d.Allocate(context.Background(), fakeGUID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1114,12 +1128,77 @@ func TestDriver_PersonalizeGuest_Linux(t *testing.T) {
 		return "", fmt.Errorf("unexpected call %d", callNum)
 	})
 
+	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
+		return providersdk.GuestBootstrapCredential{Username: "ubuntu", Password: "bootstrap"}, nil
+	}
+	d.guestExecFactory = func(_, _, _, _, _ string) vmsdk.GuestExec {
+		return &fakeGuestExec{exitCode: 0}
+	}
+
 	result, err := d.PersonalizeGuest(context.Background(), fakeGUID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got := result.AccessDetails.Properties["ssh_user"]; got != "ubuntu" {
 		t.Errorf("ssh_user = %q, want ubuntu", got)
+	}
+}
+
+func TestDriver_PersonalizeGuest_RotatesAndReturnsCredential(t *testing.T) {
+	var guestExecs []*recordingGuestExec
+	d := &Driver{
+		psExec: func(_ context.Context, script string) (string, error) {
+			switch {
+			case strings.Contains(script, "Get-VMNetworkAdapter"):
+				return "10.0.0.5\n", nil
+			case strings.Contains(script, "(Get-VM -Id") && strings.Contains(script, ").Name"):
+				return "boxy-abc123\n", nil
+			default:
+				return "boxy_guest_os=windows;boxy_guest_user=Administrator\n", nil
+			}
+		},
+		resolveBootstrap: func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
+			return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "bootstrap"}, nil
+		},
+		guestExecFactory: func(vmGUID, guestOS, guestUser, guestPassword, sshHost string) vmsdk.GuestExec {
+			exec := &recordingGuestExec{password: guestPassword}
+			guestExecs = append(guestExecs, exec)
+			return exec
+		},
+	}
+
+	result, err := d.PersonalizeGuest(context.Background(), fakeGUID)
+	if err != nil {
+		t.Fatalf("PersonalizeGuest: %v", err)
+	}
+	if len(guestExecs) != 2 {
+		t.Fatalf("guest exec sessions = %d, want bootstrap and verification sessions", len(guestExecs))
+	}
+	if guestExecs[0].password != "bootstrap" {
+		t.Fatalf("bootstrap password = %q, want bootstrap", guestExecs[0].password)
+	}
+	if guestExecs[1].password == "" || guestExecs[1].password == guestExecs[0].password {
+		t.Fatalf("rotated password = %q, want a fresh password", guestExecs[1].password)
+	}
+	if len(guestExecs[0].calls) != 1 || !strings.Contains(strings.Join(guestExecs[0].calls[0], " "), "Set-LocalUser") {
+		t.Fatalf("rotation calls = %+v, want Set-LocalUser", guestExecs[0].calls)
+	}
+	if len(guestExecs[1].calls) != 1 || guestExecs[1].calls[0][0] != "whoami" {
+		t.Fatalf("verification calls = %+v, want whoami", guestExecs[1].calls)
+	}
+
+	if result.EphemeralCredential == nil || result.EphemeralCredential.Kind != "password" {
+		t.Fatalf("ephemeral credential = %+v, want password credential", result.EphemeralCredential)
+	}
+	var payload struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.Unmarshal(result.EphemeralCredential.Data, &payload); err != nil {
+		t.Fatalf("decode returned credential: %v", err)
+	}
+	if payload.Username != "Administrator" || payload.Password != guestExecs[1].password {
+		t.Fatalf("returned payload = %+v, want Administrator/%q", payload, guestExecs[1].password)
 	}
 }
 
@@ -1137,6 +1216,13 @@ func TestDriver_Allocate_Windows(t *testing.T) {
 		}
 		return "", fmt.Errorf("unexpected call %d", callNum)
 	})
+
+	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
+		return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "bootstrap"}, nil
+	}
+	d.guestExecFactory = func(_, _, _, _, _ string) vmsdk.GuestExec {
+		return &fakeGuestExec{exitCode: 0}
+	}
 
 	info, err := d.Allocate(context.Background(), fakeGUID)
 	if err != nil {
@@ -1190,11 +1276,29 @@ type fakeGuestExec struct {
 	err      error
 }
 
+type recordingGuestExec struct {
+	password string
+	calls    [][]string
+}
+
+func (f *recordingGuestExec) Exec(_ context.Context, cmd string, args ...string) (*vmsdk.ExecResult, error) {
+	f.calls = append(f.calls, append([]string{cmd}, args...))
+	return &vmsdk.ExecResult{ExitCode: 0}, nil
+}
+
 func (f *fakeGuestExec) Exec(_ context.Context, _ string, _ ...string) (*vmsdk.ExecResult, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
 	return &vmsdk.ExecResult{Stdout: f.stdout, ExitCode: f.exitCode}, nil
+}
+
+func passwordCredential(username, password string) *providersdk.GuestCredential {
+	b, _ := json.Marshal(struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}{Username: username, Password: password})
+	return &providersdk.GuestCredential{Kind: "password", Data: b}
 }
 
 // --- providersdk.Driver interface compliance ---
