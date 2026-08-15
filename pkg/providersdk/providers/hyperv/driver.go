@@ -828,15 +828,15 @@ func (d *Driver) PersonalizeGuest(ctx context.Context, id string) (*providersdk.
 		return nil, fmt.Errorf("verify rotated guest credential for %s failed with exit code %d: %s", id, resultExitCode(verificationResult), resultOutput(verificationResult))
 	}
 
-	credentialData, err := json.Marshal(struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}{Username: guestUser, Password: newPassword})
+	credentialData, err := json.Marshal(map[string]string{
+		"username": guestUser,
+		"password": newPassword,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("encode guest credential for %s: %w", id, err)
 	}
 
-	access := map[string]string{}
+	var access map[string]string
 
 	if strings.EqualFold(guestOS, "linux") {
 		access = map[string]string{
