@@ -108,6 +108,25 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   explicit so they cannot be mistaken for the real provider; generate
   conformance scaffolding and capability fixtures, not provider semantics.
 
+### Guest Credentials
+
+- Guest bootstrap credentials and caller-facing credentials have different
+  lifetimes. The server-owned per-pool bootstrap value is used only to
+  personalize a new Hyper-V guest; the rotated `providersdk.GuestCredential`
+  is opaque, process-local, and one-time-delivered to the caller. Never add
+  either secret to `model.Resource.Properties`, VM notes, API logs, or remote
+  agent configuration. See [ADR-0010](docs/adr/0010-guest-credential-delivery.md).
+- The remote bootstrap lookup is authorized from the mTLS agent identity plus
+  the resource's recorded `OriginPool` and `Provider.AgentID`. Keep this
+  ownership check server-side; do not trust pool or agent claims supplied by a
+  remote agent.
+- Drivers that depend on a reconnectable remote transport must resolve the
+  current connection at operation time. Do not capture a gRPC connection when
+  constructing a driver; reconnects replace it.
+- Test this path with fake guest executors, injected keyring backends, agent
+  wire tests, and the devfactory provider for control-plane orchestration. This
+  host cannot perform live Hyper-V VM validation.
+
 ### Bundled Agent Skill
 
 - Bundled skill assets live under `internal/skills/assets/boxy-cli/` and are embedded into the binary.
@@ -186,6 +205,11 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   provider for control-plane, agent, and end-to-end orchestration tests, and
   inject fake guest executors for Hyper-V rotation/exec behavior. Do not claim
   live Hyper-V validation from this environment.
+- **Operational command drift can survive a green test suite.** Run the
+  documented Taskfile/skill smoke commands, not only package tests. At present
+  `task serve:once` advertises `boxy serve --once`, but the command rejects
+  that flag; treat this as a stale recipe/documentation defect and use a
+  bounded live `serve` smoke run until the command contract is repaired.
 
 ## ADRs
 
@@ -338,6 +362,11 @@ it's no longer needed. See #100.
 - For feature work, use TDD red/green/blue: add a failing test, implement the
   smallest fix, then review/refactor with `gopls`; finish with `task test`,
   `task lint`, and documentation/drift checks.
+- Guest credential delivery for Hyper-V pools (#188/#189) is implemented with
+  server-owned bootstrap storage, mTLS-authorized agent resolution, allocation
+  time password rotation, one-time sandbox delivery, and caller-supplied exec
+  credentials. See [ADR-0010](docs/adr/0010-guest-credential-delivery.md) and
+  the design spec for the accepted restart/lost-delivery behavior.
 
 # Deletions
 
