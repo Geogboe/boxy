@@ -285,7 +285,7 @@ func TestBoxyUpdater_CheckLatest_NoStableRelease_MentionsPrereleaseFlag(t *testi
 
 func TestUpdateCommand_TokenFromEnv(t *testing.T) {
 	withVersion(t, "v1.0.0")
-	t.Setenv("BOXY_GITHUB_TOKEN", "my-secret-token")
+	t.Setenv("BOXY_GITHUB_TOKEN", "${BOXY_TEST_GITHUB_TOKEN}")
 
 	var capturedOpts updateOptions
 	orig := updateNewUpdater
@@ -301,8 +301,8 @@ func TestUpdateCommand_TokenFromEnv(t *testing.T) {
 	cmd.SetErr(&bytes.Buffer{})
 	_ = cmd.Execute()
 
-	if capturedOpts.token != "my-secret-token" {
-		t.Errorf("expected token 'my-secret-token', got %q", capturedOpts.token)
+	if capturedOpts.token != "${BOXY_TEST_GITHUB_TOKEN}" {
+		t.Errorf("expected token '${BOXY_TEST_GITHUB_TOKEN}', got %q", capturedOpts.token)
 	}
 }
 

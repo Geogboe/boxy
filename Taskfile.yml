@@ -2,6 +2,9 @@
 
 version: "3"
 
+vars:
+  BETTERLEAKS_VERSION: v1.8.1
+
 tasks:
   default: task --list
 
@@ -93,8 +96,15 @@ tasks:
   # Native ARM64 Git for Windows rejects the NUL config paths Betterleaks uses
   # to isolate global/system Git config. The Windows wrapper keeps the full
   # history scan and only fixes those child Git environment values.
+  secrets:install:
+    desc: Install the pinned Betterleaks version
+    cmds:
+      - go install github.com/betterleaks/betterleaks@{{.BETTERLEAKS_VERSION}}
+
   secrets:scan:
     desc: Scan git history for secrets with Betterleaks
+    deps:
+      - secrets:install
     cmds:
       - cmd: pwsh -NoProfile -File scripts/betterleaks-git.ps1
         if: '{{eq OS "windows"}}'

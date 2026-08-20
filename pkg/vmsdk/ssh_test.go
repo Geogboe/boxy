@@ -178,7 +178,7 @@ func TestSSHExec_Exec_PasswordAuth(t *testing.T) {
 		Host:     "127.0.0.1",
 		Port:     passPort,
 		User:     "testuser",
-		Password: "testpass",
+		Password: "${BOXY_TEST_PASSWORD}",
 	}
 	result, err := exec.Exec(context.Background(), "echo", "hello from guest")
 	if err != nil {
@@ -261,7 +261,7 @@ func TestSSHExec_Exec_ConnectionRefused(t *testing.T) {
 		Host:     "127.0.0.1",
 		Port:     "1", // port 1 is always refused
 		User:     "testuser",
-		Password: "pw",
+		Password: "${BOXY_TEST_PASSWORD}",
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2000000000) // 2s
 	defer cancel()
@@ -425,7 +425,7 @@ func TestSSHExec_ExecStream_ForwardsStdoutAndStderrIncrementally(t *testing.T) {
 }
 
 func TestSSHExec_ExecStream_RequiresSink(t *testing.T) {
-	exec := &vmsdk.SSHExec{Host: "127.0.0.1", Port: "22", User: "testuser", Password: "pw"}
+	exec := &vmsdk.SSHExec{Host: "127.0.0.1", Port: "22", User: "testuser", Password: "${BOXY_TEST_PASSWORD}"}
 	_, err := exec.ExecStream(context.Background(), "echo", nil, nil)
 	if err == nil {
 		t.Fatal("expected error for a nil sink")

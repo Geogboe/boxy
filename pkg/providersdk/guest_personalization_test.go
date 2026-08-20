@@ -6,14 +6,14 @@ import (
 )
 
 func TestResolveSecretRef_Env(t *testing.T) {
-	t.Setenv("BOXY_SECRET_TEST", "super-secret")
+	t.Setenv("BOXY_SECRET_TEST", "${BOXY_TEST_SECRET}")
 
 	got, err := ResolveSecretRef(context.Background(), SecretRef("env:BOXY_SECRET_TEST"))
 	if err != nil {
 		t.Fatalf("ResolveSecretRef: %v", err)
 	}
-	if got != "super-secret" {
-		t.Fatalf("ResolveSecretRef = %q, want super-secret", got)
+	if got != "${BOXY_TEST_SECRET}" {
+		t.Fatalf("ResolveSecretRef = %q, want ${BOXY_TEST_SECRET}", got)
 	}
 }
 

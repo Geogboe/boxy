@@ -22,7 +22,7 @@ func TestAgentServiceConfig_SaveLoadRoundTrips(t *testing.T) {
 		ProviderConfigs: []providersdk.Instance{{
 			Name: "docker-local", Type: "docker", Config: map[string]any{"host": "unix:///tmp/docker.sock"},
 		}},
-		Token:   "raw-bootstrap-token",
+		Token:   "${BOXY_TEST_BOOTSTRAP_TOKEN}",
 		Name:    "agent-1",
 		DataDir: filepath.Join(dir, ".boxy-agent"),
 		LogFile: filepath.Join(dir, ".boxy-agent", "service.log"),
@@ -44,7 +44,7 @@ func TestAgentServiceConfig_TokenIsNotStoredAsPlaintextOnDisk(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "service.yaml")
 
-	cfg := agentServiceConfig{Server: "s:9091", Providers: []string{"docker"}, Token: "super-secret-token", DataDir: dir, LogFile: filepath.Join(dir, "service.log")}
+	cfg := agentServiceConfig{Server: "s:9091", Providers: []string{"docker"}, Token: "${BOXY_TEST_TOKEN}", DataDir: dir, LogFile: filepath.Join(dir, "service.log")}
 	if err := saveAgentServiceConfig(path, cfg); err != nil {
 		t.Fatalf("saveAgentServiceConfig: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestAgentServiceConfig_TokenIsNotStoredAsPlaintextOnDisk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read file: %v", err)
 	}
-	if strings.Contains(string(raw), "super-secret-token") {
+	if strings.Contains(string(raw), "${BOXY_TEST_TOKEN}") {
 		t.Fatal("service config file must not contain the raw token — it must be base64(EncryptToken(...))-encoded on disk")
 	}
 }
@@ -61,7 +61,7 @@ func TestAgentServiceConfig_TokenIsNotStoredAsPlaintextOnDisk(t *testing.T) {
 func TestScrubAgentServiceConfigToken_ClearsTokenButKeepsRestOfConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "service.yaml")
-	cfg := agentServiceConfig{Server: "s:9091", Providers: []string{"docker"}, Token: "burn-me", DataDir: dir, LogFile: filepath.Join(dir, "service.log")}
+	cfg := agentServiceConfig{Server: "s:9091", Providers: []string{"docker"}, Token: "${BOXY_TEST_BURN_TOKEN}", DataDir: dir, LogFile: filepath.Join(dir, "service.log")}
 	if err := saveAgentServiceConfig(path, cfg); err != nil {
 		t.Fatalf("saveAgentServiceConfig: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestAgentServiceConfig_EnforcesPermissionsOnRewrite(t *testing.T) {
 	cfg := agentServiceConfig{
 		Server:    "s:9091",
 		Providers: []string{"docker"},
-		Token:     "secret-token",
+		Token:     "${BOXY_TEST_TOKEN}",
 		DataDir:   dir,
 		LogFile:   filepath.Join(dir, "service.log"),
 	}

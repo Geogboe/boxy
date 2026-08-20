@@ -60,7 +60,7 @@ func TestPromptAPIKeyTerminalPropagatesCancellation(t *testing.T) {
 func TestRunLoginStoresCredentialAfterVerification(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got, want := r.Header.Get("Authorization"), "Bearer boxy_test_key"; got != want {
+		if got, want := r.Header.Get("Authorization"), "Bearer ${BOXY_TEST_API_KEY}"; got != want {
 			t.Fatalf("Authorization = %q, want %q", got, want)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -76,7 +76,7 @@ func TestRunLoginStoresCredentialAfterVerification(t *testing.T) {
 
 	if err := runLogin(context.Background(), loginOptions{
 		server:   server.URL,
-		apiKey:   "boxy_test_key",
+		apiKey:   "${BOXY_TEST_API_KEY}",
 		insecure: true,
 	}, &strings.Builder{}, &strings.Builder{}); err != nil {
 		t.Fatalf("runLogin: %v", err)
@@ -85,8 +85,8 @@ func TestRunLoginStoresCredentialAfterVerification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stored credential: %v", err)
 	}
-	if got != "boxy_test_key" {
-		t.Fatalf("stored credential = %q, want boxy_test_key", got)
+	if got != "${BOXY_TEST_API_KEY}" {
+		t.Fatalf("stored credential = %q, want ${BOXY_TEST_API_KEY}", got)
 	}
 	cfg, err := loadClientConfig()
 	if err != nil {
@@ -100,7 +100,7 @@ func TestRunLoginStoresCredentialAfterVerification(t *testing.T) {
 func TestRunLogoutDeletesCredential(t *testing.T) {
 	backend := &testCredentialBackend{values: make(map[string]string)}
 	store := credentials.NewWithBackend("boxy", backend)
-	if err := store.Set("http://boxy.example:9090", "boxy_test_key"); err != nil {
+	if err := store.Set("http://boxy.example:9090", "${BOXY_TEST_API_KEY}"); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
 	oldFactory := loginCredentialsStore

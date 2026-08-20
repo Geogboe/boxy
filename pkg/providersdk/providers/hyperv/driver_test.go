@@ -506,7 +506,7 @@ func TestDriver_Create_RejectsGuestPassword(t *testing.T) {
 
 	_, err := d.Create(context.Background(), &CreateConfig{
 		TemplateVHD:   `C:\t.vhdx`,
-		GuestPassword: "pass",
+		GuestPassword: "${BOXY_TEST_PASSWORD}",
 	})
 	if err == nil {
 		t.Fatal("expected error for deprecated guest_password")
@@ -884,15 +884,15 @@ func TestDriver_Update_ExecOp_Windows(t *testing.T) {
 			if ref != "env:BOX_PASSWORD" {
 				t.Fatalf("unexpected secret ref %q", ref)
 			}
-			return "pass", nil
+			return "${BOXY_TEST_PASSWORD}", nil
 		},
 		guestExecFactory: func(vmGUID, guestOS, guestUser, guestPassword, sshHost string) vmsdk.GuestExec {
 			guestExecCalled = true
 			if guestOS != "windows" {
 				t.Errorf("guestOS = %q, want windows", guestOS)
 			}
-			if guestPassword != "pass" {
-				t.Errorf("guestPassword = %q, want pass", guestPassword)
+			if guestPassword != "${BOXY_TEST_PASSWORD}" {
+				t.Errorf("guestPassword = %q, want ${BOXY_TEST_PASSWORD}", guestPassword)
 			}
 			return &fakeGuestExec{stdout: "output", exitCode: 0}
 		},
@@ -932,14 +932,14 @@ func TestDriver_Update_ExecOp_Linux(t *testing.T) {
 			if ref != "env:BOX_PASSWORD" {
 				t.Fatalf("unexpected secret ref %q", ref)
 			}
-			return "linux-pass", nil
+			return "${BOXY_TEST_LINUX_PASSWORD}", nil
 		},
 		guestExecFactory: func(vmGUID, guestOS, guestUser, guestPassword, sshHost string) vmsdk.GuestExec {
 			if guestOS != "linux" {
 				t.Errorf("guestOS = %q, want linux", guestOS)
 			}
-			if guestPassword != "linux-pass" {
-				t.Errorf("guestPassword = %q, want linux-pass", guestPassword)
+			if guestPassword != "${BOXY_TEST_LINUX_PASSWORD}" {
+				t.Errorf("guestPassword = %q, want ${BOXY_TEST_LINUX_PASSWORD}", guestPassword)
 			}
 			if sshHost != "10.0.0.5" {
 				t.Errorf("sshHost = %q, want 10.0.0.5", sshHost)

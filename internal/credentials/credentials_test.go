@@ -36,15 +36,15 @@ func TestKeyringStoreRoundTrip(t *testing.T) {
 	store := NewWithBackend("boxy", backend)
 	server := "HTTPS://Boxy.Example:9090/"
 
-	if err := store.Set(server, "secret-value"); err != nil {
+	if err := store.Set(server, "${BOXY_TEST_SECRET}"); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
 	got, err := store.Get(server)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got != "secret-value" {
-		t.Fatalf("Get = %q, want secret-value", got)
+	if got != "${BOXY_TEST_SECRET}" {
+		t.Fatalf("Get = %q, want ${BOXY_TEST_SECRET}", got)
 	}
 	if err := store.Delete(server); err != nil {
 		t.Fatalf("Delete: %v", err)
@@ -61,7 +61,7 @@ func TestKeyringStoreRejectsEmptyInputs(t *testing.T) {
 		call func() error
 	}{
 		{"get server", func() error { _, err := store.Get(" "); return err }},
-		{"set server", func() error { return store.Set(" ", "secret") }},
+		{"set server", func() error { return store.Set(" ", "${BOXY_TEST_SECRET}") }},
 		{"set value", func() error { return store.Set("https://boxy.example", " ") }},
 		{"delete server", func() error { return store.Delete(" ") }},
 	} {

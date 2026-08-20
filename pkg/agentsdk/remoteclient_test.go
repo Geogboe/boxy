@@ -18,6 +18,8 @@ import (
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
+const testRegistrationToken = "${BOXY_TEST_REGISTRATION_TOKEN}"
+
 type fakeDriver struct {
 	providerType providersdk.Type
 
@@ -466,7 +468,7 @@ func TestRunSession_BlankAgentVersionFailsFastLocally(t *testing.T) {
 
 	err := RunSession(context.Background(), stream, RemoteClientConfig{
 		AgentName:     "test-agent",
-		Token:         "tok-123",
+		Token:         testRegistrationToken,
 		ProviderTypes: []providersdk.Type{"docker"},
 		Drivers:       DriverSet{},
 	})
@@ -499,7 +501,7 @@ func TestRunSession_RegistersAndDispatchesCommand(t *testing.T) {
 	go func() {
 		sessionErrCh <- RunSession(ctx, stream, RemoteClientConfig{
 			AgentName:         "test-agent",
-			Token:             "tok-123",
+			Token:             testRegistrationToken,
 			AgentVersion:      "v-test",
 			ProviderTypes:     []providersdk.Type{"docker"},
 			Drivers:           drivers,
@@ -516,7 +518,7 @@ func TestRunSession_RegistersAndDispatchesCommand(t *testing.T) {
 		t.Fatal("timed out waiting for RegisterRequest")
 	}
 	reg := registerSent.GetRegister()
-	if reg == nil || reg.GetRegistrationToken() != "tok-123" {
+	if reg == nil || reg.GetRegistrationToken() != testRegistrationToken {
 		t.Fatalf("expected RegisterRequest with the configured token, got %#v", registerSent)
 	}
 	if reg.GetAgentVersion() != "v-test" {

@@ -1,9 +1,47 @@
-# Historical documentation examples reviewed on 2026-08-15. These exact
-# fingerprints are synthetic token/password examples in retired docs; keep
-# future findings in the same files visible to Betterleaks.
+# Historical synthetic examples reviewed on 2026-08-20. These exact
+# fingerprints are committed test/documentation fixtures from before the
+# `${BOXY_TEST_*}` convention; keep future findings in the same files visible.
 c9893c867c2b04497f79f0fff24b06d02e1ad0ba:docs/v1-prerelease/04-multi-tenancy.md:generic-api-key:106
 c9893c867c2b04497f79f0fff24b06d02e1ad0ba:docs/v1-prerelease/04-multi-tenancy.md:generic-api-key:111
 8945fdd8515b81404024b8da2b3c90f994223b46:docs/V1_IMPLEMENTATION_PLAN.md:generic-api-key:886
 8945fdd8515b81404024b8da2b3c90f994223b46:docs/V1_IMPLEMENTATION_PLAN.md:generic-api-key:939
 a241ee43e67d20992bebe8824e5685e8a39294d9:docs/architecture/MVP_DESIGN.md:generic-api-key:295
 e570819d3744b15a62854ebf6f925d33131a4c02:docs/guides/getting-started.md:generic-api-key:136
+086030b2ddbf1889c4284ecb1f37bf0b10ba5e56:docs/architecture/HOOKS.md:generic-password:191
+08f8ed3cff6242c1605e7e1bc5bd207646c0f5bb:docs/architecture/security-guide.md:generic-password:424
+08f8ed3cff6242c1605e7e1bc5bd207646c0f5bb:docs/architecture/security-guide.md:generic-password:466
+14f381322980696bdbf355a9a7ee6b587913d1f5:internal/sandbox/guest_credential_test.go:generic-password:20
+14f381322980696bdbf355a9a7ee6b587913d1f5:internal/sandbox/guest_credential_test.go:generic-password:66
+14f381322980696bdbf355a9a7ee6b587913d1f5:pkg/providersdk/guest_personalization_test.go:generic-password:14
+2285086b3805dca0ab9b952dca976df65118606d:internal/cli/sandbox_create_test.go:generic-password:287
+2285086b3805dca0ab9b952dca976df65118606d:internal/cli/sandbox_create_test.go:generic-password:311
+2285086b3805dca0ab9b952dca976df65118606d:internal/cli/sandbox_create_test.go:generic-password:340
+2285086b3805dca0ab9b952dca976df65118606d:internal/cli/sandbox_exec_test.go:generic-password:78
+2285086b3805dca0ab9b952dca976df65118606d:internal/cli/sandbox_exec_test.go:generic-password:94
+2285086b3805dca0ab9b952dca976df65118606d:internal/cli/sandbox_exec_test.go:generic-password:104
+2285086b3805dca0ab9b952dca976df65118606d:internal/credentials/credentials_test.go:generic-password:100
+2285086b3805dca0ab9b952dca976df65118606d:internal/credentials/credentials_test.go:generic-password:119
+2285086b3805dca0ab9b952dca976df65118606d:internal/server/api_exec_test.go:generic-password:77
+2285086b3805dca0ab9b952dca976df65118606d:internal/server/api_exec_test.go:generic-password:83
+2285086b3805dca0ab9b952dca976df65118606d:internal/server/api_guest_credentials_test.go:generic-password:22
+2285086b3805dca0ab9b952dca976df65118606d:internal/server/api_guest_credentials_test.go:generic-password:67
+2285086b3805dca0ab9b952dca976df65118606d:pkg/agentsdk/remote_test.go:generic-password:159
+2285086b3805dca0ab9b952dca976df65118606d:pkg/agentsdk/remote_test.go:generic-password:183
+2285086b3805dca0ab9b952dca976df65118606d:pkg/agentsdk/remoteclient_test.go:generic-password:307
+2285086b3805dca0ab9b952dca976df65118606d:pkg/providersdk/providers/hyperv/driver_test.go:generic-password:1045
+2285086b3805dca0ab9b952dca976df65118606d:pkg/providersdk/providers/hyperv/driver_test.go:generic-password:1082
+2285086b3805dca0ab9b952dca976df65118606d:pkg/providersdk/providers/hyperv/driver_test.go:generic-password:1111
+2285086b3805dca0ab9b952dca976df65118606d:pkg/providersdk/providers/hyperv/driver_test.go:generic-password:1171
+35b759a463d963ba1e7e910cdc215e575c5d9e0a:docs/V1_IMPLEMENTATION_PLAN.md:generic-password:2920
+38a9a2c6abe9803dcab30e0efa5c40cad7959f75:docs/v1-prerelease/testing-strategy.md:generic-password:375
+4391d9492f6314a540d93f543a4efed1831e48f5:pkg/crypto/README.md:generic-password:70
+4391d9492f6314a540d93f543a4efed1831e48f5:pkg/provider/types_test.go:generic-password:185
+793a71bd039ddbdb79a63b6b2a888623bb537e46:docs/V1_IMPLEMENTATION_PLAN.md:generic-credential-uri:1795
+793a71bd039ddbdb79a63b6b2a888623bb537e46:docs/V1_IMPLEMENTATION_PLAN.md:generic-password:2271
+7d5561d75b7de81b0b37390358584c3ba5f9457a:pkg/vmsdk/ssh_test.go:generic-password:177
+e13a88aeeab050d4ff580ca2500aa2e2ab0a551d:examples/04-hyperv-local/README.md:generic-password:186
+e570819d3744b15a62854ebf6f925d33131a4c02:docs/guides/getting-started.md:generic-password:136
+e570819d3744b15a62854ebf6f925d33131a4c02:docs/guides/getting-started.md:generic-password:265
+fe966b5b5aad2535b1c0a56b8f323925fdb44231:internal/core/resource/types_test.go:generic-password:193
+fe966b5b5aad2535b1c0a56b8f323925fdb44231:internal/provider/mock/mock.go:generic-password:92
+fe966b5b5aad2535b1c0a56b8f323925fdb44231:internal/provider/mock/mock.go:generic-password:174

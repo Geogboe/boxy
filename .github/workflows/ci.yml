@@ -95,8 +95,8 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install Betterleaks
-        run: go install github.com/betterleaks/betterleaks@v1.7.4
+      - name: Install Betterleaks v1.8.1
+        run: go install github.com/betterleaks/betterleaks@v1.8.1
 
       - name: Scan git history for secrets
         run: betterleaks git . --no-banner --redact

@@ -262,9 +262,9 @@ it's no longer needed. See #100.
 - `.github/CODEOWNERS` requires owner review on any `.github/workflows/`
   change.
 - A `betterleaks` job runs in `ci.yml` on every push/PR and scans full Git
-  history with a pinned Betterleaks release. `task secrets:scan` runs the same
-  history scan locally; do not replace it with directory mode because that
-  would miss secrets that were committed and later removed. On Windows,
+  history with pinned Betterleaks `v1.8.1`. `task secrets:scan` installs and
+  runs the same pinned version locally. Do not replace it with directory mode
+  because that would miss secrets that were committed and later removed. On Windows,
   `scripts/betterleaks-git.ps1` prepends a narrow Git shim for a native ARM64
   Git-for-Windows compatibility issue: Betterleaks maps Go's `os.DevNull` to
   `NUL` for `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM`, while the
@@ -276,6 +276,15 @@ it's no longer needed. See #100.
   Betterleaks/Git upgrade before removing the shim. See the independent
   Windows ARM64 reproduction at
   https://github.com/Gentleman-Programming/gentle-ai/issues/2206.
+
+- Test and documentation fixtures must use scanner-recognized placeholders for
+  fake credentials, such as `${BOXY_TEST_PASSWORD}`, `${BOXY_TEST_TOKEN}`, or
+  `${BOXY_TEST_API_KEY}`. Use reserved example hosts (`example.com`, `.test`,
+  or `.invalid`) in credential-bearing URLs. Do not use realistic-looking
+  random strings or common password words such as `password`, `changeme`,
+  `testpass`, or `foo`/`bar`; those can be valid credentials and should remain
+  visible to Betterleaks. Historical fixture findings may be recorded only as
+  fingerprint-only `.betterleaksignore` entries after review.
 
 ### GoReleaser Signing Notes
 
