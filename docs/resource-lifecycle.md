@@ -39,7 +39,7 @@ generated when a resource is allocated — the pool carries only generic locatio
 │                   "ssh_cmd": "ssh -i <path> admin@<host>"}          │
 │                                                                     │
 │     share     → random password generated                           │
-│                  {"access": "smb", "username": "boxy-test-user",          │
+│                  {"access": "smb", "username": "boxy-test-user",    │
 │                   "password": "<random>", "unc_path": "...",        │
 │                   "mount_path": "..."}                              │
 │                                                                     │
