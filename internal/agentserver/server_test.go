@@ -113,7 +113,7 @@ func TestConnect_TokenRegistrationHappyPath(t *testing.T) {
 	if err := stream.Send(&boxyagentv1.AgentMessage{
 		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{
 			RegistrationToken: testGoodToken,
-			AgentName:         "test-agent",
+			AgentName:         "boxy-test-agent",
 			ProviderTypes:     []string{"docker"},
 			AgentVersion:      testServerVersion,
 		}},
@@ -169,7 +169,7 @@ func TestConnect_VersionMismatchRejected(t *testing.T) {
 	if err := stream.Send(&boxyagentv1.AgentMessage{
 		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{
 			RegistrationToken: testGoodToken,
-			AgentName:         "test-agent",
+			AgentName:         "boxy-test-agent",
 			ProviderTypes:     []string{"docker"},
 			AgentVersion:      "v-other",
 		}},
@@ -217,7 +217,7 @@ func TestConnect_BlankVersionRejected(t *testing.T) {
 	if err := stream.Send(&boxyagentv1.AgentMessage{
 		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{
 			RegistrationToken: testGoodToken,
-			AgentName:         "test-agent",
+			AgentName:         "boxy-test-agent",
 			ProviderTypes:     []string{"docker"},
 		}},
 	}); err != nil {
@@ -248,7 +248,7 @@ func TestConnect_TriggersReconciliationSweep(t *testing.T) {
 	if err := stream.Send(&boxyagentv1.AgentMessage{
 		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{
 			RegistrationToken: testGoodToken,
-			AgentName:         "test-agent",
+			AgentName:         "boxy-test-agent",
 			ProviderTypes:     []string{"docker"},
 			AgentVersion:      testServerVersion,
 		}},

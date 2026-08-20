@@ -110,7 +110,7 @@ func TestRemoteAgent_CreateRoundTrip(t *testing.T) {
 		CommandId: cmd.GetCommandId(),
 		Outcome: &boxyagentv1.CommandResult_Resource{Resource: &boxyagentv1.ResourceResult{
 			Id:             "container-123",
-			ConnectionInfo: map[string]string{"host": "10.0.0.5"},
+			ConnectionInfo: map[string]string{"host": "192.0.2.5"},
 		}},
 	})
 
@@ -122,7 +122,7 @@ func TestRemoteAgent_CreateRoundTrip(t *testing.T) {
 		if r.res.ID != "container-123" {
 			t.Fatalf("expected resource id container-123, got %q", r.res.ID)
 		}
-		if r.res.ConnectionInfo["host"] != "10.0.0.5" {
+		if r.res.ConnectionInfo["host"] != "192.0.2.5" {
 			t.Fatalf("expected connection info to round-trip, got %#v", r.res.ConnectionInfo)
 		}
 	case <-time.After(2 * time.Second):
@@ -157,7 +157,7 @@ func TestRemoteAgent_PersonalizeGuestRoundTrip(t *testing.T) {
 	stream.feedResult(&boxyagentv1.CommandResult{
 		CommandId: cmd.GetCommandId(),
 		Outcome: &boxyagentv1.CommandResult_PersonalizeGuest{PersonalizeGuest: &boxyagentv1.PersonalizeGuestResult{
-			Properties: map[string]string{"access": "ssh", "host": "10.0.0.5"},
+			Properties: map[string]string{"access": "ssh", "host": "192.0.2.5"},
 		}},
 	})
 
@@ -169,7 +169,7 @@ func TestRemoteAgent_PersonalizeGuestRoundTrip(t *testing.T) {
 		if r.res == nil {
 			t.Fatal("expected a non-nil GuestPersonalizationResult")
 		}
-		if r.res.AccessDetails.Properties["access"] != "ssh" || r.res.AccessDetails.Properties["host"] != "10.0.0.5" {
+		if r.res.AccessDetails.Properties["access"] != "ssh" || r.res.AccessDetails.Properties["host"] != "192.0.2.5" {
 			t.Fatalf("expected typed properties to round-trip, got %#v", r.res.AccessDetails.Properties)
 		}
 	case <-time.After(2 * time.Second):

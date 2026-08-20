@@ -76,7 +76,7 @@ func (d *fakeProviderDriver) PersonalizeGuest(ctx context.Context, id string) (*
 		return nil, nil
 	}
 	return &providersdk.GuestPersonalizationResult{
-		AccessDetails: providersdk.GuestAccessDetails{Properties: map[string]string{"ssh_host": "10.0.0.5"}},
+		AccessDetails: providersdk.GuestAccessDetails{Properties: map[string]string{"ssh_host": "192.0.2.5"}},
 	}, nil
 }
 
@@ -205,7 +205,7 @@ func TestDriverProvisioner_AllocatePrefersGuestPersonalizer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Allocate: %v", err)
 	}
-	if props["ssh_host"] != "10.0.0.5" {
+	if props["ssh_host"] != "192.0.2.5" {
 		t.Fatalf("props = %+v, want personalized access details", props)
 	}
 	if len(driver.personalized) != 1 || len(driver.allocated) != 0 {

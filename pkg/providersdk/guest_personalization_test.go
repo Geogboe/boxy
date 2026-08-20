@@ -44,13 +44,13 @@ func TestGuestAccessDetailsToProperties(t *testing.T) {
 		t.Fatalf("empty ToProperties = %+v, want nil", props)
 	}
 
-	details := GuestAccessDetails{Properties: map[string]string{"ssh_host": "10.0.0.5"}}
+	details := GuestAccessDetails{Properties: map[string]string{"ssh_host": "192.0.2.5"}}
 	props := details.ToProperties()
-	if props["ssh_host"] != "10.0.0.5" {
+	if props["ssh_host"] != "192.0.2.5" {
 		t.Fatalf("props = %+v, want ssh_host", props)
 	}
 	props["ssh_host"] = "changed"
-	if details.Properties["ssh_host"] != "10.0.0.5" {
+	if details.Properties["ssh_host"] != "192.0.2.5" {
 		t.Fatalf("ToProperties aliased source map, got %q", details.Properties["ssh_host"])
 	}
 }

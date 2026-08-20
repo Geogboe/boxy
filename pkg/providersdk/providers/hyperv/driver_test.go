@@ -924,7 +924,7 @@ func TestDriver_Update_ExecOp_Linux(t *testing.T) {
 				return "boxy-abc123\n", nil
 			case 3:
 				// vmIP
-				return "10.0.0.5\n", nil
+				return "192.0.2.5\n", nil
 			}
 			return "", fmt.Errorf("unexpected call %d", callNum)
 		},
@@ -941,8 +941,8 @@ func TestDriver_Update_ExecOp_Linux(t *testing.T) {
 			if guestPassword != "${BOXY_TEST_LINUX_PASSWORD}" {
 				t.Errorf("guestPassword = %q, want ${BOXY_TEST_LINUX_PASSWORD}", guestPassword)
 			}
-			if sshHost != "10.0.0.5" {
-				t.Errorf("sshHost = %q, want 10.0.0.5", sshHost)
+			if sshHost != "192.0.2.5" {
+				t.Errorf("sshHost = %q, want 192.0.2.5", sshHost)
 			}
 			return &fakeGuestExec{stdout: "linux output", exitCode: 0}
 		},
@@ -1079,7 +1079,7 @@ func TestDriver_Allocate_Linux(t *testing.T) {
 		case 2:
 			return "boxy-abc123\n", nil // vmNameFromID
 		case 3:
-			return "192.168.1.100\n", nil // vmIP
+			return "198.51.100.100\n", nil // vmIP
 		}
 		return "", fmt.Errorf("unexpected call %d", callNum)
 	})
@@ -1091,8 +1091,8 @@ func TestDriver_Allocate_Linux(t *testing.T) {
 	if info["access"] != "ssh" {
 		t.Errorf("access = %q, want ssh", info["access"])
 	}
-	if info["ssh_host"] != "192.168.1.100" {
-		t.Errorf("ssh_host = %q, want 192.168.1.100", info["ssh_host"])
+	if info["ssh_host"] != "198.51.100.100" {
+		t.Errorf("ssh_host = %q, want 198.51.100.100", info["ssh_host"])
 	}
 	if info["ssh_user"] != "ubuntu" {
 		t.Errorf("ssh_user = %q, want ubuntu", info["ssh_user"])
@@ -1109,7 +1109,7 @@ func TestDriver_PersonalizeGuest_Linux(t *testing.T) {
 		case 2:
 			return "boxy-abc123\n", nil
 		case 3:
-			return "192.168.1.100\n", nil
+			return "198.51.100.100\n", nil
 		}
 		return "", fmt.Errorf("unexpected call %d", callNum)
 	})
@@ -1133,7 +1133,7 @@ func TestDriver_Allocate_Windows(t *testing.T) {
 		case 2:
 			return "boxy-abc123\n", nil
 		case 3:
-			return "10.0.0.1\n", nil
+			return "192.0.2.1\n", nil
 		}
 		return "", fmt.Errorf("unexpected call %d", callNum)
 	})

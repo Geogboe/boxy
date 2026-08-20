@@ -176,7 +176,7 @@ Expected: PASS
 
 ```bash
 git add internal/svcmgr/svcmgr.go internal/svcmgr/svcmgr_test.go
-git commit -m "feat(svcmgr): add core Manager types and sentinel errors" -m "" -m "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+git commit -m "feat(svcmgr): add core Manager types and sentinel errors" -m "" -m "Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>"
 ```
 
 ---
@@ -242,7 +242,7 @@ Expected: builds cleanly; test passes where it can run.
 
 ```bash
 git add internal/svcmgr/manager_darwin.go internal/svcmgr/manager_darwin_test.go
-git commit -m "feat(svcmgr): explicit unsupported error on darwin" -m "" -m "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+git commit -m "feat(svcmgr): explicit unsupported error on darwin" -m "" -m "Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>"
 ```
 
 ---
@@ -309,12 +309,12 @@ func TestRenderUnit_ContainsExecStartAndRestart(t *testing.T) {
 		DisplayName: "Boxy Agent",
 		Description: "Boxy remote agent",
 		ExecPath:    "/usr/local/bin/boxy",
-		Args:        []string{"agent", "serve", "--service-config", "/home/testuser/.boxy-agent/service.yaml"},
+		Args:        []string{"agent", "serve", "--service-config", "/home/boxy-test-user/.boxy-agent/service.yaml"},
 	}
 	unit := renderUnit(spec)
 	want := []string{
 		"Description=Boxy remote agent",
-		`ExecStart=/usr/local/bin/boxy agent serve --service-config /home/testuser/.boxy-agent/service.yaml`,
+		`ExecStart=/usr/local/bin/boxy agent serve --service-config /home/boxy-test-user/.boxy-agent/service.yaml`,
 		"Restart=on-failure",
 	}
 	for _, w := range want {
@@ -681,7 +681,7 @@ Expected: PASS
 
 ```bash
 git add internal/svcmgr/manager_linux.go internal/svcmgr/manager_linux_test.go
-git commit -m "feat(svcmgr): Linux systemd system/user unit manager" -m "" -m "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+git commit -m "feat(svcmgr): Linux systemd system/user unit manager" -m "" -m "Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>"
 ```
 
 ---
@@ -745,16 +745,16 @@ func TestRenderTaskXML_ContainsLogonTriggerHiddenAndRestart(t *testing.T) {
 		Name:        "boxy-agent",
 		DisplayName: "Boxy Agent",
 		Description: "Boxy remote agent",
-		ExecPath:    `C:\Users\testuser\.local\bin\boxy.exe`,
-		Args:        []string{"agent", "serve", "--service-config", `C:\Users\testuser\.boxy-agent\service.yaml`},
+		ExecPath:    `C:\Users\boxy-test-user\.local\bin\boxy.exe`,
+		Args:        []string{"agent", "serve", "--service-config", `C:\Users\boxy-test-user\.boxy-agent\service.yaml`},
 	}
 	xml := renderTaskXML(spec)
 	for _, want := range []string{
 		"<LogonTrigger>",
 		"<Hidden>true</Hidden>",
 		"<RestartOnFailure>",
-		`<Command>C:\Users\testuser\.local\bin\boxy.exe</Command>`,
-		`<Arguments>agent serve --service-config C:\Users\testuser\.boxy-agent\service.yaml</Arguments>`,
+		`<Command>C:\Users\boxy-test-user\.local\bin\boxy.exe</Command>`,
+		`<Arguments>agent serve --service-config C:\Users\boxy-test-user\.boxy-agent\service.yaml</Arguments>`,
 	} {
 		if !strings.Contains(xml, want) {
 			t.Errorf("rendered task XML missing %q; got:\n%s", want, xml)
@@ -1090,7 +1090,7 @@ Expected: PASS (this dev machine is Windows, so this runs for real, unlike the L
 
 ```bash
 git add internal/svcmgr/manager_windows_schtasks.go internal/svcmgr/manager_windows_schtasks_test.go
-git commit -m "feat(svcmgr): Windows Task Scheduler manager (unprivileged fallback)" -m "" -m "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+git commit -m "feat(svcmgr): Windows Task Scheduler manager (unprivileged fallback)" -m "" -m "Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>"
 ```
 
 ---
@@ -1445,7 +1445,7 @@ Verify `go.mod`'s `golang.org/x/sys` line no longer has the `// indirect` suffix
 
 ```bash
 git add internal/svcmgr/manager_windows_scm.go internal/svcmgr/manager_windows_scm_test.go go.mod go.sum
-git commit -m "feat(svcmgr): Windows SCM manager (real service, default/privileged)" -m "" -m "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+git commit -m "feat(svcmgr): Windows SCM manager (real service, default/privileged)" -m "" -m "Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>"
 ```
 
 ---
@@ -1524,7 +1524,7 @@ Expected: PASS
 
 ```bash
 git add internal/svcmgr/manager_windows.go internal/svcmgr/manager_windows_test.go
-git commit -m "feat(svcmgr): Windows NewManager dispatch (SCM vs Task Scheduler)" -m "" -m "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+git commit -m "feat(svcmgr): Windows NewManager dispatch (SCM vs Task Scheduler)" -m "" -m "Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>"
 ```
 
 ---
@@ -1711,7 +1711,7 @@ Expected: PASS (this dev machine is Windows, so `token_windows_test.go` runs for
 
 ```bash
 git add internal/svcmgr/token_windows.go internal/svcmgr/token_other.go internal/svcmgr/token_windows_test.go internal/svcmgr/token_other_test.go
-git commit -m "feat(svcmgr): DPAPI token encryption on Windows, identity elsewhere" -m "" -m "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+git commit -m "feat(svcmgr): DPAPI token encryption on Windows, identity elsewhere" -m "" -m "Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>"
 ```
 
 ---
@@ -1896,7 +1896,7 @@ Expected: PASS
 
 ```bash
 git add internal/svcmgr/winservice_windows.go internal/svcmgr/winservice_other.go internal/svcmgr/winservice_windows_test.go internal/svcmgr/winservice_other_test.go
-git commit -m "feat(svcmgr): RunAsWindowsService SCM detection/bridging helper" -m "" -m "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+git commit -m "feat(svcmgr): RunAsWindowsService SCM detection/bridging helper" -m "" -m "Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>"
 ```
 
 ---
@@ -1983,7 +1983,7 @@ Expected: PASS on a non-Windows runner (Task 17's CI matrix); on this Windows de
 
 ```bash
 git add internal/cli/privilege_windows.go internal/cli/privilege_unix.go internal/cli/privilege_unix_test.go
-git commit -m "feat(cli): isElevated privilege detection for service install" -m "" -m "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+git commit -m "feat(cli): isElevated privilege detection for service install" -m "" -m "Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>"
 ```
 
 ---
@@ -2316,7 +2316,7 @@ Expected: PASS
 
 ```bash
 git add internal/cli/service_config.go internal/cli/service_config_test.go
-git commit -m "feat(cli): service config YAML persistence with token encryption" -m "" -m "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+git commit -m "feat(cli): service config YAML persistence with token encryption" -m "" -m "Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>"
 ```
 
 ---
@@ -2486,7 +2486,7 @@ Expected: PASS, including every pre-existing test in `agent_serve_test.go` (they
 
 ```bash
 git add internal/cli/agent_serve.go internal/cli/agent_serve_test.go
-git commit -m "feat(cli): --service-config for agent serve, Windows SCM bridge, token scrub" -m "" -m "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+git commit -m "feat(cli): --service-config for agent serve, Windows SCM bridge, token scrub" -m "" -m "Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>"
 ```
 
 ---
@@ -2633,7 +2633,7 @@ Expected: PASS, including every pre-existing test in `serve_test.go`.
 
 ```bash
 git add internal/cli/serve.go internal/cli/serve_test.go
-git commit -m "feat(cli): --service-config for serve, Windows SCM bridge" -m "" -m "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+git commit -m "feat(cli): --service-config for serve, Windows SCM bridge" -m "" -m "Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>"
 ```
 
 ---
@@ -3131,7 +3131,7 @@ Expected: PASS
 
 ```bash
 git add internal/cli/agent_service.go internal/cli/agent.go internal/cli/agent_service_test.go
-git commit -m "feat(cli): boxy agent service install/uninstall/start/stop/status" -m "" -m "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+git commit -m "feat(cli): boxy agent service install/uninstall/start/stop/status" -m "" -m "Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>"
 ```
 
 ---
@@ -3491,7 +3491,7 @@ Expected: PASS
 
 ```bash
 git add internal/cli/serve_service.go internal/cli/serve.go internal/cli/serve_service_test.go
-git commit -m "feat(cli): boxy serve service install/uninstall/start/stop/status" -m "" -m "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+git commit -m "feat(cli): boxy serve service install/uninstall/start/stop/status" -m "" -m "Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>"
 ```
 
 ---
@@ -3526,7 +3526,7 @@ Expected: no new findings. Common issues to pre-empt given the code above: unuse
 
 ```bash
 git add -A
-git commit -m "chore: fix lint findings from service-install command wiring" -m "" -m "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+git commit -m "chore: fix lint findings from service-install command wiring" -m "" -m "Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>"
 ```
 
 (Skip the commit if Steps 1–3 found nothing to fix.)
@@ -3672,7 +3672,7 @@ Expected: PASS
 
 ```bash
 git add docs/service-install.md docs/install.md internal/skills/assets/boxy-cli/SKILL.md
-git commit -m "docs: document boxy agent/serve service install" -m "" -m "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+git commit -m "docs: document boxy agent/serve service install" -m "" -m "Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>"
 ```
 
 ---
@@ -3721,7 +3721,7 @@ Expected: valid YAML, structurally identical in shape to the existing `installer
 
 ```bash
 git add .github/workflows/ci.yml
-git commit -m "ci: run the test job on windows-latest too, covering svcmgr's Windows backends" -m "" -m "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+git commit -m "ci: run the test job on windows-latest too, covering svcmgr's Windows backends" -m "" -m "Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>"
 ```
 
 (This change only takes effect once pushed and run on GitHub Actions — there's no local way to fully verify the new matrix leg here beyond YAML validity. Push this branch and confirm both `Test (ubuntu-latest)` and `Test (windows-latest)` pass in the Actions run before considering this task done.)

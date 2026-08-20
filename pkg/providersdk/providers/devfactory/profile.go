@@ -30,7 +30,7 @@ var profiles = map[Profile]profileSpec{
 		ConnInfo: func(port int) map[string]string {
 			return map[string]string{
 				"type": "container",
-				"host": "10.0.0." + strconv.Itoa(port%256),
+				"host": "192.0.2." + strconv.Itoa(port%256),
 				"port": strconv.Itoa(port),
 			}
 		},
@@ -40,7 +40,7 @@ var profiles = map[Profile]profileSpec{
 		ConnInfo: func(port int) map[string]string {
 			return map[string]string{
 				"type":     "vm",
-				"host":     "10.1.0." + strconv.Itoa(port%256),
+				"host":     "198.51.100." + strconv.Itoa(port%256),
 				"ssh_port": "22",
 				"ssh_user": "admin",
 				"ssh_key":  "/tmp/devfactory/id_ed25519_" + strconv.Itoa(port),
@@ -52,9 +52,9 @@ var profiles = map[Profile]profileSpec{
 		ConnInfo: func(port int) map[string]string {
 			return map[string]string{
 				"type":       "share",
-				"unc_path":   `\\10.2.0.1\share-` + strconv.Itoa(port),
+				"unc_path":   `\\203.0.113.1\share-` + strconv.Itoa(port),
 				"mount_path": "/mnt/share-" + strconv.Itoa(port),
-				"username":   "svc_boxy",
+				"username":   "boxy-test-user",
 				"password":   "simulated-credential-" + strconv.Itoa(port),
 			}
 		},

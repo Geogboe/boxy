@@ -100,17 +100,17 @@ func TestRunLoginStoresCredentialAfterVerification(t *testing.T) {
 func TestRunLogoutDeletesCredential(t *testing.T) {
 	backend := &testCredentialBackend{values: make(map[string]string)}
 	store := credentials.NewWithBackend("boxy", backend)
-	if err := store.Set("http://boxy.example:9090", "${BOXY_TEST_API_KEY}"); err != nil {
+	if err := store.Set("http://boxy.example.test:9090", "${BOXY_TEST_API_KEY}"); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
 	oldFactory := loginCredentialsStore
 	loginCredentialsStore = func() *credentials.Store { return store }
 	t.Cleanup(func() { loginCredentialsStore = oldFactory })
 
-	if err := runLogout(context.Background(), "http://boxy.example:9090", &strings.Builder{}); err != nil {
+	if err := runLogout(context.Background(), "http://boxy.example.test:9090", &strings.Builder{}); err != nil {
 		t.Fatalf("runLogout: %v", err)
 	}
-	if _, err := store.Get("http://boxy.example:9090"); err == nil {
+	if _, err := store.Get("http://boxy.example.test:9090"); err == nil {
 		t.Fatal("credential still exists after logout")
 	}
 }

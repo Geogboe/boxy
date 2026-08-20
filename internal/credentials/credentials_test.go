@@ -76,7 +76,7 @@ func TestKeyringStoreRejectsEmptyInputs(t *testing.T) {
 func TestKeyringStoreCertificateRoundTrip(t *testing.T) {
 	backend := &fakeBackend{values: make(map[string]string)}
 	store := NewWithBackend("boxy", backend)
-	server := "https://boxy.example:9090"
+	server := "https://boxy.example.test:9090"
 	if err := store.SetCA(server, []byte("certificate")); err != nil {
 		t.Fatalf("SetCA: %v", err)
 	}
@@ -94,8 +94,8 @@ func TestNormalizeServerURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("normalizeServerURL: %v", err)
 	}
-	if got != "https://boxy.example:9090" {
-		t.Fatalf("normalized URL = %q, want https://boxy.example:9090", got)
+	if got != "https://boxy.example.test:9090" {
+		t.Fatalf("normalized URL = %q, want https://boxy.example.test:9090", got)
 	}
 }
 

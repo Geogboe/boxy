@@ -293,7 +293,7 @@ func (d *Driver) Allocate(ctx context.Context, id string) (map[string]any, error
 		}
 		return map[string]any{
 			"access":     "smb",
-			"username":   "svc_boxy",
+			"username":   "boxy-test-user",
 			"password":   pass,
 			"unc_path":   r.ConnectionInfo["unc_path"],
 			"mount_path": r.ConnectionInfo["mount_path"],

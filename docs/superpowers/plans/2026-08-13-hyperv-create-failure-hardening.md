@@ -163,7 +163,7 @@ Expected: PASS — new tests pass, and every existing hyperv test using `*Capaci
 git add pkg/providersdk/errors.go pkg/providersdk/errors_test.go pkg/providersdk/driver.go pkg/providersdk/providers/hyperv/driver.go
 git commit -m "feat(#185): promote CapacityError to providersdk, add OrphanedResourceError and ErrorTyper
 
-Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>
 Claude-Session: https://claude.ai/code/session_01WrFcL5kHN8FTgqZqBqWRQm"
 ```
 
@@ -427,7 +427,7 @@ Expected: PASS.
 git add proto/boxyagent/v1/agent.proto pkg/agentproto/boxyagent/v1/agent.pb.go pkg/agentsdk/remoteclient.go pkg/agentsdk/remote.go pkg/agentsdk/remoteclient_test.go pkg/agentsdk/remote_test.go
 git commit -m "feat(#185): propagate typed driver errors across the RemoteAgent/gRPC boundary
 
-Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>
 Claude-Session: https://claude.ai/code/session_01WrFcL5kHN8FTgqZqBqWRQm"
 ```
 
@@ -700,7 +700,7 @@ Expected: PASS.
 git add pkg/providersdk/providers/hyperv/driver.go pkg/providersdk/providers/hyperv/driver_test.go
 git commit -m "feat(#174): bounded cleanup retry, surface OrphanedResourceError with real GUID on create failure
 
-Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>
 Claude-Session: https://claude.ai/code/session_01WrFcL5kHN8FTgqZqBqWRQm"
 ```
 
@@ -902,7 +902,7 @@ Expected: PASS.
 git add internal/pool/provisioner_driver.go internal/pool/provisioner_agent.go internal/pool/provisioner_driver_test.go internal/pool/provisioner_agent_test.go
 git commit -m "feat(#174): Provisioner.Provision quarantines orphaned resources instead of dropping their ID
 
-Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>
 Claude-Session: https://claude.ai/code/session_01WrFcL5kHN8FTgqZqBqWRQm"
 ```
 
@@ -1134,7 +1134,7 @@ Expected: PASS.
 git add internal/pool/manager.go internal/pool/manager_test.go
 git commit -m "feat(#174): pool manager writes and auto-sweeps quarantined orphan resources
 
-Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>
 Claude-Session: https://claude.ai/code/session_01WrFcL5kHN8FTgqZqBqWRQm"
 ```
 
@@ -1250,7 +1250,7 @@ Expected: PASS.
 git add pkg/providersdk/providers/hyperv/driver.go pkg/providersdk/providers/hyperv/driver_test.go
 git commit -m "feat(#174): implement providersdk.ResourceLister for the Hyper-V driver
 
-Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>
 Claude-Session: https://claude.ai/code/session_01WrFcL5kHN8FTgqZqBqWRQm"
 ```
 
@@ -1434,7 +1434,7 @@ Expected: PASS.
 git add internal/pool/reconcile.go internal/pool/reconcile_test.go internal/agentserver/server.go
 git commit -m "feat(#174): periodic agent reconciliation sweep, replacing the registration-only one-shot
 
-Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>
 Claude-Session: https://claude.ai/code/session_01WrFcL5kHN8FTgqZqBqWRQm"
 ```
 
@@ -1653,7 +1653,7 @@ Expected: PASS — including all of Task 3's existing tests, which must still pa
 git add pkg/providersdk/providers/hyperv/driver.go pkg/providersdk/providers/hyperv/driver_test.go
 git commit -m "feat(#183): release memory reservation right after Start-VM, not at Create's return
 
-Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>
 Claude-Session: https://claude.ai/code/session_01WrFcL5kHN8FTgqZqBqWRQm"
 ```
 
@@ -1858,7 +1858,7 @@ Expected: PASS.
 git add pkg/providersdk/providers/hyperv/driver.go pkg/providersdk/providers/hyperv/driver_test.go
 git commit -m "feat(#183): grace-period release for the memory reservation, biased toward the safe failure direction
 
-Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>
 Claude-Session: https://claude.ai/code/session_01WrFcL5kHN8FTgqZqBqWRQm"
 ```
 
@@ -1941,6 +1941,6 @@ Full design: `docs/superpowers/specs/2026-08-13-hyperv-create-failure-hardening-
 git add docs/adr/0004-hyperv-teardown-guard-and-provisioning-backoff.md
 git commit -m "docs: record create-failure hardening (#174, #185, #183) in ADR-0004
 
-Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Co-Authored-By: Claude Sonnet 5 <boxy-bot@example.invalid>
 Claude-Session: https://claude.ai/code/session_01WrFcL5kHN8FTgqZqBqWRQm"
 ```

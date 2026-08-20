@@ -1,3 +1,7 @@
+param(
+    [string]$ConfigPath = ""
+)
+
 $ErrorActionPreference = "Stop"
 
 # Betterleaks' Git source deliberately isolates the user's system and global
@@ -22,5 +26,10 @@ $shimDirectory = Join-Path $PSScriptRoot "betterleaks-git-shim"
 $env:BOXY_REAL_GIT = $git.Source
 $env:PATH = "$shimDirectory$([IO.Path]::PathSeparator)$env:PATH"
 
-& betterleaks git . --no-banner --redact
+$betterleaksArgs = @("git", ".", "--no-banner", "--redact")
+if (-not [string]::IsNullOrWhiteSpace($ConfigPath)) {
+    $betterleaksArgs += @("--config", $ConfigPath)
+}
+
+& betterleaks @betterleaksArgs
 exit $LASTEXITCODE

@@ -21,6 +21,9 @@ task build            # Build ./boxy binary
 task test             # Run all tests
 task lint             # Run golangci-lint (same as CI)
 task secrets:scan     # Scan git history with Betterleaks
+task pii:scan         # Scan git history for non-controlled PII
+task pii:scan:stdin   # Scan piped public text for non-controlled PII
+task pii:authors      # Report Git author identities for separate review
 task fmt              # Format all Go source files
 task serve            # Run boxy serve (daemon mode)
 task serve:once       # Run boxy serve --once (single reconciliation pass)
@@ -277,14 +280,24 @@ it's no longer needed. See #100.
   Windows ARM64 reproduction at
   https://github.com/Gentleman-Programming/gentle-ai/issues/2206.
 
+- A separate `pii` job uses `.betterleaks-pii.toml` to scan the full Git history
+  for non-controlled email addresses, private IPs, non-example hostnames,
+  usernames, and home-directory paths. `task pii:scan` runs it locally;
+  `task pii:scan:stdin` checks proposed public issue, PR, or comment text;
+  `task pii:authors` reports Git author identities separately and is
+  informational rather than blocking. Run the repository scan and the stdin
+  scan before publishing public text. The archived external PII-scanner skill
+  is not part of this workflow.
 - Test and documentation fixtures must use scanner-recognized placeholders for
   fake credentials, such as `${BOXY_TEST_PASSWORD}`, `${BOXY_TEST_TOKEN}`, or
-  `${BOXY_TEST_API_KEY}`. Use reserved example hosts (`example.com`, `.test`,
-  or `.invalid`) in credential-bearing URLs. Do not use realistic-looking
-  random strings or common password words such as `password`, `changeme`,
-  `testpass`, or `foo`/`bar`; those can be valid credentials and should remain
-  visible to Betterleaks. Historical fixture findings may be recorded only as
-  fingerprint-only `.betterleaksignore` entries after review.
+  `${BOXY_TEST_API_KEY}`. For identity-shaped fixtures, use
+  `boxy-test@example.invalid`, `boxy.example.test`, TEST-NET/documentation IP
+  ranges, `boxy-test-user`, and `C:\Users\boxy-test-user` or
+  `/home/boxy-test-user`. Do not use realistic-looking random strings or
+  common password words such as `password`, `changeme`, `testpass`, or
+  `foo`/`bar`; those can be valid credentials and should remain visible to
+  Betterleaks. Historical secret or PII fixture findings may be recorded only
+  as narrow fingerprint-only `.betterleaksignore` entries after review.
 
 ### GoReleaser Signing Notes
 

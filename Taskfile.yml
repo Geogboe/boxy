@@ -4,6 +4,7 @@ version: "3"
 
 vars:
   BETTERLEAKS_VERSION: v1.8.1
+  BETTERLEAKS_PII_CONFIG: .betterleaks-pii.toml
 
 tasks:
   default: task --list
@@ -110,6 +111,28 @@ tasks:
         if: '{{eq OS "windows"}}'
       - cmd: betterleaks git . --no-banner --redact
         if: '{{ne OS "windows"}}'
+
+  pii:scan:
+    desc: Scan git history for non-controlled PII with Betterleaks
+    deps:
+      - secrets:install
+    cmds:
+      - cmd: pwsh -NoProfile -File scripts/betterleaks-git.ps1 {{.BETTERLEAKS_PII_CONFIG}}
+        if: '{{eq OS "windows"}}'
+      - cmd: betterleaks git . --config {{.BETTERLEAKS_PII_CONFIG}} --no-banner --redact
+        if: '{{ne OS "windows"}}'
+
+  pii:scan:stdin:
+    desc: Scan piped public text for non-controlled PII with Betterleaks
+    deps:
+      - secrets:install
+    cmds:
+      - betterleaks stdin --config {{.BETTERLEAKS_PII_CONFIG}} --no-banner --redact
+
+  pii:authors:
+    desc: Report Git author identities for non-blocking PII review
+    cmds:
+      - git log --all --format="%an <%ae>"
 
   proto:generate:
     desc: Generate gRPC/protobuf Go stubs from proto/ using the pinned buf CLI

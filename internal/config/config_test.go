@@ -23,7 +23,7 @@ server:
   agent_heartbeat_interval: 30s
   grpc_cert_sans:
     - agent.example.test
-    - 10.0.0.5
+    - 192.0.2.5
 `), 0o644); err != nil {
 			t.Fatalf("write file: %v", err)
 		}
@@ -41,7 +41,7 @@ server:
 		if d != 30*time.Second {
 			t.Fatalf("interval = %v, want 30s", d)
 		}
-		wantSANs := []string{"agent.example.test", "10.0.0.5"}
+		wantSANs := []string{"agent.example.test", "192.0.2.5"}
 		if !slices.Equal(cfg.Server.GRPCCertSANs, wantSANs) {
 			t.Fatalf("GRPCCertSANs = %v, want %v", cfg.Server.GRPCCertSANs, wantSANs)
 		}
@@ -79,7 +79,7 @@ server:
 	})
 
 	t.Run("valid_grpc_cert_sans_pass_validate", func(t *testing.T) {
-		cfg := Config{Server: ServerSpec{GRPCCertSANs: []string{"agent.example.test", "10.0.0.5"}}}
+		cfg := Config{Server: ServerSpec{GRPCCertSANs: []string{"agent.example.test", "192.0.2.5"}}}
 		if err := cfg.Validate(); err != nil {
 			t.Fatalf("Validate: unexpected error for valid grpc_cert_sans: %v", err)
 		}

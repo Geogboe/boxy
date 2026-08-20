@@ -177,7 +177,7 @@ func TestSSHExec_Exec_PasswordAuth(t *testing.T) {
 	exec := &vmsdk.SSHExec{
 		Host:     "127.0.0.1",
 		Port:     passPort,
-		User:     "testuser",
+		User:     "boxy-test-user",
 		Password: "${BOXY_TEST_PASSWORD}",
 	}
 	result, err := exec.Exec(context.Background(), "echo", "hello from guest")
@@ -205,7 +205,7 @@ func TestSSHExec_Exec_PublicKeyAuth(t *testing.T) {
 	exec := &vmsdk.SSHExec{
 		Host:       host,
 		Port:       port,
-		User:       "testuser",
+		User:       "boxy-test-user",
 		PrivateKey: clientPEM,
 	}
 	result, err := exec.Exec(context.Background(), "echo", "key auth works")
@@ -228,7 +228,7 @@ func TestSSHExec_Exec_NonZeroExitCode(t *testing.T) {
 	exec := &vmsdk.SSHExec{
 		Host:       host,
 		Port:       port,
-		User:       "testuser",
+		User:       "boxy-test-user",
 		PrivateKey: clientPEM,
 	}
 	result, err := exec.Exec(context.Background(), "false")
@@ -244,7 +244,7 @@ func TestSSHExec_Exec_InvalidPrivateKey(t *testing.T) {
 	exec := &vmsdk.SSHExec{
 		Host:       "127.0.0.1",
 		Port:       "22",
-		User:       "testuser",
+		User:       "boxy-test-user",
 		PrivateKey: []byte("not a valid pem key"),
 	}
 	_, err := exec.Exec(context.Background(), "echo", "hi")
@@ -260,7 +260,7 @@ func TestSSHExec_Exec_ConnectionRefused(t *testing.T) {
 	exec := &vmsdk.SSHExec{
 		Host:     "127.0.0.1",
 		Port:     "1", // port 1 is always refused
-		User:     "testuser",
+		User:     "boxy-test-user",
 		Password: "${BOXY_TEST_PASSWORD}",
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2000000000) // 2s
@@ -407,7 +407,7 @@ func TestSSHExec_ExecStream_ForwardsStdoutAndStderrIncrementally(t *testing.T) {
 		sendExitStatus(ch, 9)
 	})
 
-	exec := &vmsdk.SSHExec{Host: host, Port: port, User: "testuser", PrivateKey: clientPEM}
+	exec := &vmsdk.SSHExec{Host: host, Port: port, User: "boxy-test-user", PrivateKey: clientPEM}
 	sink := &collectingStreamSink{}
 	result, err := exec.ExecStream(context.Background(), "echo", []string{"hi"}, sink)
 	if err != nil {
@@ -425,7 +425,7 @@ func TestSSHExec_ExecStream_ForwardsStdoutAndStderrIncrementally(t *testing.T) {
 }
 
 func TestSSHExec_ExecStream_RequiresSink(t *testing.T) {
-	exec := &vmsdk.SSHExec{Host: "127.0.0.1", Port: "22", User: "testuser", Password: "${BOXY_TEST_PASSWORD}"}
+	exec := &vmsdk.SSHExec{Host: "127.0.0.1", Port: "22", User: "boxy-test-user", Password: "${BOXY_TEST_PASSWORD}"}
 	_, err := exec.ExecStream(context.Background(), "echo", nil, nil)
 	if err == nil {
 		t.Fatal("expected error for a nil sink")
@@ -443,7 +443,7 @@ func TestSSHExec_ExecStream_ContextCancelReturnsContextError(t *testing.T) {
 		<-block // never responds until the test cleans up
 	})
 
-	exec := &vmsdk.SSHExec{Host: host, Port: port, User: "testuser", PrivateKey: clientPEM}
+	exec := &vmsdk.SSHExec{Host: host, Port: port, User: "boxy-test-user", PrivateKey: clientPEM}
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	go func() {
