@@ -90,6 +90,9 @@ tasks:
     aliases: [lint:go, golangci-lint]
     cmd: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...
 
+  # Native ARM64 Git for Windows rejects the NUL config paths Betterleaks uses
+  # to isolate global/system Git config. The Windows wrapper keeps the full
+  # history scan and only fixes those child Git environment values.
   secrets:scan:
     desc: Scan git history for secrets with Betterleaks
     cmds:

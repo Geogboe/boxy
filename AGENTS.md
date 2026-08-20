@@ -263,10 +263,19 @@ it's no longer needed. See #100.
   change.
 - A `betterleaks` job runs in `ci.yml` on every push/PR and scans full Git
   history with a pinned Betterleaks release. `task secrets:scan` runs the same
-  history scan locally. On Windows, `scripts/betterleaks-git.ps1` prepends a
-  narrow Git shim that clears Betterleaks' invalid `NUL` config paths before
-  delegating to the real Git executable; CI and non-Windows hosts invoke
-  Betterleaks directly.
+  history scan locally; do not replace it with directory mode because that
+  would miss secrets that were committed and later removed. On Windows,
+  `scripts/betterleaks-git.ps1` prepends a narrow Git shim for a native ARM64
+  Git-for-Windows compatibility issue: Betterleaks maps Go's `os.DevNull` to
+  `NUL` for `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM`, while the
+  `clangarm64` Git build rejects `NUL` as a config-file path, including Git
+  `2.55.0.windows.3`. Testing on an x64 `mingw64` host did not reproduce it.
+  The shim clears only those invalid paths, keeps system config disabled, and
+  delegates to the real Git executable; it does not bypass Betterleaks or
+  weaken the history scan. Retest native `betterleaks git .` after any
+  Betterleaks/Git upgrade before removing the shim. See the independent
+  Windows ARM64 reproduction at
+  https://github.com/Gentleman-Programming/gentle-ai/issues/2206.
 
 ### GoReleaser Signing Notes
 
