@@ -27,10 +27,17 @@ func NewTestMux(st store.Store, sm *sandbox.Manager, uiEnabled bool, pm ...PoolM
 // NewTestMuxWithAgentAdmin is NewTestMux plus an AgentAdmin, for testing
 // the /api/v1/agents endpoints.
 func NewTestMuxWithAgentAdmin(st store.Store, sm *sandbox.Manager, aa AgentAdmin) *http.ServeMux {
+	return NewTestMuxWithAgentAdminUI(st, sm, aa, false)
+}
+
+// NewTestMuxWithAgentAdminUI is NewTestMuxWithAgentAdmin with an explicit UI
+// toggle, for testing pages that render agent data.
+func NewTestMuxWithAgentAdminUI(st store.Store, sm *sandbox.Manager, aa AgentAdmin, uiEnabled bool) *http.ServeMux {
 	s := &Server{
 		store:      st,
 		sandboxMgr: sm,
 		agentAdmin: aa,
+		uiEnabled:  uiEnabled,
 	}
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)

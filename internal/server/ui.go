@@ -2,10 +2,14 @@ package server
 
 import (
 	"embed"
+	"errors"
 	"html/template"
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/Geogboe/boxy/pkg/model"
 )
@@ -25,6 +29,24 @@ type pageData struct {
 	Pools         []model.Pool
 	Sandboxes     []model.Sandbox
 	Resources     []model.Resource
+	Agents        []agentView
+}
+
+type agentView struct {
+	ID        string
+	Name      string
+	Connected bool
+	Available bool
+	LastSeen  string
+	Providers []providerView
+}
+
+type providerView struct {
+	Name        string
+	Capacity    string
+	HasCapacity bool
+	SampleAt    string
+	HasSample   bool
 }
 
 // pageTemplate parses the layout together with a single page template so that
@@ -41,6 +63,7 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	homeTmpl := pageTemplate("index.html")
 	poolsTmpl := pageTemplate("pools.html")
 	sandboxesTmpl := pageTemplate("sandboxes.html")
+	agentsTmpl := pageTemplate("agents.html")
 
 	// Static assets (CSS, JS).
 	staticContent, _ := fs.Sub(staticFS, "static")
@@ -50,11 +73,13 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /{$}", s.uiHandler(homeTmpl, "home", s.homeData))
 	mux.HandleFunc("GET /ui/pools", s.uiHandler(poolsTmpl, "pools", s.poolsData))
 	mux.HandleFunc("GET /ui/sandboxes", s.uiHandler(sandboxesTmpl, "sandboxes", s.sandboxesData))
+	mux.HandleFunc("GET /ui/agents", s.uiHandler(agentsTmpl, "agents", s.agentsData))
 
 	// HTMX fragment routes.
 	mux.HandleFunc("GET /ui/fragments/stats", s.fragmentHandler(homeTmpl, "stats_fragment", s.homeData))
 	mux.HandleFunc("GET /ui/fragments/pools-table", s.fragmentHandler(poolsTmpl, "pools_table_fragment", s.poolsData))
 	mux.HandleFunc("GET /ui/fragments/sandboxes-table", s.fragmentHandler(sandboxesTmpl, "sandboxes_table_fragment", s.sandboxesData))
+	mux.HandleFunc("GET /ui/fragments/agents-table", s.fragmentHandler(agentsTmpl, "agents_table_fragment", s.agentsData))
 }
 
 // dataFn loads data from the store into a pageData.
@@ -144,4 +169,65 @@ func (s *Server) sandboxesData(r *http.Request) (pageData, error) {
 		return pageData{}, err
 	}
 	return pageData{Sandboxes: sandboxes}, nil
+}
+
+func (s *Server) agentsData(_ *http.Request) (pageData, error) {
+	if s.agentAdmin == nil {
+		return pageData{}, errors.New("agent transport not available")
+	}
+	summaries := s.agentAdmin.ListAgents()
+	view := make([]agentView, 0, len(summaries))
+	for _, summary := range summaries {
+		agent := agentView{
+			ID:        summary.ID,
+			Name:      summary.Name,
+			Connected: summary.Connected,
+			Available: summary.Available,
+			LastSeen:  "No heartbeat sample",
+			Providers: make([]providerView, 0, len(summary.Providers)),
+		}
+		if summary.LastSeen != nil {
+			agent.LastSeen = dashboardTime(*summary.LastSeen)
+		}
+		for _, provider := range summary.Providers {
+			availability, hasCapacity := summary.Availability[provider]
+			providerRow := providerView{
+				Name:        string(provider),
+				HasCapacity: hasCapacity,
+			}
+			if hasCapacity {
+				providerRow.Capacity = formatMemoryMB(availability.MemoryMB) + " MB free"
+			}
+			if summary.AvailabilityAt != nil {
+				providerRow.HasSample = true
+				providerRow.SampleAt = dashboardTime(*summary.AvailabilityAt)
+			}
+			agent.Providers = append(agent.Providers, providerRow)
+		}
+		view = append(view, agent)
+	}
+	return pageData{Agents: view}, nil
+}
+
+func dashboardTime(t time.Time) string {
+	return t.UTC().Format("2006-01-02 15:04:05 UTC")
+}
+
+func formatMemoryMB(value int64) string {
+	negative := value < 0
+	if negative {
+		value = -value
+	}
+	digits := strconv.FormatInt(value, 10)
+	var b strings.Builder
+	if negative {
+		b.WriteByte('-')
+	}
+	for i, digit := range digits {
+		if i > 0 && (len(digits)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteRune(digit)
+	}
+	return b.String()
 }

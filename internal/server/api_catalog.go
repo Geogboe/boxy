@@ -35,7 +35,7 @@ func APIRouteCatalog() []APIRoute {
 		{Group: "Agents", Method: "POST", Path: "/api/v1/agent-tokens", Auth: "admin", Description: "Mint a single-use remote-agent registration token."},
 		{Group: "Agents", Method: "GET", Path: "/api/v1/agent-tokens", Auth: "admin", Description: "List registration-token metadata."},
 		{Group: "Agents", Method: "DELETE", Path: "/api/v1/agent-tokens/{id}", Auth: "admin", Description: "Revoke an unused registration token."},
-		{Group: "Agents", Method: "GET", Path: "/api/v1/agents", Auth: "auditor/admin", Description: "List registered agents."},
+		{Group: "Agents", Method: "GET", Path: "/api/v1/agents", Auth: "auditor/admin", Description: "List registered agents, connection state, heartbeat time, and capacity samples."},
 		{Group: "Agents", Method: "DELETE", Path: "/api/v1/agents/{id}", Auth: "admin", Description: "Revoke an agent identity."},
 	}
 }

@@ -7,7 +7,7 @@ import "context"
 // resource it can currently hand out to a new Create request.
 type ResourceAvailability struct {
 	// MemoryMB is available memory for new resources, in megabytes.
-	MemoryMB int64
+	MemoryMB int64 `json:"memory_mb"`
 }
 
 // AvailabilityReporter is an optional provider capability for reporting

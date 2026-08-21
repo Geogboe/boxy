@@ -512,10 +512,148 @@ func TestConnect_HeartbeatAvailabilityStoredAndRetrievable(t *testing.T) {
 			if got := snap.Data["hyperv"].MemoryMB; got != 4096 {
 				t.Fatalf("hyperv MemoryMB = %d, want 4096", got)
 			}
-			return
+
+			summaries := srv.ListAgents()
+			if len(summaries) != 1 {
+				t.Fatalf("ListAgents returned %d summaries, want 1", len(summaries))
+			}
+			summary := summaries[0]
+			if !summary.Connected || !summary.Available {
+				t.Fatalf("connected/available = %v/%v, want true/true", summary.Connected, summary.Available)
+			}
+			if summary.LastSeen == nil || summary.LastSeen.IsZero() {
+				t.Fatal("expected the server-received heartbeat time in last_seen")
+			}
+			if summary.AvailabilityAt == nil || summary.AvailabilityAt.IsZero() {
+				t.Fatal("expected the server-received availability sample time")
+			}
+			if got := summary.Availability["hyperv"].MemoryMB; got != 4096 {
+				t.Fatalf("summary hyperv MemoryMB = %d, want 4096", got)
+			}
+
+			// A later heartbeat with no successful reporter entries must
+			// replace the old capacity map while retaining a new sample time.
+			if err := stream.Send(&boxyagentv1.AgentMessage{Payload: &boxyagentv1.AgentMessage_Heartbeat{Heartbeat: &boxyagentv1.Heartbeat{AgentId: agentID}}}); err != nil {
+				t.Fatalf("send empty availability heartbeat: %v", err)
+			}
+			emptyDeadline := time.Now().Add(2 * time.Second)
+			for {
+				updated := srv.ListAgents()
+				if len(updated) == 1 && updated[0].AvailabilityAt != nil && len(updated[0].Availability) == 0 {
+					return
+				}
+				if time.Now().After(emptyDeadline) {
+					t.Fatalf("timed out waiting for empty availability sample, summaries = %+v", updated)
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("timed out waiting for the availability snapshot to become retrievable via the registry")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestListAgents_EmbeddedAgentHasNoHeartbeat(t *testing.T) {
+	srv, _, _, cleanup := newTestServer(t)
+	defer cleanup()
+
+	if err := srv.registry.Register(&stubAgent{id: "embedded", name: "Embedded Agent", providers: []providersdk.Type{"docker"}}); err != nil {
+		t.Fatalf("register embedded agent: %v", err)
+	}
+	summaries := srv.ListAgents()
+	if len(summaries) != 1 {
+		t.Fatalf("ListAgents returned %d summaries, want 1", len(summaries))
+	}
+	summary := summaries[0]
+	if !summary.Connected || !summary.Available {
+		t.Fatalf("embedded connected/available = %v/%v, want true/true", summary.Connected, summary.Available)
+	}
+	if summary.LastSeen != nil || summary.AvailabilityAt != nil || summary.Availability != nil {
+		t.Fatalf("embedded summary has remote samples: %+v", summary)
+	}
+}
+
+func TestListAgents_ConnectedAndAvailableAreIndependent(t *testing.T) {
+	srv, st, client, cleanup := newTestServer(t)
+	defer cleanup()
+	mintToken(t, st, "${BOXY_TEST_REGISTRATION_TOKEN_LIST_INDEPENDENT}", time.Hour)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if err := stream.Send(&boxyagentv1.AgentMessage{Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{
+		RegistrationToken: "${BOXY_TEST_REGISTRATION_TOKEN_LIST_INDEPENDENT}",
+		AgentName:         "remote-agent",
+		ProviderTypes:     []string{"hyperv"},
+		AgentVersion:      testServerVersion,
+	}}}); err != nil {
+		t.Fatalf("send register: %v", err)
+	}
+	registered, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("recv register response: %v", err)
+	}
+	agentID := registered.GetRegistered().GetAgentId()
+
+	monitorCtx, monitorCancel := context.WithCancel(context.Background())
+	defer monitorCancel()
+	go srv.RunHeartbeatMonitor(monitorCtx)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		summaries := srv.ListAgents()
+		if len(summaries) == 1 && !summaries[0].Available {
+			if !summaries[0].Connected {
+				t.Fatal("active remote agent became disconnected while only missing heartbeats")
+			}
+			_ = agentID
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for an active remote agent to become unavailable")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestListAgents_DisconnectedRemoteRemainsVisible(t *testing.T) {
+	srv, st, client, cleanup := newTestServer(t)
+	defer cleanup()
+	mintToken(t, st, "${BOXY_TEST_REGISTRATION_TOKEN_LIST_DISCONNECTED}", time.Hour)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stream, err := client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if err := stream.Send(&boxyagentv1.AgentMessage{Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{
+		RegistrationToken: "${BOXY_TEST_REGISTRATION_TOKEN_LIST_DISCONNECTED}",
+		AgentName:         "remote-agent",
+		ProviderTypes:     []string{"hyperv"},
+		AgentVersion:      testServerVersion,
+	}}}); err != nil {
+		t.Fatalf("send register: %v", err)
+	}
+	if _, err := stream.Recv(); err != nil {
+		t.Fatalf("recv register response: %v", err)
+	}
+	cancel()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		summaries := srv.ListAgents()
+		if len(summaries) == 1 && !summaries[0].Connected {
+			if summaries[0].Available {
+				t.Fatal("disconnected remote agent must be unavailable")
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for disconnected remote agent to remain visible")
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -525,10 +663,14 @@ func TestConnect_HeartbeatAvailabilityStoredAndRetrievable(t *testing.T) {
 // populate the registry for Revoke tests — none of its CRUD methods are
 // exercised.
 type stubAgent struct {
-	id string
+	id        string
+	name      string
+	providers []providersdk.Type
 }
 
-func (a *stubAgent) Info() agentsdk.AgentInfo { return agentsdk.AgentInfo{ID: a.id} }
+func (a *stubAgent) Info() agentsdk.AgentInfo {
+	return agentsdk.AgentInfo{ID: a.id, Name: a.name, Providers: a.providers}
+}
 func (a *stubAgent) Create(ctx context.Context, provider providersdk.Type, cfg any) (*providersdk.Resource, error) {
 	return nil, fmt.Errorf("not implemented")
 }

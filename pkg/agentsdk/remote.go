@@ -49,7 +49,8 @@ type RemoteAgent struct {
 	// lock-free reads for Availability() without a second mutex — each
 	// stored *AvailabilitySnapshot is built fresh and never mutated in
 	// place, so sharing the pointer with callers is safe.
-	availability atomic.Pointer[AvailabilitySnapshot]
+	availability  atomic.Pointer[AvailabilitySnapshot]
+	heartbeatSeen atomic.Bool
 
 	closed    chan struct{}
 	closeOnce sync.Once
@@ -107,7 +108,7 @@ func NewRemoteAgent(info AgentInfo, stream boxyagentv1.AgentTransportService_Con
 		streamPending: make(map[string]*streamWaiter),
 		closed:        make(chan struct{}),
 	}
-	a.lastSeen.Store(time.Now().UnixNano())
+	a.lastSeen.Store(time.Now().UTC().UnixNano())
 	return a
 }
 
@@ -118,7 +119,15 @@ func (a *RemoteAgent) Info() AgentInfo {
 // LastSeen returns the time of the most recent Heartbeat (or connection
 // start, if none has arrived yet).
 func (a *RemoteAgent) LastSeen() time.Time {
-	return time.Unix(0, a.lastSeen.Load())
+	return time.Unix(0, a.lastSeen.Load()).UTC()
+}
+
+// HasHeartbeat reports whether this connection has received at least one
+// heartbeat. LastSeen is initialized at connection time for liveness timeout
+// handling, so callers that need to distinguish a real heartbeat sample from
+// that initialization must use this method.
+func (a *RemoteAgent) HasHeartbeat() bool {
+	return a.heartbeatSeen.Load()
 }
 
 // Availability implements AvailabilityReportingAgent, returning the latest
@@ -156,7 +165,7 @@ func (a *RemoteAgent) updateAvailability(entries []*boxyagentv1.ProviderAvailabi
 		}
 		data[pt] = providersdk.ResourceAvailability{MemoryMB: e.GetMemoryMb()}
 	}
-	a.availability.Store(&AvailabilitySnapshot{Data: data, At: time.Now()})
+	a.availability.Store(&AvailabilitySnapshot{Data: data, At: time.Now().UTC()})
 }
 
 // Serve reads AgentMessages off the stream until it ends for any reason,
@@ -173,6 +182,7 @@ func (a *RemoteAgent) Serve() error {
 		switch payload := msg.GetPayload().(type) {
 		case *boxyagentv1.AgentMessage_Heartbeat:
 			a.lastSeen.Store(time.Now().UnixNano())
+			a.heartbeatSeen.Store(true)
 			a.updateAvailability(payload.Heartbeat.GetAvailability())
 		case *boxyagentv1.AgentMessage_Result:
 			a.deliver(payload.Result)

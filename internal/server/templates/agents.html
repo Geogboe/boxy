@@ -1,0 +1,75 @@
+{{define "title"}}Boxy — Agents{{end}}
+
+{{define "content"}}
+<h1 class="page-title">Agents</h1>
+<div class="table-card">
+  <div class="table-card-header">
+    <div>Registered Agents</div>
+    <div class="table-card-subtitle">Connection liveness and scheduling eligibility are reported separately.</div>
+  </div>
+  <div hx-get="/ui/fragments/agents-table"
+       hx-trigger="every 5s"
+       hx-swap="innerHTML">
+    {{template "agents_table_fragment" .}}
+  </div>
+</div>
+{{end}}
+
+{{define "agents_table_fragment"}}
+{{if .Agents}}
+<div class="table-scroll">
+<table class="agents-table">
+  <thead>
+    <tr>
+      <th scope="col">Agent</th>
+      <th scope="col">Connection / Scheduling</th>
+      <th scope="col">Last heartbeat</th>
+      <th scope="col">Providers and capacity</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Agents}}
+    <tr>
+      <td>
+        <div class="agent-name">{{.Name}}</div>
+        <code class="agent-id">{{.ID}}</code>
+      </td>
+      <td>
+        <div class="agent-status-cluster" aria-label="Connection and scheduling status">
+          <div class="status-pair">
+            <span class="status-label">Connection</span>
+            {{if .Connected}}<span class="badge badge-connected">Connected</span>{{else}}<span class="badge badge-disconnected">Disconnected</span>{{end}}
+          </div>
+          <div class="status-pair">
+            <span class="status-label">Scheduling</span>
+            {{if .Available}}<span class="badge badge-available">Available</span>{{else}}<span class="badge badge-unavailable">Unavailable</span>{{end}}
+          </div>
+        </div>
+      </td>
+      <td>
+        <span class="timestamp">{{.LastSeen}}</span>
+      </td>
+      <td>
+        {{if .Providers}}
+        <div class="provider-list">
+          {{range .Providers}}
+          <div class="provider-row">
+            <span class="provider-name">{{.Name}}</span>
+            {{if .HasCapacity}}<span class="capacity">{{.Capacity}}</span>{{else}}<span class="capacity-empty">No capacity sample</span>{{end}}
+            {{if .HasSample}}<span class="timestamp sample-time">Sampled {{.SampleAt}}</span>{{end}}
+          </div>
+          {{end}}
+        </div>
+        {{else}}
+        <span class="capacity-empty">No providers registered</span>
+        {{end}}
+      </td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<div class="empty">No agents registered</div>
+{{end}}
+{{end}}

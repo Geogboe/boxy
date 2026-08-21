@@ -3,7 +3,9 @@ package pool
 import (
 	"fmt"
 	"slices"
+	"sort"
 	"sync"
+	"time"
 
 	"github.com/Geogboe/boxy/pkg/agentsdk"
 	"github.com/Geogboe/boxy/pkg/providersdk"
@@ -197,10 +199,14 @@ func supportsProvider(a agentsdk.Agent, provider providersdk.Type) bool {
 // AgentSummary is a read-only snapshot of a registered agent, for
 // `GET /api/v1/agents` and `boxy agent list`.
 type AgentSummary struct {
-	ID        string             `json:"id"`
-	Name      string             `json:"name"`
-	Providers []providersdk.Type `json:"providers"`
-	Available bool               `json:"available"`
+	ID             string                                                `json:"id"`
+	Name           string                                                `json:"name"`
+	Providers      []providersdk.Type                                    `json:"providers"`
+	Available      bool                                                  `json:"available"`
+	Connected      bool                                                  `json:"connected"`
+	LastSeen       *time.Time                                            `json:"last_seen,omitempty"`
+	Availability   map[providersdk.Type]providersdk.ResourceAvailability `json:"availability,omitempty"`
+	AvailabilityAt *time.Time                                            `json:"availability_at,omitempty"`
 }
 
 // List returns a snapshot of every registered agent.
@@ -211,12 +217,15 @@ func (r *AgentRegistry) List() []AgentSummary {
 	out := make([]AgentSummary, 0, len(r.agents))
 	for id, a := range r.agents {
 		info := a.Info()
+		_, isRemote := a.(*agentsdk.RemoteAgent)
 		out = append(out, AgentSummary{
 			ID:        id,
 			Name:      info.Name,
-			Providers: info.Providers,
+			Providers: slices.Clone(info.Providers),
 			Available: r.avail[id],
+			Connected: !isRemote,
 		})
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }

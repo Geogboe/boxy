@@ -118,8 +118,11 @@ func TestAgentEndpoints(t *testing.T) {
 	t.Parallel()
 
 	st := store.NewMemoryStore()
+	lastSeen := time.Date(2026, time.August, 21, 14, 30, 0, 0, time.UTC)
+	availabilityAt := lastSeen.Add(2 * time.Second)
 	admin := &fakeAgentAdmin{agents: []pool.AgentSummary{
-		{ID: "agent-a", Name: "Lab Hypervisor", Providers: []providersdk.Type{"hyperv"}, Available: true},
+		{ID: "agent-a", Name: "Lab Hypervisor", Providers: []providersdk.Type{"hyperv"}, Available: true, Connected: true,
+			LastSeen: &lastSeen, Availability: map[providersdk.Type]providersdk.ResourceAvailability{"hyperv": {MemoryMB: 4096}}, AvailabilityAt: &availabilityAt},
 	}}
 	mux := server.NewTestMuxWithAgentAdmin(st, sandbox.New(st, nil), admin)
 
@@ -128,7 +131,8 @@ func TestAgentEndpoints(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("list agents status = %d, want %d", w.Code, http.StatusOK)
 	}
-	if !strings.Contains(w.Body.String(), "agent-a") || !strings.Contains(w.Body.String(), `"available":true`) {
+	body := w.Body.String()
+	if !strings.Contains(body, "agent-a") || !strings.Contains(body, `"available":true`) || !strings.Contains(body, `"connected":true`) || !strings.Contains(body, `"memory_mb":4096`) {
 		t.Fatalf("unexpected list agents body: %s", w.Body.String())
 	}
 

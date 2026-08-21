@@ -39,6 +39,19 @@ body contains "All Sandboxes"
 body contains "No sandboxes created"
 
 
+# ── Agents page ───────────────────────────────────────────────────────────
+
+GET {{base_url}}/ui/agents
+HTTP 200
+[Asserts]
+header "Content-Type" contains "text/html"
+body contains "Agents"
+body contains "Embedded Agent"
+body contains "No heartbeat sample"
+body contains "hx-get=\"/ui/fragments/agents-table\""
+body contains "hx-trigger=\"every 5s\""
+
+
 # ── HTMX fragment: stats ────────────────────────────────────────────────
 
 GET {{base_url}}/ui/fragments/stats
@@ -68,6 +81,16 @@ GET {{base_url}}/ui/fragments/sandboxes-table
 HTTP 200
 [Asserts]
 body contains "No sandboxes created"
+body not contains "<!DOCTYPE html>"
+
+
+# ── HTMX fragment: agents table ─────────────────────────────────────────
+
+GET {{base_url}}/ui/fragments/agents-table
+HTTP 200
+[Asserts]
+body contains "Embedded Agent"
+body contains "No heartbeat sample"
 body not contains "<!DOCTYPE html>"
 
 
@@ -105,3 +128,9 @@ GET {{base_url}}/ui/sandboxes
 HTTP 200
 [Asserts]
 body contains "<a href=\"/ui/sandboxes\" class=\"active\" aria-current=\"page\">Sandboxes</a>"
+
+# Agents page has active on Agents link
+GET {{base_url}}/ui/agents
+HTTP 200
+[Asserts]
+body contains "<a href=\"/ui/agents\" class=\"active\" aria-current=\"page\">Agents</a>"

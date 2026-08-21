@@ -73,8 +73,19 @@ API-key roles:
 | POST | `/api/v1/agent-tokens` | admin | Mint a single-use remote-agent registration token. |
 | GET | `/api/v1/agent-tokens` | admin | List registration-token metadata. |
 | DELETE | `/api/v1/agent-tokens/{id}` | admin | Revoke an unused registration token. |
-| GET | `/api/v1/agents` | auditor/admin | List registered agents. |
+| GET | `/api/v1/agents` | auditor/admin | List registered agents, connection state, heartbeat time, and capacity samples. |
 | DELETE | `/api/v1/agents/{id}` | admin | Revoke an agent identity. |
+
+## Agent list response
+
+`GET /api/v1/agents` retains the original `id`, `name`, `providers`, and `available` fields and adds the following fields:
+
+```json
+{"id":"agent-1","name":"Lab Hypervisor","providers":["hyperv"],"available":true,"connected":true,"last_seen":"2026-08-21T14:30:00Z","availability":{"hyperv":{"memory_mb":4096}},"availability_at":"2026-08-21T14:30:00Z"}
+```
+
+`connected` indicates an active embedded or remote transport; `available` indicates eligibility for new provisioning and can be false while a remote transport remains connected. `last_seen` and `availability_at` are optional RFC3339 UTC server-receipt timestamps. A missing provider entry in `availability` means no capacity sample was available, not zero capacity. Disconnected remote agents remain listed; the embedded agent has no heartbeat or capacity sample.
+
 
 ## Sandbox create request
 

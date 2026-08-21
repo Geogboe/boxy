@@ -54,6 +54,11 @@ func render(routes []server.APIRoute) string {
 		fmt.Fprintf(&b, "| %s | `%s` | %s | %s |\n", route.Method, route.Path, route.Auth, route.Description)
 	}
 
+	b.WriteString("\n## Agent list response\n\n")
+	b.WriteString("`GET /api/v1/agents` retains the original `id`, `name`, `providers`, and `available` fields and adds the following fields:\n\n")
+	b.WriteString("```json\n{\"id\":\"agent-1\",\"name\":\"Lab Hypervisor\",\"providers\":[\"hyperv\"],\"available\":true,\"connected\":true,\"last_seen\":\"2026-08-21T14:30:00Z\",\"availability\":{\"hyperv\":{\"memory_mb\":4096}},\"availability_at\":\"2026-08-21T14:30:00Z\"}\n```\n\n")
+	b.WriteString("`connected` indicates an active embedded or remote transport; `available` indicates eligibility for new provisioning and can be false while a remote transport remains connected. `last_seen` and `availability_at` are optional RFC3339 UTC server-receipt timestamps. A missing provider entry in `availability` means no capacity sample was available, not zero capacity. Disconnected remote agents remain listed; the embedded agent has no heartbeat or capacity sample.\n\n")
+
 	b.WriteString("\n## Sandbox create request\n\n")
 	b.WriteString("```json\n{\"name\":\"lab\",\"policies\":{\"auto_destroy_after\":\"1h\"},\"requests\":[{\"type\":\"container\",\"profile\":\"web\",\"count\":1}]}\n```\n\n")
 	b.WriteString("Sandbox creation returns `202 Accepted` and is fulfilled asynchronously by the daemon. User-key sandboxes are owner-scoped; ownerless legacy sandboxes remain visible only to auditors and admins.\n\n")

@@ -7,10 +7,13 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/internal/sandbox"
 	"github.com/Geogboe/boxy/internal/server"
 	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
@@ -127,6 +130,58 @@ func TestUI_fragment_pools_table(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, "No pools configured") {
 		t.Fatal("empty pools fragment missing empty state")
+	}
+}
+
+func TestUI_agents_rendersStatusesCapacityAndPolling(t *testing.T) {
+	t.Parallel()
+	lastSeen := time.Date(2026, time.August, 21, 14, 30, 0, 0, time.UTC)
+	availabilityAt := lastSeen.Add(2 * time.Second)
+	admin := &fakeAgentAdmin{agents: []pool.AgentSummary{
+		{ID: "embedded", Name: "Embedded Agent", Providers: []providersdk.Type{"docker"}, Connected: true, Available: true},
+		{ID: "remote-1", Name: "Lab Hypervisor", Providers: []providersdk.Type{"hyperv", "docker"}, Connected: false, Available: false,
+			LastSeen: &lastSeen, Availability: map[providersdk.Type]providersdk.ResourceAvailability{"hyperv": {MemoryMB: 4096}}, AvailabilityAt: &availabilityAt},
+	}}
+	mux := server.NewTestMuxWithAgentAdminUI(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), admin, true)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ui/agents", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	body := w.Body.String()
+	for _, want := range []string{
+		"Agents", "Embedded Agent", "Lab Hypervisor", "remote-1", "Connected", "Disconnected",
+		"Available", "Unavailable", "hyperv", "4,096 MB free", "No heartbeat sample", "No capacity sample",
+		"2026-08-21 14:30:00 UTC", `hx-get="/ui/fragments/agents-table"`, `hx-trigger="every 5s"`,
+		`href="/ui/agents" class="active" aria-current="page"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("agents page missing %q; body = %q", want, body)
+		}
+	}
+}
+
+func TestUI_agents_emptyInventory(t *testing.T) {
+	t.Parallel()
+	admin := &fakeAgentAdmin{}
+	mux := server.NewTestMuxWithAgentAdminUI(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), admin, true)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ui/fragments/agents-table", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "No agents registered") {
+		t.Fatalf("status = %d, body = %q", w.Code, w.Body.String())
+	}
+}
+
+func TestUI_agents_withoutTransportShowsError(t *testing.T) {
+	t.Parallel()
+	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), true)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ui/fragments/agents-table", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "error") {
+		t.Fatalf("status = %d, body = %q", w.Code, w.Body.String())
 	}
 }
 

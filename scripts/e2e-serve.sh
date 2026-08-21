@@ -122,10 +122,12 @@ assert_json_array "GET /api/v1/sandboxes" "$BASE/api/v1/sandboxes"
 assert_html_contains "GET /"              "$BASE/"                   "Overview"
 assert_html_contains "GET /ui/pools"      "$BASE/ui/pools"           "All Pools"
 assert_html_contains "GET /ui/sandboxes"  "$BASE/ui/sandboxes"       "All Sandboxes"
+assert_html_contains "GET /ui/agents"     "$BASE/ui/agents"           "Embedded Agent"
 
 assert_html_contains "fragment: stats"          "$BASE/ui/fragments/stats"           "stat-card"
 assert_html_contains "fragment: pools-table"    "$BASE/ui/fragments/pools-table"     "No pools configured"
 assert_html_contains "fragment: sandboxes-table" "$BASE/ui/fragments/sandboxes-table" "No sandboxes created"
+assert_html_contains "fragment: agents-table"   "$BASE/ui/fragments/agents-table"    "Embedded Agent"
 
 assert_status   "GET /static/style.css"   "$BASE/static/style.css"   200
 assert_status   "GET /static/htmx.min.js" "$BASE/static/htmx.min.js" 200

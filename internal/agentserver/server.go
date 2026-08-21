@@ -100,7 +100,54 @@ func (s *Server) log() *slog.Logger {
 // ListAgents returns a snapshot of every registered agent, for the
 // GET /api/v1/agents endpoint and `boxy agent list`.
 func (s *Server) ListAgents() []pool.AgentSummary {
-	return s.registry.List()
+	summaries := s.registry.List()
+
+	// remoteAgents contains only live transports. The registry intentionally
+	// retains a disconnected RemoteAgent so resources attributed to it remain
+	// addressable and operators can see that identity in the dashboard.
+	s.mu.Lock()
+	active := make(map[string]*agentsdk.RemoteAgent, len(s.remoteAgents))
+	for id, remote := range s.remoteAgents {
+		active[id] = remote
+	}
+	s.mu.Unlock()
+
+	for i := range summaries {
+		summary := &summaries[i]
+		agent, ok := s.registry.Get(summary.ID)
+		if !ok {
+			continue
+		}
+
+		remote, isRemote := agent.(*agentsdk.RemoteAgent)
+		if !isRemote {
+			// The embedded in-process agent has no transport heartbeat.
+			summary.Connected = true
+			continue
+		}
+
+		// Compare pointers as well as IDs so an old connection that is
+		// finishing after a reconnect cannot make the new connection look
+		// disconnected (or vice versa).
+		summary.Connected = active[summary.ID] == remote
+		if remote.HasHeartbeat() {
+			lastSeen := remote.LastSeen().UTC()
+			summary.LastSeen = &lastSeen
+		}
+		if snapshot, ok := s.registry.Availability(summary.ID); ok {
+			if !snapshot.At.IsZero() {
+				availabilityAt := snapshot.At.UTC()
+				summary.AvailabilityAt = &availabilityAt
+			}
+			if len(snapshot.Data) > 0 {
+				summary.Availability = make(map[providersdk.Type]providersdk.ResourceAvailability, len(snapshot.Data))
+				for provider, availability := range snapshot.Data {
+					summary.Availability[provider] = availability
+				}
+			}
+		}
+	}
+	return summaries
 }
 
 // DefaultTokenTTL is how long a freshly minted registration token stays

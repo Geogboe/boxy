@@ -137,6 +137,17 @@ a:hover {
   font-weight: 600;
 }
 
+.table-card-subtitle {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 400;
+  margin-top: 0.25rem;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -186,6 +197,48 @@ tbody tr:hover {
 .badge-pending { background: rgba(139, 143, 163, 0.15); color: var(--text-muted); }
 .badge-deleting { background: rgba(251, 146, 60, 0.15); color: var(--orange); }
 .badge-failed { background: rgba(248, 113, 113, 0.15); color: var(--red); }
+
+/* Agent status pairs deliberately use distinct labels in addition to color. */
+.agent-status-cluster {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.status-pair {
+  align-items: center;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.status-label {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.badge-connected,
+.badge-available { background: rgba(74, 222, 128, 0.15); color: var(--green); }
+.badge-disconnected,
+.badge-unavailable { background: rgba(139, 143, 163, 0.15); color: var(--text-muted); }
+
+.agent-name,
+.provider-name { font-weight: 600; }
+.agent-id,
+.timestamp,
+.capacity-empty {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.agent-id { display: block; margin-top: 0.15rem; }
+.provider-list { display: grid; gap: 0.4rem; }
+.provider-row { display: grid; gap: 0.1rem; }
+.capacity { font-variant-numeric: tabular-nums; }
+.sample-time { font-size: 0.75rem; }
+.agents-table { min-width: 760px; }
 
 /* HTMX loading indicator */
 .htmx-indicator {

@@ -192,6 +192,9 @@ func TestAgentRegistry_List(t *testing.T) {
 	if len(s.Providers) != 2 {
 		t.Fatalf("expected 2 providers, got %+v", s.Providers)
 	}
+	if !s.Connected {
+		t.Fatal("embedded agent summaries should report connected")
+	}
 }
 
 func TestAgentRegistry_ResolveRoundRobinsAcrossSameTypeAgents(t *testing.T) {
