@@ -90,7 +90,7 @@ func TestKeyringStoreCertificateRoundTrip(t *testing.T) {
 }
 
 func TestNormalizeServerURL(t *testing.T) {
-	got, err := normalizeServerURL("HTTPS://Boxy.Example:9090/path/")
+	got, err := normalizeServerURL("HTTPS://Boxy.Example.test:9090/path/")
 	if err != nil {
 		t.Fatalf("normalizeServerURL: %v", err)
 	}
