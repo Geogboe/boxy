@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -360,8 +361,17 @@ func resolveEmbeddedGuestBootstrap(ctx context.Context, st store.Store, specs ma
 		return providersdk.GuestBootstrapCredential{}, fmt.Errorf("pool %q is not a Hyper-V pool", resource.OriginPool)
 	}
 	config := &hyperv.CreateConfig{}
-	if err := decodeConfig(spec.Config, config); err != nil {
-		return providersdk.GuestBootstrapCredential{}, fmt.Errorf("decode pool %q config: %w", resource.OriginPool, err)
+	if len(spec.Config) != 0 {
+		// Same JSON-round-trip decode providersdk.Registry.NewDriverFromInstance
+		// uses for provider instance config — spec.Config is the same
+		// map[string]any shape.
+		raw, err := json.Marshal(spec.Config)
+		if err != nil {
+			return providersdk.GuestBootstrapCredential{}, fmt.Errorf("marshal pool %q config: %w", resource.OriginPool, err)
+		}
+		if err := json.Unmarshal(raw, config); err != nil {
+			return providersdk.GuestBootstrapCredential{}, fmt.Errorf("decode pool %q config: %w", resource.OriginPool, err)
+		}
 	}
 	password, err = providersdk.ResolveSecretRef(ctx, providersdk.SecretRef(config.GuestPasswordRef))
 	if err != nil {
