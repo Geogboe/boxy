@@ -220,6 +220,19 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   commits. Compare each worktree tip with `origin/main` and inspect its status
   before removing the worktree or branch; never infer that the whole branch is
   disposable from one merged PR.
+- **Release Please and GoReleaser both mutate release metadata.** Release
+  Please's `prerelease: true` does not protect a release from a later GoReleaser
+  update. With a plain tag such as `v0.1.40`, GoReleaser's `prerelease: auto`
+  treats it as stable, and its default `make_latest: true` promotes it as the
+  latest release. Keep `.goreleaser.yml` explicit (`prerelease: true`,
+  `make_latest: false`) until a deliberate config change promotes a stable
+  release, and inspect the actual GitHub release flags after each release
+  workflow.
+- **A GitHub prerelease flag is separate from prerelease SemVer tags.** Explicit
+  GoReleaser `prerelease: true` keeps a plain `v0.1.x` release marked
+  prerelease, but it does not create a `-rc` or `-beta` suffix. Configure
+  Release Please's prerelease versioning separately if prerelease tag names are
+  required.
 - **This development host cannot run Hyper-V VMs.** Use the `devfactory`
   provider for control-plane, agent, and end-to-end orchestration tests, and
   inject fake guest executors for Hyper-V rotation/exec behavior. Do not claim
