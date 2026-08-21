@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/Geogboe/boxy/internal/sandbox"
+	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
@@ -19,6 +20,15 @@ func NewTestMux(st store.Store, sm *sandbox.Manager, uiEnabled bool, pm ...PoolM
 		poolMaintenance: maintenance,
 		uiEnabled:       uiEnabled,
 	}
+	mux := http.NewServeMux()
+	s.registerRoutes(mux)
+	return mux
+}
+
+// NewTestMuxWithGuestSecrets configures the pool credential endpoint with an
+// explicit server-owned secret store.
+func NewTestMuxWithGuestSecrets(st store.Store, sm *sandbox.Manager, secrets boxysecrets.Store) *http.ServeMux {
+	s := &Server{store: st, sandboxMgr: sm, guestSecrets: secrets}
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
 	return mux

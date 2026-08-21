@@ -3,6 +3,38 @@
 - Status: Accepted
 - Date: 2026-08-15
 
+## Update: pool admission and explicit secret backends (2026-08-21)
+
+The original decision covered allocation-time delivery. Pool membership now
+has its own asynchronous admission step for providers that implement guest
+personalization:
+
+- A newly created resource is persisted as `provisioning` and emits the
+  durable `resource.provisioned` lifecycle event. It is not eligible for
+  allocation until admission succeeds.
+- The admission handler rotates the guest credential, stores the returned
+  opaque credential under the resource ID, persists only safe access details,
+  and then marks the resource `ready`. A failed admission marks the resource
+  `error`; normal quarantine, destroy, and replacement backoff handle the
+  failed resource rather than retrying it in place.
+- The operational event queue is persisted with the existing state store and
+  uses leases, retry, acknowledgement, and compaction. Event payloads contain
+  identifiers only and never secret values.
+- Secret storage is selected explicitly with `server.secrets.backend`:
+  `dpapi` for Windows machine-scope DPAPI, `keyring` for a local OS keychain,
+  or `file` for a portable ACL/mode-protected path such as a PVC in a Linux
+  container. Boxy does not choose file first and does not silently fall back.
+- Legacy `pool_guest_credentials` state is migration-only. Operators use
+  `boxy doctor` to inspect readiness and `boxy migrate secrets` to verify a
+  copy into the selected backend before removing the old value. Migration is
+  never automatic.
+
+For Kubernetes/OKD, a writable persistent volume with pod/service-account
+access controls is the reference file-backend shape. A read-only Kubernetes
+Secret volume is not itself a suitable runtime backend because admission and
+allocation rotate values; use it to deliver operator input to an explicit
+bootstrap/migration operation instead. See `examples/k3s-secrets/`.
+
 ## Context
 
 Hyper-V guests need a bootstrap credential during allocation, but the
@@ -44,4 +76,3 @@ Hyper-V VM creation still needs a non-sensitive guest OS/user note so the
 driver can select its connection mechanism. The local `env:` fallback is kept
 for existing single-host development workflows, but remote deployments should
 use the server-owned pool credential.
-

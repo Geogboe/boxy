@@ -158,6 +158,31 @@ boxy
 │         server: https://boxy.example:9090
 │
 │
+├── doctor                                    Check local state and secret backend readiness
+│   ├── --config <path>                         Config file (.yaml/.yml/.json)
+│   ├── --backend file|keyring|dpapi            Explicit backend override
+│   ├── --path <path>                            Secret file path override for file/dpapi
+│   └── --service <name>                         Keyring service name override
+│
+│   $ boxy doctor --config boxy.yaml
+│     secret backend: dpapi (ready)
+│     legacy plaintext credentials: none
+│
+│
+├── migrate
+│   └── secrets                                Explicitly migrate legacy pool credentials
+│       ├── --config <path>
+│       ├── --backend file|keyring|dpapi        Required unless configured in boxy.yaml
+│       ├── --path <path>                       Secret file path override for file/dpapi
+│       └── --service <name>                    Keyring service name override
+│
+│       $ boxy migrate secrets --config boxy.yaml --backend file --path .boxy/secrets.json
+│         migrated pool win-vm
+│
+│       Migration is explicit and verified before the legacy plaintext value is removed.
+│       Boxy never silently migrates or falls back between secret backends.
+│
+│
 ├── sandbox                                    Manage sandboxes
 │   ├── --server <addr>                          Server address (overrides env/global defaults)
 │   │

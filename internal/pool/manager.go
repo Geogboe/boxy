@@ -10,6 +10,7 @@ import (
 
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/policycontroller"
+	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
@@ -73,14 +74,52 @@ const (
 
 // Manager reconciles a pool's inventory against its policies.
 type Manager struct {
-	store       store.Store
-	provisioner Provisioner
-	clock       Clock
-	locksMu     sync.Mutex
-	poolLocks   map[model.PoolName]*sync.Mutex
+	store        store.Store
+	provisioner  Provisioner
+	admission    AdmissionPublisher
+	guestSecrets boxysecrets.Store
+	clock        Clock
+	locksMu      sync.Mutex
+	poolLocks    map[model.PoolName]*sync.Mutex
 
 	backoffMu sync.Mutex
 	backoff   map[model.PoolName]*provisionBackoffState
+}
+
+// SetAdmissionPublisher enables asynchronous resource admission. It is
+// optional so existing embedders and unit tests retain the synchronous
+// provisioner behavior until they opt into the durable lifecycle queue.
+func (m *Manager) SetAdmissionPublisher(publisher AdmissionPublisher) {
+	if m != nil {
+		m.admission = publisher
+	}
+}
+
+// SetGuestSecretStore enables best-effort cleanup of resource-scoped guest
+// credentials when a resource is destroyed or force-orphaned before it is
+// allocated. Allocation cleanup remains in AgentProvisioner because it owns
+// the successful consumption point.
+func (m *Manager) SetGuestSecretStore(secrets boxysecrets.Store) {
+	if m != nil {
+		m.guestSecrets = secrets
+	}
+}
+
+// FailAdmission marks a resource whose pool-admission action cannot safely be
+// retried in place. The next reconciliation pass quarantines and destroys it,
+// while the existing capped provisioning backoff controls replacement.
+func (m *Manager) FailAdmission(ctx context.Context, res model.Resource, cause error) error {
+	if m == nil || m.store == nil {
+		return fmt.Errorf("pool manager store is required")
+	}
+	if res.Properties == nil {
+		res.Properties = make(map[string]any)
+	}
+	res.Properties["lifecycle_error"] = cause.Error()
+	res.State = model.ResourceStateError
+	res.UpdatedAt = m.clock.Now().UTC()
+	m.recordProvisionFailure(res.OriginPool, res.UpdatedAt)
+	return m.store.PutResource(ctx, res)
 }
 
 // provisionBackoffActive reports whether pool provisioning is currently in
@@ -278,6 +317,7 @@ func (m *Manager) DestroyResource(ctx context.Context, res model.Resource) error
 	if err := m.store.DeleteResource(ctx, res.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
 		return fmt.Errorf("delete resource %q: %w", res.ID, err)
 	}
+	m.deleteResourceGuestCredential(ctx, res.ID)
 	return nil
 }
 
@@ -334,6 +374,7 @@ func (m *Manager) ForceOrphanResource(ctx context.Context, res model.Resource, r
 	if err := m.store.DeleteResource(ctx, res.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
 		return fmt.Errorf("delete resource %q: %w", res.ID, err)
 	}
+	m.deleteResourceGuestCredential(ctx, res.ID)
 	return nil
 }
 
@@ -400,7 +441,17 @@ func (m *Manager) destroyAndMark(ctx context.Context, p model.Pool, res model.Re
 	if err := m.store.PutResource(ctx, res); err != nil {
 		return fmt.Errorf("mark resource %q destroyed: %w", res.ID, err)
 	}
+	m.deleteResourceGuestCredential(ctx, res.ID)
 	return nil
+}
+
+func (m *Manager) deleteResourceGuestCredential(ctx context.Context, resourceID model.ResourceID) {
+	if m == nil || m.guestSecrets == nil || resourceID == "" {
+		return
+	}
+	if err := m.guestSecrets.Delete(ctx, boxysecrets.ResourceCredentialKey(string(resourceID))); err != nil && !errors.Is(err, boxysecrets.ErrNotFound) {
+		slog.Warn("could not remove destroyed resource guest credential", "resource_id", resourceID, "error", err)
+	}
 }
 
 func (m *Manager) lockPool(poolName model.PoolName) func() {
@@ -457,6 +508,16 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 			resources, err := m.store.ListResources(ctx)
 			if err != nil {
 				return observed{}, fmt.Errorf("list resources: %w", err)
+			}
+			if m.admission != nil {
+				for _, res := range resources {
+					if res.OriginPool != poolName || res.State != model.ResourceStateProvisioning {
+						continue
+					}
+					if err := m.admission.PublishResourceProvisioned(ctx, res); err != nil {
+						return observed{}, fmt.Errorf("publish admission event for resource %q: %w", res.ID, err)
+					}
+				}
 			}
 			return observed{pool: p, resources: resources, now: m.clock.Now()}, nil
 		}),
@@ -602,11 +663,20 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 				if res.OriginPool == "" {
 					res.OriginPool = p.Name
 				}
+				if m.admission != nil {
+					res.State = model.ResourceStateProvisioning
+					res.UpdatedAt = pl.now
+				}
 				if err := p.Inventory.Add(res); err != nil {
 					return fmt.Errorf("add resource to pool %q inventory: %w", p.Name, err)
 				}
 				if err := m.store.PutResource(ctx, res); err != nil {
 					return fmt.Errorf("put resource %q: %w", res.ID, err)
+				}
+				if m.admission != nil {
+					if err := m.admission.PublishResourceProvisioned(ctx, res); err != nil {
+						return fmt.Errorf("publish admission event for resource %q: %w", res.ID, err)
+					}
 				}
 			}
 

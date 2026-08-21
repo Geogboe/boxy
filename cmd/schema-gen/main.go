@@ -157,6 +157,26 @@ func buildServerSchema() map[string]any {
 				"items":       map[string]any{"type": "string"},
 				"description": "Extra DNS names/IPs to include in the agent gRPC server certificate's SANs, on top of the always-included localhost/127.0.0.1/listen-host entries. Needed when remote agents connect through a passthrough route or load balancer using an external DNS name. Equivalent repeatable CLI flag: --grpc-cert-san (fully overrides this value when passed).",
 			},
+			"secrets": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"description":          "Explicit server-owned secret backend. Required for guest-personalizable pools; there is no automatic fallback.",
+				"properties": map[string]any{
+					"backend": map[string]any{
+						"type":        "string",
+						"enum":        []string{"file", "keyring", "dpapi"},
+						"description": "Secret backend: file for ACL/mode-protected portable deployments, keyring for local OS keychains, or dpapi for Windows machine-scope protection.",
+					},
+					"path": map[string]any{
+						"type":        "string",
+						"description": "Backend file path for file or dpapi. Relative paths are resolved beside .boxy/state.json.",
+					},
+					"service": map[string]any{
+						"type":        "string",
+						"description": "Optional OS keyring service name for the keyring backend.",
+					},
+				},
+			},
 		},
 	}
 }

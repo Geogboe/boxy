@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
+	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
 )
 
 // AgentProvisioner adapts agentsdk.Agent instances into the pool.Provisioner
@@ -34,6 +36,9 @@ type AgentProvisioner struct {
 	Specs     map[model.PoolName]boxyconfig.PoolSpec
 	Providers map[string]providersdk.Instance
 	Now       func() time.Time
+	// GuestSecrets holds the resource-scoped credential produced during pool
+	// admission. It is consumed and removed after allocation-time rotation.
+	GuestSecrets boxysecrets.Store
 }
 
 func (ap *AgentProvisioner) Provision(ctx context.Context, pool model.Pool) (model.Resource, error) {
@@ -106,6 +111,11 @@ func (ap *AgentProvisioner) Allocate(ctx context.Context, pool model.Pool, res m
 			return providersdk.AllocationResult{}, err
 		}
 		if result != nil {
+			if ap.GuestSecrets != nil {
+				if err := ap.GuestSecrets.Delete(ctx, boxysecrets.ResourceCredentialKey(string(res.ID))); err != nil && !errors.Is(err, boxysecrets.ErrNotFound) {
+					slog.Default().Warn("could not remove consumed resource credential", "resource_id", res.ID, "error", err)
+				}
+			}
 			return providersdk.AllocationResult{
 				Properties:      result.AccessDetails.ToProperties(),
 				GuestCredential: result.EphemeralCredential,
@@ -114,6 +124,27 @@ func (ap *AgentProvisioner) Allocate(ctx context.Context, pool model.Pool, res m
 	}
 	properties, err := agent.Allocate(ctx, driverType, string(res.ID))
 	return providersdk.AllocationResult{Properties: properties}, err
+}
+
+// PersonalizeGuestForPool runs only the guest-personalization capability for
+// pool admission. It deliberately does not call generic Allocate, because the
+// returned credential must be retained as the next bootstrap in the selected
+// secret backend until the resource leaves the pool.
+func (ap *AgentProvisioner) PersonalizeGuestForPool(ctx context.Context, pool model.Pool, res model.Resource) (*providersdk.GuestPersonalizationResult, error) {
+	spec, ok := ap.Specs[pool.Name]
+	if !ok {
+		return nil, fmt.Errorf("unknown pool %q", pool.Name)
+	}
+	driverType := ap.driverTypeForPool(spec)
+	agent, err := ap.agentForResource(res)
+	if err != nil {
+		return nil, err
+	}
+	gp, ok := agent.(agentsdk.GuestPersonalizingAgent)
+	if !ok {
+		return nil, nil
+	}
+	return gp.PersonalizeGuest(ctx, driverType, string(res.ID))
 }
 
 // ExecuteSandbox routes a provider-neutral command to the exact agent that

@@ -1,0 +1,15 @@
+services:
+  boxy:
+    image: ghcr.io/geogboe/boxy:latest
+    command: ["serve", "--config", "/etc/boxy/boxy.yaml"]
+    ports:
+      - "9090:9090"
+      - "9091:9091"
+    volumes:
+      - ./boxy.yaml:/etc/boxy/boxy.yaml:ro
+      - boxy-state:/var/lib/boxy
+      - boxy-secrets:/var/lib/boxy/secrets
+
+volumes:
+  boxy-state:
+  boxy-secrets:

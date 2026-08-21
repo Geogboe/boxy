@@ -43,15 +43,21 @@ type ResourceForceOrphaner interface {
 	ForceOrphanAgentResources(ctx context.Context, agentID, reason string) (int, error)
 }
 
+// GuestBootstrapResolver supplies the current server-owned credential for an
+// owned resource. It lets the daemon move from one pool bootstrap value to a
+// resource-scoped value without changing the authenticated gRPC contract.
+type GuestBootstrapResolver func(context.Context, model.Resource) (providersdk.GuestBootstrapCredential, error)
+
 // Server implements the generated AgentTransportServiceServer.
 type Server struct {
 	boxyagentv1.UnimplementedAgentTransportServiceServer
 
-	store         store.Store
-	registry      *pool.AgentRegistry
-	ca            *pki.CA
-	forceOrphaner ResourceForceOrphaner
-	version       string
+	store                  store.Store
+	registry               *pool.AgentRegistry
+	ca                     *pki.CA
+	forceOrphaner          ResourceForceOrphaner
+	guestBootstrapResolver GuestBootstrapResolver
+	version                string
 
 	heartbeatInterval    time.Duration
 	missedHeartbeatLimit int
@@ -62,6 +68,16 @@ type Server struct {
 	mu           sync.Mutex
 	remoteAgents map[string]*agentsdk.RemoteAgent
 	forceStop    map[string]chan struct{}
+}
+
+// SetGuestBootstrapResolver injects the server-owned credential lookup used by
+// remote guest personalization. When unset, the legacy pool state lookup is
+// retained for compatibility with focused agentserver users and migration
+// tests.
+func (s *Server) SetGuestBootstrapResolver(resolver GuestBootstrapResolver) {
+	if s != nil {
+		s.guestBootstrapResolver = resolver
+	}
 }
 
 // New constructs a Server. heartbeatInterval should match the value handed
@@ -313,6 +329,27 @@ func (s *Server) ResolveGuestBootstrapCredential(ctx context.Context, req *boxya
 	if resource.Provider.AgentID == "" || resource.Provider.AgentID != agentID {
 		return nil, status.Error(codes.PermissionDenied, "agent does not own resource")
 	}
+	if s.guestBootstrapResolver != nil {
+		credential, err := s.guestBootstrapResolver(ctx, resource)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return nil, status.Error(codes.FailedPrecondition, "no guest bootstrap credential is configured for the resource")
+			}
+			return nil, status.Error(codes.Internal, "failed to resolve guest bootstrap credential")
+		}
+		if strings.TrimSpace(credential.Password) == "" {
+			return nil, status.Error(codes.FailedPrecondition, "resolved guest bootstrap credential is empty")
+		}
+		username := credential.Username
+		if strings.TrimSpace(username) == "" {
+			username = guestUsername(resource)
+		}
+		return &boxyagentv1.ResolveGuestBootstrapCredentialResponse{
+			Username: username,
+			Password: credential.Password,
+		}, nil
+	}
+
 	password, err := s.store.GetPoolGuestCredential(ctx, resource.OriginPool)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, status.Error(codes.FailedPrecondition, "no guest bootstrap credential is configured for the resource pool")

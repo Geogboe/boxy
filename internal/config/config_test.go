@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Geogboe/boxy/pkg/model"
+	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
 )
 
 func TestServerSpec_AgentTransportFields(t *testing.T) {
@@ -103,6 +104,40 @@ server:
 			t.Fatal("LoadFile: expected an unknown-field error for server.insecure (deliberately flag-only, never config)")
 		}
 	})
+}
+
+func TestSecretSpec_RequiresExplicitValidBackend(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		spec    SecretSpec
+		wantErr bool
+	}{
+		{name: "unset", spec: SecretSpec{}},
+		{name: "file", spec: SecretSpec{Backend: string(boxysecrets.BackendFile), Path: "secrets.json"}},
+		{name: "keyring", spec: SecretSpec{Backend: string(boxysecrets.BackendKeyring)}},
+		{name: "dpapi", spec: SecretSpec{Backend: string(boxysecrets.BackendDPAPI), Path: "secrets.json"}},
+		{name: "missing backend", spec: SecretSpec{Path: "secrets.json"}, wantErr: true},
+		{name: "file missing path", spec: SecretSpec{Backend: string(boxysecrets.BackendFile)}, wantErr: true},
+		{name: "keyring path", spec: SecretSpec{Backend: string(boxysecrets.BackendKeyring), Path: "secrets.json"}, wantErr: true},
+		{name: "unknown", spec: SecretSpec{Backend: "vault"}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.spec.Validate()
+			if tt.wantErr && err == nil {
+				t.Fatal("Validate() = nil, want error")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("Validate() = %v, want nil", err)
+			}
+		})
+	}
+
+	if err := (Config{Server: ServerSpec{Secrets: SecretSpec{Backend: string(boxysecrets.BackendFile), Path: "secrets.json"}}}).Validate(); err != nil {
+		t.Fatalf("Config.Validate() = %v, want nil", err)
+	}
 }
 
 func TestLoadFile_YAML_HappyPath(t *testing.T) {

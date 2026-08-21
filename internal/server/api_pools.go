@@ -9,6 +9,7 @@ import (
 	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/pkg/httpjson"
 	"github.com/Geogboe/boxy/pkg/model"
+	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
@@ -67,7 +68,12 @@ func (s *Server) handleSetPoolGuestCredential(w http.ResponseWriter, r *http.Req
 		httpjson.Error(w, http.StatusBadRequest, "guest credential value must not be blank")
 		return
 	}
-	if err := s.store.PutPoolGuestCredential(r.Context(), name, req.Value); err != nil {
+	if s.guestSecrets != nil {
+		if err := s.guestSecrets.Put(r.Context(), boxysecrets.PoolBootstrapKey(string(name)), []byte(req.Value)); err != nil {
+			httpjson.Error(w, http.StatusInternalServerError, "failed to store pool guest credential")
+			return
+		}
+	} else if err := s.store.PutPoolGuestCredential(r.Context(), name, req.Value); err != nil {
 		httpjson.Error(w, http.StatusInternalServerError, "failed to store pool guest credential")
 		return
 	}

@@ -28,6 +28,8 @@ Core commands you will commonly use:
 - `boxy config client set-server <url>`
 - `boxy sandbox create`
 - `boxy pool set-guest-credential`
+- `boxy doctor`
+- `boxy migrate secrets`
 - `boxy sandbox list`
 - `boxy sandbox get`
 - `boxy sandbox delete`
@@ -74,6 +76,8 @@ Core commands you will commonly use:
 - `boxy sandbox extend <id> <duration>` only works on sandboxes created with `policies.auto_destroy_after` set; it pushes that expiry out by `<duration>` and fails if the sandbox has no expiry to extend or is already being deleted.
 - `boxy sandbox exec <id> -- <command> [args...]` runs a one-shot command only in a ready sandbox. It selects the only resource automatically; pass `--resource` for multi-resource sandboxes. Saved guest credentials are loaded from the OS keyring when the resource is unambiguous. Use `--guest-password-stdin` or `BOXY_GUEST_PASSWORD` for an explicit password, never a plain command-line flag. Use `--stream` for live NDJSON events. Interactive stdin/PTY sessions are not supported.
 - `boxy pool set-guest-credential <pool> --value -` reads a Hyper-V pool's bootstrap credential from stdin and stores it server-side; never place that secret in a config file, environment variable, or command-line argument for a remote agent.
+- Guest-personalizable pools require an explicitly configured server secret backend: `file`, `keyring`, or Windows `dpapi`. `boxy doctor` checks readiness and reports legacy plaintext credentials; it does not migrate them.
+- Run `boxy migrate secrets --backend <file|keyring|dpapi>` as a deliberate, verified migration. The command writes the selected backend first, verifies the value, and only then removes the legacy state entry. There is no automatic migration or backend fallback.
 - Use `boxy debug pool drain <pool>` and `boxy debug pool fill <pool>` for daemon-backed operator maintenance of unused ready pool inventory.
 - Remote agents register with a single-use token: `boxy agent token create` prints the raw token exactly once (never stored or retrievable again); the agent redeems it on first connect and authenticates with an issued mTLS client certificate afterward. `boxy agent list` shows registered agents and availability; `boxy agent revoke <id>` deny-lists an agent's certificate and tears down its live connection. If the agent is permanently gone, `boxy agent revoke <id> --force-orphan-resources` also detaches every resource still attributed to it (pool inventory + store) without contacting the agent — resources otherwise stay un-`Destroy`able through the normal path since `Destroy` always routes to the exact agent that created them.
 - `boxy agent serve --server <host:port> --providers <list> --token <token> --ca-cert <path>` runs a host as a remote agent. The `--server` address is the daemon's gRPC listener (default `:9091`), not its REST port. Use `--config boxy.yaml` to load configured provider instances (and optionally `--providers` to select a subset); without `--config`, `--providers` remains required. `--ca-cert` (the server's `.boxy/ca.crt`, copied out-of-band) is required for the first connection; after registration the issued credentials in `.boxy-agent/` are used automatically and neither flag is needed again.

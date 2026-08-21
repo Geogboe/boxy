@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: boxy
+spec:
+  replicas: 1
+  template:
+    spec:
+      serviceAccountName: boxy
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 1000
+      containers:
+        - name: boxy
+          image: ghcr.io/geogboe/boxy:latest
+          args: ["serve", "--config", "/etc/boxy/boxy.yaml"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/boxy
+              readOnly: true
+            - name: secret-backend
+              mountPath: /var/lib/boxy-secrets
+      volumes:
+        - name: config
+          configMap:
+            name: boxy-config
+        - name: secret-backend
+          persistentVolumeClaim:
+            claimName: boxy-secret-backend

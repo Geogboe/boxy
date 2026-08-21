@@ -96,6 +96,20 @@ func (dp *DriverProvisioner) Allocate(ctx context.Context, pool model.Pool, res 
 	return providersdk.AllocationResult{Properties: properties}, err
 }
 
+// PersonalizeGuestForPool runs only the guest-personalization capability for
+// pool admission; allocation-time callers continue to use Allocate.
+func (dp *DriverProvisioner) PersonalizeGuestForPool(ctx context.Context, pool model.Pool, res model.Resource) (*providersdk.GuestPersonalizationResult, error) {
+	driver, _, err := dp.driverForPool(pool.Name)
+	if err != nil {
+		return nil, fmt.Errorf("personalize pool %q: %w", pool.Name, err)
+	}
+	gp, ok := driver.(providersdk.GuestPersonalizer)
+	if !ok {
+		return nil, nil
+	}
+	return gp.PersonalizeGuest(ctx, string(res.ID))
+}
+
 func (dp *DriverProvisioner) Destroy(ctx context.Context, pool model.Pool, res model.Resource) error {
 	driver, _, err := dp.driverForPool(pool.Name)
 	if err != nil {

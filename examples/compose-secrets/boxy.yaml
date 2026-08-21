@@ -1,0 +1,16 @@
+server:
+  listen: ":9090"
+  grpc_listen: ":9091"
+  secrets:
+    backend: file
+    path: /var/lib/boxy/secrets/secrets.json
+
+pools:
+  - name: web
+    type: docker
+    policy:
+      preheat:
+        min_ready: 1
+        max_total: 2
+    config:
+      image: nginx:alpine

@@ -12,6 +12,7 @@ import (
 
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
+	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
 	"gopkg.in/yaml.v3"
 )
 
@@ -57,6 +58,55 @@ type ServerSpec struct {
 	// repeatable CLI flag: --grpc-cert-san (fully overrides this value
 	// when passed, does not merge with it).
 	GRPCCertSANs []string `json:"grpc_cert_sans,omitempty" yaml:"grpc_cert_sans,omitempty"`
+
+	// Secrets selects the server-owned credential backend. It is required when
+	// a provider admission policy needs guest credentials; it is intentionally
+	// not defaulted so deployment posture is explicit.
+	Secrets SecretSpec `json:"secrets,omitzero" yaml:"secrets,omitempty"`
+}
+
+// SecretSpec configures the server-owned secret backend.
+type SecretSpec struct {
+	Backend string `json:"backend,omitempty" yaml:"backend,omitempty"`
+	Path    string `json:"path,omitempty" yaml:"path,omitempty"`
+	Service string `json:"service,omitempty" yaml:"service,omitempty"`
+}
+
+func (s SecretSpec) Config() boxysecrets.Config {
+	return boxysecrets.Config{
+		Backend: boxysecrets.Backend(strings.ToLower(strings.TrimSpace(s.Backend))),
+		Path:    strings.TrimSpace(s.Path),
+		Service: strings.TrimSpace(s.Service),
+	}
+}
+
+func (s SecretSpec) Configured() bool {
+	return strings.TrimSpace(s.Backend) != ""
+}
+
+func (s SecretSpec) Validate() error {
+	if !s.Configured() {
+		if strings.TrimSpace(s.Path) != "" || strings.TrimSpace(s.Service) != "" {
+			return fmt.Errorf("server.secrets.backend is required when secret settings are present")
+		}
+		return nil
+	}
+	cfg := s.Config()
+	switch cfg.Backend {
+	case boxysecrets.BackendFile, boxysecrets.BackendDPAPI:
+		if cfg.Path == "" {
+			return fmt.Errorf("server.secrets.path is required for backend %q", cfg.Backend)
+		}
+	case boxysecrets.BackendKeyring:
+		if cfg.Path != "" {
+			return fmt.Errorf("server.secrets.path is not valid for keyring backend")
+		}
+	case boxysecrets.Backend(""):
+		return fmt.Errorf("server.secrets.backend is required")
+	default:
+		return fmt.Errorf("unsupported server.secrets.backend %q", cfg.Backend)
+	}
+	return nil
 }
 
 // UIEnabled reports whether the web UI should be served.
@@ -145,6 +195,9 @@ func ensureJSONEOF(dec *json.Decoder) error {
 func (c Config) Validate() error {
 	if _, err := c.Server.EffectiveAgentHeartbeatInterval(); err != nil {
 		return fmt.Errorf("server: %w", err)
+	}
+	if err := c.Server.Secrets.Validate(); err != nil {
+		return err
 	}
 	for i, san := range c.Server.GRPCCertSANs {
 		if strings.TrimSpace(san) == "" {

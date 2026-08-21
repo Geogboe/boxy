@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Geogboe/boxy/pkg/lifecycle"
 	"github.com/Geogboe/boxy/pkg/model"
 )
 
@@ -32,6 +33,7 @@ type diskState struct {
 	APIKeys                map[model.APIKeyID]model.APIKey                      `json:"api_keys"`
 	RevokedAgentIdentities map[model.AgentIdentityID]model.RevokedAgentIdentity `json:"revoked_agent_identities"`
 	AgentIdentities        map[string]model.AgentIdentity                       `json:"agent_identities"`
+	Events                 map[string]lifecycle.Record                          `json:"lifecycle_events"`
 }
 
 func NewDiskStore(path string) (*DiskStore, error) {
@@ -49,6 +51,7 @@ func NewDiskStore(path string) (*DiskStore, error) {
 			APIKeys:                make(map[model.APIKeyID]model.APIKey),
 			RevokedAgentIdentities: make(map[model.AgentIdentityID]model.RevokedAgentIdentity),
 			AgentIdentities:        make(map[string]model.AgentIdentity),
+			Events:                 make(map[string]lifecycle.Record),
 		},
 	}
 	if err := s.load(); err != nil {
@@ -98,6 +101,9 @@ func (s *DiskStore) load() error {
 	}
 	if st.AgentIdentities == nil {
 		st.AgentIdentities = make(map[string]model.AgentIdentity)
+	}
+	if st.Events == nil {
+		st.Events = make(map[string]lifecycle.Record)
 	}
 	s.data = st
 	return nil
@@ -169,6 +175,31 @@ func (s *DiskStore) GetPoolGuestCredential(ctx context.Context, poolName model.P
 		return "", ErrNotFound
 	}
 	return credential, nil
+}
+
+// DeletePoolGuestCredential removes a legacy plaintext pool credential. New
+// runtime code stores credentials through pkg/secrets; this method exists for
+// the explicit migration command only.
+func (s *DiskStore) DeletePoolGuestCredential(ctx context.Context, poolName model.PoolName) error {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.data.PoolGuestCredentials[poolName]; !ok {
+		return ErrNotFound
+	}
+	delete(s.data.PoolGuestCredentials, poolName)
+	return s.persistLocked()
+}
+
+func (s *DiskStore) ListPoolGuestCredentials(ctx context.Context) (map[model.PoolName]string, error) {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[model.PoolName]string, len(s.data.PoolGuestCredentials))
+	for pool, credential := range s.data.PoolGuestCredentials {
+		out[pool] = credential
+	}
+	return out, nil
 }
 
 func (s *DiskStore) GetResource(ctx context.Context, id model.ResourceID) (model.Resource, error) {

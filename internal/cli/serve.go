@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -22,11 +21,12 @@ import (
 	"github.com/Geogboe/boxy/internal/svcmgr"
 	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
 	"github.com/Geogboe/boxy/pkg/agentsdk"
+	"github.com/Geogboe/boxy/pkg/lifecycle"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/pki"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/providersdk/builtins"
-	"github.com/Geogboe/boxy/pkg/providersdk/providers/hyperv"
+	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
 	"github.com/Geogboe/boxy/pkg/store"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
@@ -194,6 +194,11 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	}
 	doneState(statePath)
 
+	guestSecrets, err := openConfiguredSecretStore(cfg.Server.Secrets, statePath, requiresGuestSecretBackend(cfg))
+	if err != nil {
+		return fmt.Errorf("open secret backend: %w", err)
+	}
+
 	// Drivers + embedded agent
 	doneAgent, failAgent := ui.step("Starting embedded agent")
 	drivers, err := buildDrivers(reg, cfg.Providers)
@@ -201,7 +206,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		failAgent(err.Error())
 		return fmt.Errorf("build drivers: %w", err)
 	}
-	configureEmbeddedGuestBootstrapResolvers(drivers, st, specsMap)
+	configureEmbeddedGuestBootstrapResolvers(drivers, st, guestSecrets, specsMap)
 	embeddedAgent, err := agentsdk.NewEmbeddedAgent("embedded", "Embedded Agent", drivers...)
 	if err != nil {
 		failAgent(err.Error())
@@ -220,11 +225,26 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 
 	// Use AgentProvisioner to route pool operations through the registry.
 	provisioner := &pool.AgentProvisioner{
-		Registry:  agentRegistry,
-		Specs:     specsMap,
-		Providers: providersMap,
+		Registry:     agentRegistry,
+		Specs:        specsMap,
+		Providers:    providersMap,
+		GuestSecrets: guestSecrets,
 	}
 	poolMgr := pool.New(st, provisioner)
+	poolMgr.SetGuestSecretStore(guestSecrets)
+	eventStore, ok := st.(lifecycle.EventStore)
+	if !ok {
+		return fmt.Errorf("state store does not support lifecycle events")
+	}
+	admissionPublisher := &pool.EventPublisher{Events: eventStore}
+	admissionHandler := &pool.AdmissionHandler{
+		Store:        st,
+		Secrets:      guestSecrets,
+		Personalizer: provisioner,
+		Failures:     poolMgr,
+	}
+	admissionDispatcher := lifecycle.NewDispatcher(eventStore, admissionHandler)
+	poolMgr.SetAdmissionPublisher(admissionPublisher)
 	sandboxMgr := sandbox.New(st, provisioner)
 	sandboxFulfiller := sandbox.NewFulfiller(st, poolMgr, sandboxMgr)
 	sandboxDeleter := sandbox.NewDeletionReconciler(st, poolMgr)
@@ -271,6 +291,9 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		failTLS(err.Error())
 		return err
 	}
+	agentSrv.SetGuestBootstrapResolver(func(ctx context.Context, resource model.Resource) (providersdk.GuestBootstrapCredential, error) {
+		return resolveGuestBootstrap(ctx, st, guestSecrets, specsMap, resource)
+	})
 	if opts.insecure {
 		doneTLS("INSECURE (no TLS — local development only)")
 	} else {
@@ -297,6 +320,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		TLSCertPEM:   httpCertPEM,
 		TLSKeyPEM:    httpKeyPEM,
 		Executor:     provisioner,
+		GuestSecrets: guestSecrets,
 	})
 
 	g, ctx := errgroup.WithContext(ctx)
@@ -311,6 +335,9 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		return nil
 	})
 	g.Go(func() error {
+		return admissionDispatcher.Run(ctx)
+	})
+	g.Go(func() error {
 		return serveLoop(ctx, poolMgr, sandboxDeleter, sandboxFulfiller, poolNames, ui)
 	})
 
@@ -319,7 +346,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	return g.Wait()
 }
 
-func configureEmbeddedGuestBootstrapResolvers(drivers []providersdk.Driver, st store.Store, specs map[model.PoolName]boxyconfig.PoolSpec) {
+func configureEmbeddedGuestBootstrapResolvers(drivers []providersdk.Driver, st store.Store, guestSecrets boxysecrets.Store, specs map[model.PoolName]boxyconfig.PoolSpec) {
 	for _, driver := range drivers {
 		configurer, ok := driver.(interface {
 			SetGuestBootstrapResolver(providersdk.GuestBootstrapResolver)
@@ -328,56 +355,13 @@ func configureEmbeddedGuestBootstrapResolvers(drivers []providersdk.Driver, st s
 			continue
 		}
 		configurer.SetGuestBootstrapResolver(func(ctx context.Context, resourceID string) (providersdk.GuestBootstrapCredential, error) {
-			return resolveEmbeddedGuestBootstrap(ctx, st, specs, resourceID)
+			resource, err := st.GetResource(ctx, model.ResourceID(resourceID))
+			if err != nil {
+				return providersdk.GuestBootstrapCredential{}, fmt.Errorf("get resource: %w", err)
+			}
+			return resolveGuestBootstrap(ctx, st, guestSecrets, specs, resource)
 		})
 	}
-}
-
-func resolveEmbeddedGuestBootstrap(ctx context.Context, st store.Store, specs map[model.PoolName]boxyconfig.PoolSpec, resourceID string) (providersdk.GuestBootstrapCredential, error) {
-	resource, err := st.GetResource(ctx, model.ResourceID(resourceID))
-	if err != nil {
-		return providersdk.GuestBootstrapCredential{}, fmt.Errorf("get resource: %w", err)
-	}
-	username := "Administrator"
-	if value, ok := resource.Properties["guest_user"].(string); ok && strings.TrimSpace(value) != "" {
-		username = value
-	} else if value, ok := resource.Properties["guest_os"].(string); ok && strings.EqualFold(value, "linux") {
-		username = "admin"
-	}
-
-	password, err := st.GetPoolGuestCredential(ctx, resource.OriginPool)
-	if err == nil {
-		return providersdk.GuestBootstrapCredential{Username: username, Password: password}, nil
-	}
-	if !errors.Is(err, store.ErrNotFound) {
-		return providersdk.GuestBootstrapCredential{}, fmt.Errorf("get pool guest credential: %w", err)
-	}
-
-	spec, ok := specs[resource.OriginPool]
-	if !ok {
-		return providersdk.GuestBootstrapCredential{}, fmt.Errorf("pool %q is not configured", resource.OriginPool)
-	}
-	if !strings.EqualFold(strings.TrimSpace(spec.Type), "hyperv") && !strings.EqualFold(strings.TrimSpace(spec.Type), "vm") {
-		return providersdk.GuestBootstrapCredential{}, fmt.Errorf("pool %q is not a Hyper-V pool", resource.OriginPool)
-	}
-	config := &hyperv.CreateConfig{}
-	if len(spec.Config) != 0 {
-		// Same JSON-round-trip decode providersdk.Registry.NewDriverFromInstance
-		// uses for provider instance config — spec.Config is the same
-		// map[string]any shape.
-		raw, err := json.Marshal(spec.Config)
-		if err != nil {
-			return providersdk.GuestBootstrapCredential{}, fmt.Errorf("marshal pool %q config: %w", resource.OriginPool, err)
-		}
-		if err := json.Unmarshal(raw, config); err != nil {
-			return providersdk.GuestBootstrapCredential{}, fmt.Errorf("decode pool %q config: %w", resource.OriginPool, err)
-		}
-	}
-	password, err = providersdk.ResolveSecretRef(ctx, providersdk.SecretRef(config.GuestPasswordRef))
-	if err != nil {
-		return providersdk.GuestBootstrapCredential{}, fmt.Errorf("resolve legacy guest_password_ref: %w", err)
-	}
-	return providersdk.GuestBootstrapCredential{Username: username, Password: password}, nil
 }
 
 // agentCertSANs assembles the full SAN list for the agent gRPC server

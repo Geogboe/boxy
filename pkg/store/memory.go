@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Geogboe/boxy/pkg/lifecycle"
 	"github.com/Geogboe/boxy/pkg/model"
 )
 
@@ -21,6 +22,7 @@ type MemoryStore struct {
 	apiKeys                map[model.APIKeyID]model.APIKey
 	revokedAgentIdentities map[model.AgentIdentityID]model.RevokedAgentIdentity
 	agentIdentities        map[string]model.AgentIdentity
+	events                 map[string]lifecycle.Record
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -33,6 +35,7 @@ func NewMemoryStore() *MemoryStore {
 		apiKeys:                make(map[model.APIKeyID]model.APIKey),
 		revokedAgentIdentities: make(map[model.AgentIdentityID]model.RevokedAgentIdentity),
 		agentIdentities:        make(map[string]model.AgentIdentity),
+		events:                 make(map[string]lifecycle.Record),
 	}
 }
 
@@ -81,6 +84,31 @@ func (s *MemoryStore) GetPoolGuestCredential(ctx context.Context, poolName model
 		return "", ErrNotFound
 	}
 	return credential, nil
+}
+
+// DeletePoolGuestCredential removes a legacy plaintext pool credential. New
+// runtime code stores credentials through pkg/secrets; this method exists for
+// the explicit migration command only.
+func (s *MemoryStore) DeletePoolGuestCredential(ctx context.Context, poolName model.PoolName) error {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.poolGuestCredentials[poolName]; !ok {
+		return ErrNotFound
+	}
+	delete(s.poolGuestCredentials, poolName)
+	return nil
+}
+
+func (s *MemoryStore) ListPoolGuestCredentials(ctx context.Context) (map[model.PoolName]string, error) {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[model.PoolName]string, len(s.poolGuestCredentials))
+	for pool, credential := range s.poolGuestCredentials {
+		out[pool] = credential
+	}
+	return out, nil
 }
 
 func (s *MemoryStore) GetResource(ctx context.Context, id model.ResourceID) (model.Resource, error) {

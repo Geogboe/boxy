@@ -86,6 +86,18 @@ func TestBuildTopLevelSchemaPoolTypeNotRequired(t *testing.T) {
 	}
 }
 
+func TestBuildServerSchemaIncludesExplicitSecretBackend(t *testing.T) {
+	schema := buildServerSchema()
+	properties := schema["properties"].(map[string]any)
+	secrets := properties["secrets"].(map[string]any)
+	secretProperties := secrets["properties"].(map[string]any)
+	backend := secretProperties["backend"].(map[string]any)
+	enum := backend["enum"].([]string)
+	if len(enum) != 3 || enum[0] != "file" || enum[1] != "keyring" || enum[2] != "dpapi" {
+		t.Fatalf("secret backend enum = %v, want [file keyring dpapi]", enum)
+	}
+}
+
 // TestBuildTopLevelSchemaMatchesCommittedFile is a drift guard: nothing
 // else in this repo fails if internal/config/schema/boxy.schema.json goes
 // stale relative to what buildTopLevelSchema() actually produces — this is

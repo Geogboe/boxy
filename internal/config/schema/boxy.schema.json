@@ -216,6 +216,30 @@
           },
           "type": "array"
         },
+        "secrets": {
+          "additionalProperties": false,
+          "description": "Explicit server-owned secret backend. Required for guest-personalizable pools; there is no automatic fallback.",
+          "properties": {
+            "backend": {
+              "description": "Secret backend: file for ACL/mode-protected portable deployments, keyring for local OS keychains, or dpapi for Windows machine-scope protection.",
+              "enum": [
+                "file",
+                "keyring",
+                "dpapi"
+              ],
+              "type": "string"
+            },
+            "path": {
+              "description": "Backend file path for file or dpapi. Relative paths are resolved beside .boxy/state.json.",
+              "type": "string"
+            },
+            "service": {
+              "description": "Optional OS keyring service name for the keyring backend.",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
         "ui": {
           "description": "Whether the web dashboard is served alongside the API. Default: true.",
           "type": "boolean"

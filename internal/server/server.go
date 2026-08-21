@@ -21,6 +21,7 @@ import (
 	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
+	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
@@ -52,6 +53,7 @@ type Server struct {
 	poolMaintenance PoolMaintenance
 	agentAdmin      AgentAdmin
 	executor        SandboxExecutor
+	guestSecrets    boxysecrets.Store
 	uiEnabled       bool
 	authRequired    bool
 	insecureHTTP    bool
@@ -68,6 +70,7 @@ type ServerOptions struct {
 	TLSCertPEM   []byte
 	TLSKeyPEM    []byte
 	Executor     SandboxExecutor
+	GuestSecrets boxysecrets.Store
 }
 
 // New creates a Server that will listen on addr. It retains the in-process,
@@ -86,6 +89,7 @@ func NewWithOptions(st store.Store, sm *sandbox.Manager, pm PoolMaintenance, aa 
 		poolMaintenance: pm,
 		agentAdmin:      aa,
 		executor:        opts.Executor,
+		guestSecrets:    opts.GuestSecrets,
 		uiEnabled:       uiEnabled,
 		authRequired:    opts.AuthRequired,
 		insecureHTTP:    opts.InsecureHTTP,

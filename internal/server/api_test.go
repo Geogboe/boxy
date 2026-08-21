@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	"github.com/Geogboe/boxy/internal/sandbox"
 	"github.com/Geogboe/boxy/internal/server"
 	"github.com/Geogboe/boxy/pkg/model"
+	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
@@ -26,6 +28,31 @@ type fakePoolMaintenance struct {
 	drained   []model.PoolName
 	filled    []model.PoolName
 }
+
+type testSecretStore struct{ values map[string][]byte }
+
+func (s *testSecretStore) Get(_ context.Context, key string) ([]byte, error) {
+	value, ok := s.values[key]
+	if !ok {
+		return nil, boxysecrets.ErrNotFound
+	}
+	return append([]byte(nil), value...), nil
+}
+
+func (s *testSecretStore) Put(_ context.Context, key string, value []byte) error {
+	if s.values == nil {
+		s.values = make(map[string][]byte)
+	}
+	s.values[key] = append([]byte(nil), value...)
+	return nil
+}
+
+func (s *testSecretStore) Delete(_ context.Context, key string) error {
+	delete(s.values, key)
+	return nil
+}
+
+func (s *testSecretStore) Check() error { return nil }
 
 func (m *fakePoolMaintenance) Drain(ctx context.Context, poolName model.PoolName) (model.Pool, error) {
 	_ = ctx
@@ -109,6 +136,31 @@ func TestAPI_SetPoolGuestCredential(t *testing.T) {
 	}
 	if got != "bootstrap-secret" {
 		t.Fatalf("stored credential = %q, want bootstrap-secret", got)
+	}
+}
+
+func TestAPI_SetPoolGuestCredentialUsesConfiguredSecretStore(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	if err := st.PutPool(ctx, model.Pool{Name: "vm-pool"}); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	secrets := &testSecretStore{}
+	mux := server.NewTestMuxWithGuestSecrets(st, sandbox.New(st, nil), secrets)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/pools/vm-pool/guest-credential", bytes.NewBufferString(`{"value":"${BOXY_TEST_PASSWORD}"}`))
+	r.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if _, err := st.GetPoolGuestCredential(ctx, "vm-pool"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("legacy credential error = %v, want ErrNotFound", err)
+	}
+	got := secrets.values[boxysecrets.PoolBootstrapKey("vm-pool")]
+	if string(got) != "${BOXY_TEST_PASSWORD}" {
+		t.Fatalf("secret store value = %q, want configured credential", got)
 	}
 }
 
