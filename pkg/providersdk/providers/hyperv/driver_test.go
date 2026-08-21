@@ -1267,7 +1267,138 @@ func TestDriver_List_EmptyHost(t *testing.T) {
 	}
 }
 
-// --- Helpers ---
+// --- NetworkConfig ---
+
+func TestNetworkConfig_Validate(t *testing.T) {
+	if err := (*NetworkConfig)(nil).validate(); err != nil {
+		t.Fatalf("nil validate() = %v, want nil", err)
+	}
+	if err := (&NetworkConfig{StaticIP: "192.0.2.10", PrefixLength: 24}).validate(); err != nil {
+		t.Fatalf("valid config: %v", err)
+	}
+	if err := (&NetworkConfig{PrefixLength: 24}).validate(); err == nil {
+		t.Fatal("missing static_ip: expected error")
+	}
+	if err := (&NetworkConfig{StaticIP: "192.0.2.10", PrefixLength: 33}).validate(); err == nil {
+		t.Fatal("prefix 33: expected error")
+	}
+}
+
+func TestDriver_Create_WithNetworkConfig(t *testing.T) {
+	var capturedScript string
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		if strings.Contains(script, hyperVAvailableMemoryScript) {
+			return "16384\n", nil
+		}
+		capturedScript += script
+		return fakeGUID + "\n", nil
+	})
+
+	_, err := d.Create(context.Background(), &CreateConfig{
+		TemplateVHD: `C:\Templates\base.vhdx`,
+		VHDDir:      `C:\VMs`,
+		Network: &NetworkConfig{
+			StaticIP:       "192.0.2.50",
+			PrefixLength:   24,
+			DefaultGateway: "192.0.2.1",
+			DNSServers:     []string{"203.0.113.1", "203.0.113.2"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{
+		"boxy_net_static_ip=192.0.2.50",
+		"boxy_net_prefix=24",
+		"boxy_net_gw=192.0.2.1",
+		"boxy_net_dns=203.0.113.1,203.0.113.2",
+	} {
+		if !strings.Contains(capturedScript, want) {
+			t.Errorf("notes missing %q in:\n%s", want, capturedScript)
+		}
+	}
+}
+
+func TestDriver_Create_InvalidNetworkConfig(t *testing.T) {
+	d := mockDriver(func(_ context.Context, _ string) (string, error) {
+		t.Fatal("psExec should not be called for invalid config")
+		return "", nil
+	})
+	_, err := d.Create(context.Background(), &CreateConfig{
+		TemplateVHD: `C:\Templates\base.vhdx`,
+		Network:     &NetworkConfig{PrefixLength: 24}, // missing static_ip
+	})
+	if err == nil {
+		t.Fatal("expected error for missing static_ip")
+	}
+	if !strings.Contains(err.Error(), "static_ip") {
+		t.Errorf("error %q should mention static_ip", err.Error())
+	}
+}
+
+func TestDriver_PersonalizeGuest_AppliesStaticIP(t *testing.T) {
+	var execCalls []string
+	callNum := 0
+	d := &Driver{
+		psExec: func(_ context.Context, script string) (string, error) {
+			callNum++
+			switch {
+			case strings.Contains(script, "Get-VM -Id") && !strings.Contains(script, ".Name"):
+				// readNotes: include static IP config
+				return "boxy_guest_os=windows;boxy_guest_user=Administrator;boxy_net_static_ip=192.0.2.10;boxy_net_prefix=24;boxy_net_gw=192.0.2.1;boxy_net_dns=203.0.113.1\n", nil
+			case strings.Contains(script, ".Name"):
+				return "boxy-abc123\n", nil
+			case strings.Contains(script, "Get-VMNetworkAdapter"):
+				return "192.0.2.10\n", nil
+			default:
+				return "", fmt.Errorf("unexpected ps call: %s", script)
+			}
+		},
+		resolveBootstrap: func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
+			return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "${BOXY_TEST_PASSWORD}"}, nil
+		},
+		guestExecFactory: func(_, _, _, _, _ string) vmsdk.GuestExec {
+			tag := fmt.Sprintf("call-%d", len(execCalls)+1)
+			execCalls = append(execCalls, tag)
+			return &fakeGuestExec{exitCode: 0}
+		},
+	}
+
+	result, err := d.PersonalizeGuest(context.Background(), fakeGUID)
+	if err != nil {
+		t.Fatalf("PersonalizeGuest: %v", err)
+	}
+	// Expect 3 guest exec calls: applyStaticIP, rotation, verification
+	if len(execCalls) != 3 {
+		t.Fatalf("guest exec call count = %d, want 3 (applyStaticIP + rotation + verification)", len(execCalls))
+	}
+	if got := result.AccessDetails.Properties["host"]; got != "192.0.2.10" {
+		t.Errorf("host = %q, want 192.0.2.10", got)
+	}
+}
+
+func TestDriver_PersonalizeGuest_StaticIP_LinuxUnsupported(t *testing.T) {
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		if strings.Contains(script, "Get-VM -Id") {
+			return "boxy_guest_os=linux;boxy_guest_user=ubuntu;boxy_net_static_ip=192.0.2.10;boxy_net_prefix=24\n", nil
+		}
+		return "boxy-abc123\n", nil
+	})
+	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
+		return providersdk.GuestBootstrapCredential{Username: "ubuntu", Password: "${BOXY_TEST_PASSWORD}"}, nil
+	}
+	d.guestExecFactory = func(_, _, _, _, _ string) vmsdk.GuestExec {
+		return &fakeGuestExec{exitCode: 0}
+	}
+
+	_, err := d.PersonalizeGuest(context.Background(), fakeGUID)
+	if err == nil {
+		t.Fatal("expected error for Linux guest with static IP config")
+	}
+	if !strings.Contains(err.Error(), "Linux") {
+		t.Errorf("error %q should mention Linux", err.Error())
+	}
+}
 
 // fakeGuestExec is a test double for vmsdk.GuestExec.
 type fakeGuestExec struct {
