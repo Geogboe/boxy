@@ -205,6 +205,21 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   checking (see ADR-0009's file list for what #162 touched that #159 also
   touched: `internal/cli/agent_serve.go`, `agent.go`, `serve.go`, and the
   bundled skill all needed a real 3-way merge, not just a fast-forward).
+- **A clean textual rebase can still be semantically broken.** Upstream
+  refactors can remove or rename helpers while the affected files auto-merge
+  without conflict. After rebasing, run the complete local CI gate on each
+  split branch independently; do not trust a clean rebase or a green combined
+  branch as proof that every standalone branch still builds and tests.
+- **Reconcile history from `origin/main` before changing local `main`.** Fetch
+  first, map the commit DAG, and preserve a named recovery ref before resetting
+  a diverged local branch. When splitting stacked work, verify which commits
+  are already represented by merged PRs so duplicate historical work is not
+  reintroduced.
+- **Worktree branch tips require their own cleanup decision.** A PR may have
+  merged while its original worktree branch continued with unmerged follow-up
+  commits. Compare each worktree tip with `origin/main` and inspect its status
+  before removing the worktree or branch; never infer that the whole branch is
+  disposable from one merged PR.
 - **This development host cannot run Hyper-V VMs.** Use the `devfactory`
   provider for control-plane, agent, and end-to-end orchestration tests, and
   inject fake guest executors for Hyper-V rotation/exec behavior. Do not claim
