@@ -45,4 +45,5 @@ changelog:
 
 release:
   draft: false
-  prerelease: auto
+  prerelease: true
+  make_latest: false
