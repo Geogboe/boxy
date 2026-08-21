@@ -47,6 +47,12 @@ tasks:
     cmds:
       - go test ./...
 
+  test:ci:
+    desc: Run the CI race, short, and devtools test matrix locally
+    cmds:
+      - go test -race -short ./...
+      - go test -race -short -tags devtools ./internal/cli/...
+
   test:cli:
     desc: Run CLI package tests
     cmds:
@@ -68,7 +74,7 @@ tasks:
     aliases:
       - test:scripts
     cmds:
-      - go test ./scripts
+      - go test ./scripts -count=1
 
   test:installers:wsl:
     desc: Run the opt-in WSL installer smoke test
@@ -94,6 +100,23 @@ tasks:
     desc: Run golangci-lint (same as CI)
     aliases: [lint:go, golangci-lint]
     cmd: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}} run ./...
+
+  ci:validate:
+    desc: Run all CI-equivalent checks locally before pushing
+    preconditions:
+      - sh: git diff --quiet HEAD
+        msg: ci:validate requires a clean tracked worktree; commit or stash changes first.
+    cmds:
+      - task: test
+      - task: test:ci
+      - task: lint
+      - task: test:installers
+      - task: build
+      - task: secrets:scan
+      - task: pii:scan
+      - task: generate
+      - cmd: git diff --check
+      - cmd: git diff --exit-code
 
   # Native ARM64 Git for Windows rejects the NUL config paths Betterleaks uses
   # to isolate global/system Git config. The Windows wrapper keeps the full
