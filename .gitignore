@@ -69,6 +69,9 @@ bin/
 .envrc
 .archive/
 
+# Host-specific agent guidance is local-only.
+AGENTS.override.md
+
 # Logs
 logs
 *.log

@@ -205,7 +205,7 @@ func TestDriverProvisioner_AllocatePrefersGuestPersonalizer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Allocate: %v", err)
 	}
-	if props["ssh_host"] != "192.0.2.5" {
+	if props.Properties["ssh_host"] != "192.0.2.5" {
 		t.Fatalf("props = %+v, want personalized access details", props)
 	}
 	if len(driver.personalized) != 1 || len(driver.allocated) != 0 {
@@ -221,7 +221,7 @@ func TestDriverProvisioner_AllocateFallsBackWhenPersonalizerHasNoResult(t *testi
 	if err != nil {
 		t.Fatalf("Allocate: %v", err)
 	}
-	if props["allocated"] != "provider-res-1" {
+	if props.Properties["allocated"] != "provider-res-1" {
 		t.Fatalf("props = %+v, want fallback allocation properties", props)
 	}
 	if len(driver.personalized) != 1 || len(driver.allocated) != 1 {

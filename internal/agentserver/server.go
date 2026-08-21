@@ -13,12 +13,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 
 	"github.com/Geogboe/boxy/internal/pool"
 	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
@@ -238,6 +241,53 @@ func (s *Server) Connect(stream boxyagentv1.AgentTransportService_ConnectServer)
 		remote.Close()
 		return fmt.Errorf("agent %q connection revoked", agentID)
 	}
+}
+
+// ResolveGuestBootstrapCredential returns the server-owned bootstrap secret
+// for a resource, but only to the mTLS-authenticated agent that owns it. The
+// resource's recorded OriginPool and Provider.AgentID are the authority; no
+// caller-supplied pool or agent claims are trusted.
+func (s *Server) ResolveGuestBootstrapCredential(ctx context.Context, req *boxyagentv1.ResolveGuestBootstrapCredentialRequest) (*boxyagentv1.ResolveGuestBootstrapCredentialResponse, error) {
+	if req == nil || strings.TrimSpace(req.GetResourceId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "resource_id is required")
+	}
+	agentID, _, _, err := s.authenticateWithCert(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Unauthenticated, "authenticated agent certificate is required")
+	}
+
+	resource, err := s.store.GetResource(ctx, model.ResourceID(req.GetResourceId()))
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, status.Error(codes.NotFound, "resource not found")
+	}
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to get resource")
+	}
+	if resource.Provider.AgentID == "" || resource.Provider.AgentID != agentID {
+		return nil, status.Error(codes.PermissionDenied, "agent does not own resource")
+	}
+	password, err := s.store.GetPoolGuestCredential(ctx, resource.OriginPool)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, status.Error(codes.FailedPrecondition, "no guest bootstrap credential is configured for the resource pool")
+	}
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to get pool guest credential")
+	}
+
+	return &boxyagentv1.ResolveGuestBootstrapCredentialResponse{
+		Username: guestUsername(resource),
+		Password: password,
+	}, nil
+}
+
+func guestUsername(resource model.Resource) string {
+	if username, ok := resource.Properties["guest_user"].(string); ok && strings.TrimSpace(username) != "" {
+		return username
+	}
+	if guestOS, ok := resource.Properties["guest_os"].(string); ok && strings.EqualFold(guestOS, "linux") {
+		return "admin"
+	}
+	return "Administrator"
 }
 
 func (s *Server) cleanupConnection(agentID string, remote *agentsdk.RemoteAgent) {

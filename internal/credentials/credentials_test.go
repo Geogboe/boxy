@@ -1,8 +1,11 @@
 package credentials
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
+
+	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
 type fakeBackend struct {
@@ -86,6 +89,39 @@ func TestKeyringStoreCertificateRoundTrip(t *testing.T) {
 	}
 	if string(got) != "certificate" {
 		t.Fatalf("GetCA = %q, want certificate", got)
+	}
+}
+
+func TestKeyringStoreGuestCredentialRoundTripUsesSeparateNamespace(t *testing.T) {
+	backend := &fakeBackend{values: make(map[string]string)}
+	store := NewWithBackend("boxy", backend)
+	credential := providersdk.GuestCredential{
+		Kind: "password",
+		Data: json.RawMessage(`{"username":"Administrator","password":"rotated"}`),
+	}
+	if err := store.SetGuestCredential("https://boxy.example:9090", "sb-1", "res-1", credential); err != nil {
+		t.Fatalf("SetGuestCredential: %v", err)
+	}
+	got, err := store.GetGuestCredential("https://boxy.example:9090", "sb-1", "res-1")
+	if err != nil {
+		t.Fatalf("GetGuestCredential: %v", err)
+	}
+	if got.Kind != credential.Kind || string(got.Data) != string(credential.Data) {
+		t.Fatalf("credential = %+v, want %+v", got, credential)
+	}
+	if _, err := store.Get("https://boxy.example:9090"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("API credential lookup = %v, want ErrNotFound", err)
+	}
+}
+
+func TestKeyringStoreGuestCredentialRejectsMissingIDs(t *testing.T) {
+	store := NewWithBackend("boxy", &fakeBackend{values: make(map[string]string)})
+	credential := providersdk.GuestCredential{Kind: "password", Data: json.RawMessage(`{"password":"secret"}`)}
+	if err := store.SetGuestCredential("https://boxy.example", "", "res-1", credential); err == nil {
+		t.Fatal("SetGuestCredential succeeded with empty sandbox ID")
+	}
+	if _, err := store.GetGuestCredential("https://boxy.example", "sb-1", ""); err == nil {
+		t.Fatal("GetGuestCredential succeeded with empty resource ID")
 	}
 }
 

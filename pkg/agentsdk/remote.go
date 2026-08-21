@@ -487,10 +487,19 @@ func (a *RemoteAgent) PersonalizeGuest(ctx context.Context, provider providersdk
 		return nil, reconstructAgentError(a.info.ID, agentErr)
 	}
 	pg := res.GetPersonalizeGuest()
-	if pg == nil || len(pg.GetProperties()) == 0 {
+	if pg == nil || (len(pg.GetProperties()) == 0 && len(pg.GetGuestCredentialJson()) == 0) {
 		return nil, nil
 	}
+	var credential *providersdk.GuestCredential
+	if len(pg.GetGuestCredentialJson()) > 0 {
+		decoded := new(providersdk.GuestCredential)
+		if err := json.Unmarshal(pg.GetGuestCredentialJson(), decoded); err != nil {
+			return nil, fmt.Errorf("agent %q: unmarshal guest credential: %w", a.info.ID, err)
+		}
+		credential = decoded
+	}
 	return &providersdk.GuestPersonalizationResult{
-		AccessDetails: providersdk.GuestAccessDetails{Properties: pg.GetProperties()},
+		AccessDetails:       providersdk.GuestAccessDetails{Properties: pg.GetProperties()},
+		EphemeralCredential: credential,
 	}, nil
 }

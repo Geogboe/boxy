@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/Geogboe/boxy/pkg/model"
@@ -24,6 +25,7 @@ type DiskStore struct {
 
 type diskState struct {
 	Pools                  map[model.PoolName]model.Pool                        `json:"pools"`
+	PoolGuestCredentials   map[model.PoolName]string                            `json:"pool_guest_credentials"`
 	Resources              map[model.ResourceID]model.Resource                  `json:"resources"`
 	Sandboxes              map[model.SandboxID]model.Sandbox                    `json:"sandboxes"`
 	AgentTokens            map[model.AgentTokenID]model.AgentRegistrationToken  `json:"agent_tokens"`
@@ -40,6 +42,7 @@ func NewDiskStore(path string) (*DiskStore, error) {
 		path: path,
 		data: diskState{
 			Pools:                  make(map[model.PoolName]model.Pool),
+			PoolGuestCredentials:   make(map[model.PoolName]string),
 			Resources:              make(map[model.ResourceID]model.Resource),
 			Sandboxes:              make(map[model.SandboxID]model.Sandbox),
 			AgentTokens:            make(map[model.AgentTokenID]model.AgentRegistrationToken),
@@ -77,6 +80,9 @@ func (s *DiskStore) load() error {
 	}
 	if st.Resources == nil {
 		st.Resources = make(map[model.ResourceID]model.Resource)
+	}
+	if st.PoolGuestCredentials == nil {
+		st.PoolGuestCredentials = make(map[model.PoolName]string)
 	}
 	if st.Sandboxes == nil {
 		st.Sandboxes = make(map[model.SandboxID]model.Sandbox)
@@ -138,6 +144,31 @@ func (s *DiskStore) PutPool(ctx context.Context, pool model.Pool) error {
 	}
 	s.data.Pools[pool.Name] = pool
 	return s.persistLocked()
+}
+
+func (s *DiskStore) PutPoolGuestCredential(ctx context.Context, poolName model.PoolName, credential string) error {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if poolName == "" {
+		return fmt.Errorf("pool name is required")
+	}
+	if strings.TrimSpace(credential) == "" {
+		return fmt.Errorf("pool guest credential is required")
+	}
+	s.data.PoolGuestCredentials[poolName] = credential
+	return s.persistLocked()
+}
+
+func (s *DiskStore) GetPoolGuestCredential(ctx context.Context, poolName model.PoolName) (string, error) {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	credential, ok := s.data.PoolGuestCredentials[poolName]
+	if !ok {
+		return "", ErrNotFound
+	}
+	return credential, nil
 }
 
 func (s *DiskStore) GetResource(ctx context.Context, id model.ResourceID) (model.Resource, error) {

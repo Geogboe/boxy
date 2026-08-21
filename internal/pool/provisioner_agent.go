@@ -90,32 +90,36 @@ func (ap *AgentProvisioner) now() time.Time {
 	return time.Now().UTC()
 }
 
-func (ap *AgentProvisioner) Allocate(ctx context.Context, pool model.Pool, res model.Resource) (map[string]any, error) {
+func (ap *AgentProvisioner) Allocate(ctx context.Context, pool model.Pool, res model.Resource) (providersdk.AllocationResult, error) {
 	spec, ok := ap.Specs[pool.Name]
 	if !ok {
-		return nil, fmt.Errorf("unknown pool %q", pool.Name)
+		return providersdk.AllocationResult{}, fmt.Errorf("unknown pool %q", pool.Name)
 	}
 	driverType := ap.driverTypeForPool(spec)
 	agent, err := ap.agentForResource(res)
 	if err != nil {
-		return nil, err
+		return providersdk.AllocationResult{}, err
 	}
 	if gp, ok := agent.(agentsdk.GuestPersonalizingAgent); ok {
 		result, err := gp.PersonalizeGuest(ctx, driverType, string(res.ID))
 		if err != nil {
-			return nil, err
+			return providersdk.AllocationResult{}, err
 		}
 		if result != nil {
-			return result.AccessDetails.ToProperties(), nil
+			return providersdk.AllocationResult{
+				Properties:      result.AccessDetails.ToProperties(),
+				GuestCredential: result.EphemeralCredential,
+			}, nil
 		}
 	}
-	return agent.Allocate(ctx, driverType, string(res.ID))
+	properties, err := agent.Allocate(ctx, driverType, string(res.ID))
+	return providersdk.AllocationResult{Properties: properties}, err
 }
 
 // ExecuteSandbox routes a provider-neutral command to the exact agent that
 // owns a sandbox resource and requires that agent/provider to support live
 // streaming.
-func (ap *AgentProvisioner) ExecuteSandbox(ctx context.Context, res model.Resource, command []string, sink eventstream.Sink) (*providersdk.Result, error) {
+func (ap *AgentProvisioner) ExecuteSandbox(ctx context.Context, res model.Resource, operation providersdk.ExecOperation, sink eventstream.Sink) (*providersdk.Result, error) {
 	spec, ok := ap.Specs[model.PoolName(res.OriginPool)]
 	if !ok {
 		return nil, fmt.Errorf("unknown origin pool %q", res.OriginPool)
@@ -129,7 +133,8 @@ func (ap *AgentProvisioner) ExecuteSandbox(ctx context.Context, res model.Resour
 	if !ok {
 		return nil, fmt.Errorf("agent %q does not support streaming operations", agent.Info().ID)
 	}
-	return streamer.UpdateStream(ctx, driverType, string(res.ID), &providersdk.ExecOperation{Command: append([]string(nil), command...)}, sink)
+	operation.Command = append([]string(nil), operation.Command...)
+	return streamer.UpdateStream(ctx, driverType, string(res.ID), &operation, sink)
 }
 
 func (ap *AgentProvisioner) Destroy(ctx context.Context, pool model.Pool, res model.Resource) error {

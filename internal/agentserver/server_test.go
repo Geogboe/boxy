@@ -12,9 +12,11 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/Geogboe/boxy/internal/pool"
@@ -618,6 +620,57 @@ func TestAuthenticateWithCert_UsesCommonNameAsAgentID(t *testing.T) {
 	}
 	if certOut != nil || keyOut != nil {
 		t.Fatal("a cert-based reconnect must not re-issue cert material")
+	}
+}
+
+func TestResolveGuestBootstrapCredentialAuthorizesOwningAgent(t *testing.T) {
+	dir := t.TempDir()
+	ca, err := pki.EnsureCA(dir)
+	if err != nil {
+		t.Fatalf("EnsureCA: %v", err)
+	}
+	certPEM, _, _, err := pki.IssueAgentCert(ca, "agent-a")
+	if err != nil {
+		t.Fatalf("IssueAgentCert agent-a: %v", err)
+	}
+	otherCertPEM, _, _, err := pki.IssueAgentCert(ca, "agent-b")
+	if err != nil {
+		t.Fatalf("IssueAgentCert agent-b: %v", err)
+	}
+
+	st := store.NewMemoryStore()
+	if err := st.PutPoolGuestCredential(context.Background(), "vm-pool", "bootstrap-secret"); err != nil {
+		t.Fatalf("PutPoolGuestCredential: %v", err)
+	}
+	if err := st.PutResource(context.Background(), model.Resource{
+		ID:         "vm-1",
+		OriginPool: "vm-pool",
+		Provider:   model.ProviderRef{AgentID: "agent-a"},
+		Properties: map[string]any{"guest_user": "svc-admin"},
+	}); err != nil {
+		t.Fatalf("PutResource: %v", err)
+	}
+
+	srv := New(st, pool.NewAgentRegistry(), ca, time.Second, nil, testServerVersion)
+	response, err := srv.ResolveGuestBootstrapCredential(contextWithPeerCert(parseTestCert(t, certPEM)), &boxyagentv1.ResolveGuestBootstrapCredentialRequest{ResourceId: "vm-1"})
+	if err != nil {
+		t.Fatalf("ResolveGuestBootstrapCredential: %v", err)
+	}
+	if response.GetUsername() != "svc-admin" || response.GetPassword() != "bootstrap-secret" {
+		t.Fatalf("response = %+v, want svc-admin/bootstrap-secret", response)
+	}
+
+	_, err = srv.ResolveGuestBootstrapCredential(contextWithPeerCert(parseTestCert(t, otherCertPEM)), &boxyagentv1.ResolveGuestBootstrapCredentialRequest{ResourceId: "vm-1"})
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("unauthorized status = %v, want PermissionDenied", status.Code(err))
+	}
+}
+
+func TestResolveGuestBootstrapCredentialRequiresMTLS(t *testing.T) {
+	srv := New(store.NewMemoryStore(), pool.NewAgentRegistry(), nil, time.Second, nil, testServerVersion)
+	_, err := srv.ResolveGuestBootstrapCredential(context.Background(), &boxyagentv1.ResolveGuestBootstrapCredentialRequest{ResourceId: "vm-1"})
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("missing mTLS status = %v, want Unauthenticated", status.Code(err))
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -81,6 +82,33 @@ func TestAPI_ListPools_withData(t *testing.T) {
 	}
 	if len(pools) != 2 {
 		t.Fatalf("pools len = %d, want 2", len(pools))
+	}
+}
+
+func TestAPI_SetPoolGuestCredential(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	if err := st.PutPool(ctx, model.Pool{Name: "vm-pool"}); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	mux := server.NewTestMux(st, sandbox.New(st, nil), false)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/pools/vm-pool/guest-credential", bytes.NewBufferString(`{"value":"bootstrap-secret"}`))
+	r.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "bootstrap-secret") {
+		t.Fatalf("response leaked credential: %s", w.Body.String())
+	}
+	got, err := st.GetPoolGuestCredential(ctx, "vm-pool")
+	if err != nil {
+		t.Fatalf("GetPoolGuestCredential: %v", err)
+	}
+	if got != "bootstrap-secret" {
+		t.Fatalf("stored credential = %q, want bootstrap-secret", got)
 	}
 }
 

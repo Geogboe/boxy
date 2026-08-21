@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
 // SandboxAllocator is called when resources are allocated to a sandbox.
@@ -13,5 +14,5 @@ import (
 // This is separate from pool.Provisioner, which handles supply-side lifecycle
 // (creating and destroying resources in the pool).
 type SandboxAllocator interface {
-	Allocate(ctx context.Context, pool model.Pool, res model.Resource) (map[string]any, error)
+	Allocate(ctx context.Context, pool model.Pool, res model.Resource) (providersdk.AllocationResult, error)
 }

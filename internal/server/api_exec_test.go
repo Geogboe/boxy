@@ -19,13 +19,15 @@ import (
 )
 
 type fakeSandboxExecutor struct {
-	calledResource model.ResourceID
-	calledCommand  []string
+	calledResource  model.ResourceID
+	calledCommand   []string
+	calledOperation providersdk.ExecOperation
 }
 
-func (f *fakeSandboxExecutor) ExecuteSandbox(ctx context.Context, res model.Resource, command []string, sink eventstream.Sink) (*providersdk.Result, error) {
+func (f *fakeSandboxExecutor) ExecuteSandbox(ctx context.Context, res model.Resource, operation providersdk.ExecOperation, sink eventstream.Sink) (*providersdk.Result, error) {
 	f.calledResource = res.ID
-	f.calledCommand = append([]string(nil), command...)
+	f.calledOperation = operation
+	f.calledCommand = append([]string(nil), operation.Command...)
 	if err := sink.Send(ctx, eventstream.Event{Kind: eventstream.Data, Channel: eventstream.Channel("stdout"), Payload: []byte("hello\n")}); err != nil {
 		return nil, err
 	}
@@ -60,6 +62,26 @@ func TestSandboxExecStreamingUsesSingleResourceAndEmitsNDJSON(t *testing.T) {
 	}
 	if executor.calledResource != "res-1" || strings.Join(executor.calledCommand, " ") != "echo hello" {
 		t.Fatalf("executor call = resource %q command %v", executor.calledResource, executor.calledCommand)
+	}
+}
+
+func TestSandboxExecPassesOpaqueGuestCredentialToExecutor(t *testing.T) {
+	st := store.NewMemoryStore()
+	_ = st.CreateSandbox(context.Background(), model.Sandbox{ID: "sb-1", Status: model.SandboxStatusReady, Resources: []model.ResourceID{"res-1"}})
+	_ = st.PutResource(context.Background(), model.Resource{ID: "res-1", State: model.ResourceStateAllocated})
+	executor := new(fakeSandboxExecutor)
+	s := &Server{store: st, executor: executor}
+	mux := http.NewServeMux()
+	s.registerRoutes(mux)
+
+	body := `{"command":["whoami"],"guest_credential":{"kind":"password","data":{"username":"Administrator","password":"rotated"}}}`
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec", strings.NewReader(body)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
+	}
+	if executor.calledOperation.GuestCredential == nil || executor.calledOperation.GuestCredential.Kind != "password" || string(executor.calledOperation.GuestCredential.Data) != `{"username":"Administrator","password":"rotated"}` {
+		t.Fatalf("executor operation = %+v, want opaque guest credential", executor.calledOperation)
 	}
 }
 
@@ -207,7 +229,7 @@ func TestSandboxExecAllowsAdminRegardlessOfOwnership(t *testing.T) {
 // check would).
 type timeoutExecutor struct{ wrap bool }
 
-func (e timeoutExecutor) ExecuteSandbox(ctx context.Context, res model.Resource, command []string, sink eventstream.Sink) (*providersdk.Result, error) {
+func (e timeoutExecutor) ExecuteSandbox(ctx context.Context, res model.Resource, operation providersdk.ExecOperation, sink eventstream.Sink) (*providersdk.Result, error) {
 	<-ctx.Done()
 	if e.wrap {
 		return nil, fmt.Errorf("provider exec: %w", ctx.Err())
@@ -240,7 +262,7 @@ func TestSandboxExecTimeoutReturnsGatewayTimeout(t *testing.T) {
 // being misclassified as a timeout or an output-limit condition.
 type failingExecutor struct{}
 
-func (failingExecutor) ExecuteSandbox(ctx context.Context, res model.Resource, command []string, sink eventstream.Sink) (*providersdk.Result, error) {
+func (failingExecutor) ExecuteSandbox(ctx context.Context, res model.Resource, operation providersdk.ExecOperation, sink eventstream.Sink) (*providersdk.Result, error) {
 	return nil, errors.New("provider exec: container not found")
 }
 
@@ -265,7 +287,7 @@ func TestSandboxExecProviderErrorReturnsInternalServerError(t *testing.T) {
 // error.
 type nonzeroExitExecutor struct{}
 
-func (nonzeroExitExecutor) ExecuteSandbox(ctx context.Context, res model.Resource, command []string, sink eventstream.Sink) (*providersdk.Result, error) {
+func (nonzeroExitExecutor) ExecuteSandbox(ctx context.Context, res model.Resource, operation providersdk.ExecOperation, sink eventstream.Sink) (*providersdk.Result, error) {
 	if err := sink.Send(ctx, eventstream.Event{Kind: eventstream.Data, Channel: eventstream.Channel("stderr"), Payload: []byte("not found\n")}); err != nil {
 		return nil, err
 	}
@@ -304,7 +326,7 @@ func TestSandboxExecNonzeroExitCodeIsNotAnError(t *testing.T) {
 // not a single oversized write.
 type limitExceedingExecutor struct{}
 
-func (limitExceedingExecutor) ExecuteSandbox(ctx context.Context, res model.Resource, command []string, sink eventstream.Sink) (*providersdk.Result, error) {
+func (limitExceedingExecutor) ExecuteSandbox(ctx context.Context, res model.Resource, operation providersdk.ExecOperation, sink eventstream.Sink) (*providersdk.Result, error) {
 	if err := sink.Send(ctx, eventstream.Event{Kind: eventstream.Data, Channel: eventstream.Channel("stdout"), Payload: []byte("first chunk fits\n")}); err != nil {
 		return nil, err
 	}
@@ -374,7 +396,7 @@ func TestSandboxExecStreamingOutputLimitEmitsCompleteEventWithError(t *testing.T
 // capability error, not a transient provider failure.
 type capabilityErrorExecutor struct{}
 
-func (capabilityErrorExecutor) ExecuteSandbox(ctx context.Context, res model.Resource, command []string, sink eventstream.Sink) (*providersdk.Result, error) {
+func (capabilityErrorExecutor) ExecuteSandbox(ctx context.Context, res model.Resource, operation providersdk.ExecOperation, sink eventstream.Sink) (*providersdk.Result, error) {
 	return nil, errors.New(`agent "agent-1" does not support streaming operations`)
 }
 

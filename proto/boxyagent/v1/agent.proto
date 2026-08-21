@@ -13,6 +13,17 @@ option go_package = "github.com/Geogboe/boxy/pkg/agentproto/boxyagentv1;boxyagen
 // back. See docs/adr/0005-remote-agent-transport-and-registration.md.
 service AgentTransportService {
   rpc Connect(stream AgentMessage) returns (stream ServerMessage);
+  rpc ResolveGuestBootstrapCredential(ResolveGuestBootstrapCredentialRequest)
+      returns (ResolveGuestBootstrapCredentialResponse);
+}
+
+message ResolveGuestBootstrapCredentialRequest {
+  string resource_id = 1;
+}
+
+message ResolveGuestBootstrapCredentialResponse {
+  string username = 1;
+  string password = 2;
 }
 
 // ---- Agent -> Server ----
@@ -185,4 +196,5 @@ message ListResult {
 // — do not add a "supported" bool.
 message PersonalizeGuestResult {
   map<string, string> properties = 1;
+  bytes guest_credential_json = 2;
 }

@@ -14,7 +14,8 @@ Use this workflow when the user describes an environment they want to create and
 3. Write the sandbox spec file.
 4. Submit with `boxy sandbox create -f <file> --no-wait` when you want fast acceptance, or omit `--no-wait` when waiting is acceptable.
 5. Poll with `boxy sandbox get <id>` until the sandbox is `ready` or `failed`.
-6. Use `boxy sandbox list` to confirm overall inventory and `boxy sandbox delete <id>` to clean up test runs.
+6. For guests that return credentials, use `boxy sandbox create -f <file> --save-guest-cred` to place the one-time credential in the OS keyring, or capture the default one-time output immediately. Use `--guest-password-stdin` or `BOXY_GUEST_PASSWORD` with `boxy sandbox exec`; never put a password in a command-line flag.
+7. Use `boxy sandbox list` to confirm overall inventory and `boxy sandbox delete <id>` to clean up test runs.
 
 ## Quality Bar
 

@@ -154,10 +154,18 @@ func TestRemoteAgent_PersonalizeGuestRoundTrip(t *testing.T) {
 		t.Fatalf("expected resource id vm-1, got %q", personalize.GetResourceId())
 	}
 
+	credentialJSON, err := json.Marshal(&providersdk.GuestCredential{
+		Kind: "password",
+		Data: json.RawMessage(`{"username":"admin","password":"rotated"}`),
+	})
+	if err != nil {
+		t.Fatalf("marshal guest credential: %v", err)
+	}
 	stream.feedResult(&boxyagentv1.CommandResult{
 		CommandId: cmd.GetCommandId(),
 		Outcome: &boxyagentv1.CommandResult_PersonalizeGuest{PersonalizeGuest: &boxyagentv1.PersonalizeGuestResult{
-			Properties: map[string]string{"access": "ssh", "host": "192.0.2.5"},
+			Properties:          map[string]string{"access": "ssh", "host": "192.0.2.5"},
+			GuestCredentialJson: credentialJSON,
 		}},
 	})
 
@@ -171,6 +179,9 @@ func TestRemoteAgent_PersonalizeGuestRoundTrip(t *testing.T) {
 		}
 		if r.res.AccessDetails.Properties["access"] != "ssh" || r.res.AccessDetails.Properties["host"] != "192.0.2.5" {
 			t.Fatalf("expected typed properties to round-trip, got %#v", r.res.AccessDetails.Properties)
+		}
+		if r.res.EphemeralCredential == nil || r.res.EphemeralCredential.Kind != "password" || string(r.res.EphemeralCredential.Data) != `{"username":"admin","password":"rotated"}` {
+			t.Fatalf("expected opaque credential to round-trip, got %+v", r.res.EphemeralCredential)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for PersonalizeGuest to return")

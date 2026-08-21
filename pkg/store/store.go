@@ -16,6 +16,8 @@ type Store interface {
 	// Pools
 	GetPool(ctx context.Context, name model.PoolName) (model.Pool, error)
 	PutPool(ctx context.Context, pool model.Pool) error
+	PutPoolGuestCredential(ctx context.Context, poolName model.PoolName, credential string) error
+	GetPoolGuestCredential(ctx context.Context, poolName model.PoolName) (string, error)
 
 	// Resources
 	GetResource(ctx context.Context, id model.ResourceID) (model.Resource, error)

@@ -3,11 +3,13 @@
 package credentials
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
 	"strings"
 
+	"github.com/Geogboe/boxy/pkg/providersdk"
 	keyring "github.com/zalando/go-keyring"
 )
 
@@ -121,6 +123,48 @@ func (s *Store) GetCA(server string) ([]byte, error) {
 	return []byte(value), nil
 }
 
+// SetGuestCredential stores a one-time-delivered guest credential for a
+// sandbox resource. Guest credentials use a separate keyring namespace from
+// API keys and CA certificates, and are stored as the opaque provider envelope
+// so the CLI does not need to understand provider-specific fields.
+func (s *Store) SetGuestCredential(server, sandboxID, resourceID string, credential providersdk.GuestCredential) error {
+	user, err := guestCredentialUser(server, sandboxID, resourceID)
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(credential)
+	if err != nil {
+		return fmt.Errorf("encode guest credential: %w", err)
+	}
+	if err := s.backend.Set(s.service, user, string(data)); err != nil {
+		return fmt.Errorf("write guest credential for %s/%s: %w", sandboxID, resourceID, err)
+	}
+	return nil
+}
+
+// GetGuestCredential retrieves a previously saved guest credential.
+func (s *Store) GetGuestCredential(server, sandboxID, resourceID string) (providersdk.GuestCredential, error) {
+	var zero providersdk.GuestCredential
+	user, err := guestCredentialUser(server, sandboxID, resourceID)
+	if err != nil {
+		return zero, err
+	}
+	value, err := s.backend.Get(s.service, user)
+	if errors.Is(err, keyring.ErrNotFound) || errors.Is(err, ErrNotFound) {
+		return zero, ErrNotFound
+	}
+	if err != nil {
+		return zero, fmt.Errorf("read guest credential for %s/%s: %w", sandboxID, resourceID, err)
+	}
+	if strings.TrimSpace(value) == "" {
+		return zero, ErrNotFound
+	}
+	if err := json.Unmarshal([]byte(value), &zero); err != nil {
+		return zero, fmt.Errorf("decode guest credential for %s/%s: %w", sandboxID, resourceID, err)
+	}
+	return zero, nil
+}
+
 func (s *Store) Delete(server string) error {
 	user, err := normalizeServerURL(server)
 	if err != nil {
@@ -137,6 +181,19 @@ func (s *Store) Delete(server string) error {
 
 func caUser(user string) string {
 	return user + "#ca"
+}
+
+func guestCredentialUser(server, sandboxID, resourceID string) (string, error) {
+	serverUser, err := normalizeServerURL(server)
+	if err != nil {
+		return "", err
+	}
+	sandboxID = strings.TrimSpace(sandboxID)
+	resourceID = strings.TrimSpace(resourceID)
+	if sandboxID == "" || resourceID == "" {
+		return "", errors.New("sandbox and resource IDs must not be empty")
+	}
+	return fmt.Sprintf("%s#guest/%s/%s", serverUser, sandboxID, resourceID), nil
 }
 
 func normalizeServerURL(raw string) (string, error) {
