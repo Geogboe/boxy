@@ -901,7 +901,7 @@ func TestDriver_Update_ExecOp_Windows(t *testing.T) {
 
 	result, err := d.Update(context.Background(), fakeGUID, &ExecOp{
 		Command:         []string{"echo", "hello"},
-		GuestCredential: passwordCredential("Administrator", "pass"),
+		GuestCredential: passwordCredential("Administrator", "${BOXY_TEST_PASSWORD}"),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -954,7 +954,7 @@ func TestDriver_Update_ExecOp_Linux(t *testing.T) {
 
 	result, err := d.Update(context.Background(), fakeGUID, &ExecOp{
 		Command:         []string{"uname", "-a"},
-		GuestCredential: passwordCredential("admin", "linux-pass"),
+		GuestCredential: passwordCredential("admin", "${BOXY_TEST_LINUX_PASSWORD}"),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
