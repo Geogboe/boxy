@@ -213,7 +213,7 @@ func TestAgentProvisioner_Allocate_RemoteAgentPrefersTypedGuestPersonalization(t
 	stream.feedResult(&boxyagentv1.CommandResult{
 		CommandId: cmd.GetCommandId(),
 		Outcome: &boxyagentv1.CommandResult_PersonalizeGuest{PersonalizeGuest: &boxyagentv1.PersonalizeGuestResult{
-			Properties: map[string]string{"access": "winrm", "host": "10.0.0.5"},
+			Properties: map[string]string{"access": "winrm", "host": "192.0.2.5"},
 		}},
 	})
 
@@ -222,7 +222,7 @@ func TestAgentProvisioner_Allocate_RemoteAgentPrefersTypedGuestPersonalization(t
 		if r.err != nil {
 			t.Fatalf("Allocate: %v", r.err)
 		}
-		if r.props["access"] != "winrm" || r.props["host"] != "10.0.0.5" {
+		if r.props["access"] != "winrm" || r.props["host"] != "192.0.2.5" {
 			t.Fatalf("Allocate result = %+v, want typed personalization properties", r.props)
 		}
 	case <-time.After(2 * time.Second):
@@ -476,7 +476,7 @@ func TestAgentProvisioner_Allocate_PrefersTypedGuestPersonalization(t *testing.T
 	mockAgent.allocateResult = map[string]any{"legacy": "path"}
 	mockAgent.personalized = &providersdk.GuestPersonalizationResult{
 		AccessDetails: providersdk.GuestAccessDetails{
-			Properties: map[string]string{"access": "winrm", "host": "10.0.0.5"},
+			Properties: map[string]string{"access": "winrm", "host": "192.0.2.5"},
 		},
 	}
 

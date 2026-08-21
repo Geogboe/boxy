@@ -6,14 +6,14 @@ import (
 )
 
 func TestResolveSecretRef_Env(t *testing.T) {
-	t.Setenv("BOXY_SECRET_TEST", "super-secret")
+	t.Setenv("BOXY_SECRET_TEST", "${BOXY_TEST_SECRET}")
 
 	got, err := ResolveSecretRef(context.Background(), SecretRef("env:BOXY_SECRET_TEST"))
 	if err != nil {
 		t.Fatalf("ResolveSecretRef: %v", err)
 	}
-	if got != "super-secret" {
-		t.Fatalf("ResolveSecretRef = %q, want super-secret", got)
+	if got != "${BOXY_TEST_SECRET}" {
+		t.Fatalf("ResolveSecretRef = %q, want ${BOXY_TEST_SECRET}", got)
 	}
 }
 
@@ -44,13 +44,13 @@ func TestGuestAccessDetailsToProperties(t *testing.T) {
 		t.Fatalf("empty ToProperties = %+v, want nil", props)
 	}
 
-	details := GuestAccessDetails{Properties: map[string]string{"ssh_host": "10.0.0.5"}}
+	details := GuestAccessDetails{Properties: map[string]string{"ssh_host": "192.0.2.5"}}
 	props := details.ToProperties()
-	if props["ssh_host"] != "10.0.0.5" {
+	if props["ssh_host"] != "192.0.2.5" {
 		t.Fatalf("props = %+v, want ssh_host", props)
 	}
 	props["ssh_host"] = "changed"
-	if details.Properties["ssh_host"] != "10.0.0.5" {
+	if details.Properties["ssh_host"] != "192.0.2.5" {
 		t.Fatalf("ToProperties aliased source map, got %q", details.Properties["ssh_host"])
 	}
 }

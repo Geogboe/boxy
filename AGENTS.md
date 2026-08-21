@@ -20,6 +20,10 @@ Features, bugs, and roadmap items are tracked as GitHub issues on `Geogboe/boxy`
 task build            # Build ./boxy binary
 task test             # Run all tests
 task lint             # Run golangci-lint (same as CI)
+task secrets:scan     # Scan git history with Betterleaks
+task pii:scan         # Scan git history for non-controlled PII
+task pii:scan:stdin   # Scan piped public text for non-controlled PII
+task pii:authors      # Report Git author identities for separate review
 task fmt              # Format all Go source files
 task serve            # Run boxy serve (daemon mode)
 task serve:once       # Run boxy serve --once (single reconciliation pass)
@@ -95,6 +99,14 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
 - **`pkg/agentsdk` (live) vs. a config-declared `agents:` list (removed, 2026-07)**: don't confuse these. `pkg/agentsdk.EmbeddedAgent` is real, in-process code wired into `boxy serve` today. A separate `Config.Agents`/`AgentSpec` field once existed for a *pull-model* remote agent (server dials out to a static agent address) but was dead code — never read anywhere — and has been deleted. The actual remote-agent design is a *push* model, **implemented 2026-07** (#37/#62) per [ADR-0005](docs/adr/0005-remote-agent-transport-and-registration.md): `boxy agent serve` dials the daemon over gRPC bidirectional streaming with full mTLS from a boxy-owned private CA, bootstrapped by a single-use token exchanged for a client cert. Per-resource agent provenance (`ProviderRef.AgentID`) ensures `Destroy`/`Allocate` route to the exact agent that created a resource rather than any agent offering the same provider type; `PoolSpec.Agent` pins a pool to a specific agent.
 - `boxy debug provider *` (drives the in-process `devfactory` reference driver directly, bypassing the daemon) is compiled only with `-tags devtools` and is absent from release binaries. `boxy debug pool drain/fill` is a separate, always-available command that does go through the daemon's HTTP API.
 - Streaming is an optional `providersdk.StreamingDriver`/`agentsdk.StreamingAgent` capability routed through `pkg/eventstream`; Docker, devfactory, SSH guests, and PowerShell Direct guests can emit live events. Unsupported custom providers return a capability error instead of buffering unary output as a fake stream.
+- `devfactory` is the generic deterministic provider simulator: it exercises
+  Boxy's lifecycle, persistence, latency, failure, availability, and streaming
+  plumbing without claiming fidelity to a real provider. Future provider
+  simulators should implement the existing `providersdk.Driver` contract plus
+  the optional capabilities they model (for example `hyperv-sim` implementing
+  `GuestPersonalizer` and `ResourceLister`). Keep simulator provider types
+  explicit so they cannot be mistaken for the real provider; generate
+  conformance scaffolding and capability fixtures, not provider semantics.
 
 ### Bundled Agent Skill
 
@@ -211,6 +223,7 @@ Wrap repeated commands in `Taskfile.yml`. If a command is run more than once, ad
 - `gopls` is available locally for code navigation, refactoring, and linting. Use the Go language server whenever possible when reading, navigating, analyzing, or modifying Go code; prefer its symbol, reference, diagnostic, and refactoring capabilities over broad text searches or manual edits for greater efficiency and correctness.
 - `task` (go-task) for running project commands.
 - `task lint` mirrors CI by running `golangci-lint` v2 from source via `go run`, so it does not depend on a preinstalled local binary version.
+- Tool dependencies used by Taskfile tasks and CI must use explicit pinned versions, kept at the latest stable release compatible with the repository's declared toolchain. Update the pin intentionally in both local and CI workflows and validate the full task/check surface; do not use moving `@latest` references.
 - GoReleaser is pinned in the isolated `tools/` module; use `task release:check` and `task release:snapshot` instead of assuming a global `goreleaser` binary is installed.
 
 ## Installer Notes
@@ -252,7 +265,40 @@ it's no longer needed. See #100.
   Dependabot would have caught the same update.
 - `.github/CODEOWNERS` requires owner review on any `.github/workflows/`
   change.
-- A `gitleaks` job runs in `ci.yml` on every push/PR.
+- A `betterleaks` job runs in `ci.yml` on every push/PR and scans full Git
+  history with pinned Betterleaks `v1.8.1`. `task secrets:scan` installs and
+  runs the same pinned version locally. Do not replace it with directory mode
+  because that would miss secrets that were committed and later removed. On Windows,
+  `scripts/betterleaks-git.ps1` prepends a narrow Git shim for a native ARM64
+  Git-for-Windows compatibility issue: Betterleaks maps Go's `os.DevNull` to
+  `NUL` for `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM`, while the
+  `clangarm64` Git build rejects `NUL` as a config-file path, including Git
+  `2.55.0.windows.3`. Testing on an x64 `mingw64` host did not reproduce it.
+  The shim clears only those invalid paths, keeps system config disabled, and
+  delegates to the real Git executable; it does not bypass Betterleaks or
+  weaken the history scan. Retest native `betterleaks git .` after any
+  Betterleaks/Git upgrade before removing the shim. See the independent
+  Windows ARM64 reproduction at
+  https://github.com/Gentleman-Programming/gentle-ai/issues/2206.
+
+- A separate `pii` job uses `.betterleaks-pii.toml` to scan the full Git history
+  for non-controlled email addresses, private IPs, non-example hostnames,
+  usernames, and home-directory paths. `task pii:scan` runs it locally;
+  `task pii:scan:stdin` checks proposed public issue, PR, or comment text;
+  `task pii:authors` reports Git author identities separately and is
+  informational rather than blocking. Run the repository scan and the stdin
+  scan before publishing public text. The archived external PII-scanner skill
+  is not part of this workflow.
+- Test and documentation fixtures must use scanner-recognized placeholders for
+  fake credentials, such as `${BOXY_TEST_PASSWORD}`, `${BOXY_TEST_TOKEN}`, or
+  `${BOXY_TEST_API_KEY}`. For identity-shaped fixtures, use
+  `boxy-test@example.invalid`, `boxy.example.test`, TEST-NET/documentation IP
+  ranges, `boxy-test-user`, and `C:\Users\boxy-test-user` or
+  `/home/boxy-test-user`. Do not use realistic-looking random strings or
+  common password words such as `password`, `changeme`, `testpass`, or
+  `foo`/`bar`; those can be valid credentials and should remain visible to
+  Betterleaks. Historical secret or PII fixture findings may be recorded only
+  as narrow fingerprint-only `.betterleaksignore` entries after review.
 
 ### GoReleaser Signing Notes
 

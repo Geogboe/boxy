@@ -121,9 +121,9 @@ boxy
 │   ├── --ca-cert <path>                         Trust a Boxy self-signed CA
 │   └── --insecure                               Skip HTTPS verification (development only)
 │
-│   $ boxy login --server https://boxy.example:9090 --ca-cert .boxy/ca.crt
+│   $ boxy login --server https://boxy.example.test:9090 --ca-cert .boxy/ca.crt
 │     API key (hidden; Ctrl+C to cancel): ********
-│     Logged in to https://boxy.example:9090
+│     Logged in to https://boxy.example.test:9090
 │
 │
 ├── logout                                     Remove the stored operator credential
@@ -285,7 +285,7 @@ boxy
 │   │   ├── --data-dir <path>                      Issued-credential dir (default .boxy-agent in cwd)
 │   │   ├── --insecure                             Connect without TLS (local development only)
 │   │   │
-│   │   $ boxy agent serve --config boxy.yaml --server boxy.example.com:9091 \
+│   │   $ boxy agent serve --config boxy.yaml --server boxy.example.test:9091 \
 │   │       --token 4f9c…e2a1 --ca-cert ./ca.crt
 │   │     (runs until stopped; reconnects with backoff; after the first
 │   │      registration the provider instances from boxy.yaml are used; pass

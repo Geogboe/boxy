@@ -32,7 +32,14 @@ import (
 // token-rejection paths — must set AgentVersion to this same value, or the
 // version check rejects the request before it ever reaches the token/cert
 // validation the test actually means to exercise.
-const testServerVersion = "v-test"
+const (
+	testServerVersion  = "v-test"
+	testGoodToken      = "${BOXY_TEST_REGISTRATION_TOKEN_GOOD}"
+	testExpiredToken   = "${BOXY_TEST_REGISTRATION_TOKEN_EXPIRED}"
+	testReusableToken  = "${BOXY_TEST_REGISTRATION_TOKEN_REUSED}"
+	testRevokedToken   = "${BOXY_TEST_REGISTRATION_TOKEN_REVOKED}"
+	testHeartbeatToken = "${BOXY_TEST_REGISTRATION_TOKEN_HEARTBEAT}"
+)
 
 // newTestServer wires up a Server against fresh in-memory dependencies and
 // starts it listening on an in-process bufconn — no real network socket,
@@ -94,7 +101,7 @@ func mintToken(t *testing.T, st store.Store, raw string, expiresIn time.Duration
 func TestConnect_TokenRegistrationHappyPath(t *testing.T) {
 	srv, st, client, cleanup := newTestServer(t)
 	defer cleanup()
-	mintToken(t, st, "tok-good", time.Hour)
+	mintToken(t, st, testGoodToken, time.Hour)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -105,8 +112,8 @@ func TestConnect_TokenRegistrationHappyPath(t *testing.T) {
 
 	if err := stream.Send(&boxyagentv1.AgentMessage{
 		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{
-			RegistrationToken: "tok-good",
-			AgentName:         "test-agent",
+			RegistrationToken: testGoodToken,
+			AgentName:         "boxy-test-agent",
 			ProviderTypes:     []string{"docker"},
 			AgentVersion:      testServerVersion,
 		}},
@@ -130,7 +137,7 @@ func TestConnect_TokenRegistrationHappyPath(t *testing.T) {
 	}
 
 	// The token must now be marked used.
-	tok, err := st.GetAgentToken(context.Background(), "tok-good")
+	tok, err := st.GetAgentToken(context.Background(), testGoodToken)
 	if err != nil {
 		t.Fatalf("GetAgentToken: %v", err)
 	}
@@ -151,7 +158,7 @@ func TestConnect_TokenRegistrationHappyPath(t *testing.T) {
 func TestConnect_VersionMismatchRejected(t *testing.T) {
 	_, st, client, cleanup := newTestServer(t)
 	defer cleanup()
-	mintToken(t, st, "tok-good", time.Hour)
+	mintToken(t, st, testGoodToken, time.Hour)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -161,8 +168,8 @@ func TestConnect_VersionMismatchRejected(t *testing.T) {
 	}
 	if err := stream.Send(&boxyagentv1.AgentMessage{
 		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{
-			RegistrationToken: "tok-good",
-			AgentName:         "test-agent",
+			RegistrationToken: testGoodToken,
+			AgentName:         "boxy-test-agent",
 			ProviderTypes:     []string{"docker"},
 			AgentVersion:      "v-other",
 		}},
@@ -183,7 +190,7 @@ func TestConnect_VersionMismatchRejected(t *testing.T) {
 
 	// The token must still be unused — a version-mismatched agent hasn't
 	// authenticated, so it shouldn't cost its single registration attempt.
-	tok, err := st.GetAgentToken(context.Background(), "tok-good")
+	tok, err := st.GetAgentToken(context.Background(), testGoodToken)
 	if err != nil {
 		t.Fatalf("GetAgentToken: %v", err)
 	}
@@ -199,7 +206,7 @@ func TestConnect_VersionMismatchRejected(t *testing.T) {
 func TestConnect_BlankVersionRejected(t *testing.T) {
 	_, st, client, cleanup := newTestServer(t)
 	defer cleanup()
-	mintToken(t, st, "tok-good", time.Hour)
+	mintToken(t, st, testGoodToken, time.Hour)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -209,8 +216,8 @@ func TestConnect_BlankVersionRejected(t *testing.T) {
 	}
 	if err := stream.Send(&boxyagentv1.AgentMessage{
 		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{
-			RegistrationToken: "tok-good",
-			AgentName:         "test-agent",
+			RegistrationToken: testGoodToken,
+			AgentName:         "boxy-test-agent",
 			ProviderTypes:     []string{"docker"},
 		}},
 	}); err != nil {
@@ -229,7 +236,7 @@ func TestConnect_BlankVersionRejected(t *testing.T) {
 func TestConnect_TriggersReconciliationSweep(t *testing.T) {
 	_, st, client, cleanup := newTestServer(t)
 	defer cleanup()
-	mintToken(t, st, "tok-good", time.Hour)
+	mintToken(t, st, testGoodToken, time.Hour)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -240,8 +247,8 @@ func TestConnect_TriggersReconciliationSweep(t *testing.T) {
 
 	if err := stream.Send(&boxyagentv1.AgentMessage{
 		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{
-			RegistrationToken: "tok-good",
-			AgentName:         "test-agent",
+			RegistrationToken: testGoodToken,
+			AgentName:         "boxy-test-agent",
 			ProviderTypes:     []string{"docker"},
 			AgentVersion:      testServerVersion,
 		}},
@@ -320,7 +327,7 @@ func TestConnect_UnknownTokenRejected(t *testing.T) {
 func TestConnect_ExpiredTokenRejected(t *testing.T) {
 	_, st, client, cleanup := newTestServer(t)
 	defer cleanup()
-	mintToken(t, st, "tok-expired", -time.Hour)
+	mintToken(t, st, testExpiredToken, -time.Hour)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -329,7 +336,7 @@ func TestConnect_ExpiredTokenRejected(t *testing.T) {
 		t.Fatalf("Connect: %v", err)
 	}
 	_ = stream.Send(&boxyagentv1.AgentMessage{
-		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{RegistrationToken: "tok-expired", AgentVersion: testServerVersion}},
+		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{RegistrationToken: testExpiredToken, AgentVersion: testServerVersion}},
 	})
 	if _, err := stream.Recv(); err == nil {
 		t.Fatal("expected an error for an expired registration token")
@@ -339,7 +346,7 @@ func TestConnect_ExpiredTokenRejected(t *testing.T) {
 func TestConnect_UsedTokenRejectedOnSecondAttempt(t *testing.T) {
 	_, st, client, cleanup := newTestServer(t)
 	defer cleanup()
-	mintToken(t, st, "tok-reuse", time.Hour)
+	mintToken(t, st, testReusableToken, time.Hour)
 
 	ctx1, cancel1 := context.WithCancel(context.Background())
 	defer cancel1()
@@ -348,7 +355,7 @@ func TestConnect_UsedTokenRejectedOnSecondAttempt(t *testing.T) {
 		t.Fatalf("Connect (first): %v", err)
 	}
 	_ = stream1.Send(&boxyagentv1.AgentMessage{
-		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{RegistrationToken: "tok-reuse", AgentVersion: testServerVersion}},
+		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{RegistrationToken: testReusableToken, AgentVersion: testServerVersion}},
 	})
 	if _, err := stream1.Recv(); err != nil {
 		t.Fatalf("expected the first registration to succeed: %v", err)
@@ -361,7 +368,7 @@ func TestConnect_UsedTokenRejectedOnSecondAttempt(t *testing.T) {
 		t.Fatalf("Connect (second): %v", err)
 	}
 	_ = stream2.Send(&boxyagentv1.AgentMessage{
-		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{RegistrationToken: "tok-reuse", AgentVersion: testServerVersion}},
+		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{RegistrationToken: testReusableToken, AgentVersion: testServerVersion}},
 	})
 	if _, err := stream2.Recv(); err == nil {
 		t.Fatal("expected the second attempt to redeem the same token to be rejected")
@@ -371,8 +378,8 @@ func TestConnect_UsedTokenRejectedOnSecondAttempt(t *testing.T) {
 func TestConnect_DeletedTokenRejected(t *testing.T) {
 	_, st, client, cleanup := newTestServer(t)
 	defer cleanup()
-	mintToken(t, st, "tok-revoked", time.Hour)
-	if err := st.DeleteAgentToken(context.Background(), "tok-revoked"); err != nil {
+	mintToken(t, st, testRevokedToken, time.Hour)
+	if err := st.DeleteAgentToken(context.Background(), testRevokedToken); err != nil {
 		t.Fatalf("DeleteAgentToken: %v", err)
 	}
 
@@ -383,7 +390,7 @@ func TestConnect_DeletedTokenRejected(t *testing.T) {
 		t.Fatalf("Connect: %v", err)
 	}
 	_ = stream.Send(&boxyagentv1.AgentMessage{
-		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{RegistrationToken: "tok-revoked", AgentVersion: testServerVersion}},
+		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{RegistrationToken: testRevokedToken, AgentVersion: testServerVersion}},
 	})
 	if _, err := stream.Recv(); err == nil {
 		t.Fatal("expected a deleted (revoked) token to be rejected")
@@ -393,7 +400,7 @@ func TestConnect_DeletedTokenRejected(t *testing.T) {
 func TestConnect_HeartbeatMarksAvailability(t *testing.T) {
 	srv, st, client, cleanup := newTestServer(t)
 	defer cleanup()
-	mintToken(t, st, "tok-hb", time.Hour)
+	mintToken(t, st, testHeartbeatToken, time.Hour)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -403,7 +410,7 @@ func TestConnect_HeartbeatMarksAvailability(t *testing.T) {
 	}
 	_ = stream.Send(&boxyagentv1.AgentMessage{
 		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{
-			RegistrationToken: "tok-hb",
+			RegistrationToken: testHeartbeatToken,
 			ProviderTypes:     []string{"docker"},
 			AgentVersion:      testServerVersion,
 		}},

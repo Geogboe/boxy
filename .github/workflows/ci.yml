@@ -25,8 +25,9 @@ jobs:
 
       # Build from source so golangci-lint and Go versions always match.
       # The golangci-lint-action pre-built binary lags behind Go releases.
+      # Pin the latest release compatible with this repository's Go 1.25 toolchain.
       - name: Install golangci-lint
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 
       - name: Run golangci-lint
         run: golangci-lint run ./...
@@ -83,17 +84,38 @@ jobs:
       - name: Build
         run: go build ./cmd/boxy
 
-  gitleaks:
-    name: Gitleaks
+  betterleaks:
+    name: Betterleaks
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install Betterleaks v1.8.1
+        run: go install github.com/betterleaks/betterleaks@v1.8.1
+
+      - name: Scan git history for secrets
+        run: betterleaks git . --no-banner --redact
+
+  pii:
+    name: Betterleaks PII
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install Betterleaks v1.8.1
+        run: go install github.com/betterleaks/betterleaks@v1.8.1
+
+      - name: Scan git history for non-controlled PII
+        run: betterleaks git . --config .betterleaks-pii.toml --no-banner --redact

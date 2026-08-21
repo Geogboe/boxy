@@ -50,12 +50,12 @@ func TestRenderUnit_ContainsExecStartAndRestart(t *testing.T) {
 		DisplayName: "Boxy Agent",
 		Description: "Boxy remote agent",
 		ExecPath:    "/usr/local/bin/boxy",
-		Args:        []string{"agent", "serve", "--service-config", "/home/testuser/.boxy-agent/service.yaml"},
+		Args:        []string{"agent", "serve", "--service-config", "/home/boxy-test-user/.boxy-agent/service.yaml"},
 	}
 	unit := renderUnit(spec)
 	want := []string{
 		"Description=Boxy remote agent",
-		`ExecStart=/usr/local/bin/boxy agent serve --service-config /home/testuser/.boxy-agent/service.yaml`,
+		`ExecStart=/usr/local/bin/boxy agent serve --service-config /home/boxy-test-user/.boxy-agent/service.yaml`,
 		"Restart=on-failure",
 	}
 	for _, w := range want {

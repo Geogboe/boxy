@@ -12,7 +12,7 @@ import (
 func newTestAgent(t *testing.T) *agentsdk.EmbeddedAgent {
 	t.Helper()
 	d := devfactory.New(&devfactory.Config{DataDir: t.TempDir()})
-	agent, err := agentsdk.NewEmbeddedAgent("test-agent", "Test Agent", d)
+	agent, err := agentsdk.NewEmbeddedAgent("boxy-test-agent", "Test Agent", d)
 	if err != nil {
 		t.Fatalf("NewEmbeddedAgent: %v", err)
 	}
@@ -23,8 +23,8 @@ func TestEmbeddedAgent_Info(t *testing.T) {
 	agent := newTestAgent(t)
 	info := agent.Info()
 
-	if info.ID != "test-agent" {
-		t.Errorf("expected ID test-agent, got %q", info.ID)
+	if info.ID != "boxy-test-agent" {
+		t.Errorf("expected ID boxy-test-agent, got %q", info.ID)
 	}
 	if info.Name != "Test Agent" {
 		t.Errorf("expected Name Test Agent, got %q", info.Name)

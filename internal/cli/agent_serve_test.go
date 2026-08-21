@@ -156,7 +156,7 @@ func TestAgentServe_RequiresCACertForFirstConnection(t *testing.T) {
 	opts := agentServeOpts{
 		server:    "127.0.0.1:1", // never dialed
 		providers: []string{"devfactory"},
-		token:     "some-token",
+		token:     "${BOXY_TEST_REGISTRATION_TOKEN}",
 		dataDir:   t.TempDir(),
 	}
 	if err := runAgentServe(context.Background(), opts); err == nil {

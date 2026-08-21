@@ -39,7 +39,7 @@ generated when a resource is allocated — the pool carries only generic locatio
 │                   "ssh_cmd": "ssh -i <path> admin@<host>"}          │
 │                                                                     │
 │     share     → random password generated                           │
-│                  {"access": "smb", "username": "svc_boxy",          │
+│                  {"access": "smb", "username": "boxy-test-user",    │
 │                   "password": "<random>", "unc_path": "...",        │
 │                   "mount_path": "..."}                              │
 │                                                                     │
@@ -56,7 +56,7 @@ generated when a resource is allocated — the pool carries only generic locatio
 │  prompted interactively: [e] save  [enter] skip                     │
 │                                                                     │
 │  SANDBOX_ID=sbx_abc123                                              │
-│  SANDBOX_WEB_1_HOST=10.0.0.5                                        │
+│  SANDBOX_WEB_1_HOST=192.0.2.5                                        │
 │  SANDBOX_WEB_1_ACCESS=docker-exec                                   │
 │  SANDBOX_WEB_1_EXEC=docker exec -it boxy-a1b2 /bin/sh              │
 │                                                                     │

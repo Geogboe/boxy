@@ -36,15 +36,15 @@ func TestKeyringStoreRoundTrip(t *testing.T) {
 	store := NewWithBackend("boxy", backend)
 	server := "HTTPS://Boxy.Example:9090/"
 
-	if err := store.Set(server, "secret-value"); err != nil {
+	if err := store.Set(server, "${BOXY_TEST_SECRET}"); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
 	got, err := store.Get(server)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got != "secret-value" {
-		t.Fatalf("Get = %q, want secret-value", got)
+	if got != "${BOXY_TEST_SECRET}" {
+		t.Fatalf("Get = %q, want ${BOXY_TEST_SECRET}", got)
 	}
 	if err := store.Delete(server); err != nil {
 		t.Fatalf("Delete: %v", err)
@@ -61,7 +61,7 @@ func TestKeyringStoreRejectsEmptyInputs(t *testing.T) {
 		call func() error
 	}{
 		{"get server", func() error { _, err := store.Get(" "); return err }},
-		{"set server", func() error { return store.Set(" ", "secret") }},
+		{"set server", func() error { return store.Set(" ", "${BOXY_TEST_SECRET}") }},
 		{"set value", func() error { return store.Set("https://boxy.example", " ") }},
 		{"delete server", func() error { return store.Delete(" ") }},
 	} {
@@ -76,7 +76,7 @@ func TestKeyringStoreRejectsEmptyInputs(t *testing.T) {
 func TestKeyringStoreCertificateRoundTrip(t *testing.T) {
 	backend := &fakeBackend{values: make(map[string]string)}
 	store := NewWithBackend("boxy", backend)
-	server := "https://boxy.example:9090"
+	server := "https://boxy.example.test:9090"
 	if err := store.SetCA(server, []byte("certificate")); err != nil {
 		t.Fatalf("SetCA: %v", err)
 	}
@@ -90,12 +90,12 @@ func TestKeyringStoreCertificateRoundTrip(t *testing.T) {
 }
 
 func TestNormalizeServerURL(t *testing.T) {
-	got, err := normalizeServerURL("HTTPS://Boxy.Example:9090/path/")
+	got, err := normalizeServerURL("HTTPS://Boxy.Example.test:9090/path/")
 	if err != nil {
 		t.Fatalf("normalizeServerURL: %v", err)
 	}
-	if got != "https://boxy.example:9090" {
-		t.Fatalf("normalized URL = %q, want https://boxy.example:9090", got)
+	if got != "https://boxy.example.test:9090" {
+		t.Fatalf("normalized URL = %q, want https://boxy.example.test:9090", got)
 	}
 }
 

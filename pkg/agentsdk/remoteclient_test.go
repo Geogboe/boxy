@@ -18,6 +18,8 @@ import (
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
+const testRegistrationToken = "${BOXY_TEST_REGISTRATION_TOKEN}"
+
 type fakeDriver struct {
 	providerType providersdk.Type
 
@@ -189,7 +191,7 @@ func TestExecuteCommand(t *testing.T) {
 	drivers := DriverSet{
 		"docker": &fakeDriver{
 			providerType: "docker",
-			createRes:    &providersdk.Resource{ID: "c1", ConnectionInfo: map[string]string{"host": "10.0.0.1"}},
+			createRes:    &providersdk.Resource{ID: "c1", ConnectionInfo: map[string]string{"host": "192.0.2.1"}},
 			readRes:      &providersdk.ResourceStatus{ID: "c1", State: "running"},
 			updateRes:    &providersdk.Result{Outputs: map[string]string{"stdout": "ok"}},
 			allocateRes:  map[string]any{"ssh_user": "ubuntu"},
@@ -210,7 +212,7 @@ func TestExecuteCommand(t *testing.T) {
 		if got := res.GetResource().GetId(); got != "c1" {
 			t.Fatalf("expected resource id c1, got %q", got)
 		}
-		if got := res.GetResource().GetConnectionInfo()["host"]; got != "10.0.0.1" {
+		if got := res.GetResource().GetConnectionInfo()["host"]; got != "192.0.2.1" {
 			t.Fatalf("expected connection info to round-trip, got %q", got)
 		}
 	})
@@ -307,7 +309,7 @@ func TestExecuteCommand(t *testing.T) {
 		drivers := DriverSet{"hyperv": &fakePersonalizingDriver{
 			fakeDriver: &fakeDriver{providerType: "hyperv"},
 			personalizeRes: &providersdk.GuestPersonalizationResult{
-				AccessDetails: providersdk.GuestAccessDetails{Properties: map[string]string{"access": "ssh", "host": "10.0.0.9"}},
+				AccessDetails: providersdk.GuestAccessDetails{Properties: map[string]string{"access": "ssh", "host": "192.0.2.9"}},
 			},
 		}}
 		cmd := &boxyagentv1.Command{
@@ -320,7 +322,7 @@ func TestExecuteCommand(t *testing.T) {
 			t.Fatalf("unexpected error: %s", res.GetError().GetMessage())
 		}
 		got := res.GetPersonalizeGuest().GetProperties()
-		if got["access"] != "ssh" || got["host"] != "10.0.0.9" {
+		if got["access"] != "ssh" || got["host"] != "192.0.2.9" {
 			t.Fatalf("expected typed properties to round-trip, got %#v", got)
 		}
 	})
@@ -466,7 +468,7 @@ func TestRunSession_BlankAgentVersionFailsFastLocally(t *testing.T) {
 
 	err := RunSession(context.Background(), stream, RemoteClientConfig{
 		AgentName:     "test-agent",
-		Token:         "tok-123",
+		Token:         testRegistrationToken,
 		ProviderTypes: []providersdk.Type{"docker"},
 		Drivers:       DriverSet{},
 	})
@@ -499,7 +501,7 @@ func TestRunSession_RegistersAndDispatchesCommand(t *testing.T) {
 	go func() {
 		sessionErrCh <- RunSession(ctx, stream, RemoteClientConfig{
 			AgentName:         "test-agent",
-			Token:             "tok-123",
+			Token:             testRegistrationToken,
 			AgentVersion:      "v-test",
 			ProviderTypes:     []providersdk.Type{"docker"},
 			Drivers:           drivers,
@@ -516,7 +518,7 @@ func TestRunSession_RegistersAndDispatchesCommand(t *testing.T) {
 		t.Fatal("timed out waiting for RegisterRequest")
 	}
 	reg := registerSent.GetRegister()
-	if reg == nil || reg.GetRegistrationToken() != "tok-123" {
+	if reg == nil || reg.GetRegistrationToken() != testRegistrationToken {
 		t.Fatalf("expected RegisterRequest with the configured token, got %#v", registerSent)
 	}
 	if reg.GetAgentVersion() != "v-test" {

@@ -1,0 +1,15 @@
+title = "Boxy Betterleaks configuration"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Ignore local tool caches, generated worktrees, runtime state, and build/index output"
+paths = [
+  '(?i)(?:^|[\\/])\.boxy(?:[\\/]|$)',
+  '(?i)(?:^|[\\/])\.cache(?:[\\/]|$)',
+  '(?i)(?:^|[\\/])\.claude(?:[\\/]|$)',
+  '(?i)(?:^|[\\/])\.copilot(?:[\\/]|$)',
+  '(?i)(?:^|[\\/])\.infigraph(?:[\\/]|$)',
+  '(?i)(?:^|[\\/])dist(?:[\\/]|$)',
+]

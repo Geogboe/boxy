@@ -22,7 +22,7 @@ func (m *mockExecutor) Execute(ctx context.Context, script string) (*psrpclient.
 }
 
 func makeExec(mock *mockExecutor) *Exec {
-	e := New("test-guid", "admin", "pass")
+	e := New("test-guid", "admin", "${BOXY_TEST_PASSWORD}")
 	e.execFactory = func() (psrpExecutor, error) { return mock, nil }
 	return e
 }
@@ -135,7 +135,7 @@ func TestExec_Exec_EmptyOutput(t *testing.T) {
 }
 
 func TestExec_Exec_FactoryError(t *testing.T) {
-	e := New("test-guid", "admin", "pass")
+	e := New("test-guid", "admin", "${BOXY_TEST_PASSWORD}")
 	e.execFactory = func() (psrpExecutor, error) {
 		return nil, fmt.Errorf("client creation failed")
 	}
@@ -147,7 +147,7 @@ func TestExec_Exec_FactoryError(t *testing.T) {
 }
 
 func TestExec_New(t *testing.T) {
-	e := New("guid-123", "user", "pass")
+	e := New("guid-123", "user", "${BOXY_TEST_PASSWORD}")
 	if e.VMID != "guid-123" {
 		t.Errorf("VMID = %q, want %q", e.VMID, "guid-123")
 	}

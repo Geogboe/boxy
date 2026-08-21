@@ -27,7 +27,7 @@ func newAgentTestServer(t *testing.T) (*httptest.Server, *agentTestState) {
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"id":         "tok-id-1",
-			"token":      "raw-secret-token",
+			"token":      "${BOXY_TEST_TOKEN}",
 			"label":      req.Label,
 			"expires_at": time.Now().Add(time.Hour).UTC(),
 		})
@@ -88,7 +88,7 @@ func TestAgentTokenCreate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !strings.Contains(output, "raw-secret-token") {
+	if !strings.Contains(output, "${BOXY_TEST_TOKEN}") {
 		t.Fatalf("output = %q, want the raw token printed once", output)
 	}
 	if state.createdLabel != "lab-hv-1" {

@@ -1,0 +1,84 @@
+title = "Boxy controlled PII configuration"
+betterleaksMinVersion = "1.8.1"
+
+# This is deliberately separate from .betterleaks.toml. The default
+# Betterleaks rules scan for secrets; these rules scan for uncontrolled values
+# that should never appear in Boxy fixtures or public text.
+
+[[allowlists]]
+description = "Ignore local tool caches, generated worktrees, runtime state, and build/index output"
+paths = [
+  '(?i)(?:^|[\\/])\.boxy(?:[\\/]|$)',
+  '(?i)(?:^|[\\/])\.cache(?:[\\/]|$)',
+  '(?i)(?:^|[\\/])\.claude(?:[\\/]|$)',
+  '(?i)(?:^|[\\/])\.copilot(?:[\\/]|$)',
+  '(?i)(?:^|[\\/])\.infigraph(?:[\\/]|$)',
+  '(?i)(?:^|[\\/])dist(?:[\\/]|$)',
+]
+
+[[rules]]
+id = "boxy-pii-email"
+description = "Detected an email address outside Boxy's reserved example domains."
+regex = '''(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,63}\b'''
+keywords = ["@"]
+confidence = "high"
+filter = '''
+filter.matchesAny(finding["secret"], [
+  `(?i)@(?:example\.(?:com|org|net|invalid|test))$`,
+  `(?i)@[^@]+\.(?:invalid|test)$`,
+])
+'''
+
+[[rules]]
+id = "boxy-pii-private-ipv4"
+description = "Detected an RFC1918 private IPv4 address; use a documentation TEST-NET address in fixtures."
+regex = '''(?i)\b(?:10(?:\.[0-9]{1,3}){3}|192\.168(?:\.[0-9]{1,3}){2}|172\.(?:1[6-9]|2[0-9]|3[01])(?:\.[0-9]{1,3}){2})\b'''
+keywords = ["10.", "192.168.", "172."]
+confidence = "high"
+
+[[rules]]
+id = "boxy-pii-private-ipv6"
+description = "Detected an IPv6 unique-local address; use 2001:db8::/32 in fixtures."
+regex = '''(?i)\b(?:f[cd][0-9a-f]{0,2}:)[0-9a-f:]{2,38}\b'''
+keywords = ["fc", "fd"]
+confidence = "high"
+
+[[rules]]
+id = "boxy-pii-hostname"
+description = "Detected a non-example hostname in a host-bearing value."
+regex = '''(?i)(?:^|[^a-z0-9])(?:host|hostname|server|endpoint|domain|ssh[_-]?host|(?:base|api)?[_-]?url)\b[ \t]*(?:=>|:=|=|:)[ \t]*(?:["'\x60])(?:https?://)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}'''
+keywords = ["host", "hostname", "server", "endpoint", "domain", "ssh_host", "base_url", "api_url"]
+confidence = "high"
+filter = '''
+filter.matchesAny(finding["secret"], [
+  `(?i)(?:^|[^a-z0-9])(?:[a-z0-9-]+\.)*example\.(?:com|org|net|invalid|test)(?:[^a-z0-9]|$)`,
+  `(?i)(?:^|[^a-z0-9])localhost(?:[^a-z0-9]|$)`,
+])
+'''
+
+[[rules]]
+id = "boxy-pii-username"
+description = "Detected an uncontrolled username-like value in an identity field."
+regex = '''(?i)(?:^|[^a-z0-9])(?:username|user[_-]+name|login|account[_-]+name|guest[_-]+user|ssh[_-]+user)\b[ \t'"\x60]{0,3}(?:=>|:=|=|:)[ \t'"\x60]*(?:\$\{[^}\r\n]+\}|[a-z][a-z0-9._ -]{2,63})'''
+keywords = ["username", "user_name", "login", "account", "guest_user", "ssh_user"]
+confidence = "medium"
+filter = '''
+filter.matchesAny(finding["secret"], [
+  `(?i)(?:username|user[_-]+name|login|account[_-]+name|guest[_-]+user|ssh[_-]+user)\b[ \t'"\x60]{0,3}(?:=>|:=|=|:)[ \t'"\x60]*value$`,
+  `(?i)(?:\$\{BOXY_TEST_[A-Z0-9_]+\}|boxy-test-[a-z0-9-]+)$`,
+  `(?i)(?:admin|administrator|root|ubuntu|vscode|user|username|testuser)$`,
+])
+'''
+
+[[rules]]
+id = "boxy-pii-home-path"
+description = "Detected a named Windows or Linux home-directory path outside Boxy's fixture paths."
+regex = '''(?i)(?:[a-z]:\\Users\\[^\\/"'\x60\r\n]+|/home/[^/"'\x60\r\n]+)'''
+keywords = ["\\Users\\", "/home/"]
+confidence = "high"
+filter = '''
+filter.matchesAny(finding["secret"], [
+  `(?i)^C:\\Users\\(?:boxy-test-user(?: name)?|vscode)(?:\\|$)`,
+  `(?i)^/home/(?:boxy-test-user|vscode|user)(?:/|$)`,
+])
+'''
