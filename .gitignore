@@ -227,6 +227,7 @@ vite.config.ts.timestamp-*
 
 # Local scratch/temp files
 .scratch/
+.playwright-cli/
 
 # Local graph indexes and generated reports
 .infigraph/
