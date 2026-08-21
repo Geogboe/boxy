@@ -283,3 +283,56 @@ instances of one type instead of silently selecting an arbitrary config,
 because their driver maps are keyed by provider type. Provider-specific path
 fields inside the opaque config snapshot are not rewritten; service installs
 must use absolute values for those fields.
+
+## Update (2026-08-21)
+
+**Per-provider availability now rides the heartbeat (#178).** `Heartbeat`
+gains an additive `repeated ProviderAvailability availability` field (one
+`{provider_type, memory_mb}` entry per driver that implements
+`providersdk.AvailabilityReporter`, added by #173's Hyper-V memory preflight
+work). This is deliberately per-provider, never a single global number: one
+agent can host multiple provider types with independent capacity, and
+collapsing them would be ambiguous the moment a second provider type is
+added to any agent.
+
+- **Client side** (`agentsdk.RemoteClientConfig`/`sendHeartbeats`): before
+  each heartbeat, `sampleAvailability` queries every `AvailabilityReporter`
+  driver concurrently, each bounded by
+  `AvailabilitySampleTimeout` (default 5s, overridable — same
+  zero-uses-production-default test seam as
+  `hyperv.Driver.memoryQueryTimeout`). A missing reporter or a reporter
+  error is logged and the provider's entry is simply omitted — it never
+  fails heartbeat delivery. A hard deadline
+  (`timeout + availabilitySampleGrace`) bounds the whole sample even against
+  a reporter that ignores its context and blocks forever, so a stuck
+  reporter can never indefinitely delay heartbeat sending; command dispatch
+  runs on a fully independent goroutine/stream-read loop untouched by this
+  sampling.
+- **Server side** (`agentsdk.RemoteAgent`): each heartbeat's availability
+  entries wholly replace the previous `AvailabilitySnapshot`, including
+  replacing it with an empty one — a reporter that starts erroring shows up
+  as "no data" on the next heartbeat, not stale-but-plausible leftover
+  numbers. The snapshot is timestamped by the server on receipt (`At`), not
+  from the agent's self-reported clock. Two anti-spoofing checks apply,
+  mirroring the identity trust boundary this ADR already established for
+  `agent_id`/`LastSeen`: the snapshot is stored on the `RemoteAgent`
+  instance itself — bound to the connection's authenticated identity fixed
+  at `Connect` — never looked up via `Heartbeat.agent_id`; and an entry for
+  a `provider_type` the connection didn't advertise in its `RegisterRequest`
+  is dropped rather than trusted, so a compromised or buggy agent can't
+  inject availability data for a provider it was never registered to serve.
+- **Registry** (`pool.AgentRegistry.Availability`): delegates to the
+  registered agent via a new optional `agentsdk.AvailabilityReportingAgent`
+  capability rather than duplicating storage — `RemoteAgent` implements it
+  (heartbeat-populated); `EmbeddedAgent` deliberately does not, since it has
+  no heartbeat to carry a snapshot on and a live per-call query is a
+  different (ctx-bound, error-returning) operation left for a future caller
+  to add if it needs one.
+- **Liveness is untouched.** Availability reporting feeds none of
+  `SetAvailable`/`RunHeartbeatMonitor`'s missed-heartbeat gating — an agent
+  with no reporters, an erroring reporter, or a timed-out sample stays
+  available for new provisioning exactly as before. This is plumbing only:
+  no scheduling logic consumes the stored snapshot yet (tracked as #179),
+  and no CLI/REST surface exposes it yet, deliberately, to avoid the
+  CLI Change Checklist churn a wireframe/skill/API-doc update would force
+  for a field with no consumer yet.

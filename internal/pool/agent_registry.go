@@ -112,6 +112,33 @@ func (r *AgentRegistry) Get(agentID string) (agentsdk.Agent, bool) {
 	return a, ok
 }
 
+// Availability returns agentID's most recently reported per-provider
+// resource snapshot, if any. It delegates to the registered Agent itself
+// via agentsdk.AvailabilityReportingAgent rather than duplicating storage
+// here — a connected RemoteAgent already binds its snapshot to the
+// connection's authenticated identity and stamps its own receipt time (see
+// docs/adr/0005-remote-agent-transport-and-registration.md); the registry
+// adds no state of its own on top of that.
+//
+// false is returned when agentID isn't registered, when the registered
+// agent doesn't implement AvailabilityReportingAgent (e.g. the embedded
+// agent, which has no heartbeat to carry a snapshot on), or when no
+// heartbeat carrying availability has arrived yet for a connected remote
+// agent.
+func (r *AgentRegistry) Availability(agentID string) (agentsdk.AvailabilitySnapshot, bool) {
+	r.mu.RLock()
+	a, ok := r.agents[agentID]
+	r.mu.RUnlock()
+	if !ok {
+		return agentsdk.AvailabilitySnapshot{}, false
+	}
+	reporter, ok := a.(agentsdk.AvailabilityReportingAgent)
+	if !ok {
+		return agentsdk.AvailabilitySnapshot{}, false
+	}
+	return reporter.Availability()
+}
+
 // Resolve picks an agent to serve a NEW provisioning request for the given
 // provider type. If pinnedAgentID is non-empty, it must name a registered,
 // currently-available agent that supports the provider type — pinning to

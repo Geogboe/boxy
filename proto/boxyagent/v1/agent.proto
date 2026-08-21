@@ -50,6 +50,25 @@ message Heartbeat {
   string agent_id = 1;
   int64 unix_time = 2;
   repeated string provider_types = 3;  // re-advertised in case of runtime capability change
+
+  // availability is this agent's best-effort, per-provider
+  // providersdk.AvailabilityReporter sample, taken just before this
+  // Heartbeat was sent. A provider_type advertised above with no
+  // corresponding entry here means its driver has no reporter, the reporter
+  // errored, or sampling hit its bounded deadline — never "zero
+  // availability". The server trusts neither agent_id nor a provider_type
+  // absent from this connection's registered provider_types (see
+  // docs/adr/0005-remote-agent-transport-and-registration.md).
+  repeated ProviderAvailability availability = 4;
+}
+
+// ProviderAvailability is one provider driver's point-in-time resource
+// headroom, carried per-provider (never a single ambiguous global value)
+// because one agent can host multiple provider types with independent
+// capacity.
+message ProviderAvailability {
+  string provider_type = 1;
+  int64 memory_mb = 2;
 }
 
 message CommandResult {

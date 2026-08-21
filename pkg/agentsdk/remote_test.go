@@ -803,3 +803,177 @@ func TestRemoteAgent_Create_ReconstructsOrphanedResourceError(t *testing.T) {
 		t.Fatal("timed out waiting for Create to return")
 	}
 }
+
+// --- Availability ---
+
+func sendHeartbeat(t *testing.T, stream *fakeServerStream, hb *boxyagentv1.Heartbeat) {
+	t.Helper()
+	stream.recvCh <- &boxyagentv1.AgentMessage{Payload: &boxyagentv1.AgentMessage_Heartbeat{Heartbeat: hb}}
+}
+
+// waitForAvailability polls a.Availability() until ok is true or the test
+// times out — Serve() processes the fed heartbeat on its own goroutine, so
+// there's no synchronous signal that a given heartbeat has been applied yet.
+func waitForAvailability(t *testing.T, a *RemoteAgent) AvailabilitySnapshot {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if snap, ok := a.Availability(); ok {
+			return snap
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for an availability snapshot")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestRemoteAgent_Availability_NoneReceivedYet(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1", Providers: []providersdk.Type{"hyperv"}}, stream)
+	go func() { _ = a.Serve() }()
+
+	if _, ok := a.Availability(); ok {
+		t.Fatal("expected ok=false before any heartbeat has arrived")
+	}
+}
+
+func TestRemoteAgent_Availability_StoredFromHeartbeat(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1", Providers: []providersdk.Type{"hyperv", "docker"}}, stream)
+	go func() { _ = a.Serve() }()
+
+	sendHeartbeat(t, stream, &boxyagentv1.Heartbeat{
+		AgentId: "agent-1",
+		Availability: []*boxyagentv1.ProviderAvailability{
+			{ProviderType: "hyperv", MemoryMb: 4096},
+			{ProviderType: "docker", MemoryMb: 8192},
+		},
+	})
+
+	snap := waitForAvailability(t, a)
+	if len(snap.Data) != 2 {
+		t.Fatalf("expected 2 provider entries, got %#v", snap.Data)
+	}
+	if got := snap.Data["hyperv"].MemoryMB; got != 4096 {
+		t.Errorf("hyperv MemoryMB = %d, want 4096", got)
+	}
+	if got := snap.Data["docker"].MemoryMB; got != 8192 {
+		t.Errorf("docker MemoryMB = %d, want 8192", got)
+	}
+	if snap.At.IsZero() {
+		t.Error("expected a non-zero receipt timestamp")
+	}
+}
+
+// TestRemoteAgent_Availability_DropsUnadvertisedProviderType is the
+// provider-identity half of #178's anti-spoofing requirement: a heartbeat
+// claiming availability for a provider type this connection never
+// registered for must not be trusted, exactly as a claimed agent_id isn't.
+func TestRemoteAgent_Availability_DropsUnadvertisedProviderType(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1", Providers: []providersdk.Type{"docker"}}, stream)
+	go func() { _ = a.Serve() }()
+
+	sendHeartbeat(t, stream, &boxyagentv1.Heartbeat{
+		AgentId: "agent-1",
+		Availability: []*boxyagentv1.ProviderAvailability{
+			{ProviderType: "docker", MemoryMb: 8192},
+			{ProviderType: "hyperv", MemoryMb: 4096}, // never advertised at registration
+		},
+	})
+
+	snap := waitForAvailability(t, a)
+	if _, ok := snap.Data["hyperv"]; ok {
+		t.Errorf("expected the unadvertised hyperv entry to be dropped, got %#v", snap.Data)
+	}
+	if got := snap.Data["docker"].MemoryMB; got != 8192 {
+		t.Errorf("docker MemoryMB = %d, want 8192", got)
+	}
+}
+
+// TestRemoteAgent_Availability_IgnoresClaimedAgentID is the agent-identity
+// half of #178's anti-spoofing requirement: storage is keyed to the
+// connection's own authenticated identity (info.ID, fixed at Connect time),
+// never to whatever agent_id happens to be in the Heartbeat payload.
+func TestRemoteAgent_Availability_IgnoresClaimedAgentID(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1", Providers: []providersdk.Type{"docker"}}, stream)
+	go func() { _ = a.Serve() }()
+
+	sendHeartbeat(t, stream, &boxyagentv1.Heartbeat{
+		AgentId: "some-other-agent-entirely", // must be ignored
+		Availability: []*boxyagentv1.ProviderAvailability{
+			{ProviderType: "docker", MemoryMb: 2048},
+		},
+	})
+
+	snap := waitForAvailability(t, a)
+	if got := snap.Data["docker"].MemoryMB; got != 2048 {
+		t.Errorf("docker MemoryMB = %d, want 2048 (heartbeat must still apply to this connection's own identity)", got)
+	}
+}
+
+// TestRemoteAgent_Availability_LaterHeartbeatWhollyReplacesSnapshot covers
+// the documented replace-not-merge contract: a provider that stops
+// reporting must disappear from the snapshot, not linger with stale data.
+func TestRemoteAgent_Availability_LaterHeartbeatWhollyReplacesSnapshot(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1", Providers: []providersdk.Type{"hyperv"}}, stream)
+	go func() { _ = a.Serve() }()
+
+	sendHeartbeat(t, stream, &boxyagentv1.Heartbeat{
+		Availability: []*boxyagentv1.ProviderAvailability{{ProviderType: "hyperv", MemoryMb: 4096}},
+	})
+	first := waitForAvailability(t, a)
+	if first.Data["hyperv"].MemoryMB != 4096 {
+		t.Fatalf("first snapshot = %#v, want hyperv=4096", first.Data)
+	}
+
+	// The reporter starts erroring: the next heartbeat carries no entries.
+	sendHeartbeat(t, stream, &boxyagentv1.Heartbeat{})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		snap, ok := a.Availability()
+		if ok && !snap.At.Equal(first.At) && len(snap.Data) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected the snapshot to go empty after a heartbeat with no availability, last seen %#v", snap.Data)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestRemoteAgent_Availability_BackwardCompatibleHeartbeatWithoutData covers
+// an old agent build that predates this field: LastSeen liveness must be
+// unaffected, and Availability() must report ok=true with an empty map
+// rather than erroring or panicking on a nil Availability slice.
+func TestRemoteAgent_Availability_BackwardCompatibleHeartbeatWithoutData(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1", Providers: []providersdk.Type{"docker"}}, stream)
+	go func() { _ = a.Serve() }()
+
+	before := a.LastSeen()
+	// A short sleep guarantees a strictly later wall-clock reading below,
+	// independent of the host's timer resolution (observed to occasionally
+	// coincide with the construction-time reading if the heartbeat round
+	// trip completes within the same clock tick).
+	time.Sleep(20 * time.Millisecond)
+	sendHeartbeat(t, stream, &boxyagentv1.Heartbeat{AgentId: "agent-1", ProviderTypes: []string{"docker"}})
+
+	snap := waitForAvailability(t, a)
+	if len(snap.Data) != 0 {
+		t.Errorf("expected an empty map, got %#v", snap.Data)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for !a.LastSeen().After(before) {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for LastSeen to advance on a heartbeat without availability data")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+var _ AvailabilityReportingAgent = (*RemoteAgent)(nil)

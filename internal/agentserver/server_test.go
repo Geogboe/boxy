@@ -35,12 +35,13 @@ import (
 // version check rejects the request before it ever reaches the token/cert
 // validation the test actually means to exercise.
 const (
-	testServerVersion  = "v-test"
-	testGoodToken      = "${BOXY_TEST_REGISTRATION_TOKEN_GOOD}"
-	testExpiredToken   = "${BOXY_TEST_REGISTRATION_TOKEN_EXPIRED}"
-	testReusableToken  = "${BOXY_TEST_REGISTRATION_TOKEN_REUSED}"
-	testRevokedToken   = "${BOXY_TEST_REGISTRATION_TOKEN_REVOKED}"
-	testHeartbeatToken = "${BOXY_TEST_REGISTRATION_TOKEN_HEARTBEAT}"
+	testServerVersion              = "v-test"
+	testGoodToken                  = "${BOXY_TEST_REGISTRATION_TOKEN_GOOD}"
+	testExpiredToken               = "${BOXY_TEST_REGISTRATION_TOKEN_EXPIRED}"
+	testReusableToken              = "${BOXY_TEST_REGISTRATION_TOKEN_REUSED}"
+	testRevokedToken               = "${BOXY_TEST_REGISTRATION_TOKEN_REVOKED}"
+	testHeartbeatToken             = "${BOXY_TEST_REGISTRATION_TOKEN_HEARTBEAT}"
+	testHeartbeatAvailabilityToken = "${BOXY_TEST_REGISTRATION_TOKEN_HEARTBEAT_AVAIL}"
 )
 
 // newTestServer wires up a Server against fresh in-memory dependencies and
@@ -455,6 +456,66 @@ func TestConnect_HeartbeatMarksAvailability(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("expected the agent to become available again after a heartbeat")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestConnect_HeartbeatAvailabilityStoredAndRetrievable proves #178's full
+// authenticated path end-to-end: a Heartbeat's availability arrives over a
+// real (bufconn) gRPC connection, through Connect's authentication, and
+// becomes retrievable via the exact same pool.AgentRegistry a scheduler
+// would query — while an unadvertised provider_type in the same heartbeat
+// (the provider half of #178's anti-spoofing requirement) is dropped rather
+// than trusted.
+func TestConnect_HeartbeatAvailabilityStoredAndRetrievable(t *testing.T) {
+	srv, st, client, cleanup := newTestServer(t)
+	defer cleanup()
+	mintToken(t, st, testHeartbeatAvailabilityToken, time.Hour)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	_ = stream.Send(&boxyagentv1.AgentMessage{
+		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{
+			RegistrationToken: testHeartbeatAvailabilityToken,
+			ProviderTypes:     []string{"hyperv"},
+			AgentVersion:      testServerVersion,
+		}},
+	})
+	msg, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("recv register response: %v", err)
+	}
+	agentID := msg.GetRegistered().GetAgentId()
+
+	_ = stream.Send(&boxyagentv1.AgentMessage{
+		Payload: &boxyagentv1.AgentMessage_Heartbeat{Heartbeat: &boxyagentv1.Heartbeat{
+			AgentId: agentID,
+			Availability: []*boxyagentv1.ProviderAvailability{
+				{ProviderType: "hyperv", MemoryMb: 4096},
+				{ProviderType: "docker", MemoryMb: 8192}, // never advertised at registration
+			},
+		}},
+	})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		snap, ok := srv.registry.Availability(agentID)
+		if ok && len(snap.Data) > 0 {
+			if _, hasDocker := snap.Data["docker"]; hasDocker {
+				t.Fatalf("unadvertised provider type must not appear in the stored snapshot, got %#v", snap.Data)
+			}
+			if got := snap.Data["hyperv"].MemoryMB; got != 4096 {
+				t.Fatalf("hyperv MemoryMB = %d, want 4096", got)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for the availability snapshot to become retrievable via the registry")
 		}
 		time.Sleep(20 * time.Millisecond)
 	}

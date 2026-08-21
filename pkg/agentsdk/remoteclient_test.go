@@ -53,6 +53,32 @@ func (d *fakePersonalizingDriver) PersonalizeGuest(ctx context.Context, id strin
 	return d.personalizeRes, d.personalizeErr
 }
 
+// fakeAvailabilityDriver adds providersdk.AvailabilityReporter on top of
+// fakeDriver, so tests can exercise both "driver has a reporter" and
+// "driver doesn't" (plain *fakeDriver, which deliberately has no
+// Availability method) through sampleAvailability.
+type fakeAvailabilityDriver struct {
+	*fakeDriver
+	avail    *providersdk.ResourceAvailability
+	availErr error
+}
+
+func (d *fakeAvailabilityDriver) Availability(ctx context.Context) (*providersdk.ResourceAvailability, error) {
+	return d.avail, d.availErr
+}
+
+// fakeHangingAvailabilityDriver's Availability ignores ctx entirely and
+// blocks forever — the worst case sampleAvailability's hard deadline must
+// still bound, since not every third-party AvailabilityReporter
+// implementation is guaranteed to respect context cancellation.
+type fakeHangingAvailabilityDriver struct {
+	*fakeDriver
+}
+
+func (d *fakeHangingAvailabilityDriver) Availability(ctx context.Context) (*providersdk.ResourceAvailability, error) {
+	select {}
+}
+
 func (d *fakeDriver) Type() providersdk.Type { return d.providerType }
 
 func (d *fakeDriver) Create(ctx context.Context, cfg any) (*providersdk.Resource, error) {
@@ -467,6 +493,69 @@ func (f *fakeClientStream) Context() context.Context     { return f.ctx }
 func (f *fakeClientStream) SendMsg(m any) error          { return nil }
 func (f *fakeClientStream) RecvMsg(m any) error          { return nil }
 
+// --- sampleAvailability ---
+
+func TestSampleAvailability_CollectsPerProviderSkipsMissingReporter(t *testing.T) {
+	drivers := DriverSet{
+		"hyperv": &fakeAvailabilityDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}, avail: &providersdk.ResourceAvailability{MemoryMB: 4096}},
+		"docker": &fakeDriver{providerType: "docker"}, // no AvailabilityReporter
+	}
+	entries := sampleAvailability(context.Background(), drivers, time.Second, nil)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry (docker has no reporter), got %#v", entries)
+	}
+	if entries[0].GetProviderType() != "hyperv" || entries[0].GetMemoryMb() != 4096 {
+		t.Fatalf("unexpected entry: %#v", entries[0])
+	}
+}
+
+func TestSampleAvailability_NoRemainingReportersReturnsNoEntries(t *testing.T) {
+	drivers := DriverSet{"docker": &fakeDriver{providerType: "docker"}}
+	entries := sampleAvailability(context.Background(), drivers, time.Second, nil)
+	if len(entries) != 0 {
+		t.Fatalf("expected no entries, got %#v", entries)
+	}
+}
+
+// TestSampleAvailability_ReporterErrorOmitsEntry proves a reporter error
+// never fails the whole sample — it just leaves that provider's entry out,
+// consistent with providersdk.AvailabilityReporter being an optional,
+// best-effort capability.
+func TestSampleAvailability_ReporterErrorOmitsEntry(t *testing.T) {
+	drivers := DriverSet{
+		"hyperv": &fakeAvailabilityDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}, availErr: fmt.Errorf("query failed")},
+		"docker": &fakeAvailabilityDriver{fakeDriver: &fakeDriver{providerType: "docker"}, avail: &providersdk.ResourceAvailability{MemoryMB: 2048}},
+	}
+	entries := sampleAvailability(context.Background(), drivers, time.Second, nil)
+	if len(entries) != 1 || entries[0].GetProviderType() != "docker" {
+		t.Fatalf("expected only the docker entry, got %#v", entries)
+	}
+}
+
+// TestSampleAvailability_HungReporterBoundedByDeadline is the "cannot be
+// indefinitely blocked" requirement's core test: a reporter that ignores
+// its context and blocks forever must not stop sampleAvailability from
+// returning within its configured deadline, and must not stop a healthy
+// reporter's result from being reported alongside it.
+func TestSampleAvailability_HungReporterBoundedByDeadline(t *testing.T) {
+	drivers := DriverSet{
+		"hyperv": &fakeHangingAvailabilityDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}},
+		"docker": &fakeAvailabilityDriver{fakeDriver: &fakeDriver{providerType: "docker"}, avail: &providersdk.ResourceAvailability{MemoryMB: 2048}},
+	}
+
+	done := make(chan []*boxyagentv1.ProviderAvailability, 1)
+	go func() { done <- sampleAvailability(context.Background(), drivers, 30*time.Millisecond, nil) }()
+
+	select {
+	case entries := <-done:
+		if len(entries) != 1 || entries[0].GetProviderType() != "docker" {
+			t.Fatalf("expected only the docker entry, got %#v", entries)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("sampleAvailability did not return despite a hung reporter and a bounded deadline")
+	}
+}
+
 // TestRunSession_BlankAgentVersionFailsFastLocally covers a Copilot finding
 // on PR #175: a caller that forgets to set AgentVersion should get an
 // immediate, clear local error instead of a wasted round-trip to a server
@@ -585,6 +674,65 @@ func TestRunSession_RegistersAndDispatchesCommand(t *testing.T) {
 			// else: a heartbeat frame, keep waiting for the command result
 		case <-deadline:
 			t.Fatal("timed out waiting for CommandResult")
+		}
+	}
+}
+
+// TestRunSession_HeartbeatCarriesAvailability proves the end-to-end client
+// wiring: a driver implementing providersdk.AvailabilityReporter shows up
+// on the wire inside Heartbeat.availability, and a driver that doesn't
+// (docker here) is simply absent, not a zero-value entry.
+func TestRunSession_HeartbeatCarriesAvailability(t *testing.T) {
+	stream := newFakeClientStream()
+	drivers := DriverSet{
+		"hyperv": &fakeAvailabilityDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}, avail: &providersdk.ResourceAvailability{MemoryMB: 4096}},
+		"docker": &fakeDriver{providerType: "docker"},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sessionErrCh := make(chan error, 1)
+	go func() {
+		sessionErrCh <- RunSession(ctx, stream, RemoteClientConfig{
+			AgentName:         "boxy-test-agent",
+			Token:             testRegistrationToken,
+			AgentVersion:      "v-test",
+			ProviderTypes:     []providersdk.Type{"hyperv", "docker"},
+			Drivers:           drivers,
+			HeartbeatInterval: 20 * time.Millisecond,
+		})
+	}()
+
+	<-stream.sentCh // RegisterRequest
+	stream.recvCh <- &boxyagentv1.ServerMessage{
+		Payload: &boxyagentv1.ServerMessage_Registered{Registered: &boxyagentv1.RegisterResponse{AgentId: "agent-xyz"}},
+	}
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case msg := <-stream.sentCh:
+			hb := msg.GetHeartbeat()
+			if hb == nil {
+				continue
+			}
+			if len(hb.GetAvailability()) != 1 {
+				t.Fatalf("expected exactly 1 availability entry (docker has no reporter), got %#v", hb.GetAvailability())
+			}
+			entry := hb.GetAvailability()[0]
+			if entry.GetProviderType() != "hyperv" || entry.GetMemoryMb() != 4096 {
+				t.Fatalf("unexpected availability entry: %#v", entry)
+			}
+			stream.close()
+			cancel()
+			select {
+			case <-sessionErrCh:
+			case <-time.After(2 * time.Second):
+				t.Fatal("timed out waiting for RunSession to return after closing the stream")
+			}
+			return
+		case <-deadline:
+			t.Fatal("timed out waiting for a Heartbeat frame")
 		}
 	}
 }
