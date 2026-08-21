@@ -50,8 +50,12 @@ tasks:
   test:ci:
     desc: Run the CI race, short, and devtools test matrix locally
     cmds:
-      - go test -race -short ./...
-      - go test -race -short -tags devtools ./internal/cli/...
+      - cmd: wsl.exe --cd "{{.ROOT_DIR}}" bash -lc "./scripts/ci-race.sh"
+        if: '{{eq OS "windows"}}'
+      - cmd: go test -race -short ./...
+        if: '{{ne OS "windows"}}'
+      - cmd: go test -race -short -tags devtools ./internal/cli/...
+        if: '{{ne OS "windows"}}'
 
   test:cli:
     desc: Run CLI package tests

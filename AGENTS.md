@@ -1,5 +1,8 @@
 # AGENTS.md
 
+If `AGENTS.override.md` exists, read it after this file for host-specific
+development guidance. It is intentionally gitignored and must not be committed.
+
 Periodically update this document with guidelines, architectural decisions, lessons learned, and development workflows for AI assistants contributing to the Boxy project.
 
 ## Project
