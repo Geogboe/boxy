@@ -3,7 +3,10 @@
 // no remote connection config is needed.
 package hyperv
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // ProviderType is the registry key for Hyper-V providers.
 const ProviderType = "hyperv"
@@ -51,6 +54,12 @@ type CreateConfig struct {
 	// Switch is the name of the virtual switch to connect to. Optional.
 	Switch string `json:"switch" yaml:"switch"`
 
+	// Network holds optional static IP configuration to apply inside the guest
+	// during personalization. When omitted the guest relies on DHCP or a
+	// pre-configured address. Use this on Windows Server hosts where Hyper-V
+	// does not issue DHCP leases automatically.
+	Network *NetworkConfig `json:"network,omitempty" yaml:"network,omitempty"`
+
 	// GuestOS is the guest operating system: "windows" or "linux". Default: "windows".
 	// Windows guests use PowerShell Direct (psdirect); Linux guests use SSH.
 	GuestOS string `json:"guest_os" yaml:"guest_os"`
@@ -70,4 +79,44 @@ type CreateConfig struct {
 	// GuestPassword is deprecated and no longer used for bootstrap guest access.
 	// Use GuestPasswordRef instead so the raw secret does not have to be persisted.
 	GuestPassword string `json:"guest_password" yaml:"guest_password"`
+}
+
+// NetworkConfig describes the static IP configuration to apply inside a guest
+// VM during personalization. All fields are optional within this struct, but
+// StaticIP is required when the struct itself is present.
+type NetworkConfig struct {
+	// StaticIP is the IPv4 address to assign to the guest's primary network
+	// adapter (e.g. "192.168.1.50"). Required when Network is set.
+	StaticIP string `json:"static_ip" yaml:"static_ip"`
+
+	// PrefixLength is the subnet prefix length (e.g. 24 for /24). Default: 24.
+	PrefixLength int `json:"prefix_length" yaml:"prefix_length"`
+
+	// DefaultGateway is the IPv4 default gateway (e.g. "192.168.1.1"). Optional.
+	DefaultGateway string `json:"default_gateway,omitempty" yaml:"default_gateway,omitempty"`
+
+	// DNSServers is a list of DNS server IPv4 addresses to assign. Optional.
+	DNSServers []string `json:"dns_servers,omitempty" yaml:"dns_servers,omitempty"`
+}
+
+// validate returns an error when the NetworkConfig is non-nil but inconsistent.
+func (n *NetworkConfig) validate() error {
+	if n == nil {
+		return nil
+	}
+	if strings.TrimSpace(n.StaticIP) == "" {
+		return fmt.Errorf("network.static_ip is required when network is set")
+	}
+	if n.PrefixLength < 0 || n.PrefixLength > 32 {
+		return fmt.Errorf("network.prefix_length must be between 0 and 32, got %d", n.PrefixLength)
+	}
+	return nil
+}
+
+// effectivePrefixLength returns PrefixLength, defaulting to 24.
+func (n *NetworkConfig) effectivePrefixLength() int {
+	if n.PrefixLength == 0 {
+		return 24
+	}
+	return n.PrefixLength
 }
