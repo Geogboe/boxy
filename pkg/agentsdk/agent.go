@@ -15,6 +15,7 @@ package agentsdk
 
 import (
 	"context"
+	"time"
 
 	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/providersdk"
@@ -64,6 +65,36 @@ type GuestPersonalizingAgent interface {
 // relying on it being part of Agent.
 type ResourceListingAgent interface {
 	List(ctx context.Context, provider providersdk.Type) ([]providersdk.ResourceStatus, error)
+}
+
+// AvailabilitySnapshot is one agent's most recently received per-provider
+// providersdk.AvailabilityReporter sample, plus when the server received it.
+// At is stamped by the server on receipt, not taken from the agent's
+// self-reported clock — the same trust boundary that keeps liveness keyed to
+// the authenticated connection rather than a claimed value in the message.
+//
+// A provider type absent from Data means "no reporter, a reporter error, or
+// a sampling timeout" on the most recent heartbeat — never "zero
+// availability". Callers must not conflate the two.
+type AvailabilitySnapshot struct {
+	Data map[providersdk.Type]providersdk.ResourceAvailability
+	At   time.Time
+}
+
+// AvailabilityReportingAgent is an optional agent capability for exposing
+// the latest AvailabilitySnapshot received over an agent's heartbeat stream.
+// Only RemoteAgent implements this today: EmbeddedAgent has no heartbeat to
+// carry a snapshot on, and querying its local drivers live is a different
+// (ctx-bound, error-returning) operation a future caller can add separately
+// if it needs one — see #178 and #179. Callers must type-assert for this
+// capability rather than relying on it being part of Agent.
+type AvailabilityReportingAgent interface {
+	// Availability returns the latest snapshot and whether one has been
+	// received yet. Each heartbeat wholly replaces the previous snapshot,
+	// including replacing it with an empty one — a reporter that starts
+	// erroring is reflected as missing data on the next heartbeat, not
+	// stale-but-plausible leftover numbers.
+	Availability() (AvailabilitySnapshot, bool)
 }
 
 // AgentInfo describes an agent and the providers it hosts.

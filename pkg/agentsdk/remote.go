@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -43,6 +44,13 @@ type RemoteAgent struct {
 	// heartbeat appear stale by up to a second due to truncation.
 	lastSeen atomic.Int64
 
+	// availability holds the latest AvailabilitySnapshot, swapped in whole
+	// by each Heartbeat (see updateAvailability). atomic.Pointer gives
+	// lock-free reads for Availability() without a second mutex — each
+	// stored *AvailabilitySnapshot is built fresh and never mutated in
+	// place, so sharing the pointer with callers is safe.
+	availability atomic.Pointer[AvailabilitySnapshot]
+
 	closed    chan struct{}
 	closeOnce sync.Once
 }
@@ -62,6 +70,7 @@ type streamWaiter struct {
 }
 
 var _ GuestPersonalizingAgent = (*RemoteAgent)(nil)
+var _ AvailabilityReportingAgent = (*RemoteAgent)(nil)
 
 // reconstructAgentError rebuilds a typed error from an AgentError's
 // error_type/error_detail_json when recognized, falling back to today's
@@ -112,6 +121,44 @@ func (a *RemoteAgent) LastSeen() time.Time {
 	return time.Unix(0, a.lastSeen.Load())
 }
 
+// Availability implements AvailabilityReportingAgent, returning the latest
+// snapshot received over this connection's heartbeat stream and whether one
+// has arrived yet.
+func (a *RemoteAgent) Availability() (AvailabilitySnapshot, bool) {
+	snap := a.availability.Load()
+	if snap == nil {
+		return AvailabilitySnapshot{}, false
+	}
+	return *snap, true
+}
+
+// updateAvailability wholly replaces the stored AvailabilitySnapshot from
+// one Heartbeat's availability entries — including replacing it with an
+// empty snapshot, so a reporter that starts erroring is reflected as
+// "no data" on the very next heartbeat rather than leaving stale-but-
+// plausible numbers behind (see AvailabilityReportingAgent's doc comment).
+//
+// Entries are keyed to this connection's own authenticated identity: the
+// snapshot is stored on a itself (fixed to one agent identity for the
+// connection's lifetime by NewRemoteAgent/Connect), never looked up via any
+// agent_id claimed in the message. An entry for a provider_type this
+// connection didn't advertise in its RegisterRequest (a.info.Providers) is
+// dropped rather than trusted — the same anti-spoofing posture applied to
+// agent identity, extended to provider identity: a compromised or buggy
+// agent must not be able to inject availability data for a provider it was
+// never registered to serve.
+func (a *RemoteAgent) updateAvailability(entries []*boxyagentv1.ProviderAvailability) {
+	data := make(map[providersdk.Type]providersdk.ResourceAvailability, len(entries))
+	for _, e := range entries {
+		pt := providersdk.Type(e.GetProviderType())
+		if !slices.Contains(a.info.Providers, pt) {
+			continue
+		}
+		data[pt] = providersdk.ResourceAvailability{MemoryMB: e.GetMemoryMb()}
+	}
+	a.availability.Store(&AvailabilitySnapshot{Data: data, At: time.Now()})
+}
+
 // Serve reads AgentMessages off the stream until it ends for any reason,
 // dispatching Heartbeats to LastSeen and CommandResults to pending callers.
 // It must be run in its own goroutine, one per connection. When it returns,
@@ -126,6 +173,7 @@ func (a *RemoteAgent) Serve() error {
 		switch payload := msg.GetPayload().(type) {
 		case *boxyagentv1.AgentMessage_Heartbeat:
 			a.lastSeen.Store(time.Now().UnixNano())
+			a.updateAvailability(payload.Heartbeat.GetAvailability())
 		case *boxyagentv1.AgentMessage_Result:
 			a.deliver(payload.Result)
 		default:

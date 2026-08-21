@@ -40,6 +40,13 @@ type RemoteClientConfig struct {
 	Drivers           DriverSet
 	HeartbeatInterval time.Duration // default 15s if zero; overridden by the server's RegisterResponse if set
 
+	// AvailabilitySampleTimeout bounds each individual
+	// providersdk.AvailabilityReporter query sampled before a Heartbeat is
+	// sent — see sampleAvailability. Zero uses
+	// defaultAvailabilitySampleTimeout; tests override it to avoid real
+	// sleeps, mirroring hyperv.Driver.memoryQueryTimeout's pattern.
+	AvailabilitySampleTimeout time.Duration
+
 	// OnRegistered is invoked once per successful registration (both the
 	// first, token-based registration and any later cert-based reconnect)
 	// with the server's RegisterResponse. The caller is responsible for
@@ -174,8 +181,20 @@ func RunSession(ctx context.Context, stream boxyagentv1.AgentTransportService_Co
 		interval = time.Duration(reg.GetHeartbeatIntervalSeconds()) * time.Second
 	}
 
+	availabilityTimeout := cfg.AvailabilitySampleTimeout
+	if availabilityTimeout <= 0 {
+		availabilityTimeout = defaultAvailabilitySampleTimeout
+	}
+
+	log := cfg.Logger
+	if log == nil {
+		log = slog.Default()
+	}
+
 	g, gctx := errgroup.WithContext(ctx)
-	g.Go(func() error { return sess.sendHeartbeats(gctx, reg.GetAgentId(), providerTypes, interval) })
+	g.Go(func() error {
+		return sess.sendHeartbeats(gctx, reg.GetAgentId(), providerTypes, cfg.Drivers, interval, availabilityTimeout, log)
+	})
 	g.Go(func() error { return sess.dispatchCommands(gctx, cfg.Drivers) })
 	return g.Wait()
 }
@@ -194,7 +213,7 @@ func (s *clientSession) send(msg *boxyagentv1.AgentMessage) error {
 	return s.stream.Send(msg)
 }
 
-func (s *clientSession) sendHeartbeats(ctx context.Context, agentID string, providerTypes []string, interval time.Duration) error {
+func (s *clientSession) sendHeartbeats(ctx context.Context, agentID string, providerTypes []string, drivers DriverSet, interval, availabilityTimeout time.Duration, log *slog.Logger) error {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -207,12 +226,100 @@ func (s *clientSession) sendHeartbeats(ctx context.Context, agentID string, prov
 					AgentId:       agentID,
 					UnixTime:      time.Now().Unix(),
 					ProviderTypes: providerTypes,
+					Availability:  sampleAvailability(ctx, drivers, availabilityTimeout, log),
 				}},
 			}); err != nil {
 				return fmt.Errorf("send heartbeat: %w", err)
 			}
 		}
 	}
+}
+
+// defaultAvailabilitySampleTimeout is the per-provider bound applied to a
+// providersdk.AvailabilityReporter query when RemoteClientConfig doesn't
+// override it. availabilitySampleGrace is added on top of that bound for
+// sampleAvailability's own hard deadline, giving a well-behaved reporter
+// that respects ctx cancellation a brief window to return its ctx.Err()
+// rather than being raced against the exact same deadline twice.
+const (
+	defaultAvailabilitySampleTimeout = 5 * time.Second
+	availabilitySampleGrace          = 500 * time.Millisecond
+)
+
+// sampleAvailability queries every driver in drivers that implements
+// providersdk.AvailabilityReporter, concurrently, and returns one
+// ProviderAvailability entry per provider that answered successfully within
+// the deadline. It is deliberately best-effort and hard-bounded:
+//
+//   - A driver with no reporter is silently skipped — not every provider
+//     implements this optional capability.
+//   - A reporter that returns an error is logged and skipped, not treated
+//     as a heartbeat-sending failure — availability reporting must never
+//     mark an otherwise-healthy agent offline.
+//   - Total wall-clock time is capped at timeout+availabilitySampleGrace
+//     regardless of how many reporters there are or whether one hangs
+//     forever ignoring its context (see fakeHangingAvailabilityDriver in
+//     tests) — this bound exists specifically so a stuck reporter can never
+//     indefinitely delay heartbeat delivery. Command dispatch runs on an
+//     entirely separate goroutine/stream-read loop and is never touched by
+//     this call at all.
+//
+// A hung reporter's goroutine is abandoned, not killed (Go has no
+// mechanism to forcibly cancel a goroutine that ignores ctx) — it writes
+// into the buffered channel whenever it eventually returns and is then
+// garbage collected; it does not block any future call.
+func sampleAvailability(ctx context.Context, drivers DriverSet, timeout time.Duration, log *slog.Logger) []*boxyagentv1.ProviderAvailability {
+	type sample struct {
+		providerType providersdk.Type
+		avail        *providersdk.ResourceAvailability
+	}
+
+	reporters := make(map[providersdk.Type]providersdk.AvailabilityReporter, len(drivers))
+	for pt, d := range drivers {
+		if r, ok := d.(providersdk.AvailabilityReporter); ok {
+			reporters[pt] = r
+		}
+	}
+	if len(reporters) == 0 {
+		return nil
+	}
+
+	results := make(chan sample, len(reporters))
+	for pt, r := range reporters {
+		go func(pt providersdk.Type, r providersdk.AvailabilityReporter) {
+			qctx, cancel := context.WithTimeout(ctx, timeout)
+			defer cancel()
+			avail, err := r.Availability(qctx)
+			if err != nil {
+				if log != nil {
+					log.Warn("agent: availability reporter failed, omitting from this heartbeat", "provider_type", pt, "error", err)
+				}
+				results <- sample{providerType: pt}
+				return
+			}
+			results <- sample{providerType: pt, avail: avail}
+		}(pt, r)
+	}
+
+	deadline := time.After(timeout + availabilitySampleGrace)
+	entries := make([]*boxyagentv1.ProviderAvailability, 0, len(reporters))
+	for i := 0; i < len(reporters); i++ {
+		select {
+		case r := <-results:
+			if r.avail != nil {
+				entries = append(entries, &boxyagentv1.ProviderAvailability{
+					ProviderType: string(r.providerType),
+					MemoryMb:     r.avail.MemoryMB,
+				})
+			}
+		case <-deadline:
+			if log != nil {
+				log.Warn("agent: availability sampling deadline exceeded, some providers omitted from this heartbeat")
+			}
+			return entries
+		}
+	}
+	return entries
 }
 
 // dispatchCommands reads pushed Commands and executes each in its own

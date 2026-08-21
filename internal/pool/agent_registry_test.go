@@ -332,3 +332,59 @@ func TestAgentRegistry_RegisterRejectsNilOrEmptyID(t *testing.T) {
 		t.Fatal("expected an error registering an agent with an empty ID")
 	}
 }
+
+// mockAvailabilityAgent adds agentsdk.AvailabilityReportingAgent on top of
+// mockAgent, so tests can exercise both "agent reports availability" and
+// "agent doesn't" (plain *mockAgent, which deliberately has no Availability
+// method — mirroring how the real EmbeddedAgent has none either) through
+// AgentRegistry.Availability.
+type mockAvailabilityAgent struct {
+	*mockAgent
+	snapshot agentsdk.AvailabilitySnapshot
+	ok       bool
+}
+
+func (a *mockAvailabilityAgent) Availability() (agentsdk.AvailabilitySnapshot, bool) {
+	return a.snapshot, a.ok
+}
+
+func TestAgentRegistry_Availability_DelegatesToAgent(t *testing.T) {
+	r := NewAgentRegistry()
+	snap := agentsdk.AvailabilitySnapshot{
+		Data: map[providersdk.Type]providersdk.ResourceAvailability{"hyperv": {MemoryMB: 4096}},
+	}
+	a := &mockAvailabilityAgent{mockAgent: newMockAgent(providersdk.Type("hyperv")), snapshot: snap, ok: true}
+	if err := r.Register(a); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	got, ok := r.Availability("mock-agent")
+	if !ok {
+		t.Fatal("expected ok=true for an agent that reports availability")
+	}
+	if got.Data["hyperv"].MemoryMB != 4096 {
+		t.Fatalf("expected the underlying agent's snapshot to be returned unchanged, got %#v", got.Data)
+	}
+}
+
+func TestAgentRegistry_Availability_UnknownAgentReturnsFalse(t *testing.T) {
+	r := NewAgentRegistry()
+	if _, ok := r.Availability("no-such-agent"); ok {
+		t.Fatal("expected ok=false for an unregistered agent")
+	}
+}
+
+// TestAgentRegistry_Availability_AgentWithoutCapabilityReturnsFalse covers
+// the embedded agent's real shape: it implements agentsdk.Agent but not
+// AvailabilityReportingAgent (no heartbeat exists to carry a snapshot on).
+func TestAgentRegistry_Availability_AgentWithoutCapabilityReturnsFalse(t *testing.T) {
+	r := NewAgentRegistry()
+	a := newMockAgent(providersdk.Type("docker"))
+	if err := r.Register(a); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	if _, ok := r.Availability("mock-agent"); ok {
+		t.Fatal("expected ok=false for an agent that doesn't implement AvailabilityReportingAgent")
+	}
+}
