@@ -223,6 +223,7 @@ Wrap repeated commands in `Taskfile.yml`. If a command is run more than once, ad
 - `gopls` is available locally for code navigation, refactoring, and linting. Use the Go language server whenever possible when reading, navigating, analyzing, or modifying Go code; prefer its symbol, reference, diagnostic, and refactoring capabilities over broad text searches or manual edits for greater efficiency and correctness.
 - `task` (go-task) for running project commands.
 - `task lint` mirrors CI by running `golangci-lint` v2 from source via `go run`, so it does not depend on a preinstalled local binary version.
+- Tool dependencies used by Taskfile tasks and CI must use explicit pinned versions, kept at the latest stable release compatible with the repository's declared toolchain. Update the pin intentionally in both local and CI workflows and validate the full task/check surface; do not use moving `@latest` references.
 - GoReleaser is pinned in the isolated `tools/` module; use `task release:check` and `task release:snapshot` instead of assuming a global `goreleaser` binary is installed.
 
 ## Installer Notes

@@ -25,8 +25,9 @@ jobs:
 
       # Build from source so golangci-lint and Go versions always match.
       # The golangci-lint-action pre-built binary lags behind Go releases.
+      # Pin the latest release compatible with this repository's Go 1.25 toolchain.
       - name: Install golangci-lint
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 
       - name: Run golangci-lint
         run: golangci-lint run ./...
