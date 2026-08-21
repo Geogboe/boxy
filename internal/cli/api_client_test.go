@@ -16,21 +16,21 @@ import (
 
 func TestWrapConnError_ClassifiesDialFailure(t *testing.T) {
 	client := &http.Client{Timeout: 2 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:0/", nil)
+	req, err := http.NewRequest(http.MethodGet, "http://127.0.0.2:1/", nil)
 	if err != nil {
 		t.Fatalf("build request: %v", err)
 	}
 
 	_, doErr := client.Do(req) //nolint:bodyclose // Do fails before a body exists
 	if doErr == nil {
-		t.Fatal("expected a dial error connecting to 127.0.0.1:0")
+		t.Fatal("expected a dial error connecting to 127.0.0.2:1")
 	}
 
-	wrapped := wrapConnError(doErr, "127.0.0.1:0")
+	wrapped := wrapConnError(doErr, "127.0.0.2:1")
 	if !strings.Contains(wrapped.Error(), "boxy serve") {
 		t.Fatalf("wrapped error = %v, want mention of `boxy serve`", wrapped)
 	}
-	if !strings.Contains(wrapped.Error(), "127.0.0.1:0") {
+	if !strings.Contains(wrapped.Error(), "127.0.0.2:1") {
 		t.Fatalf("wrapped error = %v, want the unreachable address", wrapped)
 	}
 	if !errors.Is(wrapped, doErr) {
@@ -53,14 +53,14 @@ func TestWrapConnError_Nil(t *testing.T) {
 
 func TestDoNoContent_WrapsDialFailure(t *testing.T) {
 	client := &http.Client{Timeout: 2 * time.Second}
-	req, err := http.NewRequest(http.MethodDelete, "http://127.0.0.1:0/api/v1/agent-tokens/token-1", nil)
+	req, err := http.NewRequest(http.MethodDelete, "http://127.0.0.2:1/api/v1/agent-tokens/token-1", nil)
 	if err != nil {
 		t.Fatalf("build request: %v", err)
 	}
 
 	err = doNoContent(client, req)
 	if err == nil {
-		t.Fatal("expected a dial error connecting to 127.0.0.1:0")
+		t.Fatal("expected a dial error connecting to 127.0.0.2:1")
 	}
 	if !strings.Contains(err.Error(), "boxy serve") {
 		t.Fatalf("error = %v, want a friendly `boxy serve` hint", err)

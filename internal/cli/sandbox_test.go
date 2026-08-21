@@ -300,7 +300,7 @@ func TestSandboxGet_resourceFetchErrorPropagates(t *testing.T) {
 
 func TestSandboxList_daemonDownGivesFriendlyError(t *testing.T) {
 	cmd := NewRootCommand()
-	cmd.SetArgs([]string{"sandbox", "--server", "127.0.0.1:0", "list"})
+	cmd.SetArgs([]string{"sandbox", "--server", "127.0.0.2:1", "list"})
 
 	err := cmd.ExecuteContext(context.Background())
 	if err == nil {
