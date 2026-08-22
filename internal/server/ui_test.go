@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -218,9 +219,26 @@ func TestUI_agents_devfactoryAvailabilityRendersSanely(t *testing.T) {
 	if strings.Contains(body, "9,223,372,036,854,775,807") {
 		t.Fatal("dashboard rendered the old math.MaxInt64 sentinel — Availability() regressed")
 	}
-	if !strings.Contains(body, "1,000,000,000,000 MB free") {
-		t.Fatalf("expected the finite unlimited sentinel rendered with comma grouping; body = %q", body)
+	wantUnlimited := commaGroup(devfactory.UnlimitedMemoryMB) + " MB free"
+	if !strings.Contains(body, wantUnlimited) {
+		t.Fatalf("expected the finite unlimited sentinel rendered with comma grouping (%q); body = %q", wantUnlimited, body)
 	}
+}
+
+// commaGroup mirrors ui.go's unexported formatMemoryMB (this file is
+// package server_test, so it can't call that directly) — kept in sync
+// deliberately so a future retune of devfactory.UnlimitedMemoryMB doesn't
+// silently desync a hardcoded expected string in the test above.
+func commaGroup(value int64) string {
+	digits := strconv.FormatInt(value, 10)
+	var b strings.Builder
+	for i, digit := range digits {
+		if i > 0 && (len(digits)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteRune(digit)
+	}
+	return b.String()
 }
 
 func TestUI_agents_emptyInventory(t *testing.T) {

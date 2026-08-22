@@ -90,10 +90,12 @@ type Config struct {
 	// propagation, pool quarantine) against this reference driver without
 	// real infrastructure. FailCreate (a plain error) takes precedence if
 	// both are set. Supported values:
-	//   - "capacity": returns *providersdk.CapacityError. Combine with
-	//     AvailableMemoryZero or a low AvailableMemoryMB for a realistic
-	//     insufficient-capacity scenario; RequestedMemoryMB is fixed (see
-	//     simulatedMemoryRequestMB).
+	//   - "capacity": returns *providersdk.CapacityError. RequestedMemoryMB
+	//     is fixed (see simulatedMemoryRequestMB); AvailableMemoryMB reflects
+	//     AvailableMemoryZero/AvailableMemoryMB when configured for a
+	//     specific scenario, and otherwise defaults to a value below the
+	//     request — asking for this knob at all already means "pretend
+	//     there isn't room."
 	//   - "orphaned_resource": returns *providersdk.OrphanedResourceError
 	//     and leaves the resource's store record behind in "creating"
 	//     state, simulating a create that partially succeeded and couldn't

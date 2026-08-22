@@ -383,13 +383,13 @@ func TestDriver_Availability_ZeroMeansUnlimited(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if avail.MemoryMB != unlimitedMemoryMB {
-		t.Errorf("MemoryMB = %d, want unlimitedMemoryMB (%d)", avail.MemoryMB, unlimitedMemoryMB)
+	if avail.MemoryMB != UnlimitedMemoryMB {
+		t.Errorf("MemoryMB = %d, want UnlimitedMemoryMB (%d)", avail.MemoryMB, UnlimitedMemoryMB)
 	}
 	// The sentinel must not overflow the MB->bytes conversion real drivers
 	// (e.g. hyperv.Driver.Create) perform on a MemoryMB value. See #181.
 	if bytes := avail.MemoryMB * 1024 * 1024; bytes <= 0 {
-		t.Errorf("unlimitedMemoryMB * 1024 * 1024 overflowed int64: got %d", bytes)
+		t.Errorf("UnlimitedMemoryMB * 1024 * 1024 overflowed int64: got %d", bytes)
 	}
 }
 
@@ -470,7 +470,7 @@ func TestDriver_List_ReturnsTrackedResources(t *testing.T) {
 
 // --- FailCreateAs: typed-error simulation ---
 
-func TestDriver_Create_FailCreateAsCapacity(t *testing.T) {
+func TestDriver_Create_FailCreateAsCapacity_AvailableMemoryZeroConfigured(t *testing.T) {
 	d := newTestDriver(t, &Config{FailCreateAs: "capacity", AvailableMemoryZero: true})
 
 	_, err := d.Create(context.Background(), nil)
@@ -489,6 +489,29 @@ func TestDriver_Create_FailCreateAsCapacity(t *testing.T) {
 	}
 	if d.ResourceCount() != 0 {
 		t.Errorf("expected no resource written for a capacity failure, got %d", d.ResourceCount())
+	}
+}
+
+// TestDriver_Create_FailCreateAsCapacity_DefaultIsCoherent verifies
+// FailCreateAs: "capacity" produces a self-consistent error even with no
+// other config set. Without the clamp in simulatedCapacityError, this would
+// report AvailableMemoryMB == UnlimitedMemoryMB alongside a much smaller
+// RequestedMemoryMB — a nonsensical "capacity failure" a consumer would
+// hit by default just from setting this one knob.
+func TestDriver_Create_FailCreateAsCapacity_DefaultIsCoherent(t *testing.T) {
+	d := newTestDriver(t, &Config{FailCreateAs: "capacity"})
+
+	_, err := d.Create(context.Background(), nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var capErr *providersdk.CapacityError
+	if !errors.As(err, &capErr) {
+		t.Fatalf("expected *providersdk.CapacityError, got %#v", err)
+	}
+	if capErr.AvailableMemoryMB >= capErr.RequestedMemoryMB {
+		t.Errorf("AvailableMemoryMB (%d) >= RequestedMemoryMB (%d): not a coherent capacity failure",
+			capErr.AvailableMemoryMB, capErr.RequestedMemoryMB)
 	}
 }
 

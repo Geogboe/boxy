@@ -20,14 +20,16 @@ import (
 
 const ProviderType providersdk.Type = "devfactory"
 
-// unlimitedMemoryMB is Availability()'s sentinel for "no configured cap" —
+// UnlimitedMemoryMB is Availability()'s sentinel for "no configured cap" —
 // deliberately not math.MaxInt64. hyperv.Driver.Create converts a MemoryMB
 // value to bytes via MemoryMB * 1024 * 1024; MaxInt64 doing that silently
 // overflows. This constant is comfortably under math.MaxInt64/(1024*1024)
 // (~8.8e12) so the same conversion applied to devfactory's reported value
 // can't wrap either, while still reading unambiguously as "far more than
-// any real host has," not a plausible real memory figure. See #181.
-const unlimitedMemoryMB int64 = 1_000_000_000_000 // 1e12 MB ≈ 1 EB
+// any real host has," not a plausible real memory figure. Exported so
+// consumers outside this package (e.g. dashboard rendering tests) can refer
+// to it instead of hardcoding the literal. See #181.
+const UnlimitedMemoryMB int64 = 1_000_000_000_000 // 1e12 MB ≈ 1 EB
 
 // simulatedMemoryRequestMB is the fixed RequestedMemoryMB reported by
 // FailCreateAs: "capacity" — matches hyperv.Driver's own default VM memory
@@ -92,7 +94,7 @@ func (d *Driver) Availability(ctx context.Context) (*providersdk.ResourceAvailab
 	}
 	mb := d.cfg.AvailableMemoryMB
 	if mb == 0 {
-		mb = unlimitedMemoryMB
+		mb = UnlimitedMemoryMB
 	}
 	return &providersdk.ResourceAvailability{MemoryMB: mb}, nil
 }
@@ -206,11 +208,22 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 // AvailableMemoryMB produces a self-consistent insufficient-capacity error;
 // RequestedMemoryMB is fixed (simulatedMemoryRequestMB) rather than derived
 // from availability — deriving it (e.g. available+1) would reintroduce the
-// same overflow risk unlimitedMemoryMB exists to avoid.
+// same overflow risk UnlimitedMemoryMB exists to avoid.
+//
+// If the caller hasn't configured a real insufficient-capacity value
+// (AvailableMemoryZero or a low AvailableMemoryMB), Availability() still
+// reports UnlimitedMemoryMB — which would otherwise produce a nonsensical
+// "requested 2048 MB, 1,000,000,000,000 MB available" error, the exact
+// scenario FailCreateAs: "capacity" exists to simulate the opposite of.
+// Asking for the knob at all is itself the caller saying "pretend there
+// isn't room," so clamp to a value below the request in that default case.
 func (d *Driver) simulatedCapacityError(ctx context.Context) error {
 	availableMB := int64(0)
 	if avail, err := d.Availability(ctx); err == nil && avail != nil {
 		availableMB = avail.MemoryMB
+	}
+	if availableMB >= simulatedMemoryRequestMB {
+		availableMB = simulatedMemoryRequestMB / 4
 	}
 	return &providersdk.CapacityError{
 		RequestedMemoryMB: simulatedMemoryRequestMB,

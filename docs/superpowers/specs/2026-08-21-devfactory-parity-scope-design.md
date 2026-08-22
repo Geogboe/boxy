@@ -80,7 +80,7 @@ heartbeat dashboard (`internal/server/ui.go:199`,
 devfactory pool renders as `"9,223,372,036,854,775,807 MB free"` on the
 dashboard today.
 
-Replaced with `unlimitedMemoryMB = 1_000_000_000_000` (1e12 MB, ~1 EB) —
+Replaced with `UnlimitedMemoryMB = 1_000_000_000_000` (1e12 MB, ~1 EB) —
 comfortably under `math.MaxInt64/(1024*1024)` (~8.8e12) so the same
 byte-conversion pattern can't wrap, while still reading unambiguously as "no
 real host has this much," not a plausible real figure. This is the
@@ -115,10 +115,16 @@ behavior for callers who don't care about the typed-error path.
   `Availability()` (so combining this with `AvailableMemoryZero: true` or a
   low `AvailableMemoryMB` produces a self-consistent insufficient-capacity
   error). Deliberately *not* derived as `available + 1`: in the unlimited
-  case that's `unlimitedMemoryMB + 1`, and a consumer that reproduces
+  case that's `UnlimitedMemoryMB + 1`, and a consumer that reproduces
   hyperv's MB→bytes conversion on it would be right back at the overflow
   this change exists to fix elsewhere. A fixed requested value sidesteps
-  that entirely.
+  that entirely. If the caller hasn't configured a real insufficient-capacity
+  value, `Availability()` still reports `UnlimitedMemoryMB` by default —
+  which would otherwise produce a nonsensical "requested 2048 MB,
+  1,000,000,000,000 MB available" error, the opposite of what this knob
+  exists to simulate. `simulatedCapacityError` clamps `AvailableMemoryMB`
+  below the request in that default case: asking for the knob at all is
+  itself the caller saying "pretend there isn't room."
 - **`"orphaned_resource"`**: `Create` writes a store record in `"creating"`
   state — the same record shape a normal in-flight `Create` writes before
   its latency wait — but never advances it to `"running"`, then returns
@@ -192,7 +198,7 @@ matching the real drivers' cleanup-on-failure convention.
   order), a resource left behind by `"orphaned_resource"` injection is
   included.
 - `Availability()`: `AvailableMemoryZero: true` reports `0` regardless of
-  `AvailableMemoryMB`; unset reports `unlimitedMemoryMB`, not
+  `AvailableMemoryMB`; unset reports `UnlimitedMemoryMB`, not
   `math.MaxInt64`; an explicit positive `AvailableMemoryMB` still reports
   that value unchanged.
 - `FailCreateAs: "capacity"`: returns `*providersdk.CapacityError` with the
@@ -217,3 +223,38 @@ check the heartbeat dashboard renders `"0 MB free"` for that pool's provider
 number, not the previous `MaxInt64`-derived garbage figure. This is a real,
 currently-broken visual before this change and a concrete pass/fail after
 it.
+
+Verified via `TestUI_agents_devfactoryAvailabilityRendersSanely`
+(`internal/server/ui_test.go`) — feeds the dashboard the actual values
+`devfactory.Driver.Availability` reports rather than hand-picked numbers —
+plus a live `boxy serve` + `boxy sandbox create` run against a devfactory
+VM-profile pool (reached `ready` with realistic simulated SSH connection
+info; the pools/sandboxes dashboard pages rendered it correctly, confirmed
+via curl content checks after `playwright-cli` screenshots were blocked by
+a local TLS-trust config issue unrelated to this change).
+
+## Follow-ups (found during this work, deliberately not folded in here)
+
+- **`internal/pool/admission.go`'s resource-admission gate currently
+  requires a configured `server.secrets` backend for *every* pool type**,
+  not just ones whose driver implements `GuestPersonalizer` — confirmed live
+  against both a devfactory VM-profile pool and a plain container-profile
+  pool with no secret backend configured; both got stuck with
+  `lifecycle_error: "secret backend is required for guest admission"`
+  instead of reaching `ready`. The check
+  (`h.Secrets == nil → fail`) runs before calling
+  `h.Personalizer.PersonalizeGuestForPool`, which would correctly return
+  `(nil, nil)` for a driver without the capability — reordering those two
+  would fix it. This is a regression from the immediately-preceding commit
+  (`94518da`, #197), not something #181 introduced, and it's outside this
+  issue's scope to fix silently. Needs its own decision: see the
+  conversation this spec was written in for the finding as raised to the
+  user.
+- **`internal/config/schema/providers/*.config.schema.json` has no test
+  tying it to its `Config` struct.** This pass found and fixed
+  `devfactory.config.schema.json` missing `available_memory_mb` since #148
+  (`additionalProperties: false` means that drift would fail schema
+  validation for a valid config) while adding the two new #181 fields. A
+  `cmd/schema-gen` test asserting every `Config` JSON tag appears in its
+  provider's schema file would prevent recurrence — worth its own follow-up
+  issue rather than building here.
