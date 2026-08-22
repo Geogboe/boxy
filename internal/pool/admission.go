@@ -125,15 +125,22 @@ func (h *AdmissionHandler) Handle(ctx context.Context, event lifecycle.Event) (l
 	if h.Personalizer == nil {
 		return h.markReady(ctx, res, nil)
 	}
-	if h.Secrets == nil {
-		return h.fail(ctx, res, fmt.Errorf("secret backend is required for guest admission"))
-	}
 	result, err := h.Personalizer.PersonalizeGuestForPool(ctx, pool, res)
 	if err != nil {
 		return h.fail(ctx, res, fmt.Errorf("personalize resource %q: %w", res.ID, err))
 	}
 	if result == nil {
+		// The pool's driver doesn't implement GuestPersonalizer (e.g.
+		// docker, devfactory) — this is a routine, expected outcome, not a
+		// missing-config error. A secret backend is only actually needed
+		// below, to store a real credential a driver that DOES implement
+		// GuestPersonalizer just returned. Checking h.Secrets before this
+		// call would demand a secret backend for every pool in the server,
+		// not just ones that need one. See #181's design spec follow-ups.
 		return h.markReady(ctx, res, nil)
+	}
+	if h.Secrets == nil {
+		return h.fail(ctx, res, fmt.Errorf("secret backend is required for guest admission"))
 	}
 	if result.EphemeralCredential == nil || len(result.EphemeralCredential.Data) == 0 {
 		return h.fail(ctx, res, fmt.Errorf("personalization returned no credential for resource %q", res.ID))

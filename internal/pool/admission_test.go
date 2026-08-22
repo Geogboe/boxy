@@ -100,6 +100,62 @@ func TestAdmissionHandlerRotatesAndPersistsBeforeReady(t *testing.T) {
 	}
 }
 
+// TestAdmissionHandlerMarksReadyWithoutSecretsWhenPersonalizerDoesNotApply
+// covers a driver that doesn't implement GuestPersonalizer (e.g. docker,
+// devfactory) — PersonalizeGuestForPool correctly returns (nil, nil) for
+// those, and admission must not demand a configured secret backend just
+// because *some* pool in the server might need one. Before this fix, the
+// handler required h.Secrets != nil unconditionally whenever a Personalizer
+// was wired at all, which broke every non-guest-personalization pool
+// (docker, devfactory) unless server.secrets happened to be configured —
+// see #181's design spec, "Follow-ups".
+func TestAdmissionHandlerMarksReadyWithoutSecretsWhenPersonalizerDoesNotApply(t *testing.T) {
+	ctx := context.Background()
+	st := newTestStoreWithAdmissionResource(t)
+	personalizer := &admissionPersonalizer{result: nil}
+	handler := &AdmissionHandler{Store: st, Secrets: nil, Personalizer: personalizer}
+	payload, _ := json.Marshal(resourceProvisionedPayload{ResourceID: "res-1", PoolName: "win-vm"})
+
+	outcome, err := handler.Handle(ctx, lifecycle.Event{ID: "event-1", Type: ResourceProvisionedEventType, Subject: "res-1", Payload: payload})
+	if err != nil || outcome != lifecycle.OutcomeAck {
+		t.Fatalf("Handle() = (%v, %v), want (ack, nil)", outcome, err)
+	}
+	res, err := st.GetResource(ctx, "res-1")
+	if err != nil {
+		t.Fatalf("GetResource: %v", err)
+	}
+	if res.State != model.ResourceStateReady {
+		t.Fatalf("resource state = %q, want ready", res.State)
+	}
+	if personalizer.calls != 1 {
+		t.Fatalf("personalizer calls = %d, want 1 (must be consulted before requiring Secrets)", personalizer.calls)
+	}
+}
+
+// TestAdmissionHandlerRequiresSecretsWhenPersonalizerAppliesWithoutBackend
+// confirms the original protection still holds for a driver that DOES
+// implement GuestPersonalizer (e.g. hyperv) when no secret backend is
+// configured — only the no-op (nil, nil) case from the test above should be
+// exempt.
+func TestAdmissionHandlerRequiresSecretsWhenPersonalizerAppliesWithoutBackend(t *testing.T) {
+	ctx := context.Background()
+	st := newTestStoreWithAdmissionResource(t)
+	personalizer := &admissionPersonalizer{result: &providersdk.GuestPersonalizationResult{
+		AccessDetails: providersdk.GuestAccessDetails{Properties: map[string]string{"guest_address": "192.0.2.10"}},
+		EphemeralCredential: &providersdk.GuestCredential{
+			Kind: "password",
+			Data: json.RawMessage(`{"username":"Administrator","password":"${BOXY_TEST_PASSWORD}"}`),
+		},
+	}}
+	handler := &AdmissionHandler{Store: st, Secrets: nil, Personalizer: personalizer}
+	payload, _ := json.Marshal(resourceProvisionedPayload{ResourceID: "res-1", PoolName: "win-vm"})
+
+	outcome, err := handler.Handle(ctx, lifecycle.Event{ID: "event-1", Type: ResourceProvisionedEventType, Subject: "res-1", Payload: payload})
+	if outcome != lifecycle.OutcomeTerminal || err == nil {
+		t.Fatalf("Handle() = (%v, %v), want terminal error (no secret backend for a real credential)", outcome, err)
+	}
+}
+
 func TestAdmissionHandlerFailureQuarantinesWithoutRetryingSameResource(t *testing.T) {
 	ctx := context.Background()
 	st := newTestStoreWithAdmissionResource(t)
