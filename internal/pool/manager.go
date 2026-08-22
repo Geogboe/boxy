@@ -72,15 +72,27 @@ const (
 	provisionBackoffMax  = 5 * time.Minute
 )
 
+// ProvisionLocker serializes a driver's Create-then-store-write sequence
+// against a concurrent reconciliation sweep's List()-then-store-read
+// sequence for the same agent, closing a race where a resource visible
+// through a driver's ResourceLister isn't yet visible through the store —
+// see AgentRegistry.LockProvisioning's doc comment for the full mechanism
+// and #181's design spec, "Follow-ups", for how it was found. AgentRegistry
+// implements this; Manager and ReconcileAgent must share the same instance.
+type ProvisionLocker interface {
+	LockProvisioning(agentID string) func()
+}
+
 // Manager reconciles a pool's inventory against its policies.
 type Manager struct {
-	store        store.Store
-	provisioner  Provisioner
-	admission    AdmissionPublisher
-	guestSecrets boxysecrets.Store
-	clock        Clock
-	locksMu      sync.Mutex
-	poolLocks    map[model.PoolName]*sync.Mutex
+	store           store.Store
+	provisioner     Provisioner
+	admission       AdmissionPublisher
+	guestSecrets    boxysecrets.Store
+	provisionLocker ProvisionLocker
+	clock           Clock
+	locksMu         sync.Mutex
+	poolLocks       map[model.PoolName]*sync.Mutex
 
 	backoffMu sync.Mutex
 	backoff   map[model.PoolName]*provisionBackoffState
@@ -103,6 +115,29 @@ func (m *Manager) SetGuestSecretStore(secrets boxysecrets.Store) {
 	if m != nil {
 		m.guestSecrets = secrets
 	}
+}
+
+// SetProvisionLocker enables per-agent mutual exclusion between this
+// Manager's provisioning and a concurrent ReconcileAgent sweep for the same
+// agent (see ProvisionLocker). Optional: nil is a safe default for
+// embedders and unit tests that don't run agent-backed reconciliation
+// concurrently with provisioning.
+func (m *Manager) SetProvisionLocker(locker ProvisionLocker) {
+	if m != nil {
+		m.provisionLocker = locker
+	}
+}
+
+// lockProvisioning acquires the ProvisionLocker for agentID if one is
+// configured and agentID is non-empty (DriverProvisioner's resources have
+// no agent concept and are never subject to ReconcileAgent's sweep, so
+// there's nothing to serialize against). Always returns a valid release
+// func, even as a no-op, so callers can call it unconditionally.
+func (m *Manager) lockProvisioning(agentID string) func() {
+	if m.provisionLocker == nil || agentID == "" {
+		return func() {}
+	}
+	return m.provisionLocker.LockProvisioning(agentID)
 }
 
 // FailAdmission marks a resource whose pool-admission action cannot safely be
@@ -653,7 +688,15 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 					// retrying on every reconcile tick.
 					m.recordProvisionFailure(p.Name, pl.now)
 					if res.ID != "" {
-						if putErr := m.store.PutResource(ctx, res); putErr != nil {
+						// See the success path below for why this write is
+						// lock-guarded: a driver's own internal record for
+						// this ID (e.g. devfactory's orphaned-resource
+						// simulation) can already be visible through
+						// ResourceLister the moment Provision returns.
+						release := m.lockProvisioning(res.Provider.AgentID)
+						putErr := m.store.PutResource(ctx, res)
+						release()
+						if putErr != nil {
 							return fmt.Errorf("put quarantined resource %q: %w", res.ID, putErr)
 						}
 					}
@@ -670,8 +713,20 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 				if err := p.Inventory.Add(res); err != nil {
 					return fmt.Errorf("add resource to pool %q inventory: %w", p.Name, err)
 				}
-				if err := m.store.PutResource(ctx, res); err != nil {
-					return fmt.Errorf("put resource %q: %w", res.ID, err)
+				// Hold the per-agent provisioning lock across this write so
+				// a concurrent ReconcileAgent sweep for the same agent (see
+				// ProvisionLocker) can never observe this resource through
+				// the driver's List() without also seeing it here — closing
+				// the ghost-orphan race #181 exposed for fast drivers like
+				// devfactory. Released immediately after the write, not
+				// held through PublishResourceProvisioned below: the race
+				// this guards is specifically about store-vs-List()
+				// visibility, not the admission event.
+				release := m.lockProvisioning(res.Provider.AgentID)
+				putErr := m.store.PutResource(ctx, res)
+				release()
+				if putErr != nil {
+					return fmt.Errorf("put resource %q: %w", res.ID, putErr)
 				}
 				if m.admission != nil {
 					if err := m.admission.PublishResourceProvisioned(ctx, res); err != nil {

@@ -133,6 +133,17 @@ func reconcileObserver(st store.Store, registry *AgentRegistry, agentID string, 
 			return reconcileObserved{}, fmt.Errorf("reconcile agent %q: not registered", agentID)
 		}
 
+		// Hold the same per-agent lock Manager's provision actuator holds
+		// around its store write (see ProvisionLocker), across both reads
+		// below — the driver's List() and the store's ListResources().
+		// Without this, a resource whose Create() already returned but
+		// whose store write hasn't landed yet can be seen here via List()
+		// while still missing from tracked, and gets permanently
+		// misclassified as an orphan to adopt. See AgentRegistry.LockProvisioning's
+		// doc comment for the full mechanism.
+		release := registry.LockProvisioning(agentID)
+		defer release()
+
 		remote := make(map[model.ResourceID]remoteEntry)
 		listed := make(map[providersdk.Type]int)
 

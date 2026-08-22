@@ -25,6 +25,9 @@ type AgentRegistry struct {
 	byType map[providersdk.Type][]string // provider type -> agent IDs, insertion order
 	avail  map[string]bool               // agent ID -> available for new provisioning
 	cursor map[providersdk.Type]uint64   // provider type -> monotonic rotation counter
+
+	provisionLocksMu sync.Mutex
+	provisionLocks   map[string]*sync.Mutex // agent ID -> provisioning/reconciliation mutex, see LockProvisioning
 }
 
 // NewAgentRegistry creates an empty registry.
@@ -190,6 +193,43 @@ func (r *AgentRegistry) Resolve(provider providersdk.Type, pinnedAgentID string)
 		}
 	}
 	return nil, fmt.Errorf("no available agent for provider %q", provider)
+}
+
+// LockProvisioning acquires the per-agent provisioning lock, blocking until
+// it's available, and returns a release func that must be called exactly
+// once. Implements pool.ProvisionLocker.
+//
+// It closes a race exposed by devfactory implementing providersdk.ResourceLister
+// (see #181's design spec, "Follow-ups"): Manager's provision actuator calls
+// driver.Create() and only writes the resulting resource to the store
+// afterward, while ReconcileAgent's periodic sweep (#133/#174) treats any ID
+// a driver's List() reports that the store doesn't yet know about as an
+// orphan to adopt. Both call sites are independent goroutines
+// (internal/cli/serve.go starts them separately) with no prior
+// synchronization between them. A driver whose Create() writes its own
+// internal state fast enough — devfactory, unlike docker or hyperv, can
+// return in well under a millisecond — makes that window reliably hittable:
+// the sweep can see a resource via List() before the store's own write for
+// the same resource has landed, permanently misclassifying it as an unowned
+// orphan. Manager's actuator holds this lock from right after Provision()
+// returns until its store write completes; ReconcileAgent's observer holds
+// it across its combined List()-and-store-read snapshot for the same agent.
+// Whichever side runs first, the other always sees a fully settled view —
+// no polling, no fixed grace period.
+func (r *AgentRegistry) LockProvisioning(agentID string) func() {
+	r.provisionLocksMu.Lock()
+	if r.provisionLocks == nil {
+		r.provisionLocks = make(map[string]*sync.Mutex)
+	}
+	mu, ok := r.provisionLocks[agentID]
+	if !ok {
+		mu = &sync.Mutex{}
+		r.provisionLocks[agentID] = mu
+	}
+	r.provisionLocksMu.Unlock()
+
+	mu.Lock()
+	return mu.Unlock
 }
 
 func supportsProvider(a agentsdk.Agent, provider providersdk.Type) bool {

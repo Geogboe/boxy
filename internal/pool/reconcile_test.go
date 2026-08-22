@@ -138,6 +138,10 @@ type fakeListingAgent struct {
 	// TestRunAgentReconciliation_RunsImmediatelyThenOnEachTick to prove a
 	// second (ticked) pass actually ran, not just the immediate one.
 	listCalls atomic.Int32
+	// blockOnList, if non-nil, is received from before List returns —
+	// lets a test hold ReconcileAgent inside its locked critical section
+	// on demand, for TestReconcileAgent_ProvisionLockPreventsGhostAdoption.
+	blockOnList <-chan struct{}
 }
 
 func (a *fakeListingAgent) Info() agentsdk.AgentInfo { return a.info }
@@ -158,6 +162,9 @@ func (a *fakeListingAgent) Allocate(context.Context, providersdk.Type, string) (
 }
 func (a *fakeListingAgent) List(_ context.Context, provider providersdk.Type) ([]providersdk.ResourceStatus, error) {
 	a.listCalls.Add(1)
+	if a.blockOnList != nil {
+		<-a.blockOnList
+	}
 	if err, ok := a.listErrs[provider]; ok {
 		return nil, err
 	}
@@ -308,6 +315,68 @@ func TestReconcileAgent_NoResourceListingCapability(t *testing.T) {
 	// Must not error even though this agent can't be audited at all.
 	if err := ReconcileAgent(ctx, st, registry, "agent-1", slog.Default()); err != nil {
 		t.Fatalf("ReconcileAgent: %v", err)
+	}
+}
+
+// TestReconcileAgent_HoldsProvisionLockAcrossItsSweep proves reconcileObserver
+// holds AgentRegistry's per-agent provisioning lock across its List() call —
+// the mechanism ProvisionLocker relies on to close the ghost-orphan race
+// #181 exposed for fast ResourceLister drivers (see
+// AgentRegistry.LockProvisioning's doc comment). A concurrent
+// LockProvisioning("agent-1") acquisition, simulating Manager's provision
+// actuator, must block until ReconcileAgent's sweep — deliberately held
+// inside its own List() call via blockOnList — releases it.
+func TestReconcileAgent_HoldsProvisionLockAcrossItsSweep(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+
+	listGate := make(chan struct{})
+	agent := &fakeListingAgent{
+		info:        agentsdk.AgentInfo{ID: "agent-1", Providers: []providersdk.Type{"devfactory"}},
+		blockOnList: listGate,
+	}
+	registry := registryWith(t, agent)
+
+	reconcileDone := make(chan error, 1)
+	go func() {
+		reconcileDone <- ReconcileAgent(ctx, st, registry, "agent-1", slog.Default())
+	}()
+
+	// Wait for ReconcileAgent to actually enter List() (not just to have
+	// been scheduled) before probing the lock.
+	deadline := time.After(time.Second)
+	for agent.listCalls.Load() < 1 {
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for ReconcileAgent to call List")
+		case <-time.After(time.Millisecond):
+		}
+	}
+
+	competingAcquire := make(chan struct{})
+	go func() {
+		release := registry.LockProvisioning("agent-1")
+		close(competingAcquire)
+		release()
+	}()
+
+	select {
+	case <-competingAcquire:
+		t.Fatal("a competing LockProvisioning(\"agent-1\") acquired while ReconcileAgent's sweep was still mid-List()")
+	case <-time.After(50 * time.Millisecond):
+		// expected: still blocked
+	}
+
+	close(listGate) // let ReconcileAgent's List() return, finishing its pass and releasing the lock
+
+	if err := <-reconcileDone; err != nil {
+		t.Fatalf("ReconcileAgent: %v", err)
+	}
+	select {
+	case <-competingAcquire:
+		// expected: unblocks once the sweep's own lock is released
+	case <-time.After(time.Second):
+		t.Fatal("competing LockProvisioning(\"agent-1\") never acquired after ReconcileAgent's sweep finished")
 	}
 }
 
