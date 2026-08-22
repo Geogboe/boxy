@@ -11,6 +11,7 @@ package devfactory
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"time"
 )
 
@@ -102,4 +103,19 @@ type Config struct {
 	//     be confirmed torn down — so ResourceLister and quarantine/cleanup
 	//     flows have something real to find and later Delete.
 	FailCreateAs string `yaml:"fail_create_as" json:"fail_create_as"`
+}
+
+// ResolveRelativePaths implements providersdk.RelativePathResolver. A
+// relative DataDir is resolved against baseDir (the directory of the boxy
+// config file DataDir was loaded from) rather than being left to resolve
+// against the process's own working directory — matching how Boxy's own
+// .boxy/state.json resolves (see internal/cli/serve.go's serveStatePath).
+// An empty or already-absolute DataDir, and an empty baseDir (no config
+// file path known), are left untouched. See #181's design spec,
+// "Persistence backend and DataDir resolution."
+func (c *Config) ResolveRelativePaths(baseDir string) {
+	if c.DataDir == "" || baseDir == "" || filepath.IsAbs(c.DataDir) {
+		return
+	}
+	c.DataDir = filepath.Join(baseDir, c.DataDir)
 }

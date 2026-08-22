@@ -92,7 +92,12 @@ func (r *Registry) Types() []Type {
 // zero-value configuration. This keeps provider configuration plumbing in the
 // provider-agnostic registry rather than duplicating it in each application
 // entrypoint.
-func (r *Registry) NewDriverFromInstance(instance Instance) (Driver, error) {
+//
+// baseDir is passed to the decoded config's ResolveRelativePaths, if it
+// implements RelativePathResolver — pass the directory of whatever boxy
+// config file supplied instance, or "" if none (see RelativePathResolver's
+// doc comment for what implementations should do with an empty baseDir).
+func (r *Registry) NewDriverFromInstance(instance Instance, baseDir string) (Driver, error) {
 	registration, ok := r.Get(instance.Type)
 	if !ok {
 		return nil, fmt.Errorf("provider type %q not found in registry", instance.Type)
@@ -106,6 +111,9 @@ func (r *Registry) NewDriverFromInstance(instance Instance) (Driver, error) {
 		if err := json.Unmarshal(b, cfg); err != nil {
 			return nil, fmt.Errorf("unmarshal config for provider type %q: %w", instance.Type, err)
 		}
+	}
+	if resolver, ok := cfg.(RelativePathResolver); ok {
+		resolver.ResolveRelativePaths(baseDir)
 	}
 	driver, err := registration.NewDriver(cfg)
 	if err != nil {

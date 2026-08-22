@@ -314,4 +314,27 @@ func TestResolveAgentServeOptsLoadsProviderConfig(t *testing.T) {
 	if len(opts.providerConfigs) != 1 || opts.providerConfigs[0].Config["host"] != "unix:///tmp/docker.sock" {
 		t.Fatalf("providerConfigs = %+v, want decoded docker config", opts.providerConfigs)
 	}
+	if want := filepath.Dir(path); opts.providerConfigsBaseDir != want {
+		t.Fatalf("providerConfigsBaseDir = %q, want %q", opts.providerConfigsBaseDir, want)
+	}
+}
+
+func TestResolveAgentServeOptsSetsProviderConfigsBaseDirFromServiceConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "service.yaml")
+	if err := saveAgentServiceConfig(path, agentServiceConfig{
+		Server: "host:9091",
+		ProviderConfigs: []providersdk.Instance{
+			{Name: "docker-local", Type: "docker"},
+		},
+	}); err != nil {
+		t.Fatalf("saveAgentServiceConfig: %v", err)
+	}
+
+	opts, err := resolveAgentServeOpts(agentServeOpts{serviceConfigPath: path})
+	if err != nil {
+		t.Fatalf("resolveAgentServeOpts: %v", err)
+	}
+	if want := filepath.Dir(path); opts.providerConfigsBaseDir != want {
+		t.Fatalf("providerConfigsBaseDir = %q, want %q", opts.providerConfigsBaseDir, want)
+	}
 }

@@ -144,11 +144,54 @@ func TestRegistryNewDriverFromInstanceDecodesConfig(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	if _, err := registry.NewDriverFromInstance(Instance{Type: "fake", Config: map[string]any{"host": "remote"}}); err != nil {
+	if _, err := registry.NewDriverFromInstance(Instance{Type: "fake", Config: map[string]any{"host": "remote"}}, ""); err != nil {
 		t.Fatalf("NewDriverFromInstance: %v", err)
 	}
 	if got != "remote" {
 		t.Fatalf("decoded host = %q, want remote", got)
+	}
+}
+
+type resolvingConfig struct {
+	Path     string `json:"path"`
+	resolved string
+}
+
+func (c *resolvingConfig) ResolveRelativePaths(baseDir string) {
+	c.resolved = baseDir
+}
+
+func TestRegistryNewDriverFromInstance_AppliesRelativePathResolver(t *testing.T) {
+	var gotBaseDir string
+	registry := NewRegistry()
+	if err := registry.Register(Registration{
+		Type:        "fake",
+		ConfigProto: func() any { return &resolvingConfig{} },
+		NewDriver: func(cfg any) (Driver, error) {
+			gotBaseDir = cfg.(*resolvingConfig).resolved
+			return registryDriver{}, nil
+		},
+	}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	if _, err := registry.NewDriverFromInstance(Instance{Type: "fake"}, "/base/dir"); err != nil {
+		t.Fatalf("NewDriverFromInstance: %v", err)
+	}
+	if gotBaseDir != "/base/dir" {
+		t.Fatalf("ResolveRelativePaths baseDir seen by driver = %q, want /base/dir", gotBaseDir)
+	}
+}
+
+func TestRegistryNewDriverFromInstance_SkipsResolverWhenConfigDoesNotImplementIt(t *testing.T) {
+	registry := NewRegistry()
+	if err := registry.Register(testRegistration()); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	// testRegistration's ConfigProto is a plain struct{} — no
+	// ResolveRelativePaths method. Must not panic or error.
+	if _, err := registry.NewDriverFromInstance(Instance{Type: "fake"}, "/base/dir"); err != nil {
+		t.Fatalf("NewDriverFromInstance: %v", err)
 	}
 }
 

@@ -602,3 +602,4 @@ func TestDriver_Create_CtxCancelDuringLatency_CleansUp(t *testing.T) {
 
 var _ providersdk.AvailabilityReporter = (*Driver)(nil)
 var _ providersdk.ResourceLister = (*Driver)(nil)
+var _ providersdk.RelativePathResolver = (*Config)(nil)
