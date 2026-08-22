@@ -11,9 +11,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"sync"
 	"time"
 
+	"github.com/Geogboe/boxy/pkg/diskjson"
 	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
@@ -40,13 +40,14 @@ const simulatedMemoryRequestMB int64 = 2048
 
 // Driver is the devfactory reference implementation of providersdk.Driver.
 // State is persisted to a JSON file in DataDir so you can inspect it
-// with cat/jq while developing the rest of the system.
+// with cat/jq while developing the rest of the system — see store.go and
+// pkg/diskjson, which owns the actual load/save mechanics and locking.
 type Driver struct {
 	cfg     Config
 	profile profileSpec
 	latency time.Duration
 	dataDir string
-	mu      sync.Mutex
+	store   *diskjson.Store[storeData]
 }
 
 // New creates a devfactory driver from a parsed Config. If DataDir is
@@ -74,7 +75,25 @@ func New(cfg *Config) *Driver {
 		profile: profile,
 		latency: latency,
 		dataDir: dataDir,
+		store:   newDevfactoryStore(dataDir),
 	}
+}
+
+// loadStore returns the current store contents, normalized.
+func (d *Driver) loadStore() (storeData, error) {
+	s, err := d.store.Load()
+	if err != nil {
+		return storeData{}, err
+	}
+	return normalizeStoreData(s), nil
+}
+
+// updateStore loads the current store contents (normalized), applies fn,
+// and atomically saves the result — see diskjson.Store.Update.
+func (d *Driver) updateStore(fn func(storeData) (storeData, error)) (storeData, error) {
+	return d.store.Update(func(s storeData) (storeData, error) {
+		return fn(normalizeStoreData(s))
+	})
 }
 
 func (d *Driver) Type() providersdk.Type {
@@ -106,9 +125,7 @@ func (d *Driver) Availability(ctx context.Context) (*providersdk.ResourceAvailab
 // devfactory already persists to. Sorted by ID since map iteration order
 // isn't deterministic.
 func (d *Driver) List(ctx context.Context) ([]providersdk.ResourceStatus, error) {
-	d.mu.Lock()
-	store, err := loadStore(d.dataDir)
-	d.mu.Unlock()
+	store, err := d.loadStore()
 	if err != nil {
 		return nil, fmt.Errorf("devfactory: load store: %w", err)
 	}
@@ -140,31 +157,24 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 	id := generateID()
 	now := time.Now()
 
-	d.mu.Lock()
-	store, err := loadStore(d.dataDir)
-	if err != nil {
-		d.mu.Unlock()
-		return nil, fmt.Errorf("devfactory: load store: %w", err)
-	}
+	var connInfo map[string]string
+	if _, err := d.updateStore(func(s storeData) (storeData, error) {
+		port := s.NextPort
+		s.NextPort++
 
-	port := store.NextPort
-	store.NextPort++
+		connInfo = d.profile.ConnInfo(port)
 
-	connInfo := d.profile.ConnInfo(port)
-
-	store.Resources[id] = &resourceRecord{
-		ID:             id,
-		State:          "creating",
-		Labels:         d.cfg.Labels,
-		ConnectionInfo: connInfo,
-		CreatedAt:      now,
-	}
-
-	if err := saveStore(d.dataDir, store); err != nil {
-		d.mu.Unlock()
+		s.Resources[id] = &resourceRecord{
+			ID:             id,
+			State:          "creating",
+			Labels:         d.cfg.Labels,
+			ConnectionInfo: connInfo,
+			CreatedAt:      now,
+		}
+		return s, nil
+	}); err != nil {
 		return nil, fmt.Errorf("devfactory: save store: %w", err)
 	}
-	d.mu.Unlock()
 
 	// Block for the configured latency, then mark running.
 	if d.latency > 0 {
@@ -180,20 +190,14 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 		}
 	}
 
-	d.mu.Lock()
-	store2, err := loadStore(d.dataDir)
-	if err != nil {
-		d.mu.Unlock()
-		return nil, fmt.Errorf("devfactory: load store: %w", err)
-	}
-	if r, ok := store2.Resources[id]; ok {
-		r.State = "running"
-	}
-	if err := saveStore(d.dataDir, store2); err != nil {
-		d.mu.Unlock()
+	if _, err := d.updateStore(func(s storeData) (storeData, error) {
+		if r, ok := s.Resources[id]; ok {
+			r.State = "running"
+		}
+		return s, nil
+	}); err != nil {
 		return nil, fmt.Errorf("devfactory: save store: %w", err)
 	}
-	d.mu.Unlock()
 
 	return &providersdk.Resource{
 		ID:             id,
@@ -241,21 +245,15 @@ func (d *Driver) simulatedCapacityError(ctx context.Context) error {
 func (d *Driver) createOrphaned() (*providersdk.Resource, error) {
 	id := generateID()
 
-	d.mu.Lock()
-	store, err := loadStore(d.dataDir)
-	if err != nil {
-		d.mu.Unlock()
-		return nil, fmt.Errorf("devfactory: load store: %w", err)
-	}
-	store.Resources[id] = &resourceRecord{
-		ID:        id,
-		State:     "creating",
-		Labels:    d.cfg.Labels,
-		CreatedAt: time.Now(),
-	}
-	err = saveStore(d.dataDir, store)
-	d.mu.Unlock()
-	if err != nil {
+	if _, err := d.updateStore(func(s storeData) (storeData, error) {
+		s.Resources[id] = &resourceRecord{
+			ID:        id,
+			State:     "creating",
+			Labels:    d.cfg.Labels,
+			CreatedAt: time.Now(),
+		}
+		return s, nil
+	}); err != nil {
 		return nil, fmt.Errorf("devfactory: save store: %w", err)
 	}
 
@@ -270,23 +268,15 @@ func (d *Driver) createOrphaned() (*providersdk.Resource, error) {
 // swallowed: this is best-effort cleanup on an already-failing path, same
 // as docker/hyperv's deleteBestEffort.
 func (d *Driver) cleanupAfterCancel(id string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	store, err := loadStore(d.dataDir)
-	if err != nil {
-		return
-	}
-	delete(store.Resources, id)
-	_ = saveStore(d.dataDir, store)
+	_, _ = d.updateStore(func(s storeData) (storeData, error) {
+		delete(s.Resources, id)
+		return s, nil
+	})
 }
 
 // Read returns the current state of a simulated resource.
 func (d *Driver) Read(ctx context.Context, id string) (*providersdk.ResourceStatus, error) {
-	d.mu.Lock()
-	store, err := loadStore(d.dataDir)
-	d.mu.Unlock()
-
+	store, err := d.loadStore()
 	if err != nil {
 		return nil, fmt.Errorf("devfactory: load store: %w", err)
 	}
@@ -310,43 +300,37 @@ func (d *Driver) Update(ctx context.Context, id string, op providersdk.Operation
 		return nil, fmt.Errorf("devfactory: simulated update failure")
 	}
 
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	var outputs map[string]string
+	if _, err := d.updateStore(func(s storeData) (storeData, error) {
+		r, ok := s.Resources[id]
+		if !ok {
+			return s, fmt.Errorf("devfactory: resource %q not found", id)
+		}
 
-	store, err := loadStore(d.dataDir)
-	if err != nil {
-		return nil, fmt.Errorf("devfactory: load store: %w", err)
-	}
+		desc := fmt.Sprintf("%T", op)
+		outputs = map[string]string{"status": "ok"}
 
-	r, ok := store.Resources[id]
-	if !ok {
-		return nil, fmt.Errorf("devfactory: resource %q not found", id)
-	}
+		switch o := op.(type) {
+		case *ExecOp:
+			desc = fmt.Sprintf("exec: %v", o.Command)
+			outputs["operation"] = desc
+			outputs["stdout"] = fmt.Sprintf("[simulated output of: %v]", o.Command)
+			outputs["exit_code"] = "0"
+		case *SetStateOp:
+			prev := r.State
+			desc = fmt.Sprintf("set_state: %s → %s", prev, o.State)
+			r.State = o.State
+			outputs["operation"] = desc
+			outputs["previous_state"] = prev
+			outputs["new_state"] = o.State
+		default:
+			outputs["operation"] = desc
+		}
 
-	desc := fmt.Sprintf("%T", op)
-	outputs := map[string]string{"status": "ok"}
-
-	switch o := op.(type) {
-	case *ExecOp:
-		desc = fmt.Sprintf("exec: %v", o.Command)
-		outputs["operation"] = desc
-		outputs["stdout"] = fmt.Sprintf("[simulated output of: %v]", o.Command)
-		outputs["exit_code"] = "0"
-	case *SetStateOp:
-		prev := r.State
-		desc = fmt.Sprintf("set_state: %s → %s", prev, o.State)
-		r.State = o.State
-		outputs["operation"] = desc
-		outputs["previous_state"] = prev
-		outputs["new_state"] = o.State
-	default:
-		outputs["operation"] = desc
-	}
-
-	r.Updates = append(r.Updates, desc)
-
-	if err := saveStore(d.dataDir, store); err != nil {
-		return nil, fmt.Errorf("devfactory: save store: %w", err)
+		r.Updates = append(r.Updates, desc)
+		return s, nil
+	}); err != nil {
+		return nil, err
 	}
 
 	return &providersdk.Result{Outputs: outputs}, nil
@@ -373,20 +357,11 @@ func (d *Driver) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("devfactory: simulated delete failure")
 	}
 
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	store, err := loadStore(d.dataDir)
-	if err != nil {
-		return fmt.Errorf("devfactory: load store: %w", err)
-	}
-
-	if _, ok := store.Resources[id]; !ok {
-		return nil
-	}
-	delete(store.Resources, id)
-
-	return saveStore(d.dataDir, store)
+	_, err := d.updateStore(func(s storeData) (storeData, error) {
+		delete(s.Resources, id)
+		return s, nil
+	})
+	return err
 }
 
 // Allocate performs allocation-time work based on the driver's profile.
@@ -394,9 +369,7 @@ func (d *Driver) Delete(ctx context.Context, id string) error {
 // VM: generates an RSA SSH keypair to /tmp/boxy/key_<id> and returns SSH info.
 // Share: generates random credentials and returns SMB connection info.
 func (d *Driver) Allocate(ctx context.Context, id string) (map[string]any, error) {
-	d.mu.Lock()
-	store, err := loadStore(d.dataDir)
-	d.mu.Unlock()
+	store, err := d.loadStore()
 	if err != nil {
 		return nil, fmt.Errorf("devfactory: load store: %w", err)
 	}
@@ -478,10 +451,7 @@ func (d *Driver) DataDir() string {
 
 // ResourceCount returns the number of tracked resources.
 func (d *Driver) ResourceCount() int {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	store, err := loadStore(d.dataDir)
+	store, err := d.loadStore()
 	if err != nil {
 		return 0
 	}
@@ -490,10 +460,7 @@ func (d *Driver) ResourceCount() int {
 
 // ResourceUpdates returns the update log for a resource.
 func (d *Driver) ResourceUpdates(id string) ([]string, bool) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	store, err := loadStore(d.dataDir)
+	store, err := d.loadStore()
 	if err != nil {
 		return nil, false
 	}

@@ -1,10 +1,10 @@
 package devfactory
 
 import (
-	"encoding/json"
-	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/Geogboe/boxy/pkg/diskjson"
 )
 
 const storeFilename = "devfactory.json"
@@ -25,55 +25,33 @@ type storeData struct {
 	NextPort  int                        `json:"next_port"`
 }
 
-func newStoreData() *storeData {
-	return &storeData{
+func newStoreData() storeData {
+	return storeData{
 		Resources: make(map[string]*resourceRecord),
 		NextPort:  10000,
 	}
 }
 
-// loadStore reads the store file from disk. Returns empty store if the
-// file doesn't exist yet.
-func loadStore(dataDir string) (*storeData, error) {
-	path := filepath.Join(dataDir, storeFilename)
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return newStoreData(), nil
-		}
-		return nil, err
-	}
-
-	var s storeData
-	if err := json.Unmarshal(data, &s); err != nil {
-		return nil, err
-	}
+// normalizeStoreData fills in defaults a decoded storeData might be missing
+// — either because the file doesn't exist yet (diskjson.Store's newFunc
+// covers that case already, but re-normalizing here is cheap and covers a
+// store file written before a field existed) or because a zero-value
+// storeData was unmarshaled from an empty/partial file.
+func normalizeStoreData(s storeData) storeData {
 	if s.Resources == nil {
 		s.Resources = make(map[string]*resourceRecord)
 	}
 	if s.NextPort == 0 {
 		s.NextPort = 10000
 	}
-	return &s, nil
+	return s
 }
 
-// saveStore writes the store to disk as indented JSON.
-func saveStore(dataDir string, s *storeData) error {
-	if err := os.MkdirAll(dataDir, 0o700); err != nil {
-		return err
-	}
-	path := filepath.Join(dataDir, storeFilename)
-
-	data, err := json.MarshalIndent(s, "", "  ")
-	if err != nil {
-		return err
-	}
-	// os.WriteFile's mode argument is only applied by the OS on file
-	// creation, not on rewrite of a pre-existing file — see #158. This path
-	// rewrites the same store file on every save.
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return err
-	}
-	return os.Chmod(path, 0o600)
+// newDevfactoryStore builds the diskjson.Store devfactory.json is persisted
+// through — one atomically-written JSON blob, mutex-guarded by the Store
+// itself. See pkg/diskjson's package doc for why devfactory uses this
+// instead of hand-rolling its own load/save (it used to; see #181's design
+// spec, "Persistence backend and DataDir resolution").
+func newDevfactoryStore(dataDir string) *diskjson.Store[storeData] {
+	return diskjson.New(filepath.Join(dataDir, storeFilename), newStoreData)
 }
