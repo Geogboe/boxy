@@ -246,10 +246,32 @@ a local TLS-trust config issue unrelated to this change).
   `h.Personalizer.PersonalizeGuestForPool`, which would correctly return
   `(nil, nil)` for a driver without the capability — reordering those two
   would fix it. This is a regression from the immediately-preceding commit
-  (`94518da`, #197), not something #181 introduced, and it's outside this
-  issue's scope to fix silently. Needs its own decision: see the
-  conversation this spec was written in for the finding as raised to the
-  user.
+  (`94518da`, #197), not something #181 introduced. **Fixed on this branch**
+  (user chose "fix it now, same branch" when asked): the ordering was
+  swapped so `h.Secrets == nil` is only checked after confirming the driver
+  actually returned a personalization result. See
+  `TestAdmissionHandlerMarksReadyWithoutSecretsWhenPersonalizerDoesNotApply`
+  and `TestAdmissionHandlerRequiresSecretsWhenPersonalizerAppliesWithoutBackend`.
+- **A theorized race between `Manager`'s provision-then-store-write sequence
+  and `ReconcileAgent`'s periodic orphan-adoption sweep** (#133/#174),
+  newly reachable once devfactory implements `ResourceLister` and can
+  return from `Create` in well under a millisecond. Investigated,
+  and initially misreported as a confirmed live bug — the "reproduction"
+  turned out to be an artifact of a relative `data_dir` in a test config
+  resolving against the wrong process CWD, contaminating results across
+  runs. A proper isolated A/B repro (patched vs. unpatched, absolute
+  `data_dir`, full state cleanup between runs) found **zero** live
+  occurrences either way; a cold `boxy serve` start also runs pool
+  initialization synchronously before the reconciliation goroutine starts,
+  closing the only window that theory depended on at startup. What remains
+  true, proven by `TestReconcileAgent_HoldsProvisionLockAcrossItsSweep`
+  with real goroutines and a real mutex, is that the two code paths *can*
+  interleave dangerously in principle if a future change removes that
+  synchronous-startup ordering. Kept as defensive hardening — `AgentRegistry.
+  LockProvisioning` (`internal/pool/agent_registry.go`) — on the user's
+  explicit call: "if it's a better architecture I'm all for it," independent
+  of whether the originally-claimed live bug was ever real. Not claimed
+  as a bug fix in the commit that introduces it.
 - **`internal/config/schema/providers/*.config.schema.json` has no test
   tying it to its `Config` struct.** This pass found and fixed
   `devfactory.config.schema.json` missing `available_memory_mb` since #148
@@ -258,3 +280,96 @@ a local TLS-trust config issue unrelated to this change).
   `cmd/schema-gen` test asserting every `Config` JSON tag appears in its
   provider's schema file would prevent recurrence — worth its own follow-up
   issue rather than building here.
+
+## Persistence backend and DataDir resolution (added post-#181, same branch)
+
+Investigating the race above surfaced two independent, more fundamental
+gaps the user asked to have fixed properly rather than left as "vibed"
+persistence, prioritizing clean architecture over minimal scope:
+
+1. **devfactory's own store (`pkg/providersdk/providers/devfactory/store.go`)
+   was a smaller, weaker reimplementation of something this codebase
+   already does correctly.** `pkg/store.DiskStore` (Boxy's own
+   `state.json`) writes atomically — `os.WriteFile` to a `.tmp` sibling,
+   then `os.Rename` over the real path — specifically because
+   `os.WriteFile`'s mode argument is only honored on file *creation*, not
+   on rewrite of a pre-existing file (see AGENTS.md's "Lessons Learned").
+   devfactory's `saveStore` instead did a direct `os.WriteFile` over the
+   live file followed by a separate `os.Chmod`, which is not atomic: a
+   crash or concurrent read mid-write could observe a truncated or
+   partially-written `devfactory.json`. Every one of devfactory's driver
+   methods also hand-rolled its own `d.mu.Lock(); loadStore(...); ...;
+   saveStore(...); d.mu.Unlock()` sequence — ten near-identical copies of
+   the same load/mutate/save shape.
+
+   **Decision:** extract the load/mutate/atomic-save pattern into a new
+   generic package, `pkg/diskjson` — a `Store[T]` persisting one
+   JSON-serializable value with `Load`, `Save`, and a locked
+   `Update(func(T) (T, error)) (T, error)` that removes the need for
+   callers to manage their own mutex. It's deliberately **stateless
+   between calls** (every call round-trips through disk rather than
+   caching in memory) rather than mirroring `DiskStore`'s in-memory-cache
+   shape — devfactory's package doc comment explicitly promises state you
+   can `cat`/`jq` mid-run, and a stateless store preserves that byte-for-
+   byte. This fits the project's own `pkg/` philosophy (AGENTS.md: "generic
+   contracts, primitives... usable outside of boxy," naming precedent:
+   `pkg/httpjson`) — it isn't Boxy-specific and carries no devfactory
+   coupling. devfactory's `store.go` and `driver.go` are rebuilt on it,
+   collapsing every load/mutate/save call site to one `d.store.Update(...)`
+   call and removing `Driver`'s own `sync.Mutex` entirely (the `Store[T]`
+   owns locking now).
+
+   **Non-goal:** a real embedded database (bbolt/sqlite). devfactory
+   persists exactly one JSON blob per process; `DiskStore`'s own doc
+   comment already treats that upgrade as available later "without
+   changing the Store interface" if ever needed for the *real* state
+   store, and nothing here needs it for a reference/testing double.
+   Reaching for a database dependency to persist ~one struct would be the
+   over-engineering the "clean architecture, not MVP" value warns against
+   in the other direction.
+
+   **Non-goal (this branch):** refactoring `pkg/store.DiskStore` itself to
+   build on `pkg/diskjson`. `DiskStore` caches its full state in memory and
+   persists on every mutation, a different shape than `diskjson.Store[T]`'s
+   stateless round-trip; forcing that merge now risks an unrelated
+   regression in the one store every daemon actually depends on, for a
+   file that isn't broken. Worth a deliberate follow-up, not a side effect
+   here.
+
+2. **`Config.DataDir` resolved relative paths against the process's
+   ambient working directory, not the boxy config file's own directory** —
+   unlike `.boxy/state.json`, which `internal/cli/serve.go`'s
+   `serveStatePath` explicitly resolves against `filepath.Dir(cfgPath)`.
+   A relative `data_dir: .boxy/devfactory-c` in a config file therefore
+   meant something different depending on where `boxy serve` happened to
+   be launched from — the exact ambiguity that caused this session's
+   false-positive race finding (data from an unrelated earlier run, in an
+   unrelated directory, silently adopted as "this run's" store).
+
+   **Decision:** add `providersdk.RelativePathResolver`, a new optional
+   provider-config capability (`ResolveRelativePaths(baseDir string)`),
+   detected the same way as every other optional capability in this
+   codebase (`ResourceLister`, `AvailabilityReporter`, `GuestPersonalizer`,
+   `ErrorTyper`) — type assertion, not embedding. `Registry.
+   NewDriverFromInstance` gains a `baseDir` parameter and calls it, if
+   implemented, right after decoding config and before constructing the
+   driver. `devfactory.Config` implements it: a relative `DataDir` is
+   joined onto `baseDir`; an absolute `DataDir`, an empty `DataDir`, or an
+   empty `baseDir` (no config file — e.g. `boxy agent serve` with no
+   `--config`) are left untouched. Both real call sites are threaded
+   through: the daemon's `buildDrivers` (`internal/cli/serve.go`, already
+   has `cfgPath` right next to where it opens `state.json`) and the remote
+   agent's `buildAgentDrivers` (`internal/cli/agent_serve.go`, sourced from
+   whichever of `--config` or `--service-config` actually supplied the
+   provider instances — the two take different base directories and
+   `resolveAgentServeOpts` tracks that explicitly rather than assuming
+   `--config`).
+
+   **Non-goal:** generalizing this to every provider's path-shaped config
+   fields. docker's socket path and hyperv's VHD/template paths are real
+   host filesystem locations an operator points at explicitly — "relative
+   to boxy's own config file" isn't the right default for them the way it
+   is for a directory that's conceptually devfactory's own
+   `.boxy/`-equivalent. `RelativePathResolver` is opt-in per `Config`
+   type for exactly this reason: no other provider implements it today,
+   and none is added speculatively here.
