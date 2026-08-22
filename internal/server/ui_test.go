@@ -14,6 +14,7 @@ import (
 	"github.com/Geogboe/boxy/internal/server"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
+	"github.com/Geogboe/boxy/pkg/providersdk/providers/devfactory"
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
@@ -159,6 +160,66 @@ func TestUI_agents_rendersStatusesCapacityAndPolling(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("agents page missing %q; body = %q", want, body)
 		}
+	}
+}
+
+// TestUI_agents_devfactoryAvailabilityRendersSanely closes the loop on
+// #181's Availability() sentinel fix: it feeds the dashboard the *actual*
+// values devfactory.Driver.Availability reports (not hand-picked numbers)
+// and asserts the rendered page reflects them sanely. Before that fix, an
+// unconfigured devfactory pool's Availability reported math.MaxInt64, which
+// formatMemoryMB rendered as "9,223,372,036,854,775,807 MB free" — this
+// guards against that regression without needing a real mTLS remote agent
+// (the dashboard's Availability data is agent-transport-agnostic; see
+// TestUI_agents_rendersStatusesCapacityAndPolling for the same pattern with
+// hand-picked values).
+func TestUI_agents_devfactoryAvailabilityRendersSanely(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	unconfigured := devfactory.New(&devfactory.Config{DataDir: t.TempDir()})
+	unlimitedAvail, err := unconfigured.Availability(ctx)
+	if err != nil {
+		t.Fatalf("Availability (unconfigured): %v", err)
+	}
+
+	zeroed := devfactory.New(&devfactory.Config{AvailableMemoryZero: true, DataDir: t.TempDir()})
+	zeroAvail, err := zeroed.Availability(ctx)
+	if err != nil {
+		t.Fatalf("Availability (AvailableMemoryZero): %v", err)
+	}
+	if zeroAvail.MemoryMB != 0 {
+		t.Fatalf("AvailableMemoryZero: MemoryMB = %d, want 0", zeroAvail.MemoryMB)
+	}
+
+	lastSeen := time.Date(2026, time.August, 21, 14, 30, 0, 0, time.UTC)
+	admin := &fakeAgentAdmin{agents: []pool.AgentSummary{
+		{ID: "devfactory-unconfigured", Name: "Devfactory (unconfigured)", Providers: []providersdk.Type{devfactory.ProviderType},
+			Connected: true, Available: true, LastSeen: &lastSeen,
+			Availability:   map[providersdk.Type]providersdk.ResourceAvailability{devfactory.ProviderType: *unlimitedAvail},
+			AvailabilityAt: &lastSeen},
+		{ID: "devfactory-zeroed", Name: "Devfactory (zeroed)", Providers: []providersdk.Type{devfactory.ProviderType},
+			Connected: true, Available: false, LastSeen: &lastSeen,
+			Availability:   map[providersdk.Type]providersdk.ResourceAvailability{devfactory.ProviderType: *zeroAvail},
+			AvailabilityAt: &lastSeen},
+	}}
+	mux := server.NewTestMuxWithAgentAdminUI(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), admin, true)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ui/agents", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	body := w.Body.String()
+
+	if !strings.Contains(body, "0 MB free") {
+		t.Fatalf("expected \"0 MB free\" for AvailableMemoryZero; body = %q", body)
+	}
+	if strings.Contains(body, "9,223,372,036,854,775,807") {
+		t.Fatal("dashboard rendered the old math.MaxInt64 sentinel — Availability() regressed")
+	}
+	if !strings.Contains(body, "1,000,000,000,000 MB free") {
+		t.Fatalf("expected the finite unlimited sentinel rendered with comma grouping; body = %q", body)
 	}
 }
 
