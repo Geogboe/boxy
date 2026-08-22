@@ -34,10 +34,26 @@
       "type": "boolean",
       "default": false
     },
+    "fail_create_as": {
+      "description": "If set, Create fails with a specific typed provider error instead of a plain one, letting a consumer exercise typed-error handling against this reference driver. fail_create (a plain error) takes precedence if both are set. \"capacity\" returns a CapacityError; combine with available_memory_zero or a low available_memory_mb for a realistic insufficient-capacity scenario. \"orphaned_resource\" returns an OrphanedResourceError and leaves the resource's record behind in \"creating\" state, discoverable via the driver's resource listing and removable with a later delete.",
+      "type": "string",
+      "enum": ["", "capacity", "orphaned_resource"],
+      "default": ""
+    },
     "labels": {
       "description": "Labels passed through to resource metadata.",
       "type": "object",
       "additionalProperties": { "type": "string" }
+    },
+    "available_memory_mb": {
+      "description": "Value Availability() reports as available memory, in megabytes. Zero (the default) means unlimited.",
+      "type": "integer",
+      "default": 0
+    },
+    "available_memory_zero": {
+      "description": "If true, Availability() reports exactly zero MB available, overriding available_memory_mb (whose own zero value means \"unlimited\" and so can't itself express insufficient capacity).",
+      "type": "boolean",
+      "default": false
     }
   }
 }

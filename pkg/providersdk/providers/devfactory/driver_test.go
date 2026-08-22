@@ -3,9 +3,10 @@ package devfactory
 import (
 	"context"
 	"encoding/json"
-	"math"
+	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -382,11 +383,199 @@ func TestDriver_Availability_ZeroMeansUnlimited(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if avail.MemoryMB != math.MaxInt64 {
-		t.Errorf("MemoryMB = %d, want math.MaxInt64", avail.MemoryMB)
+	if avail.MemoryMB != unlimitedMemoryMB {
+		t.Errorf("MemoryMB = %d, want unlimitedMemoryMB (%d)", avail.MemoryMB, unlimitedMemoryMB)
+	}
+	// The sentinel must not overflow the MB->bytes conversion real drivers
+	// (e.g. hyperv.Driver.Create) perform on a MemoryMB value. See #181.
+	if bytes := avail.MemoryMB * 1024 * 1024; bytes <= 0 {
+		t.Errorf("unlimitedMemoryMB * 1024 * 1024 overflowed int64: got %d", bytes)
 	}
 }
 
-// --- providersdk.AvailabilityReporter interface compliance ---
+func TestDriver_Availability_ZeroFlag_ReportsRealZero(t *testing.T) {
+	d := New(&Config{AvailableMemoryZero: true, AvailableMemoryMB: 4096, DataDir: t.TempDir()})
+
+	avail, err := d.Availability(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if avail.MemoryMB != 0 {
+		t.Errorf("MemoryMB = %d, want 0 (AvailableMemoryZero overrides AvailableMemoryMB)", avail.MemoryMB)
+	}
+}
+
+func TestDriver_Availability_PositiveValueUnaffectedByFix(t *testing.T) {
+	d := New(&Config{AvailableMemoryMB: 4096, DataDir: t.TempDir()})
+
+	avail, err := d.Availability(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if avail.MemoryMB != 4096 {
+		t.Errorf("MemoryMB = %d, want 4096", avail.MemoryMB)
+	}
+}
+
+// --- ResourceLister ---
+
+func TestDriver_List_Empty(t *testing.T) {
+	d := newTestDriver(t, &Config{})
+
+	statuses, err := d.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(statuses) != 0 {
+		t.Errorf("expected 0 resources, got %d", len(statuses))
+	}
+}
+
+func TestDriver_List_ReturnsTrackedResources(t *testing.T) {
+	d := newTestDriver(t, &Config{})
+
+	r1, err := d.Create(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	r2, err := d.Create(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	statuses, err := d.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(statuses) != 2 {
+		t.Fatalf("expected 2 resources, got %d", len(statuses))
+	}
+
+	ids := map[string]string{statuses[0].ID: statuses[0].State, statuses[1].ID: statuses[1].State}
+	for _, id := range []string{r1.ID, r2.ID} {
+		state, ok := ids[id]
+		if !ok {
+			t.Errorf("expected resource %q in List() result", id)
+			continue
+		}
+		if state != "running" {
+			t.Errorf("resource %q state = %q, want running", id, state)
+		}
+	}
+
+	if !sort.SliceIsSorted(statuses, func(i, j int) bool { return statuses[i].ID < statuses[j].ID }) {
+		t.Error("expected List() results sorted by ID for deterministic output")
+	}
+}
+
+// --- FailCreateAs: typed-error simulation ---
+
+func TestDriver_Create_FailCreateAsCapacity(t *testing.T) {
+	d := newTestDriver(t, &Config{FailCreateAs: "capacity", AvailableMemoryZero: true})
+
+	_, err := d.Create(context.Background(), nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var capErr *providersdk.CapacityError
+	if !errors.As(err, &capErr) {
+		t.Fatalf("expected *providersdk.CapacityError, got %#v", err)
+	}
+	if capErr.RequestedMemoryMB != simulatedMemoryRequestMB {
+		t.Errorf("RequestedMemoryMB = %d, want %d", capErr.RequestedMemoryMB, simulatedMemoryRequestMB)
+	}
+	if capErr.AvailableMemoryMB != 0 {
+		t.Errorf("AvailableMemoryMB = %d, want 0 (AvailableMemoryZero configured)", capErr.AvailableMemoryMB)
+	}
+	if d.ResourceCount() != 0 {
+		t.Errorf("expected no resource written for a capacity failure, got %d", d.ResourceCount())
+	}
+}
+
+func TestDriver_Create_FailCreateAsOrphanedResource(t *testing.T) {
+	d := newTestDriver(t, &Config{FailCreateAs: "orphaned_resource"})
+
+	_, err := d.Create(context.Background(), nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var orphanErr *providersdk.OrphanedResourceError
+	if !errors.As(err, &orphanErr) {
+		t.Fatalf("expected *providersdk.OrphanedResourceError, got %#v", err)
+	}
+	if orphanErr.ID == "" {
+		t.Fatal("expected non-empty orphaned resource ID")
+	}
+
+	// The orphaned record must be discoverable via List()...
+	statuses, err := d.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	found := false
+	for _, s := range statuses {
+		if s.ID == orphanErr.ID {
+			found = true
+			if s.State != "creating" {
+				t.Errorf("orphaned resource state = %q, want creating", s.State)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected orphaned resource %q in List() result", orphanErr.ID)
+	}
+
+	// ...and cleanable via Delete(), completing the quarantine round trip.
+	if err := d.Delete(context.Background(), orphanErr.ID); err != nil {
+		t.Fatalf("Delete orphaned resource: %v", err)
+	}
+	if d.ResourceCount() != 0 {
+		t.Errorf("expected orphaned resource removed after Delete, got %d resources", d.ResourceCount())
+	}
+}
+
+func TestDriver_Create_FailCreateTakesPrecedenceOverFailCreateAs(t *testing.T) {
+	d := newTestDriver(t, &Config{FailCreate: true, FailCreateAs: "capacity"})
+
+	_, err := d.Create(context.Background(), nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var capErr *providersdk.CapacityError
+	if errors.As(err, &capErr) {
+		t.Fatal("expected plain FailCreate error, not *providersdk.CapacityError")
+	}
+}
+
+// --- ctx-cancellation cleanup ---
+
+func TestDriver_Create_CtxCancelDuringLatency_CleansUp(t *testing.T) {
+	d := newTestDriver(t, &Config{Latency: Duration(200 * time.Millisecond)})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	_, err := d.Create(ctx, nil)
+	if err == nil {
+		t.Fatal("expected context deadline error")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context.DeadlineExceeded, got %v", err)
+	}
+
+	if d.ResourceCount() != 0 {
+		t.Errorf("expected the partial resource cleaned up after ctx cancellation, got %d", d.ResourceCount())
+	}
+	statuses, err := d.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(statuses) != 0 {
+		t.Errorf("expected no resources in List() after ctx cancellation, got %d", len(statuses))
+	}
+}
+
+// --- providersdk interface compliance ---
 
 var _ providersdk.AvailabilityReporter = (*Driver)(nil)
+var _ providersdk.ResourceLister = (*Driver)(nil)

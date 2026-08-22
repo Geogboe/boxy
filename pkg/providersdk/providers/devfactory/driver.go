@@ -8,9 +8,9 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -19,6 +19,22 @@ import (
 )
 
 const ProviderType providersdk.Type = "devfactory"
+
+// unlimitedMemoryMB is Availability()'s sentinel for "no configured cap" —
+// deliberately not math.MaxInt64. hyperv.Driver.Create converts a MemoryMB
+// value to bytes via MemoryMB * 1024 * 1024; MaxInt64 doing that silently
+// overflows. This constant is comfortably under math.MaxInt64/(1024*1024)
+// (~8.8e12) so the same conversion applied to devfactory's reported value
+// can't wrap either, while still reading unambiguously as "far more than
+// any real host has," not a plausible real memory figure. See #181.
+const unlimitedMemoryMB int64 = 1_000_000_000_000 // 1e12 MB ≈ 1 EB
+
+// simulatedMemoryRequestMB is the fixed RequestedMemoryMB reported by
+// FailCreateAs: "capacity" — matches hyperv.Driver's own default VM memory
+// request (see hyperv/driver.go's CreateConfig.MemoryMB default) so a
+// consumer testing capacity-error handling against devfactory sees
+// realistic numbers without needing to configure one.
+const simulatedMemoryRequestMB int64 = 2048
 
 // Driver is the devfactory reference implementation of providersdk.Driver.
 // State is persisted to a JSON file in DataDir so you can inspect it
@@ -64,17 +80,43 @@ func (d *Driver) Type() providersdk.Type {
 }
 
 // Availability implements providersdk.AvailabilityReporter. It returns the
-// static value configured via Config.AvailableMemoryMB — no per-call
-// memory-request modeling; devfactory's Create doesn't decode one today,
-// and adding it purely to enforce here would be scope creep unrelated to
-// what this simulator is for (letting other code exercise the
-// AvailabilityReporter interface without needing a real Hyper-V host).
+// static value configured via Config.AvailableMemoryMB (or exactly zero if
+// AvailableMemoryZero is set) — no per-call memory-request modeling;
+// devfactory's Create doesn't decode one today, and adding it purely to
+// enforce here would be scope creep unrelated to what this simulator is for
+// (letting other code exercise the AvailabilityReporter interface without
+// needing a real Hyper-V host). See #181 for AvailableMemoryZero's rationale.
 func (d *Driver) Availability(ctx context.Context) (*providersdk.ResourceAvailability, error) {
+	if d.cfg.AvailableMemoryZero {
+		return &providersdk.ResourceAvailability{MemoryMB: 0}, nil
+	}
 	mb := d.cfg.AvailableMemoryMB
 	if mb == 0 {
-		mb = math.MaxInt64
+		mb = unlimitedMemoryMB
 	}
 	return &providersdk.ResourceAvailability{MemoryMB: mb}, nil
+}
+
+// List satisfies providersdk.ResourceLister, returning every resource
+// tracked in this driver's store — the devfactory analogue of docker's
+// managed-label filter and hyperv's boxy-*-name-prefix query: "everything I
+// created and haven't deleted," reflected straight from the JSON store
+// devfactory already persists to. Sorted by ID since map iteration order
+// isn't deterministic.
+func (d *Driver) List(ctx context.Context) ([]providersdk.ResourceStatus, error) {
+	d.mu.Lock()
+	store, err := loadStore(d.dataDir)
+	d.mu.Unlock()
+	if err != nil {
+		return nil, fmt.Errorf("devfactory: load store: %w", err)
+	}
+
+	statuses := make([]providersdk.ResourceStatus, 0, len(store.Resources))
+	for _, r := range store.Resources {
+		statuses = append(statuses, providersdk.ResourceStatus{ID: r.ID, State: r.State})
+	}
+	sort.Slice(statuses, func(i, j int) bool { return statuses[i].ID < statuses[j].ID })
+	return statuses, nil
 }
 
 // Create provisions a simulated resource. If latency is configured,
@@ -85,6 +127,12 @@ func (d *Driver) Availability(ctx context.Context) (*providersdk.ResourceAvailab
 func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, error) {
 	if d.cfg.FailCreate {
 		return nil, fmt.Errorf("devfactory: simulated create failure")
+	}
+	switch d.cfg.FailCreateAs {
+	case "capacity":
+		return nil, d.simulatedCapacityError(ctx)
+	case "orphaned_resource":
+		return d.createOrphaned()
 	}
 
 	id := generateID()
@@ -120,6 +168,11 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 	if d.latency > 0 {
 		select {
 		case <-ctx.Done():
+			// Mirror docker/hyperv's cleanup-on-failed-Create convention
+			// (deleteBestEffort): the "creating" record above is otherwise
+			// unreachable — Create never returns an ID on this path — and
+			// would sit in the store forever, skewing ResourceCount/List.
+			d.cleanupAfterCancel(id)
 			return nil, ctx.Err()
 		case <-time.After(d.latency):
 		}
@@ -145,6 +198,74 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 		ConnectionInfo: connInfo,
 		Metadata:       d.cfg.Labels,
 	}, nil
+}
+
+// simulatedCapacityError builds the *providersdk.CapacityError returned by
+// FailCreateAs: "capacity". AvailableMemoryMB is read from the driver's own
+// Availability() so combining this with AvailableMemoryZero or a low
+// AvailableMemoryMB produces a self-consistent insufficient-capacity error;
+// RequestedMemoryMB is fixed (simulatedMemoryRequestMB) rather than derived
+// from availability — deriving it (e.g. available+1) would reintroduce the
+// same overflow risk unlimitedMemoryMB exists to avoid.
+func (d *Driver) simulatedCapacityError(ctx context.Context) error {
+	availableMB := int64(0)
+	if avail, err := d.Availability(ctx); err == nil && avail != nil {
+		availableMB = avail.MemoryMB
+	}
+	return &providersdk.CapacityError{
+		RequestedMemoryMB: simulatedMemoryRequestMB,
+		AvailableMemoryMB: availableMB,
+	}
+}
+
+// createOrphaned implements FailCreateAs: "orphaned_resource". It writes a
+// store record in "creating" state — the same shape a normal in-flight
+// Create writes before its latency wait — but never advances it to
+// "running", simulating a create that partially succeeded and couldn't be
+// confirmed torn down. This gives ResourceLister and quarantine/cleanup
+// flows something real to find and later Delete, instead of only being
+// exercisable against real Hyper-V or a hand-built fake driver.
+func (d *Driver) createOrphaned() (*providersdk.Resource, error) {
+	id := generateID()
+
+	d.mu.Lock()
+	store, err := loadStore(d.dataDir)
+	if err != nil {
+		d.mu.Unlock()
+		return nil, fmt.Errorf("devfactory: load store: %w", err)
+	}
+	store.Resources[id] = &resourceRecord{
+		ID:        id,
+		State:     "creating",
+		Labels:    d.cfg.Labels,
+		CreatedAt: time.Now(),
+	}
+	err = saveStore(d.dataDir, store)
+	d.mu.Unlock()
+	if err != nil {
+		return nil, fmt.Errorf("devfactory: save store: %w", err)
+	}
+
+	return nil, &providersdk.OrphanedResourceError{
+		ID:           id,
+		CauseMessage: "devfactory: simulated create failure (orphaned)",
+	}
+}
+
+// cleanupAfterCancel best-effort removes a partially-created resource's
+// store record when Create's caller cancels ctx mid-provision. Errors are
+// swallowed: this is best-effort cleanup on an already-failing path, same
+// as docker/hyperv's deleteBestEffort.
+func (d *Driver) cleanupAfterCancel(id string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	store, err := loadStore(d.dataDir)
+	if err != nil {
+		return
+	}
+	delete(store.Resources, id)
+	_ = saveStore(d.dataDir, store)
 }
 
 // Read returns the current state of a simulated resource.

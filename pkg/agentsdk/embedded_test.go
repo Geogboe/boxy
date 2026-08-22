@@ -115,13 +115,48 @@ func TestEmbeddedAgent_UnknownProviderForEveryLifecycleMethod(t *testing.T) {
 	}
 }
 
+// noListDriver wraps a devfactory.Driver but withholds its List method, so
+// it satisfies providersdk.Driver without providersdk.ResourceLister.
+// devfactory itself implements ResourceLister as of #181, so a
+// capability-negative List fixture needs an explicit wrapper instead
+// (embedding *devfactory.Driver would promote List and defeat the point).
+type noListDriver struct {
+	inner *devfactory.Driver
+}
+
+func (d *noListDriver) Type() providersdk.Type { return d.inner.Type() }
+
+func (d *noListDriver) Create(ctx context.Context, cfg any) (*providersdk.Resource, error) {
+	return d.inner.Create(ctx, cfg)
+}
+
+func (d *noListDriver) Read(ctx context.Context, id string) (*providersdk.ResourceStatus, error) {
+	return d.inner.Read(ctx, id)
+}
+
+func (d *noListDriver) Update(ctx context.Context, id string, op providersdk.Operation) (*providersdk.Result, error) {
+	return d.inner.Update(ctx, id, op)
+}
+
+func (d *noListDriver) Delete(ctx context.Context, id string) error {
+	return d.inner.Delete(ctx, id)
+}
+
+func (d *noListDriver) Allocate(ctx context.Context, id string) (map[string]any, error) {
+	return d.inner.Allocate(ctx, id)
+}
+
 // TestEmbeddedAgent_ListReturnsErrorForDriverWithoutCapability verifies that
 // an unsupported List returns an error rather than an empty slice — an empty
 // slice would be indistinguishable from "confirmed nothing exists," which
 // the #133 reconciliation sweep must never assume for a driver that simply
 // can't enumerate.
 func TestEmbeddedAgent_ListReturnsErrorForDriverWithoutCapability(t *testing.T) {
-	agent := newTestAgent(t)
+	d := &noListDriver{inner: devfactory.New(&devfactory.Config{DataDir: t.TempDir()})}
+	agent, err := agentsdk.NewEmbeddedAgent("boxy-test-agent", "Test Agent", d)
+	if err != nil {
+		t.Fatalf("NewEmbeddedAgent: %v", err)
+	}
 
 	statuses, err := agent.List(context.Background(), devfactory.ProviderType)
 	if err == nil {
