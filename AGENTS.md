@@ -145,7 +145,7 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   `cat`/`jq` mid-run, wrong for `state.json`'s hot path; don't merge the
   two without a deliberate reason to. `pkg/store.DiskStore` itself hasn't
   been migrated onto it — that's an open, not-yet-decided follow-up, not
-  an oversight.
+  an oversight. See [ADR-0011](docs/adr/0011-devfactory-persistence-config-paths-and-provisioning-lock.md).
 - **`providersdk.RelativePathResolver`** is an optional provider-`Config`
   capability (`ResolveRelativePaths(baseDir string)`), detected by type
   assertion like every other capability in this package. `Registry.
@@ -164,7 +164,35 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   `cfgPath`) and `internal/cli/agent_serve.go`'s `buildAgentDrivers`
   (remote agent, `agentServeOpts.providerConfigsBaseDir` — tracks whether
   provider instances came from `--config` or `--service-config`, since
-  those are different files with different base directories).
+  those are different files with different base directories). `agent
+  service install --config ...` persists the resolved base directory into
+  the installed `service.yaml` (`ProviderConfigsBaseDir`) so a later
+  `agent serve --service-config service.yaml` resolves against the
+  original `--config` file's directory, not `service.yaml`'s own — an
+  earlier version recomputed it from `service.yaml`'s path instead, which
+  was wrong whenever `--config` was given at install time. See
+  [ADR-0011](docs/adr/0011-devfactory-persistence-config-paths-and-provisioning-lock.md).
+- **`pool.LockedProvisioner`** (`AgentProvisioner.ProvisionLocked`) is an
+  optional `Provisioner` capability that acquires
+  `AgentRegistry.LockProvisioning(agentID)` — implements
+  `pool.ProvisionLocker` — *before* calling the agent's `Create`, not just
+  around the caller's own subsequent store write. This closes a race
+  devfactory implementing `providersdk.ResourceLister` exposed: a fast
+  driver's `Create()` can make a resource visible via a concurrent agent's
+  `List()` before the caller (`Manager`'s provision actuator) regains
+  control to acquire anything, which `ReconcileAgent`'s periodic sweep
+  (#133/#174) could then misclassify as an orphan. The lock is acquired
+  *inside* the provisioner, not by `Manager` beforehand, because only the
+  provisioner knows which agent a pool will resolve to without a second,
+  observably-different resolution (`AgentRegistry.Resolve` round-robins
+  across agents advertising the same type). `Manager.Provision` prefers
+  `ProvisionLocked` via a type assertion, falling back to locking only
+  around its own store write for a `Provisioner` with no per-agent concept
+  (the deprecated `DriverProvisioner`, or a test fake). See
+  [ADR-0011](docs/adr/0011-devfactory-persistence-config-paths-and-provisioning-lock.md)
+  for the full race analysis, including why an earlier version of this fix
+  (locking only around the store write) left the exact window open that
+  this one closes.
 
 ### Guest Credentials
 

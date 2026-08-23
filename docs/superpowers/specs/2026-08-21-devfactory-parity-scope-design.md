@@ -56,8 +56,10 @@ only against real Hyper-V or hand-built fakes.
 `nil` preserve today's "unset ⇒ unlimited" default while an explicit `&0`
 means real zero. But it's a type change on a field in a public package —
 source-breaking for anything constructing `Config{AvailableMemoryMB: N}` as
-a Go literal, and every AGENTS.md instruction on this project says API
-changes must stay additive. The capability doesn't require it.
+a Go literal, an avoidable break when the capability doesn't require it.
+(AGENTS.md has no general "API changes must stay additive" rule — this is
+a judgment call for this specific field, not an appeal to a project-wide
+policy.)
 
 **Accepted: add `AvailableMemoryZero bool`.** Its zero value (`false`,
 matching every other `Fail*`-style flag in this struct) reproduces today's
