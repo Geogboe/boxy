@@ -201,7 +201,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 
 	// Drivers + embedded agent
 	doneAgent, failAgent := ui.step("Starting embedded agent")
-	drivers, err := buildDrivers(reg, cfg.Providers)
+	drivers, err := buildDrivers(reg, cfg.Providers, cfgPath)
 	if err != nil {
 		failAgent(err.Error())
 		return fmt.Errorf("build drivers: %w", err)
@@ -232,6 +232,10 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	}
 	poolMgr := pool.New(st, provisioner)
 	poolMgr.SetGuestSecretStore(guestSecrets)
+	// Shares agentRegistry's per-agent lock with RunAgentReconciliation's
+	// sweep below, closing a race exposed by fast ResourceLister drivers
+	// (see pool.ProvisionLocker's doc comment).
+	poolMgr.SetProvisionLocker(agentRegistry)
 	eventStore, ok := st.(lifecycle.EventStore)
 	if !ok {
 		return fmt.Errorf("state store does not support lifecycle events")
@@ -757,7 +761,16 @@ func providerTypes(reg *providersdk.Registry) []string {
 // For each type in the registry:
 // - If a provider instance with matching Type exists, use its Config
 // - Otherwise, use the zero-value config (defaults)
-func buildDrivers(reg *providersdk.Registry, instances []providersdk.Instance) ([]providersdk.Driver, error) {
+//
+// cfgPath is the boxy config file instances came from ("" if none); its
+// directory is passed to each config's providersdk.RelativePathResolver, if
+// implemented (see devfactory.Config.ResolveRelativePaths).
+func buildDrivers(reg *providersdk.Registry, instances []providersdk.Instance, cfgPath string) ([]providersdk.Driver, error) {
+	baseDir := ""
+	if cfgPath != "" {
+		baseDir = filepath.Dir(cfgPath)
+	}
+
 	types := reg.Types()
 	drivers := make([]providersdk.Driver, 0, len(types))
 
@@ -780,7 +793,7 @@ func buildDrivers(reg *providersdk.Registry, instances []providersdk.Instance) (
 		// Get config for this type, or use zero-value proto if not configured.
 		instance := configByType[t]
 		instance.Type = t
-		driver, err := reg.NewDriverFromInstance(instance)
+		driver, err := reg.NewDriverFromInstance(instance, baseDir)
 		if err != nil {
 			return nil, err
 		}

@@ -175,6 +175,61 @@ func TestAgentServiceInstall_Elevated_WritesConfigAndInstalls(t *testing.T) {
 	}
 }
 
+// TestAgentServiceInstall_PersistsProviderConfigsBaseDirFromConfigFile
+// guards a real bug: `agent service install --config boxy.yaml` used to
+// write ProviderConfigs into service.yaml without recording the directory
+// they were resolved against, so a later `agent serve --service-config
+// service.yaml` recomputed the base directory as service.yaml's own
+// directory (the service's data dir) instead of boxy.yaml's — silently
+// resolving a relative provider path (e.g. devfactory's DataDir) in the
+// wrong place. Install must now persist the resolved base directory.
+func TestAgentServiceInstall_PersistsProviderConfigsBaseDirFromConfigFile(t *testing.T) {
+	withElevated(t, true)
+	m := &fakeManager{}
+	withFakeSvcManager(t, m)
+
+	configDir := t.TempDir()
+	boxyConfigPath := filepath.Join(configDir, "boxy.yaml")
+	if err := os.WriteFile(boxyConfigPath, []byte("providers:\n  - name: docker-local\n    type: docker\n    config:\n      host: unix:///tmp/docker.sock\npools: []\n"), 0o600); err != nil {
+		t.Fatalf("write boxy.yaml: %v", err)
+	}
+
+	serviceDataDir := filepath.Join(t.TempDir(), ".boxy-agent")
+	err := runAgentServiceInstall(newTestCmd(&bytes.Buffer{}), agentServiceInstallOpts{
+		agentOpts: agentServeOpts{
+			server:     "boxy-server:9091",
+			configPath: boxyConfigPath,
+			dataDir:    serviceDataDir,
+		},
+	})
+	if err != nil {
+		t.Fatalf("runAgentServiceInstall: %v", err)
+	}
+
+	cfg, err := loadAgentServiceConfig(filepath.Join(serviceDataDir, "service.yaml"))
+	if err != nil {
+		t.Fatalf("loadAgentServiceConfig: %v", err)
+	}
+	wantBaseDir, err := filepath.Abs(configDir)
+	if err != nil {
+		t.Fatalf("filepath.Abs: %v", err)
+	}
+	if cfg.ProviderConfigsBaseDir != wantBaseDir {
+		t.Fatalf("ProviderConfigsBaseDir = %q, want %q (boxy.yaml's directory, not service.yaml's)", cfg.ProviderConfigsBaseDir, wantBaseDir)
+	}
+
+	// End to end: resolveAgentServeOpts against the installed service.yaml
+	// must recover boxy.yaml's directory, not service.yaml's own directory
+	// (which is a different location entirely — serviceDataDir here).
+	opts, err := resolveAgentServeOpts(agentServeOpts{serviceConfigPath: filepath.Join(serviceDataDir, "service.yaml")})
+	if err != nil {
+		t.Fatalf("resolveAgentServeOpts: %v", err)
+	}
+	if opts.providerConfigsBaseDir != wantBaseDir {
+		t.Fatalf("providerConfigsBaseDir = %q, want %q", opts.providerConfigsBaseDir, wantBaseDir)
+	}
+}
+
 func TestAgentServiceInstall_NotElevated_ErrorsWithoutInstalling(t *testing.T) {
 	withElevated(t, false)
 	m := &fakeManager{}

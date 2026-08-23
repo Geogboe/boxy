@@ -18,21 +18,29 @@ import (
 // invocation (data dir, CA cert, and log file) are stored absolute because a
 // service has no predictable working directory. ProviderConfigs remain
 // opaque provider-specific values; path fields inside them must be made
-// absolute by the operator when the provider requires it. Token is the
-// agent's single-use bootstrap token, base64(svcmgr.EncryptToken(...))-encoded
-// at rest and scrubbed to empty once the agent successfully registers (see
-// scrubAgentServiceConfigToken and its call site in agent_serve.go's
-// OnRegistered callback).
+// absolute by the operator when the provider requires it — UNLESS the
+// provider's Config implements providersdk.RelativePathResolver (e.g.
+// devfactory's DataDir), in which case a relative path was written against
+// whatever --config file ProviderConfigs came from. ProviderConfigsBaseDir
+// records that directory (already resolved to absolute at install time) so
+// `agent serve --service-config` resolves relative provider paths against
+// the original --config file's directory, not this service.yaml's own
+// directory — those are different files with different base directories.
+// Token is the agent's single-use bootstrap token,
+// base64(svcmgr.EncryptToken(...))-encoded at rest and scrubbed to empty
+// once the agent successfully registers (see scrubAgentServiceConfigToken
+// and its call site in agent_serve.go's OnRegistered callback).
 type agentServiceConfig struct {
-	Server          string                 `yaml:"server"`
-	Providers       []string               `yaml:"providers"`
-	ProviderConfigs []providersdk.Instance `yaml:"provider_configs,omitempty"`
-	Token           string                 `yaml:"token,omitempty"`
-	Name            string                 `yaml:"name,omitempty"`
-	CACert          string                 `yaml:"ca_cert,omitempty"`
-	DataDir         string                 `yaml:"data_dir"`
-	Insecure        bool                   `yaml:"insecure,omitempty"`
-	LogFile         string                 `yaml:"log_file"`
+	Server                 string                 `yaml:"server"`
+	Providers              []string               `yaml:"providers"`
+	ProviderConfigs        []providersdk.Instance `yaml:"provider_configs,omitempty"`
+	ProviderConfigsBaseDir string                 `yaml:"provider_configs_base_dir,omitempty"`
+	Token                  string                 `yaml:"token,omitempty"`
+	Name                   string                 `yaml:"name,omitempty"`
+	CACert                 string                 `yaml:"ca_cert,omitempty"`
+	DataDir                string                 `yaml:"data_dir"`
+	Insecure               bool                   `yaml:"insecure,omitempty"`
+	LogFile                string                 `yaml:"log_file"`
 }
 
 func saveAgentServiceConfig(path string, cfg agentServiceConfig) error {

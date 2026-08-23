@@ -104,13 +104,95 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
 - `boxy debug provider *` (drives the in-process `devfactory` reference driver directly, bypassing the daemon) is compiled only with `-tags devtools` and is absent from release binaries. `boxy debug pool drain/fill` is a separate, always-available command that does go through the daemon's HTTP API.
 - Streaming is an optional `providersdk.StreamingDriver`/`agentsdk.StreamingAgent` capability routed through `pkg/eventstream`; Docker, devfactory, SSH guests, and PowerShell Direct guests can emit live events. Unsupported custom providers return a capability error instead of buffering unary output as a fake stream.
 - `devfactory` is the generic deterministic provider simulator: it exercises
-  Boxy's lifecycle, persistence, latency, failure, availability, and streaming
-  plumbing without claiming fidelity to a real provider. Future provider
-  simulators should implement the existing `providersdk.Driver` contract plus
-  the optional capabilities they model (for example `hyperv-sim` implementing
-  `GuestPersonalizer` and `ResourceLister`). Keep simulator provider types
-  explicit so they cannot be mistaken for the real provider; generate
-  conformance scaffolding and capability fixtures, not provider semantics.
+  Boxy's lifecycle, persistence, latency, failure, availability, streaming,
+  and resource-listing plumbing without claiming fidelity to a real provider.
+  Future provider simulators should implement the existing `providersdk.Driver`
+  contract plus the optional capabilities they model (for example `hyperv-sim`
+  implementing `GuestPersonalizer`). Keep simulator provider types explicit
+  so they cannot be mistaken for the real provider; generate conformance
+  scaffolding and capability fixtures, not provider semantics.
+- **devfactory's optional-capability scope is a deliberate, written decision
+  (#181), not "implement everything eventually."** As of 2026-08 it
+  implements `StreamingDriver`, `AvailabilityReporter` (including a real
+  zero/insufficient-capacity value via `Config.AvailableMemoryZero` — see
+  below), and `ResourceLister` (reflects its own JSON store, sorted by ID).
+  `Config.FailCreateAs` (`"capacity"` / `"orphaned_resource"`) makes `Create`
+  return `providersdk.CapacityError`/`OrphanedResourceError` on demand, so a
+  consumer can exercise typed-error handling (`ErrorTyper`, RemoteAgent/gRPC
+  propagation, pool quarantine-and-cleanup) against a reference driver
+  without real infrastructure. **`GuestPersonalizer` is an intentional
+  non-goal**, not a gap to close later by default: it currently has exactly
+  one implementation (`hyperv.Driver`) and no second real provider to
+  validate a simulated credential-rotation contract against, so simulating
+  it would mean inventing Hyper-V-specific semantics wearing a
+  generic-looking interface. Revisit only for a concrete testing need with
+  its own scoping writeup — don't fold it into an unrelated change. See
+  `docs/superpowers/specs/2026-08-21-devfactory-parity-scope-design.md` for
+  the full capability comparison and reasoning, including why the
+  "unlimited" `Availability()` sentinel is a large finite constant and not
+  `math.MaxInt64` (byte-conversion overflow risk in real drivers).
+- **`pkg/diskjson`** is a generic, mutex-guarded, atomically-written
+  (write-tmp-then-`os.Rename`) JSON file store for a single value —
+  `diskjson.Store[T]` with `Load`/`Save`/`Update`. It generalizes the same
+  pattern `pkg/store.DiskStore` already used for `state.json`, so a
+  package that needs "persist one JSON blob to disk safely" doesn't
+  reimplement it (weaker) on its own — `devfactory`'s own store
+  (`pkg/providersdk/providers/devfactory/store.go`) is built on it as of
+  2026-08 (#181 follow-up), replacing a direct-overwrite `os.WriteFile`
+  that wasn't atomic. `diskjson.Store[T]` is deliberately stateless
+  between calls (every call re-reads from disk) rather than caching like
+  `DiskStore` does — right for a low-volume debug/reference store you can
+  `cat`/`jq` mid-run, wrong for `state.json`'s hot path; don't merge the
+  two without a deliberate reason to. `pkg/store.DiskStore` itself hasn't
+  been migrated onto it — that's an open, not-yet-decided follow-up, not
+  an oversight. See [ADR-0011](docs/adr/0011-devfactory-persistence-config-paths-and-provisioning-lock.md).
+- **`providersdk.RelativePathResolver`** is an optional provider-`Config`
+  capability (`ResolveRelativePaths(baseDir string)`), detected by type
+  assertion like every other capability in this package. `Registry.
+  NewDriverFromInstance(instance, baseDir)` calls it, if implemented,
+  right after decoding config and before constructing the driver — it
+  exists so a relative path in a provider config resolves against *the
+  boxy config file's own directory*, matching how `.boxy/state.json`
+  already resolves (`internal/cli/serve.go`'s `serveStatePath`), instead
+  of silently resolving against the process's ambient working directory.
+  `devfactory.Config.DataDir` implements it (2026-08, #181 follow-up); no
+  other provider does — it's opt-in per `Config` type, not a default for
+  every path-shaped field (docker's socket path and hyperv's VHD/template
+  paths are real host locations an operator points at explicitly, not
+  directories conceptually owned by the config file). Both real call
+  sites are threaded: `internal/cli/serve.go`'s `buildDrivers` (daemon,
+  `cfgPath`) and `internal/cli/agent_serve.go`'s `buildAgentDrivers`
+  (remote agent, `agentServeOpts.providerConfigsBaseDir` — tracks whether
+  provider instances came from `--config` or `--service-config`, since
+  those are different files with different base directories). `agent
+  service install --config ...` persists the resolved base directory into
+  the installed `service.yaml` (`ProviderConfigsBaseDir`) so a later
+  `agent serve --service-config service.yaml` resolves against the
+  original `--config` file's directory, not `service.yaml`'s own — an
+  earlier version recomputed it from `service.yaml`'s path instead, which
+  was wrong whenever `--config` was given at install time. See
+  [ADR-0011](docs/adr/0011-devfactory-persistence-config-paths-and-provisioning-lock.md).
+- **`pool.LockedProvisioner`** (`AgentProvisioner.ProvisionLocked`) is an
+  optional `Provisioner` capability that acquires
+  `AgentRegistry.LockProvisioning(agentID)` — implements
+  `pool.ProvisionLocker` — *before* calling the agent's `Create`, not just
+  around the caller's own subsequent store write. This closes a race
+  devfactory implementing `providersdk.ResourceLister` exposed: a fast
+  driver's `Create()` can make a resource visible via a concurrent agent's
+  `List()` before the caller (`Manager`'s provision actuator) regains
+  control to acquire anything, which `ReconcileAgent`'s periodic sweep
+  (#133/#174) could then misclassify as an orphan. The lock is acquired
+  *inside* the provisioner, not by `Manager` beforehand, because only the
+  provisioner knows which agent a pool will resolve to without a second,
+  observably-different resolution (`AgentRegistry.Resolve` round-robins
+  across agents advertising the same type). `Manager.Provision` prefers
+  `ProvisionLocked` via a type assertion, falling back to locking only
+  around its own store write for a `Provisioner` with no per-agent concept
+  (the deprecated `DriverProvisioner`, or a test fake). See
+  [ADR-0011](docs/adr/0011-devfactory-persistence-config-paths-and-provisioning-lock.md)
+  for the full race analysis, including why an earlier version of this fix
+  (locking only around the store write) left the exact window open that
+  this one closes.
 
 ### Guest Credentials
 

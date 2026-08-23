@@ -2,6 +2,7 @@ package pool
 
 import (
 	"testing"
+	"time"
 
 	"github.com/Geogboe/boxy/pkg/agentsdk"
 	"github.com/Geogboe/boxy/pkg/providersdk"
@@ -389,5 +390,54 @@ func TestAgentRegistry_Availability_AgentWithoutCapabilityReturnsFalse(t *testin
 
 	if _, ok := r.Availability("mock-agent"); ok {
 		t.Fatal("expected ok=false for an agent that doesn't implement AvailabilityReportingAgent")
+	}
+}
+
+// --- LockProvisioning ---
+
+func TestAgentRegistry_LockProvisioning_SerializesSameAgent(t *testing.T) {
+	r := NewAgentRegistry()
+
+	release1 := r.LockProvisioning("agent-1")
+	acquired := make(chan struct{})
+	go func() {
+		release2 := r.LockProvisioning("agent-1")
+		close(acquired)
+		release2()
+	}()
+
+	select {
+	case <-acquired:
+		t.Fatal("a second LockProvisioning(\"agent-1\") acquired while the first is still held")
+	case <-time.After(50 * time.Millisecond):
+		// expected: still blocked
+	}
+
+	release1()
+	select {
+	case <-acquired:
+		// expected: unblocks once the first is released
+	case <-time.After(time.Second):
+		t.Fatal("second LockProvisioning(\"agent-1\") never acquired after release")
+	}
+}
+
+func TestAgentRegistry_LockProvisioning_DoesNotSerializeDifferentAgents(t *testing.T) {
+	r := NewAgentRegistry()
+	release1 := r.LockProvisioning("agent-1")
+	defer release1()
+
+	acquired := make(chan struct{})
+	go func() {
+		release2 := r.LockProvisioning("agent-2")
+		close(acquired)
+		release2()
+	}()
+
+	select {
+	case <-acquired:
+		// expected: an unrelated agent ID isn't blocked by agent-1's lock
+	case <-time.After(time.Second):
+		t.Fatal("LockProvisioning(\"agent-2\") blocked by an unrelated agent-1 lock")
 	}
 }

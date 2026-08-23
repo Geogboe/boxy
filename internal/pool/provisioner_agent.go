@@ -41,26 +41,56 @@ type AgentProvisioner struct {
 	GuestSecrets boxysecrets.Store
 }
 
+// Provision implements pool.Provisioner. It's a thin wrapper around
+// ProvisionLocked with no persist callback — Manager calls ProvisionLocked
+// directly instead (see LockedProvisioner's doc comment) whenever it can,
+// but Provision stays fully functional on its own for any caller (tests,
+// or a future Provisioner-only consumer) that only knows the base
+// interface.
 func (ap *AgentProvisioner) Provision(ctx context.Context, pool model.Pool) (model.Resource, error) {
+	res, _, err := ap.ProvisionLocked(ctx, pool, nil)
+	return res, err
+}
+
+// ProvisionLocked implements pool.LockedProvisioner. See that interface's
+// doc comment for the persist/created contract and why the lock must be
+// acquired here rather than by Manager beforehand.
+func (ap *AgentProvisioner) ProvisionLocked(ctx context.Context, pool model.Pool, persist func(*model.Resource) error) (model.Resource, bool, error) {
 	spec, ok := ap.Specs[pool.Name]
 	if !ok {
-		return model.Resource{}, fmt.Errorf("unknown pool %q", pool.Name)
+		return model.Resource{}, false, fmt.Errorf("unknown pool %q", pool.Name)
 	}
 
 	driverType := ap.driverTypeForPool(spec)
 	agent, err := ap.Registry.Resolve(driverType, spec.Agent)
 	if err != nil {
-		return model.Resource{}, fmt.Errorf("resolve agent for pool %q: %w", pool.Name, err)
+		return model.Resource{}, false, fmt.Errorf("resolve agent for pool %q: %w", pool.Name, err)
 	}
+
+	// Acquired before Create — not after, like the version of this fix that
+	// only wrapped the caller's own store write — because a fast
+	// ResourceLister driver (e.g. devfactory) can make the resource visible
+	// via List() the instant Create returns, before any code has a chance
+	// to acquire anything. Held through persist below via defer, so a
+	// concurrent ReconcileAgent sweep for this same agent can never
+	// observe the driver's List() without also seeing the store write.
+	release := ap.Registry.LockProvisioning(agent.Info().ID)
+	defer release()
 
 	res, err := agent.Create(ctx, driverType, spec.Config)
 	if err != nil {
 		wrapped := fmt.Errorf("agent create for pool %q: %w", pool.Name, err)
 		var orphanErr *providersdk.OrphanedResourceError
 		if errors.As(err, &orphanErr) {
-			return newQuarantinedResource(pool.Name, string(driverType), agent.Info().ID, orphanErr, ap.now()), wrapped
+			quarantined := newQuarantinedResource(pool.Name, string(driverType), agent.Info().ID, orphanErr, ap.now())
+			if persist != nil {
+				if perr := persist(&quarantined); perr != nil {
+					return quarantined, false, perr
+				}
+			}
+			return quarantined, false, wrapped
 		}
-		return model.Resource{}, wrapped
+		return model.Resource{}, false, wrapped
 	}
 
 	now := ap.now()
@@ -74,7 +104,7 @@ func (ap *AgentProvisioner) Provision(ctx context.Context, pool model.Pool) (mod
 		props[k] = v
 	}
 
-	return model.Resource{
+	built := model.Resource{
 		ID:         model.ResourceID(res.ID),
 		Type:       pool.Inventory.ExpectedType,
 		Profile:    pool.Inventory.ExpectedProfile,
@@ -84,7 +114,13 @@ func (ap *AgentProvisioner) Provision(ctx context.Context, pool model.Pool) (mod
 		Properties: props,
 		CreatedAt:  now,
 		UpdatedAt:  now,
-	}, nil
+	}
+	if persist != nil {
+		if perr := persist(&built); perr != nil {
+			return built, true, perr
+		}
+	}
+	return built, true, nil
 }
 
 // now resolves ap.Now, defaulting to time.Now().UTC() when unset.
@@ -130,6 +166,21 @@ func (ap *AgentProvisioner) Allocate(ctx context.Context, pool model.Pool, res m
 // pool admission. It deliberately does not call generic Allocate, because the
 // returned credential must be retained as the next bootstrap in the selected
 // secret backend until the resource leaves the pool.
+//
+// SupportsGuestPersonalization must be checked (and, if true, a secret
+// backend confirmed) before calling this — see its doc comment.
+func (ap *AgentProvisioner) SupportsGuestPersonalization(_ context.Context, pool model.Pool, res model.Resource) (bool, error) {
+	if _, ok := ap.Specs[pool.Name]; !ok {
+		return false, fmt.Errorf("unknown pool %q", pool.Name)
+	}
+	agent, err := ap.agentForResource(res)
+	if err != nil {
+		return false, err
+	}
+	_, ok := agent.(agentsdk.GuestPersonalizingAgent)
+	return ok, nil
+}
+
 func (ap *AgentProvisioner) PersonalizeGuestForPool(ctx context.Context, pool model.Pool, res model.Resource) (*providersdk.GuestPersonalizationResult, error) {
 	spec, ok := ap.Specs[pool.Name]
 	if !ok {

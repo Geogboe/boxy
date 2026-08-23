@@ -96,6 +96,18 @@ func (dp *DriverProvisioner) Allocate(ctx context.Context, pool model.Pool, res 
 	return providersdk.AllocationResult{Properties: properties}, err
 }
 
+// SupportsGuestPersonalization must be checked (and, if true, a secret
+// backend confirmed) before calling PersonalizeGuestForPool — see its doc
+// comment.
+func (dp *DriverProvisioner) SupportsGuestPersonalization(_ context.Context, pool model.Pool, _ model.Resource) (bool, error) {
+	driver, _, err := dp.driverForPool(pool.Name)
+	if err != nil {
+		return false, fmt.Errorf("personalize pool %q: %w", pool.Name, err)
+	}
+	_, ok := driver.(providersdk.GuestPersonalizer)
+	return ok, nil
+}
+
 // PersonalizeGuestForPool runs only the guest-personalization capability for
 // pool admission; allocation-time callers continue to use Allocate.
 func (dp *DriverProvisioner) PersonalizeGuestForPool(ctx context.Context, pool model.Pool, res model.Resource) (*providersdk.GuestPersonalizationResult, error) {

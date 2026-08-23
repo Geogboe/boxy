@@ -40,9 +40,8 @@ gap anywhere it applies.
 | `pkg/pki/ca.go` (`EnsureCA`, `IssueServerCert`) | CA private key/cert, server private key/cert |
 | `internal/cli/agent_serve.go` (`persistAgentCredentials`) | Agent's mTLS client private key/cert, CA cert — rewritten on *every* successful registration, not just the first (see `agentsdk.RemoteClientConfig.OnRegistered`'s doc comment), so the rewrite case is the common case here, not an edge case |
 | `pkg/providersdk/providers/devfactory/driver.go` (`generateSSHKey`) | Reference-driver simulated SSH key |
-| `pkg/providersdk/providers/devfactory/store.go` (`saveStore`) | Reference-driver JSON state file |
 
-### The one file checked and found *not* affected
+### Files checked and found *not* affected
 
 `pkg/store/disk.go`'s `persistLocked` writes to `<path>.tmp` and then
 `os.Rename`s over the target. `os.Rename` replaces the target's inode
@@ -52,6 +51,13 @@ mode after a rename is whatever the tmp file's mode was at creation
 `O_CREATE`), regardless of what the previously-existing target's
 permissions were. Any file using this write-tmp-then-rename pattern is
 safe by construction and does not need the `os.Chmod` treatment.
+
+`pkg/providersdk/providers/devfactory/store.go` (`saveStore`) originally
+appeared in the table above, fixed with the same direct `os.WriteFile` +
+`os.Chmod` treatment as every other file here. As of 2026-08 (#181
+follow-up) it was rebuilt on `pkg/diskjson.Store[T]`, which uses this same
+write-tmp-then-rename pattern — moving it into this section instead. See
+`pkg/diskjson`'s package doc and AGENTS.md's `pkg/diskjson` note.
 
 ## Consequences
 
@@ -72,3 +78,13 @@ safe by construction and does not need the `os.Chmod` treatment.
   part of the CLI's trusted-material surface, but it was fixed anyway for
   consistency — the fix is cheap and the pattern should not have known,
   intentionally-left exceptions.
+
+## Update (2026-08-22)
+
+`pkg/providersdk/providers/devfactory/store.go` (`saveStore`) moved from
+the "files carrying this fix" table to "files checked and found not
+affected": it no longer does a direct `os.WriteFile` + `os.Chmod` — it was
+rebuilt on `pkg/diskjson.Store[T]`'s write-tmp-then-`os.Rename` pattern
+(#181 follow-up), which this ADR already recognized as safe by
+construction for `pkg/store/disk.go`. No behavior change; this is a
+documentation correction so the file table matches the current code.

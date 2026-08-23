@@ -11,6 +11,7 @@ package devfactory
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"time"
 )
 
@@ -73,4 +74,48 @@ type Config struct {
 	// pattern the other fields here already use (e.g. FailCreate's zero
 	// value means "don't fail").
 	AvailableMemoryMB int64 `yaml:"available_memory_mb" json:"available_memory_mb"`
+
+	// AvailableMemoryZero, when true, forces Availability() to report
+	// exactly zero MB available, overriding AvailableMemoryMB.
+	// AvailableMemoryMB's own zero value already means "unlimited" (see
+	// above), so it cannot itself express "insufficient capacity" — the one
+	// scenario a consumer would actually want to exercise
+	// (CapacityError-equivalent handling) against a reference driver. This
+	// flag adds that without changing AvailableMemoryMB's existing meaning
+	// or any config's default behavior. See #181.
+	AvailableMemoryZero bool `yaml:"available_memory_zero" json:"available_memory_zero"`
+
+	// FailCreateAs, when non-empty, causes Create to fail with a specific
+	// providersdk error type instead of a plain error — letting a consumer
+	// exercise typed-error handling (ErrorTyper, RemoteAgent/gRPC
+	// propagation, pool quarantine) against this reference driver without
+	// real infrastructure. FailCreate (a plain error) takes precedence if
+	// both are set. Supported values:
+	//   - "capacity": returns *providersdk.CapacityError. RequestedMemoryMB
+	//     is fixed (see simulatedMemoryRequestMB); AvailableMemoryMB reflects
+	//     AvailableMemoryZero/AvailableMemoryMB when configured for a
+	//     specific scenario, and otherwise defaults to a value below the
+	//     request — asking for this knob at all already means "pretend
+	//     there isn't room."
+	//   - "orphaned_resource": returns *providersdk.OrphanedResourceError
+	//     and leaves the resource's store record behind in "creating"
+	//     state, simulating a create that partially succeeded and couldn't
+	//     be confirmed torn down — so ResourceLister and quarantine/cleanup
+	//     flows have something real to find and later Delete.
+	FailCreateAs string `yaml:"fail_create_as" json:"fail_create_as"`
+}
+
+// ResolveRelativePaths implements providersdk.RelativePathResolver. A
+// relative DataDir is resolved against baseDir (the directory of the boxy
+// config file DataDir was loaded from) rather than being left to resolve
+// against the process's own working directory — matching how Boxy's own
+// .boxy/state.json resolves (see internal/cli/serve.go's serveStatePath).
+// An empty or already-absolute DataDir, and an empty baseDir (no config
+// file path known), are left untouched. See #181's design spec,
+// "Persistence backend and DataDir resolution."
+func (c *Config) ResolveRelativePaths(baseDir string) {
+	if c.DataDir == "" || baseDir == "" || filepath.IsAbs(c.DataDir) {
+		return
+	}
+	c.DataDir = filepath.Join(baseDir, c.DataDir)
 }

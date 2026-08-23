@@ -72,15 +72,27 @@ const (
 	provisionBackoffMax  = 5 * time.Minute
 )
 
+// ProvisionLocker serializes a driver's Create-then-store-write sequence
+// against a concurrent reconciliation sweep's List()-then-store-read
+// sequence for the same agent, closing a race where a resource visible
+// through a driver's ResourceLister isn't yet visible through the store —
+// see AgentRegistry.LockProvisioning's doc comment for the full mechanism
+// and #181's design spec, "Follow-ups", for how it was found. AgentRegistry
+// implements this; Manager and ReconcileAgent must share the same instance.
+type ProvisionLocker interface {
+	LockProvisioning(agentID string) func()
+}
+
 // Manager reconciles a pool's inventory against its policies.
 type Manager struct {
-	store        store.Store
-	provisioner  Provisioner
-	admission    AdmissionPublisher
-	guestSecrets boxysecrets.Store
-	clock        Clock
-	locksMu      sync.Mutex
-	poolLocks    map[model.PoolName]*sync.Mutex
+	store           store.Store
+	provisioner     Provisioner
+	admission       AdmissionPublisher
+	guestSecrets    boxysecrets.Store
+	provisionLocker ProvisionLocker
+	clock           Clock
+	locksMu         sync.Mutex
+	poolLocks       map[model.PoolName]*sync.Mutex
 
 	backoffMu sync.Mutex
 	backoff   map[model.PoolName]*provisionBackoffState
@@ -103,6 +115,29 @@ func (m *Manager) SetGuestSecretStore(secrets boxysecrets.Store) {
 	if m != nil {
 		m.guestSecrets = secrets
 	}
+}
+
+// SetProvisionLocker enables per-agent mutual exclusion between this
+// Manager's provisioning and a concurrent ReconcileAgent sweep for the same
+// agent (see ProvisionLocker). Optional: nil is a safe default for
+// embedders and unit tests that don't run agent-backed reconciliation
+// concurrently with provisioning.
+func (m *Manager) SetProvisionLocker(locker ProvisionLocker) {
+	if m != nil {
+		m.provisionLocker = locker
+	}
+}
+
+// lockProvisioning acquires the ProvisionLocker for agentID if one is
+// configured and agentID is non-empty (DriverProvisioner's resources have
+// no agent concept and are never subject to ReconcileAgent's sweep, so
+// there's nothing to serialize against). Always returns a valid release
+// func, even as a no-op, so callers can call it unconditionally.
+func (m *Manager) lockProvisioning(agentID string) func() {
+	if m.provisionLocker == nil || agentID == "" {
+		return func() {}
+	}
+	return m.provisionLocker.LockProvisioning(agentID)
 }
 
 // FailAdmission marks a resource whose pool-admission action cannot safely be
@@ -645,33 +680,71 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 			}
 
 			for i := 0; i < pl.toProvision; i++ {
-				res, err := m.provisioner.Provision(ctx, p)
-				if err != nil {
-					// Record the failure before attempting the quarantine
-					// write below, so a pool whose store can't even persist
-					// the quarantine record still backs off instead of
-					// retrying on every reconcile tick.
-					m.recordProvisionFailure(p.Name, pl.now)
-					if res.ID != "" {
-						if putErr := m.store.PutResource(ctx, res); putErr != nil {
-							return fmt.Errorf("put quarantined resource %q: %w", res.ID, putErr)
+				// persist finishes building whatever resource Create
+				// produced (pool-inventory/admission-specific fields) and
+				// writes it to the store. Quarantined resources (always
+				// State == ResourceStateError) skip the inventory add —
+				// they were never part of the pool's usable inventory.
+				persist := func(res *model.Resource) error {
+					if res.State != model.ResourceStateError {
+						if res.OriginPool == "" {
+							res.OriginPool = p.Name
+						}
+						if m.admission != nil {
+							res.State = model.ResourceStateProvisioning
+							res.UpdatedAt = pl.now
+						}
+						if err := p.Inventory.Add(*res); err != nil {
+							return fmt.Errorf("add resource to pool %q inventory: %w", p.Name, err)
 						}
 					}
+					return m.store.PutResource(ctx, *res)
+				}
+
+				var res model.Resource
+				var created bool
+				var err error
+				if lp, ok := m.provisioner.(LockedProvisioner); ok {
+					// Preferred path: the per-agent ProvisionLocker lock (if
+					// any) is acquired by the provisioner itself around both
+					// its Create call and persist above, closing the window
+					// the fallback below cannot — a fast ResourceLister
+					// driver (e.g. devfactory) can make a resource visible
+					// via List() the instant Create returns, before Manager
+					// gets control back to acquire anything. See
+					// LockedProvisioner's doc comment.
+					res, created, err = lp.ProvisionLocked(ctx, p, persist)
+				} else {
+					// Fallback for a Provisioner that doesn't implement
+					// LockedProvisioner (e.g. the deprecated
+					// DriverProvisioner, or a test fake) — no per-agent
+					// concept to lock around Create itself, so this only
+					// closes the narrower window around the store write,
+					// same as before LockedProvisioner existed.
+					res, err = m.provisioner.Provision(ctx, p)
+					created = err == nil
+					if err == nil || res.ID != "" {
+						release := m.lockProvisioning(res.Provider.AgentID)
+						perr := persist(&res)
+						release()
+						if perr != nil {
+							err = perr
+						}
+					}
+				}
+
+				// created (Create itself succeeded), not err (persist may
+				// have failed afterward), decides backoff bookkeeping: a
+				// persist failure after a successful Create must not count
+				// against the pool's provisioning backoff the way a real
+				// Create failure does.
+				if created {
+					m.recordProvisionSuccess(p.Name)
+				} else {
+					m.recordProvisionFailure(p.Name, pl.now)
+				}
+				if err != nil {
 					return fmt.Errorf("provision resource for pool %q: %w", p.Name, err)
-				}
-				m.recordProvisionSuccess(p.Name)
-				if res.OriginPool == "" {
-					res.OriginPool = p.Name
-				}
-				if m.admission != nil {
-					res.State = model.ResourceStateProvisioning
-					res.UpdatedAt = pl.now
-				}
-				if err := p.Inventory.Add(res); err != nil {
-					return fmt.Errorf("add resource to pool %q inventory: %w", p.Name, err)
-				}
-				if err := m.store.PutResource(ctx, res); err != nil {
-					return fmt.Errorf("put resource %q: %w", res.ID, err)
 				}
 				if m.admission != nil {
 					if err := m.admission.PublishResourceProvisioned(ctx, res); err != nil {

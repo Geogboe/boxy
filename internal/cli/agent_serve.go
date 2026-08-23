@@ -44,6 +44,13 @@ type agentServeOpts struct {
 	dataDir           string
 	insecure          bool
 	serviceConfigPath string
+
+	// providerConfigsBaseDir is the directory of whichever config file
+	// actually supplied providerConfigs (--config, or --service-config's
+	// embedded provider_configs) — passed to each decoded provider config's
+	// providersdk.RelativePathResolver, if implemented. Empty when
+	// providerConfigs is empty, or came from flags with no backing file.
+	providerConfigsBaseDir string
 }
 
 func newAgentServeCommand() *cobra.Command {
@@ -96,6 +103,7 @@ func resolveAgentServeOpts(opts agentServeOpts) (agentServeOpts, error) {
 				return agentServeOpts{}, fmt.Errorf("select providers from --config %q: %w", opts.configPath, err)
 			}
 			opts.providerConfigs = instances
+			opts.providerConfigsBaseDir = filepath.Dir(opts.configPath)
 			if len(opts.providers) == 0 {
 				opts.providers = providerTypesFromInstances(instances)
 			}
@@ -115,6 +123,7 @@ func resolveAgentServeOpts(opts agentServeOpts) (agentServeOpts, error) {
 	}
 	providers := normalizeProviderStrings(cfg.Providers)
 	providerConfigs := cfg.ProviderConfigs
+	providerConfigsBaseDir := ""
 	if len(providerConfigs) != 0 {
 		selected, err := selectAgentProviderInstances(providerConfigs, nil)
 		if err != nil {
@@ -122,20 +131,33 @@ func resolveAgentServeOpts(opts agentServeOpts) (agentServeOpts, error) {
 		}
 		providerConfigs = selected
 		providers = providerTypesFromInstances(providerConfigs)
+		// Prefer the base directory `agent service install` recorded (the
+		// original --config boxy.yaml's directory, already absolute) —
+		// service.yaml's own directory is a different location entirely, so
+		// resolving against it would put a relative devfactory DataDir (etc.)
+		// in the wrong place. Fall back to service.yaml's own directory only
+		// for a hand-authored service.yaml with no --config provenance, or
+		// one saved before this field existed.
+		if cfg.ProviderConfigsBaseDir != "" {
+			providerConfigsBaseDir = cfg.ProviderConfigsBaseDir
+		} else {
+			providerConfigsBaseDir = filepath.Dir(opts.serviceConfigPath)
+		}
 	}
 	if len(providers) == 0 {
 		return agentServeOpts{}, fmt.Errorf("invalid --service-config %q: missing providers", opts.serviceConfigPath)
 	}
 	return agentServeOpts{
-		server:            cfg.Server,
-		providers:         providers,
-		providerConfigs:   providerConfigs,
-		token:             cfg.Token,
-		name:              cfg.Name,
-		caCert:            cfg.CACert,
-		dataDir:           cfg.DataDir,
-		insecure:          cfg.Insecure,
-		serviceConfigPath: opts.serviceConfigPath,
+		server:                 cfg.Server,
+		providers:              providers,
+		providerConfigs:        providerConfigs,
+		providerConfigsBaseDir: providerConfigsBaseDir,
+		token:                  cfg.Token,
+		name:                   cfg.Name,
+		caCert:                 cfg.CACert,
+		dataDir:                cfg.DataDir,
+		insecure:               cfg.Insecure,
+		serviceConfigPath:      opts.serviceConfigPath,
 	}, nil
 }
 
@@ -239,7 +261,7 @@ func runAgentServe(ctx context.Context, opts agentServeOpts) error {
 		return fmt.Errorf("--providers must name at least one provider type")
 	}
 
-	drivers, err := buildAgentDrivers(providerTypes, opts.providerConfigs)
+	drivers, err := buildAgentDrivers(providerTypes, opts.providerConfigs, opts.providerConfigsBaseDir)
 	if err != nil {
 		return err
 	}
@@ -293,7 +315,11 @@ func runAgentServe(ctx context.Context, opts agentServeOpts) error {
 // registered type). When an instance was loaded from --config, its provider
 // connection settings are decoded before the driver is constructed; the
 // legacy flag-only path receives the provider's zero-value config.
-func buildAgentDrivers(types []providersdk.Type, instances []providersdk.Instance) (agentsdk.DriverSet, error) {
+//
+// baseDir is the directory of whichever config file supplied instances (see
+// agentServeOpts.providerConfigsBaseDir) — passed through to each decoded
+// config's providersdk.RelativePathResolver, if implemented.
+func buildAgentDrivers(types []providersdk.Type, instances []providersdk.Instance, baseDir string) (agentsdk.DriverSet, error) {
 	reg := providersdk.NewRegistry()
 	if err := builtins.RegisterBuiltins(reg); err != nil {
 		return nil, fmt.Errorf("register providers: %w", err)
@@ -308,7 +334,7 @@ func buildAgentDrivers(types []providersdk.Type, instances []providersdk.Instanc
 				break
 			}
 		}
-		driver, err := reg.NewDriverFromInstance(instance)
+		driver, err := reg.NewDriverFromInstance(instance, baseDir)
 		if err != nil {
 			if _, ok := reg.Get(t); !ok {
 				return nil, fmt.Errorf("unknown provider type %q (known: %v)", t, reg.Types())

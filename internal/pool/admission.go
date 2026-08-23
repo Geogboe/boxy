@@ -63,6 +63,14 @@ func (p *EventPublisher) PublishResourceProvisioned(ctx context.Context, res mod
 // GuestAdmissionPersonalizer is implemented by provider adapters that can
 // rotate a newly created guest before it becomes ready inventory.
 type GuestAdmissionPersonalizer interface {
+	// SupportsGuestPersonalization reports whether res's owning agent/driver
+	// implements guest personalization at all, without performing any live
+	// rotation. Admission must check this — and, if true, that a secret
+	// backend is configured — before ever calling PersonalizeGuestForPool:
+	// that call's side effect (rotating the guest's real credential) cannot
+	// be undone if a secret backend then turns out to be missing to store
+	// the result.
+	SupportsGuestPersonalization(ctx context.Context, pool model.Pool, res model.Resource) (bool, error)
 	PersonalizeGuestForPool(context.Context, model.Pool, model.Resource) (*providersdk.GuestPersonalizationResult, error)
 }
 
@@ -125,7 +133,26 @@ func (h *AdmissionHandler) Handle(ctx context.Context, event lifecycle.Event) (l
 	if h.Personalizer == nil {
 		return h.markReady(ctx, res, nil)
 	}
+	supports, err := h.Personalizer.SupportsGuestPersonalization(ctx, pool, res)
+	if err != nil {
+		return h.fail(ctx, res, fmt.Errorf("check guest personalization support for resource %q: %w", res.ID, err))
+	}
+	if !supports {
+		// The pool's driver doesn't implement GuestPersonalizer (e.g.
+		// docker, devfactory) — this is a routine, expected outcome, not a
+		// missing-config error. A secret backend is only actually needed
+		// below, to store a real credential a driver that DOES implement
+		// GuestPersonalizer would produce. Requiring h.Secrets unconditionally
+		// would demand a secret backend for every pool in the server, not
+		// just ones that need one. See #181's design spec follow-ups.
+		return h.markReady(ctx, res, nil)
+	}
 	if h.Secrets == nil {
+		// Checked here, before PersonalizeGuestForPool is ever called: that
+		// call rotates the guest's real, live credential as a side effect.
+		// Calling it first and only then discovering there's nowhere to
+		// store the result would rotate a real password with no way to
+		// recover or deliver it — see ADR-0010.
 		return h.fail(ctx, res, fmt.Errorf("secret backend is required for guest admission"))
 	}
 	result, err := h.Personalizer.PersonalizeGuestForPool(ctx, pool, res)
@@ -133,6 +160,11 @@ func (h *AdmissionHandler) Handle(ctx context.Context, event lifecycle.Event) (l
 		return h.fail(ctx, res, fmt.Errorf("personalize resource %q: %w", res.ID, err))
 	}
 	if result == nil {
+		// Capability was confirmed above, but the call still returned no
+		// result (e.g. the underlying capability check and the actual call
+		// raced against a driver capability that changed in between, or the
+		// driver legitimately has nothing to rotate this time) — fall back
+		// to the routine no-op path rather than treating it as an error.
 		return h.markReady(ctx, res, nil)
 	}
 	if result.EphemeralCredential == nil || len(result.EphemeralCredential.Data) == 0 {

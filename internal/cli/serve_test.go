@@ -293,7 +293,7 @@ func TestBuildDriversDecodesConfiguredInstancesAndDefaults(t *testing.T) {
 
 	drivers, err := buildDrivers(reg, []providersdk.Instance{
 		{Name: "alpha-local", Type: "alpha", Config: map[string]any{"image": "alpine"}},
-	})
+	}, "")
 	if err != nil {
 		t.Fatalf("buildDrivers: %v", err)
 	}
@@ -311,6 +311,37 @@ func TestBuildDriversDecodesConfiguredInstancesAndDefaults(t *testing.T) {
 	}
 }
 
+type resolvingServeDriverConfig struct {
+	resolvedBaseDir string
+}
+
+func (c *resolvingServeDriverConfig) ResolveRelativePaths(baseDir string) {
+	c.resolvedBaseDir = baseDir
+}
+
+func TestBuildDriversPassesCfgPathDirToRelativePathResolver(t *testing.T) {
+	reg := providersdk.NewRegistry()
+	var gotBaseDir string
+	if err := reg.Register(providersdk.Registration{
+		Type:        "alpha",
+		ConfigProto: func() any { return &resolvingServeDriverConfig{} },
+		NewDriver: func(cfg any) (providersdk.Driver, error) {
+			gotBaseDir = cfg.(*resolvingServeDriverConfig).resolvedBaseDir
+			return serveDriver{providerType: "alpha", cfg: cfg}, nil
+		},
+	}); err != nil {
+		t.Fatalf("register alpha: %v", err)
+	}
+
+	cfgPath := filepath.Join("some", "dir", "boxy.yaml")
+	if _, err := buildDrivers(reg, nil, cfgPath); err != nil {
+		t.Fatalf("buildDrivers: %v", err)
+	}
+	if want := filepath.Dir(cfgPath); gotBaseDir != want {
+		t.Fatalf("ResolveRelativePaths baseDir = %q, want %q", gotBaseDir, want)
+	}
+}
+
 func TestBuildDriversReportsDecodeAndFactoryErrors(t *testing.T) {
 	reg := providersdk.NewRegistry()
 	if err := reg.Register(providersdk.Registration{
@@ -323,11 +354,11 @@ func TestBuildDriversReportsDecodeAndFactoryErrors(t *testing.T) {
 		t.Fatalf("register alpha: %v", err)
 	}
 
-	if _, err := buildDrivers(reg, []providersdk.Instance{{Name: "alpha-local", Type: "alpha", Config: map[string]any{"image": map[string]any{"bad": true}}}}); err == nil {
+	if _, err := buildDrivers(reg, []providersdk.Instance{{Name: "alpha-local", Type: "alpha", Config: map[string]any{"image": map[string]any{"bad": true}}}}, ""); err == nil {
 		t.Fatal("buildDrivers decode error = nil")
 	}
 
-	if _, err := buildDrivers(reg, nil); err == nil {
+	if _, err := buildDrivers(reg, nil, ""); err == nil {
 		t.Fatal("buildDrivers factory error = nil")
 	}
 }
@@ -345,7 +376,7 @@ func TestBuildDriversRejectsDuplicateConfiguredProviderTypes(t *testing.T) {
 	_, err := buildDrivers(reg, []providersdk.Instance{
 		{Name: "alpha-a", Type: "alpha"},
 		{Name: "alpha-b", Type: "alpha"},
-	})
+	}, "")
 	if err == nil {
 		t.Fatal("buildDrivers duplicate provider type error = nil")
 	}
