@@ -34,6 +34,15 @@ type mockAgent struct {
 	allocateResult map[string]any
 	personalized   *providersdk.GuestPersonalizationResult
 	personalizeErr error
+
+	// createEntered and createGate let a test observe that Create has been
+	// called (createEntered closes) and hold it there until the test is
+	// ready to let it proceed (closing createGate) — used to probe
+	// AgentProvisioner.ProvisionLocked's lock scope against a concurrent
+	// ReconcileAgent sweep. Both nil is the default, non-blocking behavior
+	// every other test relies on.
+	createEntered chan struct{}
+	createGate    chan struct{}
 }
 
 type mockCreateCall struct {
@@ -81,6 +90,12 @@ func (m *mockAgent) Info() agentsdk.AgentInfo {
 
 func (m *mockAgent) Create(ctx context.Context, provider providersdk.Type, cfg any) (*providersdk.Resource, error) {
 	m.createCalls = append(m.createCalls, mockCreateCall{driverType: provider, cfg: cfg})
+	if m.createEntered != nil {
+		close(m.createEntered)
+	}
+	if m.createGate != nil {
+		<-m.createGate
+	}
 	if m.createErr != nil {
 		return nil, m.createErr
 	}
@@ -113,6 +128,31 @@ func (m *mockAgent) PersonalizeGuest(ctx context.Context, provider providersdk.T
 		return nil, m.personalizeErr
 	}
 	return m.personalized, nil
+}
+
+// nonPersonalizingAgent implements only the base agentsdk.Agent methods —
+// unlike mockAgent, it does NOT define PersonalizeGuest, so a type assertion
+// to agentsdk.GuestPersonalizingAgent against it fails. This is the double
+// SupportsGuestPersonalization's "not supported" branch needs: mockAgent
+// always implements the capability (it defines PersonalizeGuest
+// unconditionally), so it can only exercise the "supported" branch.
+type nonPersonalizingAgent struct {
+	info agentsdk.AgentInfo
+}
+
+func (a *nonPersonalizingAgent) Info() agentsdk.AgentInfo { return a.info }
+func (a *nonPersonalizingAgent) Create(context.Context, providersdk.Type, any) (*providersdk.Resource, error) {
+	return nil, nil
+}
+func (a *nonPersonalizingAgent) Read(context.Context, providersdk.Type, string) (*providersdk.ResourceStatus, error) {
+	return nil, nil
+}
+func (a *nonPersonalizingAgent) Update(context.Context, providersdk.Type, string, providersdk.Operation) (*providersdk.Result, error) {
+	return nil, nil
+}
+func (a *nonPersonalizingAgent) Delete(context.Context, providersdk.Type, string) error { return nil }
+func (a *nonPersonalizingAgent) Allocate(context.Context, providersdk.Type, string) (map[string]any, error) {
+	return nil, nil
 }
 
 // fakeAgentStream is a minimal, no-network implementation of
@@ -530,6 +570,56 @@ func TestAgentProvisioner_Allocate_FallsBackWhenPersonalizationReturnsNil(t *tes
 	}
 }
 
+// TestAgentProvisioner_SupportsGuestPersonalization_TrueForCapableAgent and
+// its _False counterpart guard the fix for a real bug: admission used to
+// call PersonalizeGuestForPool (a live, irreversible guest credential
+// rotation) before confirming a secret backend existed to store the
+// result. SupportsGuestPersonalization must answer correctly, and without
+// itself triggering any rotation, so admission can check it — and a secret
+// backend — first. See internal/pool/admission.go's Handle and ADR-0010.
+func TestAgentProvisioner_SupportsGuestPersonalization_TrueForCapableAgent(t *testing.T) {
+	mockAgent := newMockAgent(providersdk.Type("hyperv"))
+	provisioner := &AgentProvisioner{
+		Registry: registryWith(t, mockAgent),
+		Specs: map[model.PoolName]boxyconfig.PoolSpec{
+			"vm-pool": {Name: "vm-pool", Type: "hyperv"},
+		},
+		Providers: map[string]providersdk.Instance{},
+	}
+	res := model.Resource{ID: "vm-1", Provider: model.ProviderRef{AgentID: mockAgent.info.ID}}
+
+	supports, err := provisioner.SupportsGuestPersonalization(context.Background(), model.Pool{Name: "vm-pool"}, res)
+	if err != nil {
+		t.Fatalf("SupportsGuestPersonalization: %v", err)
+	}
+	if !supports {
+		t.Fatal("supports = false, want true for an agent implementing GuestPersonalizingAgent")
+	}
+	if mockAgent.personalized != nil || len(mockAgent.createCalls) != 0 {
+		t.Fatal("SupportsGuestPersonalization must not perform any personalization side effect")
+	}
+}
+
+func TestAgentProvisioner_SupportsGuestPersonalization_FalseForPlainAgent(t *testing.T) {
+	plain := &nonPersonalizingAgent{info: agentsdk.AgentInfo{ID: "plain-agent", Providers: []providersdk.Type{"docker"}}}
+	provisioner := &AgentProvisioner{
+		Registry: registryWith(t, plain),
+		Specs: map[model.PoolName]boxyconfig.PoolSpec{
+			"web-pool": {Name: "web-pool", Type: "docker"},
+		},
+		Providers: map[string]providersdk.Instance{},
+	}
+	res := model.Resource{ID: "res-1", Provider: model.ProviderRef{AgentID: "plain-agent"}}
+
+	supports, err := provisioner.SupportsGuestPersonalization(context.Background(), model.Pool{Name: "web-pool"}, res)
+	if err != nil {
+		t.Fatalf("SupportsGuestPersonalization: %v", err)
+	}
+	if supports {
+		t.Fatal("supports = true, want false for an agent not implementing GuestPersonalizingAgent")
+	}
+}
+
 func TestAgentProvisioner_Allocate_SurfacesPersonalizationFailure(t *testing.T) {
 	mockAgent := newMockAgent(providersdk.Type("hyperv"))
 	mockAgent.personalizeErr = errPersonalizeFailed
@@ -736,6 +826,73 @@ func TestAgentProvisioner_ForceOrphan_RefusedWhenAgentStillRegistered(t *testing
 	}
 	if len(agent.deleteCalls) != 0 {
 		t.Fatalf("deleteCalls = %v, want none — ForceOrphan must never contact the agent even when refusing", agent.deleteCalls)
+	}
+}
+
+// TestAgentProvisioner_ProvisionLocked_HoldsLockThroughCreate proves the
+// extended fix for the ghost-orphan race: the per-agent ProvisionLocker
+// lock must be held from before Create is even called, not just around the
+// subsequent store write. A version of this fix that only wrapped the
+// store write (the version this branch shipped with initially) would let
+// this test's competing LockProvisioning acquire while Create is still
+// blocked below — which is exactly the window a fast ResourceLister driver
+// like devfactory (returns from Create in well under a millisecond) could
+// hit in practice, since List() visibility happens inside Create, before
+// any caller regains control to acquire anything. See LockedProvisioner's
+// and AgentRegistry.LockProvisioning's doc comments.
+func TestAgentProvisioner_ProvisionLocked_HoldsLockThroughCreate(t *testing.T) {
+	agent := &mockAgent{
+		info:           agentsdk.AgentInfo{ID: "agent-1", Providers: []providersdk.Type{"devfactory"}},
+		nextResourceID: "res-1",
+		createEntered:  make(chan struct{}),
+		createGate:     make(chan struct{}),
+	}
+	registry := registryWith(t, agent)
+	provisioner := &AgentProvisioner{
+		Registry: registry,
+		Specs: map[model.PoolName]boxyconfig.PoolSpec{
+			"vm-pool": {Name: "vm-pool", Type: "devfactory"},
+		},
+		Providers: map[string]providersdk.Instance{},
+	}
+	pool := model.Pool{Name: "vm-pool", Inventory: model.ResourceCollection{ExpectedType: "container", ExpectedProfile: "default"}}
+
+	provisionDone := make(chan error, 1)
+	go func() {
+		_, _, err := provisioner.ProvisionLocked(context.Background(), pool, nil)
+		provisionDone <- err
+	}()
+
+	select {
+	case <-agent.createEntered:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for ProvisionLocked to enter Create")
+	}
+
+	competingAcquire := make(chan struct{})
+	go func() {
+		release := registry.LockProvisioning("agent-1")
+		close(competingAcquire)
+		release()
+	}()
+
+	select {
+	case <-competingAcquire:
+		t.Fatal("a competing LockProvisioning(\"agent-1\") acquired while ProvisionLocked was still blocked inside Create — the lock must be held from before Create returns, not just around the store write after")
+	case <-time.After(50 * time.Millisecond):
+		// expected: still blocked
+	}
+
+	close(agent.createGate) // let Create return, finishing ProvisionLocked and releasing the lock
+
+	if err := <-provisionDone; err != nil {
+		t.Fatalf("ProvisionLocked: %v", err)
+	}
+	select {
+	case <-competingAcquire:
+		// expected: unblocks once ProvisionLocked releases its lock
+	case <-time.After(time.Second):
+		t.Fatal("competing LockProvisioning(\"agent-1\") never acquired after ProvisionLocked finished")
 	}
 }
 

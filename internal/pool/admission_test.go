@@ -41,10 +41,22 @@ func (s *admissionSecretStore) Delete(_ context.Context, key string) error {
 
 func (s *admissionSecretStore) Check() error { return nil }
 
+// admissionPersonalizer fakes GuestAdmissionPersonalizer. supports controls
+// SupportsGuestPersonalization's answer independently of result/err, so
+// tests can exercise "doesn't apply" (supports=false) and "applies but no
+// secret backend" (supports=true, PersonalizeGuestForPool never reached)
+// as distinct scenarios — mirroring how a real driver's capability is known
+// before any rotation is attempted.
 type admissionPersonalizer struct {
-	result *providersdk.GuestPersonalizationResult
-	err    error
-	calls  int
+	supports   bool
+	supportErr error
+	result     *providersdk.GuestPersonalizationResult
+	err        error
+	calls      int
+}
+
+func (p *admissionPersonalizer) SupportsGuestPersonalization(context.Context, model.Pool, model.Resource) (bool, error) {
+	return p.supports, p.supportErr
 }
 
 func (p *admissionPersonalizer) PersonalizeGuestForPool(context.Context, model.Pool, model.Resource) (*providersdk.GuestPersonalizationResult, error) {
@@ -67,7 +79,7 @@ func TestAdmissionHandlerRotatesAndPersistsBeforeReady(t *testing.T) {
 	ctx := context.Background()
 	st := newTestStoreWithAdmissionResource(t)
 	secrets := &admissionSecretStore{}
-	personalizer := &admissionPersonalizer{result: &providersdk.GuestPersonalizationResult{
+	personalizer := &admissionPersonalizer{supports: true, result: &providersdk.GuestPersonalizationResult{
 		AccessDetails: providersdk.GuestAccessDetails{Properties: map[string]string{"guest_address": "192.0.2.10"}},
 		EphemeralCredential: &providersdk.GuestCredential{
 			Kind: "password",
@@ -102,7 +114,7 @@ func TestAdmissionHandlerRotatesAndPersistsBeforeReady(t *testing.T) {
 
 // TestAdmissionHandlerMarksReadyWithoutSecretsWhenPersonalizerDoesNotApply
 // covers a driver that doesn't implement GuestPersonalizer (e.g. docker,
-// devfactory) — PersonalizeGuestForPool correctly returns (nil, nil) for
+// devfactory) — SupportsGuestPersonalization correctly returns false for
 // those, and admission must not demand a configured secret backend just
 // because *some* pool in the server might need one. Before this fix, the
 // handler required h.Secrets != nil unconditionally whenever a Personalizer
@@ -112,7 +124,7 @@ func TestAdmissionHandlerRotatesAndPersistsBeforeReady(t *testing.T) {
 func TestAdmissionHandlerMarksReadyWithoutSecretsWhenPersonalizerDoesNotApply(t *testing.T) {
 	ctx := context.Background()
 	st := newTestStoreWithAdmissionResource(t)
-	personalizer := &admissionPersonalizer{result: nil}
+	personalizer := &admissionPersonalizer{supports: false}
 	handler := &AdmissionHandler{Store: st, Secrets: nil, Personalizer: personalizer}
 	payload, _ := json.Marshal(resourceProvisionedPayload{ResourceID: "res-1", PoolName: "win-vm"})
 
@@ -127,20 +139,25 @@ func TestAdmissionHandlerMarksReadyWithoutSecretsWhenPersonalizerDoesNotApply(t 
 	if res.State != model.ResourceStateReady {
 		t.Fatalf("resource state = %q, want ready", res.State)
 	}
-	if personalizer.calls != 1 {
-		t.Fatalf("personalizer calls = %d, want 1 (must be consulted before requiring Secrets)", personalizer.calls)
+	if personalizer.calls != 0 {
+		t.Fatalf("personalizer calls = %d, want 0 (PersonalizeGuestForPool must never run once capability is confirmed absent)", personalizer.calls)
 	}
 }
 
 // TestAdmissionHandlerRequiresSecretsWhenPersonalizerAppliesWithoutBackend
 // confirms the original protection still holds for a driver that DOES
 // implement GuestPersonalizer (e.g. hyperv) when no secret backend is
-// configured — only the no-op (nil, nil) case from the test above should be
-// exempt.
+// configured — only the not-applicable case from the test above should be
+// exempt. Critically, PersonalizeGuestForPool must never be called in this
+// case: it performs a real, live guest credential rotation, and calling it
+// with no backend to store the result would rotate a real password and lose
+// it permanently (see ADR-0010). This was a real, unaddressed bug in the
+// initial version of this fix — the ordering swap that made the test above
+// pass also allowed this call through before the h.Secrets check ran.
 func TestAdmissionHandlerRequiresSecretsWhenPersonalizerAppliesWithoutBackend(t *testing.T) {
 	ctx := context.Background()
 	st := newTestStoreWithAdmissionResource(t)
-	personalizer := &admissionPersonalizer{result: &providersdk.GuestPersonalizationResult{
+	personalizer := &admissionPersonalizer{supports: true, result: &providersdk.GuestPersonalizationResult{
 		AccessDetails: providersdk.GuestAccessDetails{Properties: map[string]string{"guest_address": "192.0.2.10"}},
 		EphemeralCredential: &providersdk.GuestCredential{
 			Kind: "password",
@@ -154,6 +171,9 @@ func TestAdmissionHandlerRequiresSecretsWhenPersonalizerAppliesWithoutBackend(t 
 	if outcome != lifecycle.OutcomeTerminal || err == nil {
 		t.Fatalf("Handle() = (%v, %v), want terminal error (no secret backend for a real credential)", outcome, err)
 	}
+	if personalizer.calls != 0 {
+		t.Fatalf("personalizer calls = %d, want 0 (must fail before ever rotating a live guest credential)", personalizer.calls)
+	}
 }
 
 func TestAdmissionHandlerFailureQuarantinesWithoutRetryingSameResource(t *testing.T) {
@@ -163,7 +183,7 @@ func TestAdmissionHandlerFailureQuarantinesWithoutRetryingSameResource(t *testin
 	handler := &AdmissionHandler{
 		Store:        st,
 		Secrets:      &admissionSecretStore{},
-		Personalizer: &admissionPersonalizer{err: errors.New("guest rotation failed")},
+		Personalizer: &admissionPersonalizer{supports: true, err: errors.New("guest rotation failed")},
 		Failures:     failures,
 	}
 	payload, _ := json.Marshal(resourceProvisionedPayload{ResourceID: "res-1", PoolName: "win-vm"})

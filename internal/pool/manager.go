@@ -680,53 +680,71 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 			}
 
 			for i := 0; i < pl.toProvision; i++ {
-				res, err := m.provisioner.Provision(ctx, p)
-				if err != nil {
-					// Record the failure before attempting the quarantine
-					// write below, so a pool whose store can't even persist
-					// the quarantine record still backs off instead of
-					// retrying on every reconcile tick.
-					m.recordProvisionFailure(p.Name, pl.now)
-					if res.ID != "" {
-						// See the success path below for why this write is
-						// lock-guarded: a driver's own internal record for
-						// this ID (e.g. devfactory's orphaned-resource
-						// simulation) can already be visible through
-						// ResourceLister the moment Provision returns.
-						release := m.lockProvisioning(res.Provider.AgentID)
-						putErr := m.store.PutResource(ctx, res)
-						release()
-						if putErr != nil {
-							return fmt.Errorf("put quarantined resource %q: %w", res.ID, putErr)
+				// persist finishes building whatever resource Create
+				// produced (pool-inventory/admission-specific fields) and
+				// writes it to the store. Quarantined resources (always
+				// State == ResourceStateError) skip the inventory add —
+				// they were never part of the pool's usable inventory.
+				persist := func(res *model.Resource) error {
+					if res.State != model.ResourceStateError {
+						if res.OriginPool == "" {
+							res.OriginPool = p.Name
+						}
+						if m.admission != nil {
+							res.State = model.ResourceStateProvisioning
+							res.UpdatedAt = pl.now
+						}
+						if err := p.Inventory.Add(*res); err != nil {
+							return fmt.Errorf("add resource to pool %q inventory: %w", p.Name, err)
 						}
 					}
+					return m.store.PutResource(ctx, *res)
+				}
+
+				var res model.Resource
+				var created bool
+				var err error
+				if lp, ok := m.provisioner.(LockedProvisioner); ok {
+					// Preferred path: the per-agent ProvisionLocker lock (if
+					// any) is acquired by the provisioner itself around both
+					// its Create call and persist above, closing the window
+					// the fallback below cannot — a fast ResourceLister
+					// driver (e.g. devfactory) can make a resource visible
+					// via List() the instant Create returns, before Manager
+					// gets control back to acquire anything. See
+					// LockedProvisioner's doc comment.
+					res, created, err = lp.ProvisionLocked(ctx, p, persist)
+				} else {
+					// Fallback for a Provisioner that doesn't implement
+					// LockedProvisioner (e.g. the deprecated
+					// DriverProvisioner, or a test fake) — no per-agent
+					// concept to lock around Create itself, so this only
+					// closes the narrower window around the store write,
+					// same as before LockedProvisioner existed.
+					res, err = m.provisioner.Provision(ctx, p)
+					created = err == nil
+					if err == nil || res.ID != "" {
+						release := m.lockProvisioning(res.Provider.AgentID)
+						perr := persist(&res)
+						release()
+						if perr != nil {
+							err = perr
+						}
+					}
+				}
+
+				// created (Create itself succeeded), not err (persist may
+				// have failed afterward), decides backoff bookkeeping: a
+				// persist failure after a successful Create must not count
+				// against the pool's provisioning backoff the way a real
+				// Create failure does.
+				if created {
+					m.recordProvisionSuccess(p.Name)
+				} else {
+					m.recordProvisionFailure(p.Name, pl.now)
+				}
+				if err != nil {
 					return fmt.Errorf("provision resource for pool %q: %w", p.Name, err)
-				}
-				m.recordProvisionSuccess(p.Name)
-				if res.OriginPool == "" {
-					res.OriginPool = p.Name
-				}
-				if m.admission != nil {
-					res.State = model.ResourceStateProvisioning
-					res.UpdatedAt = pl.now
-				}
-				if err := p.Inventory.Add(res); err != nil {
-					return fmt.Errorf("add resource to pool %q inventory: %w", p.Name, err)
-				}
-				// Hold the per-agent provisioning lock across this write so
-				// a concurrent ReconcileAgent sweep for the same agent (see
-				// ProvisionLocker) can never observe this resource through
-				// the driver's List() without also seeing it here — closing
-				// the ghost-orphan race #181 exposed for fast drivers like
-				// devfactory. Released immediately after the write, not
-				// held through PublishResourceProvisioned below: the race
-				// this guards is specifically about store-vs-List()
-				// visibility, not the admission event.
-				release := m.lockProvisioning(res.Provider.AgentID)
-				putErr := m.store.PutResource(ctx, res)
-				release()
-				if putErr != nil {
-					return fmt.Errorf("put resource %q: %w", res.ID, putErr)
 				}
 				if m.admission != nil {
 					if err := m.admission.PublishResourceProvisioned(ctx, res); err != nil {

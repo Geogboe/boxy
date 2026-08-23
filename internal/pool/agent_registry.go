@@ -200,7 +200,7 @@ func (r *AgentRegistry) Resolve(provider providersdk.Type, pinnedAgentID string)
 // once. Implements pool.ProvisionLocker.
 //
 // It closes a race exposed by devfactory implementing providersdk.ResourceLister
-// (see #181's design spec, "Follow-ups"): Manager's provision actuator calls
+// (see #181's design spec, "Follow-ups"): a provision actuator calls
 // driver.Create() and only writes the resulting resource to the store
 // afterward, while ReconcileAgent's periodic sweep (#133/#174) treats any ID
 // a driver's List() reports that the store doesn't yet know about as an
@@ -211,11 +211,19 @@ func (r *AgentRegistry) Resolve(provider providersdk.Type, pinnedAgentID string)
 // return in well under a millisecond — makes that window reliably hittable:
 // the sweep can see a resource via List() before the store's own write for
 // the same resource has landed, permanently misclassifying it as an unowned
-// orphan. Manager's actuator holds this lock from right after Provision()
-// returns until its store write completes; ReconcileAgent's observer holds
-// it across its combined List()-and-store-read snapshot for the same agent.
-// Whichever side runs first, the other always sees a fully settled view —
-// no polling, no fixed grace period.
+// orphan. AgentProvisioner.ProvisionLocked (pool.LockedProvisioner) holds
+// this lock from immediately before its Create call through its store
+// write — not merely from after Create returns, which would leave the
+// exact window above open for a fast driver, since List()-visibility
+// happens inside Create itself, before any caller regains control to
+// acquire anything. (Manager falls back to acquiring this lock only around
+// its own store write, for a Provisioner that doesn't implement
+// LockedProvisioner — a narrower guarantee, since such a provisioner has no
+// per-agent concept for this lock to protect Create with.)
+// ReconcileAgent's observer holds it across its combined
+// List()-and-store-read snapshot for the same agent. Whichever side runs
+// first, the other always sees a fully settled view — no polling, no fixed
+// grace period.
 func (r *AgentRegistry) LockProvisioning(agentID string) func() {
 	r.provisionLocksMu.Lock()
 	if r.provisionLocks == nil {
