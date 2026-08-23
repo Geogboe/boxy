@@ -131,10 +131,18 @@ func resolveAgentServeOpts(opts agentServeOpts) (agentServeOpts, error) {
 		}
 		providerConfigs = selected
 		providers = providerTypesFromInstances(providerConfigs)
-		// providerConfigs came from the service config file itself, not a
-		// --config boxy.yaml — resolve relative provider paths (e.g.
-		// devfactory's DataDir) against that file's directory instead.
-		providerConfigsBaseDir = filepath.Dir(opts.serviceConfigPath)
+		// Prefer the base directory `agent service install` recorded (the
+		// original --config boxy.yaml's directory, already absolute) —
+		// service.yaml's own directory is a different location entirely, so
+		// resolving against it would put a relative devfactory DataDir (etc.)
+		// in the wrong place. Fall back to service.yaml's own directory only
+		// for a hand-authored service.yaml with no --config provenance, or
+		// one saved before this field existed.
+		if cfg.ProviderConfigsBaseDir != "" {
+			providerConfigsBaseDir = cfg.ProviderConfigsBaseDir
+		} else {
+			providerConfigsBaseDir = filepath.Dir(opts.serviceConfigPath)
+		}
 	}
 	if len(providers) == 0 {
 		return agentServeOpts{}, fmt.Errorf("invalid --service-config %q: missing providers", opts.serviceConfigPath)

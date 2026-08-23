@@ -120,18 +120,29 @@ func runAgentServiceInstall(cmd *cobra.Command, opts agentServiceInstallOpts) er
 	if err != nil {
 		return err
 	}
+	// Resolved from opts.agentOpts.configPath's directory by
+	// resolveAgentServeOpts above, when --config supplied provider
+	// instances. Persisted absolute (like absDataDir/absCACert) so
+	// `agent serve --service-config` can resolve a provider's relative
+	// paths (e.g. devfactory's DataDir) against the original --config
+	// file's directory instead of service.yaml's own directory.
+	absProviderConfigsBaseDir, err := resolveAbs(opts.agentOpts.providerConfigsBaseDir)
+	if err != nil {
+		return err
+	}
 	logFile := filepath.Join(absDataDir, "service.log")
 
 	cfg := agentServiceConfig{
-		Server:          opts.agentOpts.server,
-		Providers:       stringsOf(opts.agentOpts.providers),
-		ProviderConfigs: opts.agentOpts.providerConfigs,
-		Token:           opts.agentOpts.token,
-		Name:            opts.agentOpts.name,
-		CACert:          absCACert,
-		DataDir:         absDataDir,
-		Insecure:        opts.agentOpts.insecure,
-		LogFile:         logFile,
+		Server:                 opts.agentOpts.server,
+		Providers:              stringsOf(opts.agentOpts.providers),
+		ProviderConfigs:        opts.agentOpts.providerConfigs,
+		ProviderConfigsBaseDir: absProviderConfigsBaseDir,
+		Token:                  opts.agentOpts.token,
+		Name:                   opts.agentOpts.name,
+		CACert:                 absCACert,
+		DataDir:                absDataDir,
+		Insecure:               opts.agentOpts.insecure,
+		LogFile:                logFile,
 	}
 	cfgPath := filepath.Join(absDataDir, "service.yaml")
 	if err := saveAgentServiceConfig(cfgPath, cfg); err != nil {

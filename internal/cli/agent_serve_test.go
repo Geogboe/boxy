@@ -338,3 +338,31 @@ func TestResolveAgentServeOptsSetsProviderConfigsBaseDirFromServiceConfig(t *tes
 		t.Fatalf("providerConfigsBaseDir = %q, want %q", opts.providerConfigsBaseDir, want)
 	}
 }
+
+// TestResolveAgentServeOptsPrefersPersistedProviderConfigsBaseDir proves the
+// fallback above (filepath.Dir(serviceConfigPath)) only applies to a
+// service.yaml with no recorded ProviderConfigsBaseDir. When
+// ProviderConfigsBaseDir IS set — as `agent service install --config`
+// always sets it — it must win, even though it points somewhere entirely
+// different from service.yaml's own directory.
+func TestResolveAgentServeOptsPrefersPersistedProviderConfigsBaseDir(t *testing.T) {
+	originalConfigDir := t.TempDir()
+	path := filepath.Join(t.TempDir(), "service.yaml") // deliberately a different directory
+	if err := saveAgentServiceConfig(path, agentServiceConfig{
+		Server: "host:9091",
+		ProviderConfigs: []providersdk.Instance{
+			{Name: "docker-local", Type: "docker"},
+		},
+		ProviderConfigsBaseDir: originalConfigDir,
+	}); err != nil {
+		t.Fatalf("saveAgentServiceConfig: %v", err)
+	}
+
+	opts, err := resolveAgentServeOpts(agentServeOpts{serviceConfigPath: path})
+	if err != nil {
+		t.Fatalf("resolveAgentServeOpts: %v", err)
+	}
+	if opts.providerConfigsBaseDir != originalConfigDir {
+		t.Fatalf("providerConfigsBaseDir = %q, want persisted %q, not service.yaml's own directory %q", opts.providerConfigsBaseDir, originalConfigDir, filepath.Dir(path))
+	}
+}
