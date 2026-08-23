@@ -160,18 +160,6 @@ func (s *fileStore) Delete(_ context.Context, key string) error {
 	return s.persistLocked()
 }
 
-func (s *fileStore) getRaw(key string) ([]byte, error) {
-	return s.Get(context.Background(), key)
-}
-
-func (s *fileStore) putRaw(key string, value []byte) error {
-	return s.Put(context.Background(), key, value)
-}
-
-func (s *fileStore) deleteRaw(key string) error {
-	return s.Delete(context.Background(), key)
-}
-
 func (s *fileStore) persistLocked() error {
 	if err := ensureSecretDir(filepath.Dir(s.path)); err != nil {
 		return err
