@@ -362,6 +362,31 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   splitting a fix into multiple PRs (see the `--log-opts HEAD` fix, #210):
   each branch's own full local validation surface should be run and read,
   not assumed from the sibling branch's results.
+- **A bare `#N` in a commit message or PR title does not close the issue —
+  and this repo has already shipped work this way multiple times.** During
+  the 2026-08-24 session, four issues (#197, #101, #168, #185) were found
+  fully implemented and merged to `main` — in three cases via a direct
+  commit to `main` with no PR at all (`94518da`, `e993f04`, `df7794f`) —
+  but still open, because the commit messages used a `feat(#N): ...`
+  traceability prefix instead of a `Closes #N`/`Fixes #N`/`Resolves #N`
+  closing keyword. GitHub only auto-closes on the closing keyword, not a
+  bare reference, whether that keyword lives in a merged PR body or in a
+  commit pushed straight to the default branch — see the existing "Closing
+  issues via merged PRs" entry above, which already covered the PR case;
+  this generalizes it to direct commits too. Before triaging or planning
+  off the open-issue list, don't trust it at face value for anything that
+  looks like it might already be architecturally significant — cross-check
+  with `git log --all --oneline --grep="#N"` and read the matching commits,
+  same as verifying against code per the "Issue text drifts from reality
+  fast" entry. Going forward: (1) self-assign an issue
+  (`gh issue edit <N> --add-assignee @me`) when starting real implementation
+  work on it, so its state is visible while in progress; (2) always use the
+  actual closing keyword (not a bare `#N`) in whichever text GitHub will
+  scan — the PR body when there's a PR, the commit message itself when
+  committing straight to `main`; (3) when finishing work with no PR
+  involved, explicitly verify the issue closed (`gh issue view <N> --json
+  state`) and close it manually referencing the commit SHA if it didn't.
+  The `ship-it` skill's Phase 10 now covers the no-PR case explicitly.
 
 ## ADRs
 
