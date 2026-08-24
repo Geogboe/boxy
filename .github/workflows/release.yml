@@ -10,6 +10,20 @@ on:
   push:
     branches: [main]
 
+# Serialize runs on main: release-please-action has no lock of its own around
+# "does a release for this tag exist yet" — two pushes close enough together
+# (e.g. a release-please PR merge immediately followed by an unrelated merge)
+# can each pass that check before either has created anything, producing two
+# GitHub Release objects for the same tag. GoReleaser's subsequent update
+# then fails with a 422 tag_name conflict against whichever object it didn't
+# resolve. Reproduced 2026-08-24 (release-please PR #207 and docs-only #214,
+# 32s apart) — see the duplicate-release cleanup in that day's history.
+# cancel-in-progress: false queues the second run instead of racing or
+# dropping it, so every push still gets its own complete release pipeline.
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions: {}
 
 jobs:
