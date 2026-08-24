@@ -324,6 +324,44 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   `task serve:once` advertises `boxy serve --once`, but the command rejects
   that flag; treat this as a stale recipe/documentation defect and use a
   bounded live `serve` smoke run until the command contract is repaired.
+- **`task lint` used to pass on a Windows dev host while CI's `Lint` job
+  failed on the exact same commit.** `golangci-lint`'s build-tag-sensitive
+  checks (e.g. `unused`) only see the invoking host's own `GOOS`; CI's `Lint`
+  job always runs on `ubuntu-latest`, so a Windows host compiling
+  Windows-tagged files (`//go:build windows`) never saw anything that was
+  unused specifically outside Windows. This is exactly how
+  `pkg/secrets/secrets.go` shipped three Windows-only-consumed methods in
+  #197 that stayed invisible to local lint on this Windows host but broke CI
+  immediately (found and fixed in #209, 2026-08). `task lint` (and therefore
+  `task ci:validate`) now installs golangci-lint natively but runs it with
+  `GOOS=linux` forced, so the analysis matches CI's runner regardless of host
+  OS — this class of gap should not recur. If a future change adds a new
+  GOOS-gated file family, verify `task lint` still reflects CI by comparing
+  against `GOOS=<other target>` explicitly rather than assuming.
+- **A PR's red CI check is not automatically evidence of a bug the PR
+  introduced.** Before assuming a failing check needs fixing in the branch
+  under review, check whether the failing file/behavior is even reachable
+  from that branch (`git merge-base --is-ancestor <suspect-commit>
+  <branch-tip>`, or `git log <merge-base>..<branch-tip> -- <path>`) — a
+  failure can be pre-existing on `main` (unrelated commit, merged earlier)
+  or, for Betterleaks specifically, coming from an entirely different open
+  branch the scan happened to also see (see the `--log-opts HEAD` note
+  above). #208 merged to `main` with two red CI checks (Lint, Betterleaks
+  PII); neither was caused by #208's own changes, and conflating "PR is red"
+  with "PR broke it" would have led to fixing the wrong branch. Root-cause
+  before patching.
+- **Fully validate locally before pushing, including the parts that are easy
+  to skip because you already predict the result.** `task ci:validate` (or
+  the specific local scan/lint commands it wraps) must actually be run and
+  its real output checked before every push — not inferred from what a
+  similar run did earlier, and not skipped because a failure is "expected"
+  (e.g. a known pre-existing issue on a sibling PR). Predicting a CI outcome
+  correctly is not the same as verifying it locally; pushing on a prediction
+  still burns a CI run and a round trip to find out you were right, and
+  leaves no local proof if you were wrong. This also applies per-branch when
+  splitting a fix into multiple PRs (see the `--log-opts HEAD` fix, #210):
+  each branch's own full local validation surface should be run and read,
+  not assumed from the sibling branch's results.
 
 ## ADRs
 

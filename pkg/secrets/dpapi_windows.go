@@ -44,3 +44,22 @@ func (s *dpapiStore) Put(_ context.Context, key string, value []byte) error {
 func (s *dpapiStore) Delete(_ context.Context, key string) error {
 	return s.file.deleteRaw(key)
 }
+
+// getRaw, putRaw, and deleteRaw adapt fileStore's context-taking Store
+// methods for dpapiStore, whose own Get/Put/Delete need ctx-free access to
+// the underlying ciphertext. They live here (not in secrets.go) because
+// dpapiStore is their only caller and this file is windows-only; keeping
+// them in the shared, cross-platform file left them unused on every other
+// GOOS, which golangci-lint's `unused` linter (correctly) flags when run on
+// non-Windows CI runners.
+func (s *fileStore) getRaw(key string) ([]byte, error) {
+	return s.Get(context.Background(), key)
+}
+
+func (s *fileStore) putRaw(key string, value []byte) error {
+	return s.Put(context.Background(), key, value)
+}
+
+func (s *fileStore) deleteRaw(key string) error {
+	return s.Delete(context.Background(), key)
+}
