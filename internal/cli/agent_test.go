@@ -49,7 +49,21 @@ func newAgentTestServer(t *testing.T) (*httptest.Server, *agentTestState) {
 	mux.HandleFunc("GET /api/v1/agents", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode([]map[string]any{
-			{"id": "agent-a", "name": "Lab HV", "providers": []string{"hyperv"}, "available": true},
+			{
+				"id": "agent-a", "name": "Lab HV", "providers": []string{"hyperv"},
+				"available": true, "connected": true,
+				"last_seen":    time.Date(2026, time.August, 21, 14, 30, 0, 0, time.UTC),
+				"availability": map[string]any{"hyperv": map[string]any{"memory_mb": 4096}},
+			},
+			{
+				"id": "agent-b", "name": "Remote Docker", "providers": []string{"docker"},
+				"available": false, "connected": false,
+			},
+			{
+				"id": "agent-c", "name": "Mixed Host", "providers": []string{"hyperv", "docker"},
+				"available": true, "connected": true,
+				"availability": map[string]any{"hyperv": map[string]any{"memory_mb": 2048}},
+			},
 		})
 	})
 	mux.HandleFunc("DELETE /api/v1/agents/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -186,8 +200,121 @@ func TestAgentList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !strings.Contains(output, "agent-a") || !strings.Contains(output, "available") {
-		t.Fatalf("output = %q, want agent listing", output)
+	for _, want := range []string{
+		"agent-a", "connected", "available", "2026-08-21 14:30:00 UTC",
+		"agent-b", "disconnected", "unavailable", "no heartbeat sample",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("output = %q, want it to contain %q", output, want)
+		}
+	}
+}
+
+func TestAgentList_json(t *testing.T) {
+	srv, _ := newAgentTestServer(t)
+	defer srv.Close()
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"agent", "--server", srv.URL, "list", "--format", "json"})
+
+	output, err := captureSandboxStdout(t, func() error {
+		return cmd.ExecuteContext(context.Background())
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	var agents []map[string]any
+	if err := json.Unmarshal([]byte(output), &agents); err != nil {
+		t.Fatalf("output not valid JSON: %v\noutput = %s", err, output)
+	}
+	if len(agents) != 3 {
+		t.Fatalf("len(agents) = %d, want 3", len(agents))
+	}
+}
+
+func TestAgentStatus(t *testing.T) {
+	srv, _ := newAgentTestServer(t)
+	defer srv.Close()
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"agent", "--server", srv.URL, "status", "agent-a"})
+
+	output, err := captureSandboxStdout(t, func() error {
+		return cmd.ExecuteContext(context.Background())
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	for _, want := range []string{"agent-a", "Lab HV", "connected", "available", "2026-08-21 14:30:00 UTC", "4,096 MB free"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("output = %q, want it to contain %q", output, want)
+		}
+	}
+}
+
+func TestAgentStatus_noCapacitySample(t *testing.T) {
+	srv, _ := newAgentTestServer(t)
+	defer srv.Close()
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"agent", "--server", srv.URL, "status", "agent-b"})
+
+	output, err := captureSandboxStdout(t, func() error {
+		return cmd.ExecuteContext(context.Background())
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(output, "no capacity sample") {
+		t.Fatalf("output = %q, want it to mention no capacity sample", output)
+	}
+}
+
+// TestAgentStatus_mixedProviderSamples guards against two regressions of
+// iterating found.Availability directly instead of the ordered Providers
+// slice: (1) Go's randomized map iteration would make row order flaky across
+// runs, and (2) a provider with no sample would silently vanish instead of
+// getting its own "no capacity sample" row (the old `len(Availability) == 0`
+// guard only fired when *every* provider was unsampled).
+func TestAgentStatus_mixedProviderSamples(t *testing.T) {
+	srv, _ := newAgentTestServer(t)
+	defer srv.Close()
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"agent", "--server", srv.URL, "status", "agent-c"})
+
+	output, err := captureSandboxStdout(t, func() error {
+		return cmd.ExecuteContext(context.Background())
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	hyperv := strings.Index(output, "Capacity (hyperv)")
+	docker := strings.Index(output, "Capacity (docker)")
+	if hyperv == -1 || docker == -1 {
+		t.Fatalf("output = %q, want a capacity row for both providers", output)
+	}
+	if hyperv > docker {
+		t.Fatalf("output = %q, want hyperv row before docker row (Providers order)", output)
+	}
+	if !strings.Contains(output, "2,048 MB free") {
+		t.Fatalf("output = %q, want hyperv's sampled capacity", output)
+	}
+	if !strings.Contains(output[docker:], "no capacity sample") {
+		t.Fatalf("output = %q, want docker's row to say no capacity sample (not vanish)", output)
+	}
+}
+
+func TestAgentStatus_notFound(t *testing.T) {
+	srv, _ := newAgentTestServer(t)
+	defer srv.Close()
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"agent", "--server", srv.URL, "status", "does-not-exist"})
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
+	if err := cmd.ExecuteContext(context.Background()); err == nil {
+		t.Fatal("expected an error for an unknown agent id")
 	}
 }
 
