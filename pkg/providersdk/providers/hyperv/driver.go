@@ -225,6 +225,9 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 	if strings.TrimSpace(cc.GuestPassword) != "" {
 		return nil, fmt.Errorf("config.guest_password is no longer supported; use config.guest_password_ref")
 	}
+	if err := cc.Network.validate(); err != nil {
+		return nil, fmt.Errorf("config.network: %w", err)
+	}
 	guestUser := cc.GuestUser
 	if guestUser == "" {
 		if strings.EqualFold(cc.GuestOS, "linux") {
@@ -268,6 +271,16 @@ Connect-VMNetworkAdapter -VMName '%s' -SwitchName '%s' | Out-Null`,
 	// Store only non-sensitive Boxy guest metadata in VM Notes. Bootstrap and
 	// rotated credentials are delivered out-of-band and never written to the VM.
 	notes := fmt.Sprintf("boxy_guest_os=%s;boxy_guest_user=%s", cc.GuestOS, guestUser)
+	if cc.Network != nil {
+		notes += fmt.Sprintf(";boxy_net_static_ip=%s;boxy_net_prefix=%d",
+			cc.Network.StaticIP, cc.Network.effectivePrefixLength())
+		if strings.TrimSpace(cc.Network.DefaultGateway) != "" {
+			notes += fmt.Sprintf(";boxy_net_gw=%s", cc.Network.DefaultGateway)
+		}
+		if len(cc.Network.DNSServers) > 0 {
+			notes += fmt.Sprintf(";boxy_net_dns=%s", strings.Join(cc.Network.DNSServers, ","))
+		}
+	}
 
 	createScript := fmt.Sprintf(`
 $ErrorActionPreference = 'Stop'
@@ -794,6 +807,15 @@ func (d *Driver) PersonalizeGuest(ctx context.Context, id string) (*providersdk.
 		return nil, fmt.Errorf("resolve VM name for %s: %w", id, err)
 	}
 
+	// When a static IP is configured, apply it inside the guest via PowerShell
+	// Direct (VMBus — no network required) before querying the IP. This is the
+	// primary hook for Windows Server hosts where Hyper-V does not DHCP.
+	if netIP := strings.TrimSpace(notes["boxy_net_static_ip"]); netIP != "" {
+		if err := d.applyStaticIP(ctx, id, guestOS, guestUser, bootstrap.Password, notes); err != nil {
+			return nil, fmt.Errorf("apply static IP for VM %s: %w", id, err)
+		}
+	}
+
 	ip, err := d.vmIP(ctx, vmName)
 	if err != nil {
 		return nil, fmt.Errorf("get IP for VM %q: %w", vmName, err)
@@ -1012,6 +1034,72 @@ $ErrorActionPreference = 'Stop'
 		return "", fmt.Errorf("no IP address available for VM %q (is it running?)", vmName)
 	}
 	return ip, nil
+}
+
+// applyStaticIP configures a static IPv4 address inside the guest using
+// PowerShell Direct (VMBus — no guest network required). This is the primary
+// mechanism for Windows Server Hyper-V hosts where the virtual switch does not
+// issue DHCP leases. Only Windows guests are supported; Linux guests must
+// obtain their address via another mechanism (e.g. cloud-init).
+func (d *Driver) applyStaticIP(ctx context.Context, id, guestOS, guestUser, guestPassword string, notes map[string]string) error {
+	if strings.EqualFold(guestOS, "linux") {
+		return fmt.Errorf("static IP via boxy is not supported for Linux guests; configure the address via cloud-init or a pre-baked image")
+	}
+
+	staticIP := strings.TrimSpace(notes["boxy_net_static_ip"])
+	if staticIP == "" {
+		return nil
+	}
+	prefix := strings.TrimSpace(notes["boxy_net_prefix"])
+	if prefix == "" {
+		prefix = "24"
+	}
+	gateway := strings.TrimSpace(notes["boxy_net_gw"])
+	dns := strings.TrimSpace(notes["boxy_net_dns"])
+
+	// Build the PowerShell script to assign the static IP inside the guest.
+	// We target the first non-disabled adapter ordered by interface index.
+	gwBlock := ""
+	if gateway != "" {
+		gwBlock = fmt.Sprintf(" -DefaultGateway '%s'", psq(gateway))
+	}
+	dnsBlock := ""
+	if dns != "" {
+		var quoted []string
+		for _, srv := range strings.Split(dns, ",") {
+			srv = strings.TrimSpace(srv)
+			if srv != "" {
+				quoted = append(quoted, fmt.Sprintf("'%s'", psq(srv)))
+			}
+		}
+		if len(quoted) > 0 {
+			dnsBlock = fmt.Sprintf(`
+Set-DnsClientServerAddress -InterfaceIndex $adapter.InterfaceIndex -ServerAddresses @(%s) | Out-Null`,
+				strings.Join(quoted, ", "))
+		}
+	}
+
+	script := fmt.Sprintf(`
+$ErrorActionPreference = 'Stop'
+$adapter = Get-NetAdapter | Where-Object { $_.Status -ne 'Disabled' } | Sort-Object InterfaceIndex | Select-Object -First 1
+if ($null -eq $adapter) { throw 'no network adapter found in guest' }
+$existing = Get-NetIPAddress -InterfaceIndex $adapter.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
+if ($existing) { $existing | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue | Out-Null }
+New-NetIPAddress -InterfaceIndex $adapter.InterfaceIndex -IPAddress '%s' -PrefixLength %s%s | Out-Null%s
+`, psq(staticIP), psq(prefix), gwBlock, dnsBlock)
+
+	exec, err := d.newGuestExec(ctx, id, guestOS, guestUser, guestPassword, "")
+	if err != nil {
+		return fmt.Errorf("create guest exec for static IP: %w", err)
+	}
+	result, err := exec.Exec(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
+	if err != nil {
+		return fmt.Errorf("run static IP script: %w", err)
+	}
+	if result == nil || result.ExitCode != 0 {
+		return fmt.Errorf("static IP script exited %d: %s", resultExitCode(result), resultOutput(result))
+	}
+	return nil
 }
 
 func (d *Driver) readNotes(ctx context.Context, id string) (map[string]string, error) {
