@@ -408,10 +408,22 @@ it's no longer needed. See #100.
   Dependabot would have caught the same update.
 - `.github/CODEOWNERS` requires owner review on any `.github/workflows/`
   change.
-- A `betterleaks` job runs in `ci.yml` on every push/PR and scans full Git
-  history with pinned Betterleaks `v1.8.1`. `task secrets:scan` installs and
-  runs the same pinned version locally. Do not replace it with directory mode
-  because that would miss secrets that were committed and later removed. On Windows,
+- A `betterleaks` job runs in `ci.yml` on every push/PR and scans the full Git
+  history of the checked-out ref with pinned Betterleaks `v1.8.1`. `task
+  secrets:scan` installs and runs the same pinned version locally. Do not
+  replace it with directory mode because that would miss secrets that were
+  committed and later removed. Both the CI job and `task secrets:scan`/`task
+  pii:scan` pass `--log-opts HEAD` (2026-08, PR #209 follow-up): without it,
+  Betterleaks' `git .` source walks every ref reachable in the local
+  repository, and `fetch-depth: 0` on `actions/checkout` fetches *all* remote
+  branches (`+refs/heads/*`), not just the one being tested — so an unrelated
+  open branch elsewhere in the repo (e.g. a stray test IP literal on someone
+  else's in-progress PR) could fail the PII job for a PR that never touched
+  it, and the same is true locally for any developer with those branches
+  fetched. `--log-opts HEAD` still walks the *full* history of the checked-out
+  ref back to its initial commit — no coverage of what's actually being
+  merged is lost — it only drops sibling branches this run isn't about. On
+  Windows,
   `scripts/betterleaks-git.ps1` prepends a narrow Git shim for a native ARM64
   Git-for-Windows compatibility issue: Betterleaks maps Go's `os.DevNull` to
   `NUL` for `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM`, while the
@@ -424,8 +436,8 @@ it's no longer needed. See #100.
   Windows ARM64 reproduction at
   https://github.com/Gentleman-Programming/gentle-ai/issues/2206.
 
-- A separate `pii` job uses `.betterleaks-pii.toml` to scan the full Git history
-  for non-controlled email addresses, private IPs, non-example hostnames,
+- A separate `pii` job uses `.betterleaks-pii.toml` to scan the checked-out
+  ref's full Git history for non-controlled email addresses, private IPs, non-example hostnames,
   usernames, and home-directory paths. `task pii:scan` runs it locally;
   `task pii:scan:stdin` checks proposed public issue, PR, or comment text;
   `task pii:authors` reports Git author identities separately and is

@@ -26,7 +26,14 @@ $shimDirectory = Join-Path $PSScriptRoot "betterleaks-git-shim"
 $env:BOXY_REAL_GIT = $git.Source
 $env:PATH = "$shimDirectory$([IO.Path]::PathSeparator)$env:PATH"
 
-$betterleaksArgs = @("git", ".", "--no-banner", "--redact")
+# --log-opts HEAD scopes the scan to full history of the checked-out ref.
+# Without it, Betterleaks' git source walks every ref it can see, and CI's
+# fetch-depth:0 checkout fetches all remote branches (+refs/heads/*), so an
+# unrelated open branch elsewhere in the repo can fail this scan for a PR
+# that never touched it. HEAD's ancestry already includes full history back
+# to the initial commit, so this loses no real coverage of what's being
+# tested — it only drops sibling branches this run isn't about.
+$betterleaksArgs = @("git", ".", "--no-banner", "--redact", "--log-opts", "HEAD")
 if (-not [string]::IsNullOrWhiteSpace($ConfigPath)) {
     $betterleaksArgs += @("--config", $ConfigPath)
 }
