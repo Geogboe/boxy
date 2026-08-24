@@ -6,7 +6,8 @@ test.describe("Dashboard — UI enabled", () => {
 
     // Layout elements
     await expect(page.locator(".sidebar-brand")).toHaveText("Boxy");
-    await expect(page.locator(".sidebar-nav a")).toHaveCount(3);
+    // Home, Pools, Sandboxes, Agents.
+    await expect(page.locator(".sidebar-nav a")).toHaveCount(4);
 
     // Active nav
     await expect(page.locator('.sidebar-nav a.active')).toHaveText("Home");
@@ -32,7 +33,7 @@ test.describe("Dashboard — UI enabled", () => {
 
     await expect(page.locator('.sidebar-nav a.active')).toHaveText("Pools");
     await expect(page.locator(".page-title")).toHaveText("Pools");
-    await expect(page.locator(".table-card-header")).toHaveText("All Pools");
+    await expect(page.locator(".table-card-header")).toContainText("All Pools");
     await expect(page.locator(".empty")).toHaveText("No pools configured");
   });
 
@@ -41,7 +42,7 @@ test.describe("Dashboard — UI enabled", () => {
 
     await expect(page.locator('.sidebar-nav a.active')).toHaveText("Sandboxes");
     await expect(page.locator(".page-title")).toHaveText("Sandboxes");
-    await expect(page.locator(".table-card-header")).toHaveText("All Sandboxes");
+    await expect(page.locator(".table-card-header")).toContainText("All Sandboxes");
     await expect(page.locator(".empty")).toHaveText("No sandboxes created");
   });
 
@@ -80,10 +81,28 @@ test.describe("Dashboard — UI enabled", () => {
     await page.goto("/");
 
     // Stats container has hx-get and hx-trigger for polling
-    const statsDiv = page.locator('[hx-get="/ui/fragments/stats"]');
+    const statsDiv = page.locator("#stats-fragment");
     await expect(statsDiv).toHaveCount(1);
+    await expect(statsDiv).toHaveAttribute("hx-get", "/ui/fragments/stats");
     await expect(statsDiv).toHaveAttribute("hx-trigger", "every 5s");
     await expect(statsDiv).toHaveAttribute("hx-swap", "innerHTML");
+  });
+
+  test("manual refresh button re-fetches the fragment on click", async ({ page }) => {
+    await page.goto("/ui/pools");
+
+    const fragment = page.locator("#pools-fragment");
+    const refreshBtn = page.locator('.refresh-btn[hx-target="#pools-fragment"]');
+    await expect(refreshBtn).toHaveAttribute("hx-get", "/ui/fragments/pools-table");
+
+    const [response] = await Promise.all([
+      page.waitForResponse("**/ui/fragments/pools-table"),
+      refreshBtn.click(),
+    ]);
+    expect(response.ok()).toBe(true);
+    // The 5s auto-poll is untouched — the button is an additional trigger,
+    // not a replacement.
+    await expect(fragment).toHaveAttribute("hx-trigger", "every 5s");
   });
 
   test("dark theme is applied", async ({ page }) => {

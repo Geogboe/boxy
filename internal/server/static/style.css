@@ -101,6 +101,20 @@ a:hover {
   margin-bottom: 1.5rem;
 }
 
+/* Flex wrapper for a page-title plus an adjacent control (e.g. the Overview
+   page's refresh button). .page-title's own margin-bottom does not extend a
+   row flex container's box (verified live, not just assumed), so this needs
+   its own explicit margin-bottom too — pages that don't use this wrapper
+   (pools/sandboxes/agents, whose refresh button lives in their
+   table-card-header instead) still get .page-title's own spacing directly. */
+.page-header {
+  align-items: center;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
+}
+
 /* Stats grid */
 .stats {
   display: grid;
@@ -139,6 +153,10 @@ a:hover {
 }
 
 .table-card-header {
+  align-items: center;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
   padding: 1rem 1.25rem;
   border-bottom: 1px solid var(--border);
   font-weight: 600;
@@ -255,6 +273,60 @@ tbody tr:hover {
 .htmx-request .htmx-indicator,
 .htmx-request.htmx-indicator {
   opacity: 1;
+}
+
+/* Manual refresh button — sits next to each 5s-polled fragment and re-fires
+   the same hx-get on demand. htmx adds the htmx-request class to the button
+   itself for the duration of its own request (no hx-indicator needed), so
+   .refresh-icon spins purely from that class, no JS. */
+.refresh-btn {
+  align-items: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  flex-shrink: 0;
+  font-size: 0.8rem;
+  gap: 0.4rem;
+  line-height: 1;
+  padding: 0.4rem 0.7rem;
+  transition: color 150ms ease, border-color 150ms ease;
+}
+.refresh-btn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.refresh-icon {
+  display: inline-block;
+}
+.refresh-btn.htmx-request .refresh-icon {
+  animation: boxy-spin 0.6s linear infinite;
+}
+
+@keyframes boxy-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Transient-state badges (a sandbox actively pending/provisioning/deleting,
+   not settled into a terminal state) get a subtle pulse so "this is actively
+   happening" reads at a glance, distinct from a flat terminal-state badge. */
+.badge-transient {
+  animation: boxy-badge-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes boxy-badge-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .refresh-btn.htmx-request .refresh-icon,
+  .badge-transient {
+    animation: none;
+  }
 }
 
 /* Error banner shown when a data load fails (full page or HTMX fragment). */

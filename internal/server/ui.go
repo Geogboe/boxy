@@ -7,10 +7,9 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 
+	"github.com/Geogboe/boxy/pkg/humanize"
 	"github.com/Geogboe/boxy/pkg/model"
 )
 
@@ -196,7 +195,7 @@ func (s *Server) agentsData(_ *http.Request) (pageData, error) {
 				HasCapacity: hasCapacity,
 			}
 			if hasCapacity {
-				providerRow.Capacity = formatMemoryMB(availability.MemoryMB) + " MB free"
+				providerRow.Capacity = humanize.CommaInt(availability.MemoryMB) + " MB free"
 			}
 			if summary.AvailabilityAt != nil {
 				providerRow.HasSample = true
@@ -211,23 +210,4 @@ func (s *Server) agentsData(_ *http.Request) (pageData, error) {
 
 func dashboardTime(t time.Time) string {
 	return t.UTC().Format("2006-01-02 15:04:05 UTC")
-}
-
-func formatMemoryMB(value int64) string {
-	negative := value < 0
-	if negative {
-		value = -value
-	}
-	digits := strconv.FormatInt(value, 10)
-	var b strings.Builder
-	if negative {
-		b.WriteByte('-')
-	}
-	for i, digit := range digits {
-		if i > 0 && (len(digits)-i)%3 == 0 {
-			b.WriteByte(',')
-		}
-		b.WriteRune(digit)
-	}
-	return b.String()
 }

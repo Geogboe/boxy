@@ -1,8 +1,13 @@
 {{define "title"}}Boxy — Overview{{end}}
 
 {{define "content"}}
-<h1 class="page-title">Overview</h1>
-<div class="stats"
+<div class="page-header">
+  <h1 class="page-title">Overview</h1>
+  <button type="button" class="refresh-btn" hx-get="/ui/fragments/stats" hx-target="#stats-fragment" hx-swap="innerHTML" hx-sync="#stats-fragment:replace" aria-label="Refresh now" title="Refresh now">
+    <span class="refresh-icon" aria-hidden="true">⟳</span> Refresh
+  </button>
+</div>
+<div id="stats-fragment" class="stats"
      hx-get="/ui/fragments/stats"
      hx-trigger="every 5s"
      hx-swap="innerHTML">

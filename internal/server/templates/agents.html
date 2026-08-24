@@ -4,10 +4,16 @@
 <h1 class="page-title">Agents</h1>
 <div class="table-card">
   <div class="table-card-header">
-    <div>Registered Agents</div>
-    <div class="table-card-subtitle">Connection liveness and scheduling eligibility are reported separately.</div>
+    <div>
+      <div>Registered Agents</div>
+      <div class="table-card-subtitle">Connection liveness and scheduling eligibility are reported separately.</div>
+    </div>
+    <button type="button" class="refresh-btn" hx-get="/ui/fragments/agents-table" hx-target="#agents-fragment" hx-swap="innerHTML" hx-sync="#agents-fragment:replace" aria-label="Refresh agents now" title="Refresh now">
+      <span class="refresh-icon" aria-hidden="true">⟳</span> Refresh
+    </button>
   </div>
-  <div hx-get="/ui/fragments/agents-table"
+  <div id="agents-fragment"
+       hx-get="/ui/fragments/agents-table"
        hx-trigger="every 5s"
        hx-swap="innerHTML">
     {{template "agents_table_fragment" .}}

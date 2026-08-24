@@ -16,6 +16,21 @@ const (
 	SandboxStatusFailed       SandboxStatus = "failed"
 )
 
+// IsTransient reports whether the sandbox is actively changing state
+// (pending/provisioning/deleting) rather than settled into a terminal state
+// (ready/failed). This is the single source of truth for that distinction —
+// consumers such as the web dashboard's "in progress" badge styling should
+// call this instead of hardcoding the transient status list, so a future
+// lifecycle status only needs to be classified here once.
+func (s SandboxStatus) IsTransient() bool {
+	switch s {
+	case SandboxStatusPending, SandboxStatusProvisioning, SandboxStatusDeleting:
+		return true
+	default:
+		return false
+	}
+}
+
 // Sandbox is a user-facing environment that contains 1..N resources.
 //
 // This model is intentionally minimal. Orchestration state and richer composition
