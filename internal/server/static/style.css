@@ -24,7 +24,14 @@
 }
 
 body {
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* "Segoe UI" is listed ahead of the system-ui keyword, not after it:
+     Windows 11 maps system-ui to "Segoe UI Variable" for Chromium/Edge, and
+     specifically substitutes "Segoe UI Variable Display" for bold weights —
+     a visibly different, rounder face than regular Segoe UI. Every bold
+     heading (.page-title, .sidebar-brand, .table-card-header, ...) rendered
+     in that mismatched face until this was pinned explicitly. Verified via
+     boxy serve + a live screenshot on Windows 11 + Edge, 2026-08-24. */
+  font-family: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
   line-height: 1.5;
