@@ -100,7 +100,7 @@ jobs:
         run: go install github.com/betterleaks/betterleaks@v1.8.1
 
       - name: Scan git history for secrets
-        run: betterleaks git . --no-banner --redact
+        run: betterleaks git . --no-banner --redact --log-opts HEAD
 
   pii:
     name: Betterleaks PII
@@ -118,4 +118,4 @@ jobs:
         run: go install github.com/betterleaks/betterleaks@v1.8.1
 
       - name: Scan git history for non-controlled PII
-        run: betterleaks git . --config .betterleaks-pii.toml --no-banner --redact
+        run: betterleaks git . --config .betterleaks-pii.toml --no-banner --redact --log-opts HEAD
