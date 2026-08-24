@@ -100,10 +100,22 @@ tasks:
     aliases: [format]
     cmd: gofmt -w .
 
+  # golangci-lint's build-tag-sensitive checks (e.g. `unused`) only see the
+  # invoking host's own GOOS. CI's Lint job always runs on ubuntu-latest, so
+  # a Windows or macOS host running `go run .../golangci-lint@version run
+  # ./...` (host GOOS) can pass locally while CI fails on GOOS-gated code —
+  # this is exactly how three Windows-only-consumed methods in
+  # pkg/secrets/secrets.go shipped past local lint and broke CI (#197, fixed
+  # here). Install natively (go run can't cross-compile-then-exec itself),
+  # then invoke with GOOS=linux so the *analysis* always matches CI's runner
+  # regardless of host OS; Task's shell interpreter supports the env-var-
+  # prefix form cross-platform, including on Windows.
   lint:
-    desc: Run golangci-lint (same as CI)
+    desc: Run golangci-lint the same way CI does (GOOS=linux, matching the ubuntu-latest runner, regardless of host OS)
     aliases: [lint:go, golangci-lint]
-    cmd: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}} run ./...
+    cmds:
+      - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}}
+      - GOOS=linux golangci-lint run ./...
 
   ci:validate:
     desc: Run all CI-equivalent checks locally before pushing
