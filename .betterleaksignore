@@ -321,3 +321,10 @@ fd65a552ac2cc4a6a2b775cfc090cd1967ce6719:examples/03-remote-agent/server-config.
 fd65a552ac2cc4a6a2b775cfc090cd1967ce6719:examples/03-remote-agent/start-server.sh:boxy-pii-private-ipv4:49
 fe966b5b5aad2535b1c0a56b8f323925fdb44231:internal/core/resource/types_test.go:boxy-pii-private-ipv4:190
 fe966b5b5aad2535b1c0a56b8f323925fdb44231:internal/core/resource/types_test.go:boxy-pii-private-ipv4:200
+
+# Historical fixture reviewed on 2026-08-24. RFC1918 example IPs in Go doc
+# comments (config.go's NetworkConfig field docs), from PR #201 (#200).
+# Current source already fixed to use RFC 5737 documentation addresses —
+# these entries only cover the already-merged historical commit's patch text.
+8ef37e529ff504d1e4583e82959d48537a17b1ef:pkg/providersdk/providers/hyperv/config.go:boxy-pii-private-ipv4:89
+8ef37e529ff504d1e4583e82959d48537a17b1ef:pkg/providersdk/providers/hyperv/config.go:boxy-pii-private-ipv4:95
