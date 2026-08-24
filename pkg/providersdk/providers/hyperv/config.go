@@ -86,13 +86,14 @@ type CreateConfig struct {
 // StaticIP is required when the struct itself is present.
 type NetworkConfig struct {
 	// StaticIP is the IPv4 address to assign to the guest's primary network
-	// adapter (e.g. "192.168.1.50"). Required when Network is set.
+	// adapter (e.g. "203.0.113.50", an RFC 5737 documentation address).
+	// Required when Network is set.
 	StaticIP string `json:"static_ip" yaml:"static_ip"`
 
 	// PrefixLength is the subnet prefix length (e.g. 24 for /24). Default: 24.
 	PrefixLength int `json:"prefix_length" yaml:"prefix_length"`
 
-	// DefaultGateway is the IPv4 default gateway (e.g. "192.168.1.1"). Optional.
+	// DefaultGateway is the IPv4 default gateway (e.g. "203.0.113.1"). Optional.
 	DefaultGateway string `json:"default_gateway,omitempty" yaml:"default_gateway,omitempty"`
 
 	// DNSServers is a list of DNS server IPv4 addresses to assign. Optional.
