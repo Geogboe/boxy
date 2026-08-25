@@ -261,6 +261,17 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 	if err := cc.Network.validate(); err != nil {
 		return nil, fmt.Errorf("config.network: %w", err)
 	}
+	if cc.Network != nil && strings.TrimSpace(cc.Switch) != "" &&
+		(strings.TrimSpace(cc.Network.Range) != "" || strings.TrimSpace(cc.Network.StaticIP) != "") {
+		// Only meaningful when a switch is declared — with none, there's no
+		// live switch state to validate against, matching pools that predate
+		// this capability (#223, ADR-0013). Applies to both network modes:
+		// static_ip is exactly as exposed to a typo/drifted address as
+		// range mode is.
+		if err := d.validateNetworkRange(ctx, cc.Switch, cc.Network); err != nil {
+			return nil, err
+		}
+	}
 	guestUser := cc.GuestUser
 	if guestUser == "" {
 		if strings.EqualFold(cc.GuestOS, "linux") {

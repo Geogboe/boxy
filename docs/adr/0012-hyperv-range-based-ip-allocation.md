@@ -267,3 +267,17 @@ read-back" decision above is not undermined one layer up.
   prevent two pools sharing a range from stepping on each other's reserved
   addresses. Not addressed here; avoid overlapping `network.range` CIDRs
   across pools on the same host until this is revisited.
+
+## Update (2026-08-25)
+
+#223, the `NetworkRangeReporter` fast-follow named above, is implemented.
+See [ADR-0013](0013-hyperv-network-range-reporter.md) for the design: a new
+optional `providersdk` capability discovers a switch's real IPv4 range from
+its host vNIC and validates `network.range` against it (containment, not
+equality) inside `Driver.Create` — not at pool registration/reconcile time
+as originally described, since that layer never decodes per-provider
+`config.switch`/`network.range` values. The auto-populate stretch goal
+this ADR also mentioned remains deferred; ADR-0013 explains why it's not
+simply a "not done yet" gap (it would recreate #222's collision at the
+`RangeKey` boundary if the discovered range ever changes across a host
+reboot).

@@ -174,6 +174,15 @@ func (n *NetworkConfig) validate() error {
 			return fmt.Errorf("network.range %q must be an IPv4 CIDR", n.Range)
 		}
 	}
+	if hasStatic {
+		addr, err := netip.ParseAddr(strings.TrimSpace(n.StaticIP))
+		if err != nil {
+			return fmt.Errorf("network.static_ip %q is not a valid IP address: %w", n.StaticIP, err)
+		}
+		if !addr.Is4() {
+			return fmt.Errorf("network.static_ip %q must be an IPv4 address", n.StaticIP)
+		}
+	}
 	if n.PrefixLength < 0 || n.PrefixLength > 32 {
 		return fmt.Errorf("network.prefix_length must be between 0 and 32, got %d", n.PrefixLength)
 	}
