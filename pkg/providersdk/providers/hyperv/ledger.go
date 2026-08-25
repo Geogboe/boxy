@@ -74,7 +74,19 @@ func (d *Driver) ledger() *diskjson.Store[ledgerData] {
 		}
 		dir, err := os.MkdirTemp("", "boxy-hyperv-ledger-*")
 		if err != nil {
+			// os.MkdirTemp("", pattern) already resolves "" to os.TempDir()
+			// internally, so this fallback dir is the same one that just
+			// failed to yield a fresh subdirectory — reusing the fixed
+			// ledgerFilename here would let every Driver whose MkdirTemp
+			// call fails converge on one shared file, racing on state that
+			// has nothing to do with each other. Make the fallback name
+			// unique too (pid + this Driver's own address can't collide
+			// within a single machine) so a MkdirTemp failure degrades to
+			// "broken in isolation" rather than "silently shared".
 			dir = os.TempDir()
+			name := fmt.Sprintf("boxy-hyperv-ledger-%d-%p.json", os.Getpid(), d)
+			d.ledgerStore = diskjson.New(filepath.Join(dir, name), newLedgerData)
+			return
 		}
 		d.ledgerStore = diskjson.New(filepath.Join(dir, ledgerFilename), newLedgerData)
 	})
