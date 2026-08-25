@@ -1400,6 +1400,295 @@ func TestDriver_PersonalizeGuest_StaticIP_LinuxUnsupported(t *testing.T) {
 	}
 }
 
+// --- NetworkConfig.Range (#222 / ADR-0012) ---
+
+func TestNetworkConfig_Validate_Range(t *testing.T) {
+	if err := (&NetworkConfig{Range: "203.0.113.0/24"}).validate(); err != nil {
+		t.Fatalf("valid range: %v", err)
+	}
+	if err := (&NetworkConfig{StaticIP: "192.0.2.10", Range: "203.0.113.0/24"}).validate(); err == nil {
+		t.Fatal("static_ip + range: expected mutual-exclusivity error")
+	}
+	if err := (&NetworkConfig{Range: "not-a-cidr"}).validate(); err == nil {
+		t.Fatal("invalid CIDR: expected error")
+	}
+	if err := (&NetworkConfig{Range: "2001:db8::/32"}).validate(); err == nil {
+		t.Fatal("IPv6 range: expected error (IPv4-only, matching static_ip's scope)")
+	}
+	if err := (&NetworkConfig{}).validate(); err == nil {
+		t.Fatal("neither static_ip nor range set: expected error")
+	}
+}
+
+func TestDriver_Create_WithRangeNetworkConfig(t *testing.T) {
+	var capturedScript string
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		if strings.Contains(script, hyperVAvailableMemoryScript) {
+			return "16384\n", nil
+		}
+		capturedScript += script
+		return fakeGUID + "\n", nil
+	})
+
+	_, err := d.Create(context.Background(), &CreateConfig{
+		TemplateVHD: `C:\Templates\base.vhdx`,
+		VHDDir:      `C:\VMs`,
+		Network: &NetworkConfig{
+			Range:          "203.0.113.0/24",
+			DefaultGateway: "203.0.113.1",
+			DNSServers:     []string{"203.0.113.53"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Range mode must never write networking data into VM Notes — see
+	// ADR-0012, "Ledger, not VM Notes".
+	for _, notWant := range []string{"boxy_net_static_ip", "boxy_net_prefix", "boxy_net_gw", "boxy_net_dns"} {
+		if strings.Contains(capturedScript, notWant) {
+			t.Errorf("range mode wrote %q into VM Notes, want none of it there:\n%s", notWant, capturedScript)
+		}
+	}
+
+	entry, ok, err := d.ledgerLookup(fakeGUID)
+	if err != nil {
+		t.Fatalf("ledgerLookup: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected a ledger entry to exist after Create with network.range set")
+	}
+	if entry.RangeKey != "203.0.113.0/24" {
+		t.Errorf("RangeKey = %q, want 203.0.113.0/24", entry.RangeKey)
+	}
+	if entry.AssignedAddress != "" {
+		t.Errorf("AssignedAddress = %q, want empty — not assigned until Allocate", entry.AssignedAddress)
+	}
+	if entry.DefaultGateway != "203.0.113.1" {
+		t.Errorf("DefaultGateway = %q, want 203.0.113.1", entry.DefaultGateway)
+	}
+}
+
+// TestDriver_Allocate_TwoResourcesSamePool_DistinctAddresses drives the
+// actual acceptance criterion end to end — through Create then
+// Allocate/PersonalizeGuest for two resources sharing one pool's
+// network.range — rather than calling reserveAddress directly (that's
+// already covered at the unit level by
+// TestDriver_ReserveAddress_DistinctForConcurrentEntriesSameRange). This is
+// the #222 bug: two VMs in a min_ready > 1 pool must not receive the same
+// address once both are allocated.
+func TestDriver_Allocate_TwoResourcesSamePool_DistinctAddresses(t *testing.T) {
+	const idA = fakeGUID
+	const idB = "22222222-2222-2222-2222-222222222222"
+	resolveCalls := 0
+
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		switch {
+		case strings.Contains(script, hyperVAvailableMemoryScript):
+			return "16384\n", nil
+		case strings.Contains(script, ".Id.ToString()"):
+			// Create's post-New-VM ID resolution: two sequential Creates,
+			// resolved in order.
+			resolveCalls++
+			if resolveCalls == 1 {
+				return idA + "\n", nil
+			}
+			return idB + "\n", nil
+		case strings.Contains(script, ".Name") && strings.Contains(script, idA):
+			return "boxy-a\n", nil
+		case strings.Contains(script, ".Name") && strings.Contains(script, idB):
+			return "boxy-b\n", nil
+		case strings.Contains(script, idA), strings.Contains(script, idB):
+			// readNotes for whichever id the script names.
+			return "boxy_guest_os=windows;boxy_guest_user=Administrator\n", nil
+		default:
+			return "", nil
+		}
+	})
+	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
+		return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "${BOXY_TEST_PASSWORD}"}, nil
+	}
+	d.guestExecFactory = func(_, _, _, _, _ string) vmsdk.GuestExec {
+		return &fakeGuestExec{exitCode: 0}
+	}
+
+	netCfg := &NetworkConfig{Range: "203.0.113.0/24"}
+	for i := 0; i < 2; i++ {
+		if _, err := d.Create(context.Background(), &CreateConfig{TemplateVHD: `C:\t.vhdx`, Network: netCfg}); err != nil {
+			t.Fatalf("Create (%d): %v", i+1, err)
+		}
+	}
+
+	resultA, err := d.PersonalizeGuest(context.Background(), idA)
+	if err != nil {
+		t.Fatalf("PersonalizeGuest(idA): %v", err)
+	}
+	resultB, err := d.PersonalizeGuest(context.Background(), idB)
+	if err != nil {
+		t.Fatalf("PersonalizeGuest(idB): %v", err)
+	}
+
+	hostA := resultA.AccessDetails.Properties["host"]
+	hostB := resultB.AccessDetails.Properties["host"]
+	if hostA == "" || hostB == "" {
+		t.Fatalf("empty host in access details: A=%q B=%q", hostA, hostB)
+	}
+	if hostA == hostB {
+		t.Fatalf("both resources in the pool were allocated address %q — the #222 collision", hostA)
+	}
+}
+
+func TestDriver_PersonalizeGuest_AppliesRangeIP(t *testing.T) {
+	d := mockDriver(nil)
+	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
+		return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "${BOXY_TEST_PASSWORD}"}, nil
+	}
+	var execCalls []string
+	d.guestExecFactory = func(_, _, _, _, _ string) vmsdk.GuestExec {
+		execCalls = append(execCalls, fmt.Sprintf("call-%d", len(execCalls)+1))
+		return &fakeGuestExec{exitCode: 0}
+	}
+	d.psExec = func(_ context.Context, script string) (string, error) {
+		switch {
+		case strings.Contains(script, "Get-VM -Id") && !strings.Contains(script, ".Name"):
+			// readNotes: no network fields — range mode carries none.
+			return "boxy_guest_os=windows;boxy_guest_user=Administrator\n", nil
+		case strings.Contains(script, ".Name"):
+			return "boxy-abc123\n", nil
+		default:
+			// Notably absent: a Get-VMNetworkAdapter case. Range mode must
+			// never call vmIP — falling through to this error is exactly
+			// what proves that (PersonalizeGuest below would fail loudly
+			// instead of silently passing on a stale/wrong address). See
+			// ADR-0012, "Range mode trusts the ledger's address".
+			return "", fmt.Errorf("unexpected ps call: %s", script)
+		}
+	}
+
+	if err := d.reserveRangeEntry(fakeGUID, &NetworkConfig{
+		Range:          "203.0.113.0/24",
+		DefaultGateway: "203.0.113.1",
+		DNSServers:     []string{"203.0.113.53"},
+	}); err != nil {
+		t.Fatalf("reserveRangeEntry: %v", err)
+	}
+
+	result, err := d.PersonalizeGuest(context.Background(), fakeGUID)
+	if err != nil {
+		t.Fatalf("PersonalizeGuest: %v", err)
+	}
+	// Expect 3 guest exec calls: applyRangeIP + rotation + verification.
+	if len(execCalls) != 3 {
+		t.Fatalf("guest exec call count = %d, want 3 (applyRangeIP + rotation + verification)", len(execCalls))
+	}
+
+	entry, ok, err := d.ledgerLookup(fakeGUID)
+	if err != nil {
+		t.Fatalf("ledgerLookup: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected ledger entry to still exist after Allocate")
+	}
+	if entry.AssignedAddress == "" {
+		t.Fatal("AssignedAddress is empty after PersonalizeGuest; expected a reserved address")
+	}
+	// The host in AccessDetails must be exactly the ledger's own reserved
+	// address, not an independently-queried value — see ADR-0012, "Range
+	// mode trusts the ledger's address, not a Get-VMNetworkAdapter
+	// read-back".
+	if got := result.AccessDetails.Properties["host"]; got != entry.AssignedAddress {
+		t.Errorf("host = %q, want the ledger's AssignedAddress %q", got, entry.AssignedAddress)
+	}
+}
+
+func TestDriver_PersonalizeGuest_RangeIP_LinuxUnsupported(t *testing.T) {
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		if strings.Contains(script, "Get-VM -Id") {
+			return "boxy_guest_os=linux;boxy_guest_user=ubuntu\n", nil
+		}
+		return "boxy-abc123\n", nil
+	})
+	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
+		return providersdk.GuestBootstrapCredential{Username: "ubuntu", Password: "${BOXY_TEST_PASSWORD}"}, nil
+	}
+	d.guestExecFactory = func(_, _, _, _, _ string) vmsdk.GuestExec {
+		return &fakeGuestExec{exitCode: 0}
+	}
+	if err := d.reserveRangeEntry(fakeGUID, &NetworkConfig{Range: "203.0.113.0/24"}); err != nil {
+		t.Fatalf("reserveRangeEntry: %v", err)
+	}
+
+	_, err := d.PersonalizeGuest(context.Background(), fakeGUID)
+	if err == nil {
+		t.Fatal("expected error for Linux guest with range-based IP config")
+	}
+	if !strings.Contains(err.Error(), "Linux") {
+		t.Errorf("error %q should mention Linux", err.Error())
+	}
+
+	// A rejected Linux guest must not burn a reservation it can never apply.
+	entry, ok, lookupErr := d.ledgerLookup(fakeGUID)
+	if lookupErr != nil {
+		t.Fatalf("ledgerLookup: %v", lookupErr)
+	}
+	if !ok {
+		t.Fatal("expected the ledger entry to still exist")
+	}
+	if entry.AssignedAddress != "" {
+		t.Errorf("AssignedAddress = %q, want empty — Linux rejection must precede reservation", entry.AssignedAddress)
+	}
+}
+
+func TestDriver_Delete_ReleasesLedgerEntry_MissingVM(t *testing.T) {
+	// The orphan sweep and a crash-then-recycle both call Delete on a VM
+	// already gone from Hyper-V — release must happen on that path too,
+	// not only when Remove-VM actually runs. See ADR-0012.
+	d := mockDriver(func(_ context.Context, _ string) (string, error) {
+		return "__BOXY_NOT_FOUND__\n", nil
+	})
+	if err := d.reserveRangeEntry(fakeGUID, &NetworkConfig{Range: "203.0.113.0/24"}); err != nil {
+		t.Fatalf("reserveRangeEntry: %v", err)
+	}
+	if _, err := d.reserveAddress(fakeGUID); err != nil {
+		t.Fatalf("reserveAddress: %v", err)
+	}
+
+	if err := d.Delete(context.Background(), fakeGUID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	if _, ok, err := d.ledgerLookup(fakeGUID); err != nil || ok {
+		t.Fatalf("ledgerLookup after Delete on a missing VM: ok=%v err=%v, want ok=false", ok, err)
+	}
+}
+
+func TestDriver_Delete_ReleasesLedgerEntry_SuccessfulTeardown(t *testing.T) {
+	callNum := 0
+	d := mockDriver(func(_ context.Context, _ string) (string, error) {
+		callNum++
+		switch callNum {
+		case 1:
+			return "boxy-abc123|C:\\VMs\\boxy-abc123.vhdx|Off\n", nil
+		default:
+			return "", nil
+		}
+	})
+	if err := d.reserveRangeEntry(fakeGUID, &NetworkConfig{Range: "203.0.113.0/24"}); err != nil {
+		t.Fatalf("reserveRangeEntry: %v", err)
+	}
+	if _, err := d.reserveAddress(fakeGUID); err != nil {
+		t.Fatalf("reserveAddress: %v", err)
+	}
+
+	if err := d.Delete(context.Background(), fakeGUID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	if _, ok, err := d.ledgerLookup(fakeGUID); err != nil || ok {
+		t.Fatalf("ledgerLookup after successful Delete: ok=%v err=%v, want ok=false", ok, err)
+	}
+}
+
 // fakeGuestExec is a test double for vmsdk.GuestExec.
 type fakeGuestExec struct {
 	stdout   string

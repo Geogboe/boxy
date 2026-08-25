@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Geogboe/boxy/pkg/diskjson"
 	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/providersdk/guestcred"
@@ -74,6 +76,13 @@ type Driver struct {
 	// calls that a live host query doesn't reflect yet. See reserveMemory.
 	mu         sync.Mutex
 	reservedMB int64
+
+	// ledgerStore persists the range-based IP allocation ledger (see
+	// ADR-0012). nil when a Driver is constructed directly rather than via
+	// New (e.g. most existing tests in this package) — ledger() lazily
+	// builds an ephemeral temp-backed store in that case.
+	ledgerStore *diskjson.Store[ledgerData]
+	ledgerOnce  sync.Once
 }
 
 // ErrVMBusy indicates a VM is stuck transitioning between power states and
@@ -183,7 +192,31 @@ func New(cfg *Config) (*Driver, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Driver{hostReserveMB: reserve, hostReserveConfigured: true}, nil
+
+	dataDir := ""
+	if cfg != nil {
+		dataDir = cfg.DataDir
+	}
+	if dataDir == "" {
+		dataDir = filepath.Join(defaultDataDirBase, defaultDataDirHyperV)
+	}
+	if !filepath.IsAbs(dataDir) {
+		// Only reached when cfg.DataDir was never anchored by
+		// ResolveRelativePaths — i.e. no boxy config file was known to the
+		// caller. Documented, narrower gap: see ADR-0012's "Ledger
+		// location: Config.DataDir".
+		wd, err := os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("resolve hyperv data dir: %w", err)
+		}
+		dataDir = filepath.Join(wd, dataDir)
+	}
+
+	return &Driver{
+		hostReserveMB:         reserve,
+		hostReserveConfigured: true,
+		ledgerStore:           diskjson.New(filepath.Join(dataDir, ledgerFilename), newLedgerData),
+	}, nil
 }
 
 // SetGuestBootstrapResolver injects the control-plane lookup used for new
@@ -271,7 +304,9 @@ Connect-VMNetworkAdapter -VMName '%s' -SwitchName '%s' | Out-Null`,
 	// Store only non-sensitive Boxy guest metadata in VM Notes. Bootstrap and
 	// rotated credentials are delivered out-of-band and never written to the VM.
 	notes := fmt.Sprintf("boxy_guest_os=%s;boxy_guest_user=%s", cc.GuestOS, guestUser)
-	if cc.Network != nil {
+	// Range-mode networking never goes into Notes — the ledger carries it
+	// instead (see ADR-0012). Only static_ip mode writes these fields.
+	if cc.Network != nil && strings.TrimSpace(cc.Network.StaticIP) != "" {
 		notes += fmt.Sprintf(";boxy_net_static_ip=%s;boxy_net_prefix=%d",
 			cc.Network.StaticIP, cc.Network.effectivePrefixLength())
 		if strings.TrimSpace(cc.Network.DefaultGateway) != "" {
@@ -318,6 +353,18 @@ Start-VM -Name '%s' | Out-Null
 		// lookup hiccup. Leave it for the periodic ResourceLister sweep
 		// (#174, Task 7) to pick up later.
 		return nil, fmt.Errorf("hyperv create VM %q: resolve id: %w", vmName, err)
+	}
+
+	if cc.Network != nil && strings.TrimSpace(cc.Network.Range) != "" {
+		if err := d.reserveRangeEntry(vmGUID, cc.Network); err != nil {
+			// The VM is healthy and running (Start-VM already succeeded).
+			// Same rationale as the ID-resolution failure above: do NOT
+			// clean up a good VM over a ledger write hiccup. Leave it for
+			// the periodic ResourceLister sweep (#174, Task 7) — it will
+			// simply have no ledger entry, which PersonalizeGuest treats
+			// the same as "no network config at all" (see ADR-0012).
+			return nil, fmt.Errorf("hyperv create VM %q: reserve IP range entry: %w", vmName, err)
+		}
 	}
 
 	return &providersdk.Resource{
@@ -679,11 +726,30 @@ if ($null -eq $vm) {
 	}
 }
 
-func (d *Driver) Delete(ctx context.Context, id string) error {
+func (d *Driver) Delete(ctx context.Context, id string) (err error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return fmt.Errorf("resource id is required")
 	}
+
+	// Release id's IP ledger entry (if any) whenever Delete confirms the
+	// VM gone or successfully removes it — its two nil-return paths below.
+	// Deferred so both paths release without duplicating the call, and so
+	// a non-nil return (e.g. ErrVMBusy) does NOT release: the VM may still
+	// be alive with that address configured, and a later retry of Delete
+	// (recycle backoff, drain, the orphan sweep) will reach a nil return
+	// and release then. This matters in practice: the orphan sweep and a
+	// crash-then-recycle both call Delete on a VM already gone from
+	// Hyper-V (the NOT_FOUND path below) with a live ledger entry — release
+	// must not sit only behind the branch that actually runs Remove-VM.
+	// See ADR-0012.
+	defer func() {
+		if err == nil {
+			if relErr := d.releaseAddress(id); relErr != nil {
+				err = relErr
+			}
+		}
+	}()
 
 	infoScript := fmt.Sprintf(`
 $ErrorActionPreference = 'Stop'
@@ -807,18 +873,40 @@ func (d *Driver) PersonalizeGuest(ctx context.Context, id string) (*providersdk.
 		return nil, fmt.Errorf("resolve VM name for %s: %w", id, err)
 	}
 
-	// When a static IP is configured, apply it inside the guest via PowerShell
-	// Direct (VMBus — no network required) before querying the IP. This is the
+	// Apply network configuration inside the guest via PowerShell Direct
+	// (VMBus — no network required) before querying the IP. This is the
 	// primary hook for Windows Server hosts where Hyper-V does not DHCP.
-	if netIP := strings.TrimSpace(notes["boxy_net_static_ip"]); netIP != "" {
-		if err := d.applyStaticIP(ctx, id, guestOS, guestUser, bootstrap.Password, notes); err != nil {
-			return nil, fmt.Errorf("apply static IP for VM %s: %w", id, err)
-		}
+	// The IP ledger's own presence for id is the mode discriminator: if a
+	// range-mode entry exists, it wins; otherwise fall back to today's
+	// static_ip Notes check, unchanged. See ADR-0012.
+	rangeEntry, hasRangeEntry, err := d.ledgerLookup(id)
+	if err != nil {
+		return nil, fmt.Errorf("read IP ledger for %s: %w", id, err)
 	}
 
-	ip, err := d.vmIP(ctx, vmName)
-	if err != nil {
-		return nil, fmt.Errorf("get IP for VM %q: %w", vmName, err)
+	var ip string
+	if hasRangeEntry {
+		// Range mode trusts the address it just reserved and applied as
+		// authoritative — it does NOT re-read it back via vmIP below the
+		// way static_ip mode does. Get-VMNetworkAdapter's IPAddresses is
+		// populated by guest integration services and can lag a fresh
+		// New-NetIPAddress by several seconds, returning a stale
+		// pre-assignment address or an empty list; the ledger's own
+		// AssignedAddress has no such lag. See ADR-0012.
+		ip, err = d.applyRangeIP(ctx, id, guestOS, guestUser, bootstrap.Password, rangeEntry)
+		if err != nil {
+			return nil, fmt.Errorf("apply range IP for VM %s: %w", id, err)
+		}
+	} else {
+		if strings.TrimSpace(notes["boxy_net_static_ip"]) != "" {
+			if err := d.applyStaticIP(ctx, id, guestOS, guestUser, bootstrap.Password, notes); err != nil {
+				return nil, fmt.Errorf("apply static IP for VM %s: %w", id, err)
+			}
+		}
+		ip, err = d.vmIP(ctx, vmName)
+		if err != nil {
+			return nil, fmt.Errorf("get IP for VM %q: %w", vmName, err)
+		}
 	}
 
 	bootstrapExec, err := d.newGuestExec(ctx, id, guestOS, guestUser, bootstrap.Password, ip)
@@ -1036,28 +1124,69 @@ $ErrorActionPreference = 'Stop'
 	return ip, nil
 }
 
-// applyStaticIP configures a static IPv4 address inside the guest using
-// PowerShell Direct (VMBus — no guest network required). This is the primary
-// mechanism for Windows Server Hyper-V hosts where the virtual switch does not
-// issue DHCP leases. Only Windows guests are supported; Linux guests must
-// obtain their address via another mechanism (e.g. cloud-init).
+// applyStaticIP configures static_ip mode's fixed address inside the guest,
+// reading it out of the VM's Notes exactly as before. See assignGuestIP for
+// the shared mechanism.
 func (d *Driver) applyStaticIP(ctx context.Context, id, guestOS, guestUser, guestPassword string, notes map[string]string) error {
-	if strings.EqualFold(guestOS, "linux") {
-		return fmt.Errorf("static IP via boxy is not supported for Linux guests; configure the address via cloud-init or a pre-baked image")
-	}
-
 	staticIP := strings.TrimSpace(notes["boxy_net_static_ip"])
 	if staticIP == "" {
 		return nil
 	}
-	prefix := strings.TrimSpace(notes["boxy_net_prefix"])
+	prefix := notes["boxy_net_prefix"]
+	gateway := notes["boxy_net_gw"]
+	dns := notes["boxy_net_dns"]
+	return d.assignGuestIP(ctx, id, guestOS, guestUser, guestPassword, staticIP, prefix, gateway, dns)
+}
+
+// applyRangeIP reserves (if not already reserved — see reserveAddress's
+// idempotency) and applies entry's range-mode address inside the guest,
+// returning the reserved address. PersonalizeGuest trusts this return value
+// as authoritative for the guest's reachable IP rather than re-reading it
+// back via vmIP — see the call site's comment and ADR-0012 for why.
+func (d *Driver) applyRangeIP(ctx context.Context, id, guestOS, guestUser, guestPassword string, entry *ledgerEntry) (string, error) {
+	if strings.EqualFold(guestOS, "linux") {
+		// Checked before reserveAddress so an unsupported Linux guest
+		// doesn't burn a reservation it can never apply.
+		return "", guestIPUnsupportedOnLinux("range-based IP assignment")
+	}
+	address, err := d.reserveAddress(id)
+	if err != nil {
+		return "", fmt.Errorf("reserve address for %s: %w", id, err)
+	}
+	dns := strings.Join(entry.DNSServers, ",")
+	if err := d.assignGuestIP(ctx, id, guestOS, guestUser, guestPassword, address, strconv.Itoa(entry.PrefixLength), entry.DefaultGateway, dns); err != nil {
+		return "", err
+	}
+	return address, nil
+}
+
+// guestIPUnsupportedOnLinux builds the shared "not supported for Linux"
+// error, parameterized by which mode (mechanism) was being attempted.
+func guestIPUnsupportedOnLinux(mechanism string) error {
+	return fmt.Errorf("%s via boxy is not supported for Linux guests; configure the address via cloud-init or a pre-baked image", mechanism)
+}
+
+// assignGuestIP configures a static IPv4 address inside the guest using
+// PowerShell Direct (VMBus — no guest network required). This is the primary
+// mechanism for Windows Server Hyper-V hosts where the virtual switch does not
+// issue DHCP leases. Only Windows guests are supported; Linux guests must
+// obtain their address via another mechanism (e.g. cloud-init). Shared by
+// applyStaticIP (static_ip mode) and applyRangeIP (range mode, ADR-0012) —
+// ip/prefix/gateway/dns is all either needs to source, from Notes or the
+// ledger respectively.
+func (d *Driver) assignGuestIP(ctx context.Context, id, guestOS, guestUser, guestPassword, ip, prefix, gateway, dns string) error {
+	if strings.EqualFold(guestOS, "linux") {
+		return guestIPUnsupportedOnLinux("static IP")
+	}
+
+	prefix = strings.TrimSpace(prefix)
 	if prefix == "" {
 		prefix = "24"
 	}
-	gateway := strings.TrimSpace(notes["boxy_net_gw"])
-	dns := strings.TrimSpace(notes["boxy_net_dns"])
+	gateway = strings.TrimSpace(gateway)
+	dns = strings.TrimSpace(dns)
 
-	// Build the PowerShell script to assign the static IP inside the guest.
+	// Build the PowerShell script to assign the address inside the guest.
 	// We target the first non-disabled adapter ordered by interface index.
 	gwBlock := ""
 	if gateway != "" {
@@ -1086,7 +1215,7 @@ if ($null -eq $adapter) { throw 'no network adapter found in guest' }
 $existing = Get-NetIPAddress -InterfaceIndex $adapter.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
 if ($existing) { $existing | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue | Out-Null }
 New-NetIPAddress -InterfaceIndex $adapter.InterfaceIndex -IPAddress '%s' -PrefixLength %s%s | Out-Null%s
-`, psq(staticIP), psq(prefix), gwBlock, dnsBlock)
+`, psq(ip), psq(prefix), gwBlock, dnsBlock)
 
 	exec, err := d.newGuestExec(ctx, id, guestOS, guestUser, guestPassword, "")
 	if err != nil {
