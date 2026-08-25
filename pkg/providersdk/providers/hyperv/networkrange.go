@@ -208,9 +208,13 @@ func declaredNetworkPrefix(netCfg *NetworkConfig) (netip.Prefix, string, error) 
 func (d *Driver) validateNetworkRange(ctx context.Context, switchName string, netCfg *NetworkConfig) error {
 	declared, declaredLabel, err := declaredNetworkPrefix(netCfg)
 	if err != nil {
-		// NetworkConfig.validate() already rejected an invalid value before
-		// Create reaches here; treat defensively rather than panic.
-		return nil
+		// NetworkConfig.validate() already rejects an invalid range/static_ip
+		// before Create reaches here, so this should be unreachable — but
+		// propagate rather than swallow it defensively: proceeding on an
+		// unparseable declared address would only defer the same failure to
+		// guest personalization with a worse error, and a config.validate()
+		// regression should surface here loudly, not silently pass through.
+		return fmt.Errorf("config.network: %w", err)
 	}
 
 	queryCtx, cancel := context.WithTimeout(ctx, d.memQueryTimeout())

@@ -1282,6 +1282,12 @@ func TestNetworkConfig_Validate(t *testing.T) {
 	if err := (&NetworkConfig{StaticIP: "192.0.2.10", PrefixLength: 33}).validate(); err == nil {
 		t.Fatal("prefix 33: expected error")
 	}
+	if err := (&NetworkConfig{StaticIP: "not-an-ip"}).validate(); err == nil {
+		t.Fatal("unparseable static_ip: expected error")
+	}
+	if err := (&NetworkConfig{StaticIP: "2001:db8::1"}).validate(); err == nil {
+		t.Fatal("IPv6 static_ip: expected error (IPv4-only, matching range's scope)")
+	}
 }
 
 func TestDriver_Create_WithNetworkConfig(t *testing.T) {

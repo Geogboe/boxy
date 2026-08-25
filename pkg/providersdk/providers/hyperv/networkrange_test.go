@@ -282,6 +282,51 @@ func TestDriver_Create_StaticIPOutsideDiscoveredSwitchRange_Fails(t *testing.T) 
 	}
 }
 
+func TestDriver_Create_InvalidStaticIP_FailsFastWithoutQueryingSwitch(t *testing.T) {
+	// An unparseable/IPv6 static_ip must be rejected by config.network
+	// validation before Create ever reaches switch-range discovery — it
+	// must not slip through and fail later, deeper, during guest
+	// personalization (Copilot review on #227).
+	called := false
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		if strings.Contains(script, "Get-NetIPAddress") {
+			called = true
+		}
+		if strings.Contains(script, hyperVAvailableMemoryScript) {
+			return "16384\n", nil
+		}
+		return fakeGUID + "\n", nil
+	})
+
+	_, err := d.Create(context.Background(), &CreateConfig{
+		TemplateVHD: `C:\Templates\base.vhdx`,
+		Switch:      "boxy-switch",
+		Network:     &NetworkConfig{StaticIP: "2001:db8::1"},
+	})
+	if err == nil {
+		t.Fatal("expected an error: static_ip is not a valid IPv4 address")
+	}
+	if called {
+		t.Error("Create should reject the invalid static_ip before querying the switch's discovered range")
+	}
+}
+
+func TestValidateNetworkRange_UnparseableDeclaredValue_PropagatesRatherThanSwallows(t *testing.T) {
+	// Defense in depth: even though NetworkConfig.validate() rejects an
+	// invalid static_ip/range before Create reaches this point, a direct
+	// call with a config that bypassed that check must fail loudly rather
+	// than silently proceed as if unverified (Copilot review on #227).
+	d := mockDriver(func(context.Context, string) (string, error) {
+		t.Fatal("should not query the switch for an undeclared/unparseable address")
+		return "", nil
+	})
+
+	err := d.validateNetworkRange(context.Background(), "boxy-switch", &NetworkConfig{StaticIP: "not-an-ip"})
+	if err == nil {
+		t.Fatal("expected an error for an unparseable declared address")
+	}
+}
+
 func TestDriver_Create_RangeValidation_SkippedWithoutSwitch(t *testing.T) {
 	// No cc.Switch set — there is nothing to validate against, and this
 	// must not call NetworkRanges at all (existing pools with no switch
