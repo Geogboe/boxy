@@ -197,6 +197,32 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   for the full race analysis, including why an earlier version of this fix
   (locking only around the store write) left the exact window open that
   this one closes.
+- **`providersdk.NetworkRangeReporter`** (`NetworkRanges(ctx, switchName)`)
+  is an optional capability, detected by type assertion like every other
+  one in this package, that discovers a named switch's real IPv4 range from
+  the host's own `vEthernet (<switch name>)` adapter rather than trusting
+  an operator-declared `network.range` blindly (2026-08, #223). `hyperv.
+  Driver` is the only implementation — `devfactory` deliberately does not
+  implement it, same reasoning as `GuestPersonalizer`'s devfactory-parity
+  non-goal above (one real consumer, no second provider to validate a
+  simulated contract against). `Driver.Create` is the sole caller: it
+  validates the declared address falls *within* (not equal to) a discovered
+  range whenever `config.switch` and either `network.range` or
+  `network.static_ip` are set (both modes get this check, not just
+  `range` — a `static_ip` pool is exactly as exposed to a typo/drifted
+  address), right after `cc.Network.validate()` and before `reserveMemory`
+  so a bad config fails before reserving host memory. The discovery query
+  itself is bounded by `d.memQueryTimeout()`, reused rather than adding a
+  fourth overridable duration field. A positive contradiction is a hard
+  `Create` error; an indeterminate result (query failure, or nothing
+  discoverable — e.g. a Private switch has no host vNIC) logs a warning and
+  proceeds, since this host cannot validate the PowerShell against a real
+  switch — see [ADR-0013](docs/adr/0013-hyperv-network-range-reporter.md)
+  for the full design, including why validation lives in `Create` rather
+  than at pool registration/reconcile time as originally proposed
+  (`PoolSpec.Config` is an undecoded `map[string]any` outside the driver,
+  and the driver itself normally runs on a remote agent, not the daemon
+  that owns pool reconciliation).
 
 ### Guest Credentials
 
