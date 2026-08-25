@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +12,7 @@ import (
 	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/internal/sandbox"
 	"github.com/Geogboe/boxy/internal/server"
+	"github.com/Geogboe/boxy/pkg/humanize"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/providersdk/providers/devfactory"
@@ -97,6 +97,68 @@ func TestUI_sandboxes_renders(t *testing.T) {
 	if !strings.Contains(body, `class="badge badge-ready"`) {
 		t.Fatalf("sandboxes page missing status badge, body = %q", body)
 	}
+	// A settled terminal state must not get the "actively happening" pulse.
+	if strings.Contains(body, `class="badge badge-ready badge-transient"`) {
+		t.Fatalf("ready sandbox should not be marked badge-transient, body = %q", body)
+	}
+}
+
+func TestUI_sandboxes_pendingStatusGetsTransientBadge(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	_ = st.CreateSandbox(context.Background(), model.Sandbox{ID: "sb-pending", Name: "still-provisioning", Status: model.SandboxStatusPending})
+	_ = st.CreateSandbox(context.Background(), model.Sandbox{ID: "sb-deleting", Name: "tearing-down", Status: model.SandboxStatusDeleting})
+
+	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/ui/sandboxes", nil)
+	mux.ServeHTTP(w, r)
+
+	body := w.Body.String()
+	if !strings.Contains(body, `class="badge badge-pending badge-transient"`) {
+		t.Fatalf("pending sandbox missing badge-transient, body = %q", body)
+	}
+	if !strings.Contains(body, `class="badge badge-deleting badge-transient"`) {
+		t.Fatalf("deleting sandbox missing badge-transient, body = %q", body)
+	}
+}
+
+func TestUI_refreshButtons_targetTheirFragment(t *testing.T) {
+	t.Parallel()
+	admin := &fakeAgentAdmin{}
+	mux := server.NewTestMuxWithAgentAdminUI(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), admin, true)
+
+	cases := []struct {
+		path        string
+		fragmentID  string
+		fragmentGet string
+	}{
+		{"/", "stats-fragment", "/ui/fragments/stats"},
+		{"/ui/pools", "pools-fragment", "/ui/fragments/pools-table"},
+		{"/ui/sandboxes", "sandboxes-fragment", "/ui/fragments/sandboxes-table"},
+		{"/ui/agents", "agents-fragment", "/ui/fragments/agents-table"},
+	}
+	for _, tc := range cases {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, tc.path, nil))
+		body := w.Body.String()
+		if !strings.Contains(body, `id="`+tc.fragmentID+`"`) {
+			t.Errorf("%s: missing fragment container id %q, body = %q", tc.path, tc.fragmentID, body)
+		}
+		wantBtn := `class="refresh-btn" hx-get="` + tc.fragmentGet + `" hx-target="#` + tc.fragmentID + `" hx-swap="innerHTML" hx-sync="#` + tc.fragmentID + `:replace"`
+		if !strings.Contains(body, wantBtn) {
+			t.Errorf("%s: missing refresh button wired to its fragment, want substring %q, body = %q", tc.path, wantBtn, body)
+		}
+		// Must be "replace", not the htmx default "drop": a manual click
+		// racing the 5s poll must preempt it, not be silently swallowed.
+		if strings.Contains(body, `hx-sync="#`+tc.fragmentID+`:drop"`) {
+			t.Errorf("%s: refresh button still uses hx-sync:drop, which silently discards a click that races the poll", tc.path)
+		}
+		// The 5s poll must still be present and unchanged alongside the button.
+		if !strings.Contains(body, `hx-trigger="every 5s"`) {
+			t.Errorf("%s: missing unchanged 5s poll trigger, body = %q", tc.path, body)
+		}
+	}
 }
 
 func TestUI_fragment_stats(t *testing.T) {
@@ -169,7 +231,7 @@ func TestUI_agents_rendersStatusesCapacityAndPolling(t *testing.T) {
 // values devfactory.Driver.Availability reports (not hand-picked numbers)
 // and asserts the rendered page reflects them sanely. Before that fix, an
 // unconfigured devfactory pool's Availability reported math.MaxInt64, which
-// formatMemoryMB rendered as "9,223,372,036,854,775,807 MB free" — this
+// humanize.CommaInt rendered as "9,223,372,036,854,775,807 MB free" — this
 // guards against that regression without needing a real mTLS remote agent
 // (the dashboard's Availability data is agent-transport-agnostic; see
 // TestUI_agents_rendersStatusesCapacityAndPolling for the same pattern with
@@ -219,26 +281,10 @@ func TestUI_agents_devfactoryAvailabilityRendersSanely(t *testing.T) {
 	if strings.Contains(body, "9,223,372,036,854,775,807") {
 		t.Fatal("dashboard rendered the old math.MaxInt64 sentinel — Availability() regressed")
 	}
-	wantUnlimited := commaGroup(devfactory.UnlimitedMemoryMB) + " MB free"
+	wantUnlimited := humanize.CommaInt(devfactory.UnlimitedMemoryMB) + " MB free"
 	if !strings.Contains(body, wantUnlimited) {
 		t.Fatalf("expected the finite unlimited sentinel rendered with comma grouping (%q); body = %q", wantUnlimited, body)
 	}
-}
-
-// commaGroup mirrors ui.go's unexported formatMemoryMB (this file is
-// package server_test, so it can't call that directly) — kept in sync
-// deliberately so a future retune of devfactory.UnlimitedMemoryMB doesn't
-// silently desync a hardcoded expected string in the test above.
-func commaGroup(value int64) string {
-	digits := strconv.FormatInt(value, 10)
-	var b strings.Builder
-	for i, digit := range digits {
-		if i > 0 && (len(digits)-i)%3 == 0 {
-			b.WriteByte(',')
-		}
-		b.WriteRune(digit)
-	}
-	return b.String()
 }
 
 func TestUI_agents_emptyInventory(t *testing.T) {

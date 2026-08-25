@@ -3,8 +3,14 @@
 {{define "content"}}
 <h1 class="page-title">Pools</h1>
 <div class="table-card">
-  <div class="table-card-header">All Pools</div>
-  <div hx-get="/ui/fragments/pools-table"
+  <div class="table-card-header">
+    <div>All Pools</div>
+    <button type="button" class="refresh-btn" hx-get="/ui/fragments/pools-table" hx-target="#pools-fragment" hx-swap="innerHTML" hx-sync="#pools-fragment:replace" aria-label="Refresh pools now" title="Refresh now">
+      <span class="refresh-icon" aria-hidden="true">⟳</span> Refresh
+    </button>
+  </div>
+  <div id="pools-fragment"
+       hx-get="/ui/fragments/pools-table"
        hx-trigger="every 5s"
        hx-swap="innerHTML">
     {{template "pools_table_fragment" .}}

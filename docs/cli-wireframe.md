@@ -397,9 +397,26 @@ boxy
 │   │       $ boxy agent token revoke 6b1f0e7c-…
 │   │         revoked token 6b1f0e7c-…
 │   │
-│   ├── list                                     List registered agents and availability
+│   ├── list                                     List registered agents, connection liveness, and
+│   │   │                                          availability
+│   │   └── --format <json|table>                  Output format (default table)
+│   │
 │   │   $ boxy agent list
-│   │     0d9a…	lab-hv-1	[hyperv]	available
+│   │     ID     NAME       PROVIDERS    CONNECTION   SCHEDULING    LAST HEARTBEAT
+│   │     0d9a…  lab-hv-1   [hyperv]     connected    available     2026-08-21 14:30:00 UTC
+│   │
+│   ├── status <id>                              Show one agent's connection liveness, scheduling
+│   │   │                                          eligibility, and reported capacity
+│   │   └── --format <json|table>                  Output format (default table)
+│   │
+│   │   $ boxy agent status 0d9a…
+│   │     ID               0d9a…
+│   │     Name             lab-hv-1
+│   │     Providers        [hyperv]
+│   │     Connection       connected
+│   │     Scheduling       available
+│   │     Last heartbeat   2026-08-21 14:30:00 UTC
+│   │     Capacity (hyperv)  4,096 MB free
 │   │
 │   └── revoke <id>                              Revoke an agent's identity (deny-lists its mTLS cert
 │       │                                          and tears down any live connection)

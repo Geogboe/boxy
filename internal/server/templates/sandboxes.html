@@ -3,8 +3,14 @@
 {{define "content"}}
 <h1 class="page-title">Sandboxes</h1>
 <div class="table-card">
-  <div class="table-card-header">All Sandboxes</div>
-  <div hx-get="/ui/fragments/sandboxes-table"
+  <div class="table-card-header">
+    <div>All Sandboxes</div>
+    <button type="button" class="refresh-btn" hx-get="/ui/fragments/sandboxes-table" hx-target="#sandboxes-fragment" hx-swap="innerHTML" hx-sync="#sandboxes-fragment:replace" aria-label="Refresh sandboxes now" title="Refresh now">
+      <span class="refresh-icon" aria-hidden="true">⟳</span> Refresh
+    </button>
+  </div>
+  <div id="sandboxes-fragment"
+       hx-get="/ui/fragments/sandboxes-table"
        hx-trigger="every 5s"
        hx-swap="innerHTML">
     {{template "sandboxes_table_fragment" .}}
@@ -28,7 +34,13 @@
     <tr>
       <td><code>{{.ID}}</code></td>
       <td>{{.Name}}</td>
-      <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
+      <td>
+        {{if .Status.IsTransient}}
+        <span class="badge badge-{{.Status}} badge-transient">{{.Status}}</span>
+        {{else}}
+        <span class="badge badge-{{.Status}}">{{.Status}}</span>
+        {{end}}
+      </td>
       <td>{{len .Resources}}</td>
     </tr>
     {{end}}

@@ -16,8 +16,8 @@ func newSandboxListCommand(serverAddr func() string) *cobra.Command {
 		Short: "List all sandboxes",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if format != "" && format != "json" && format != "table" {
-				return fmt.Errorf("unknown --format %q: want json or table", format)
+			if err := validateListFormat(format); err != nil {
+				return err
 			}
 
 			client := apiClientForServer(serverAddr())
