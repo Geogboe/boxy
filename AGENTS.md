@@ -155,12 +155,16 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   boxy config file's own directory*, matching how `.boxy/state.json`
   already resolves (`internal/cli/serve.go`'s `serveStatePath`), instead
   of silently resolving against the process's ambient working directory.
-  `devfactory.Config.DataDir` implements it (2026-08, #181 follow-up); no
-  other provider does — it's opt-in per `Config` type, not a default for
-  every path-shaped field (docker's socket path and hyperv's VHD/template
-  paths are real host locations an operator points at explicitly, not
-  directories conceptually owned by the config file). Both real call
-  sites are threaded: `internal/cli/serve.go`'s `buildDrivers` (daemon,
+  `devfactory.Config.DataDir` implements it (2026-08, #181 follow-up); it's
+  opt-in per `Config` type, not a default for every path-shaped field
+  (docker's socket path and hyperv's VHD/template paths are real host
+  locations an operator points at explicitly, not directories conceptually
+  owned by the config file). `hyperv.Config.DataDir` implements it too
+  (2026-08, #222) — unlike devfactory's, an empty `DataDir` there defaults
+  to `.boxy-agent/hyperv` *before* anchoring against `baseDir`, since a lost
+  ledger reproduces #222's own address-collision bug rather than just losing
+  a debug store; see [ADR-0012](docs/adr/0012-hyperv-range-based-ip-allocation.md).
+  Both real call sites are threaded: `internal/cli/serve.go`'s `buildDrivers` (daemon,
   `cfgPath`) and `internal/cli/agent_serve.go`'s `buildAgentDrivers`
   (remote agent, `agentServeOpts.providerConfigsBaseDir` — tracks whether
   provider instances came from `--config` or `--service-config`, since

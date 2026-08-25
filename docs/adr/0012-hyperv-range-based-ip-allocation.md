@@ -258,3 +258,12 @@ read-back" decision above is not undermined one layer up.
   `PersonalizeGuest` finding no ledger entry for an id is not itself an
   error — it's treated the same as "no `boxy_net_static_ip` in Notes"
   today: no networking is applied, guest DHCP/pre-baked config is trusted.
+- Two pools that happen to declare the *same* `RangeKey` with *different*
+  `DefaultGateway` values are not mutually protected: `reserveAddress` only
+  excludes its own entry's gateway from allocation, so a VM from pool B can
+  be handed pool A's gateway address. This is the practical edge of "no
+  cross-pool-consistency policy is needed" above — self-contained entries
+  avoid needing to *reconcile* two pools' declared gateways, but do not
+  prevent two pools sharing a range from stepping on each other's reserved
+  addresses. Not addressed here; avoid overlapping `network.range` CIDRs
+  across pools on the same host until this is revisited.
