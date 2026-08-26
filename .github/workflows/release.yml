@@ -10,26 +10,33 @@ on:
   push:
     branches: [main]
 
-# Serialize runs on main: release-please-action has no lock of its own around
-# "does a release for this tag exist yet" — two pushes close enough together
-# (e.g. a release-please PR merge immediately followed by an unrelated merge)
-# can each pass that check before either has created anything, producing two
-# GitHub Release objects for the same tag. GoReleaser's subsequent update
-# then fails with a 422 tag_name conflict against whichever object it didn't
-# resolve. Reproduced 2026-08-24 (release-please PR #207 and docs-only #214,
-# 32s apart) — see the duplicate-release cleanup in that day's history.
-# cancel-in-progress: false queues the second run instead of racing or
-# dropping it, so every push still gets its own complete release pipeline.
-concurrency:
-  group: release-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
-
 permissions: {}
 
 jobs:
   release-please:
     name: Release Please
     runs-on: ubuntu-latest
+    # Serialize release-please runs on main: release-please-action has no
+    # lock of its own around "does a release for this tag exist yet" — two
+    # pushes close enough together (e.g. a release-please PR merge
+    # immediately followed by an unrelated merge) can each pass that check
+    # before either has created anything, producing two GitHub Release
+    # objects for the same tag. GoReleaser's subsequent update then fails
+    # with a 422 tag_name conflict against whichever object it didn't
+    # resolve. Reproduced 2026-08-24 (release-please PR #207 and docs-only
+    # #214, 32s apart) — see the duplicate-release cleanup in that day's
+    # history. cancel-in-progress: false queues the second run instead of
+    # racing or dropping it, so every push still gets its own release-please
+    # pass. Deliberately scoped to *this job only*, not the whole workflow
+    # (#55 follow-up, 2026-08): the goreleaser job below can pause for a
+    # while on its release-signing approval gate, and each of its runs
+    # operates on its own distinct tag — workflow-level concurrency would
+    # have queued the *next* release-please run behind that pending
+    # approval too, stalling all main-triggered release activity for as
+    # long as the click is outstanding.
+    concurrency:
+      group: release-please-${{ github.ref }}
+      cancel-in-progress: false
     permissions:
       contents: write
       pull-requests: write

@@ -153,6 +153,15 @@ documented in `docs/install.md`.
 
 ## Consequences
 
+- The workflow's `concurrency:` block, which previously serialized the
+  entire `release.yml` run to prevent two `release-please` runs from racing
+  to create the same tag's GitHub Release object, moved from workflow scope
+  to the `release-please` job specifically. Left at workflow scope, a
+  `goreleaser` job paused on the new approval gate would keep the whole run
+  "in progress," queuing the *next* push's `release-please` job behind an
+  unrelated pending approval — stalling all main-triggered release activity
+  for as long as the click is outstanding. Each `goreleaser` run operates on
+  its own distinct tag, so it needs no cross-run serialization of its own.
 - Verifying a release now requires the `cosign` CLI and one command
   (documented in `docs/install.md`), not `gpg --import` plus a separate
   trust decision about a maintainer's public key.

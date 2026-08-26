@@ -485,7 +485,7 @@ Wrap repeated commands in `Taskfile.yml`. If a command is run more than once, ad
 - `main` has no branch protection (`gh api repos/Geogboe/boxy/branches/main/protection` → 404). Merges are gated by convention and green CI, not by GitHub-enforced required checks.
 - History uses merge commits, not squash, for every PR including release-please PRs — use `gh pr merge --merge`.
 - release-please PRs reliably show their `CI` check as `action_required` with zero jobs run (seen for 0.1.27 and 0.1.29). This is a known, harmless quirk of that workflow's trigger conditions, not a real gate — safe to merge through.
-- Merging a release-please PR triggers `release.yml` on push to `main`, which tags and runs GoReleaser (5 platforms + SBOMs + checksums, ~3 min). Wait for that `Release` workflow run to complete before treating the release as published.
+- Merging a release-please PR triggers `release.yml` on push to `main`. The `release-please` job tags and completes quickly; the `goreleaser` job (5 platforms + SBOMs + checksums + cosign signing, ~3 min of actual runtime) then **pauses indefinitely on a `release-signing` GitHub Environment approval** (#55, 2026-08, ADR-0014) before it starts — it will not run to completion on its own. Go approve it in the Actions run's UI, then wait for the run to complete before treating the release as published. Don't mistake the pause for a stalled/failed run.
 
 ### GitHub Actions Node 24 migration — done
 
