@@ -281,3 +281,29 @@ this ADR also mentioned remains deferred; ADR-0013 explains why it's not
 simply a "not done yet" gap (it would recreate #222's collision at the
 `RangeKey` boundary if the discovered range ever changes across a host
 reboot).
+
+## Update (2026-08-26)
+
+#235 fixed a destructive bug in `assignGuestIP`, the in-guest apply
+mechanism this ADR's "trust the ledger, not a read-back" decision builds on
+(shared with `static_ip` mode). The script removed the guest's existing
+IPv4 address but never its existing default route; a preheated resource is
+always personalized a second time on its first `Allocate` (not an edge
+case), and on that second apply `New-NetIPAddress`'s own `-DefaultGateway`
+rejected the reapply *after* the working address was already torn out,
+leaving the guest on APIPA while `PersonalizeGuest` — per this ADR's own
+design — kept trusting `applyRangeIP`'s return value as authoritative with
+no independent check. The fix has two parts, both inside the same
+PowerShell Direct script/session so no second guest connection is needed:
+clear the interface's existing default route alongside its address before
+reapplying (idempotency), and re-query the guest's own state immediately
+after applying, throwing if it doesn't confirm the apply: the address must
+be present in a usable state (`Preferred`/`Tentative`, not
+`Duplicate`/`Invalid` — a bare presence check would pass on exactly the
+conflict-detection failure this exists to catch), and when a gateway was
+requested, the `0.0.0.0/0` route must exist too (closing the silent-success
+gap for both halves of what the original bug broke). This does not weaken
+"trust the ledger, not a `Get-VMNetworkAdapter` read-back" above — the new
+check reads the guest's own configured state over the same lag-free VMBus
+channel used to apply it, not the host-side adapter view ADR-0012 already
+distrusts.

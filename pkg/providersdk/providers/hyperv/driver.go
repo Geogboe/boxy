@@ -1185,6 +1185,25 @@ func guestIPUnsupportedOnLinux(mechanism string) error {
 // applyStaticIP (static_ip mode) and applyRangeIP (range mode, ADR-0012) —
 // ip/prefix/gateway/dns is all either needs to source, from Notes or the
 // ledger respectively.
+//
+// The script is idempotent and self-verifying (#235, fixed 2026-08-26): a
+// preheated resource is always personalized a second time on its first
+// Allocate, so re-applying to an already-configured guest is the normal
+// path, not an edge case. The original script removed the guest's existing
+// IPv4 address but left its default route in place; New-NetIPAddress's own
+// -DefaultGateway then rejected the reapply ("Instance DefaultGateway
+// already exists") *after* the working address was already torn out,
+// leaving the guest on APIPA while the driver still reported success. The
+// script now clears the interface's existing default route alongside its
+// address before reapplying, and — since ADR-0012 deliberately trusts this
+// return value over a host-side Get-VMNetworkAdapter read-back — re-queries
+// the guest's own state immediately after and throws if it doesn't confirm
+// the apply: the address must be present in a usable state (Preferred or
+// Tentative, not Duplicate/Invalid — a bare presence check would pass on
+// exactly the conflict-detection failure this exists to catch), and when a
+// gateway was requested, the 0.0.0.0/0 route must exist too. A silent
+// in-guest failure of either kind now surfaces as a loud Allocate error
+// instead of a healthy-looking but unreachable ready resource.
 func (d *Driver) assignGuestIP(ctx context.Context, id, guestOS, guestUser, guestPassword, ip, prefix, gateway, dns string) error {
 	if strings.EqualFold(guestOS, "linux") {
 		return guestIPUnsupportedOnLinux("static IP")
@@ -1219,14 +1238,25 @@ Set-DnsClientServerAddress -InterfaceIndex $adapter.InterfaceIndex -ServerAddres
 		}
 	}
 
+	gwVerifyBlock := ""
+	if gateway != "" {
+		gwVerifyBlock = fmt.Sprintf(`
+$appliedRoute = Get-NetRoute -InterfaceIndex $adapter.InterfaceIndex -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue
+if ($null -eq $appliedRoute) { throw "default gateway '%s' did not apply in guest; no 0.0.0.0/0 route found on the interface after New-NetIPAddress" }`, psq(gateway))
+	}
+
 	script := fmt.Sprintf(`
 $ErrorActionPreference = 'Stop'
 $adapter = Get-NetAdapter | Where-Object { $_.Status -ne 'Disabled' } | Sort-Object InterfaceIndex | Select-Object -First 1
 if ($null -eq $adapter) { throw 'no network adapter found in guest' }
 $existing = Get-NetIPAddress -InterfaceIndex $adapter.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
 if ($existing) { $existing | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue | Out-Null }
+$existingRoute = Get-NetRoute -InterfaceIndex $adapter.InterfaceIndex -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue
+if ($existingRoute) { $existingRoute | Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue | Out-Null }
 New-NetIPAddress -InterfaceIndex $adapter.InterfaceIndex -IPAddress '%s' -PrefixLength %s%s | Out-Null%s
-`, psq(ip), psq(prefix), gwBlock, dnsBlock)
+$applied = Get-NetIPAddress -InterfaceIndex $adapter.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -eq '%s' -and $_.AddressState -in @('Preferred', 'Tentative') }
+if ($null -eq $applied) { throw "address '%s' did not apply in guest; New-NetIPAddress reported success but the interface shows no usable IPv4 address matching it (duplicate/invalid address state is treated as not applied)" }%s
+`, psq(ip), psq(prefix), gwBlock, dnsBlock, psq(ip), psq(ip), gwVerifyBlock)
 
 	exec, err := d.newGuestExec(ctx, id, guestOS, guestUser, guestPassword, "")
 	if err != nil {
