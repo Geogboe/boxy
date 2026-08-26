@@ -49,8 +49,16 @@ jobs:
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
+    # Gates the entire build+publish behind one required-reviewer approval,
+    # not just the signing step — see docs/adr/0014 for why signing stays
+    # inside this job (testable via `task release:check`/`release:snapshot`)
+    # instead of a separate downstream job. Create this environment in repo
+    # Settings > Environments with yourself as a required reviewer before
+    # merging, or this job will hang waiting for a gate that doesn't exist.
+    environment: release-signing
     permissions:
       contents: write
+      id-token: write # required for keyless cosign signing via GitHub OIDC, #55
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -63,6 +71,9 @@ jobs:
 
       - name: Install syft (for SBOM generation)
         uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+
+      - name: Install cosign (for keyless release signing, #55)
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
