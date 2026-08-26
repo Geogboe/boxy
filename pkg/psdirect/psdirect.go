@@ -386,10 +386,10 @@ func escapeNativeArg(s string) string {
 // escaping it for native command-line reconstruction (escapeNativeArg, for
 // the & operator's argv rebuild -- see #238) and then doubling embedded
 // single quotes (for the PowerShell parser's own single-quoted-string
-// rule). These two escaping passes touch disjoint character classes
-// (\/" vs '), so order between them does not matter; single-quote doubling
-// is applied last only because it must wrap the whole already-escaped
-// literal.
+// rule). These two escaping passes touch disjoint character classes --
+// backslash and double quote vs. single quote -- so order between them does
+// not matter; single-quote doubling is applied last only because it must
+// wrap the whole already-escaped literal.
 func psQuote(s string) string {
 	return "'" + strings.ReplaceAll(escapeNativeArg(s), "'", "''") + "'"
 }
