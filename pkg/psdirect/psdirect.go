@@ -178,10 +178,11 @@ func (e *Exec) ExecStream(ctx context.Context, cmd string, args []string, sink e
 						continue
 					}
 				}
-				payload := fmt.Append(nil, value)
-				if len(payload) == 0 {
+				text, drop := formatStreamValue(value)
+				if drop {
 					continue
 				}
+				payload := []byte(text)
 				if err := sink.Send(ctx, eventstream.Event{Kind: eventstream.Data, Channel: item.channel, Payload: payload}); err != nil {
 					stream.Cancel()
 					return nil, err
@@ -254,7 +255,11 @@ func buildScript(cmd string, args []string) string {
 }
 
 // extractOutput parses the PSRP output stream produced by buildScript.
-// The last numeric item is the exit code; everything else is stdout.
+// The last numeric item is the exit code; everything else is stdout, joined
+// with a newline between items that don't already end in one (Out-String
+// output typically already carries its own \r\n, so an unconditional join
+// would insert blank lines). Items formatStreamValue can't meaningfully
+// render are dropped rather than turned into synthetic tokens -- see #239.
 func extractOutput(output []interface{}) (stdout string, exitCode int) {
 	if len(output) == 0 {
 		return "", 0
@@ -274,18 +279,117 @@ func extractOutput(output []interface{}) (stdout string, exitCode int) {
 	}
 
 	var sb strings.Builder
+	endsInNewline := true // no separator needed before the first item
 	for _, item := range stdoutItems {
-		switch v := item.(type) {
-		case string:
-			sb.WriteString(v)
-		default:
-			fmt.Fprintf(&sb, "%v", v)
+		text, drop := formatStreamValue(item)
+		if drop {
+			continue
 		}
+		if !endsInNewline {
+			sb.WriteByte('\n')
+		}
+		sb.WriteString(text)
+		endsInNewline = strings.HasSuffix(text, "\n")
 	}
 	return sb.String(), exitCode
 }
 
-// psQuote wraps s in PowerShell single quotes, escaping contained single quotes.
+// formatStreamValue renders one deserialized PSRP stream item as text
+// suitable for stdout/stderr. It drops nil values and the case where a
+// *serialization.PSObject's own String() falls all the way through to its
+// literal "PSObject" placeholder (no ToString, wrapped Value, exception
+// message, or TypeNames) -- in that exact case there is nothing real to
+// render, and emitting the literal token is worse than silence. Anything
+// else formats via %v as before, which already calls PSObject.String() for
+// its full ToString/Value/exception-record/TypeNames fallback chain -- this
+// deliberately does not re-derive any subset of that chain itself, so it
+// stays correct as PSObject's own fallback logic evolves. See #239.
+func formatStreamValue(v interface{}) (text string, drop bool) {
+	if v == nil {
+		return "", true
+	}
+	text = fmt.Sprintf("%v", v)
+	if _, ok := v.(*serialization.PSObject); ok && text == "PSObject" {
+		return "", true
+	}
+	return text, false
+}
+
+// escapeNativeArg escapes s so it survives Windows PowerShell 5.1's native
+// command-line reconstruction for the `&` call operator, on top of whatever
+// psQuote does for the PowerShell parser itself.
+//
+// PowerShell performs no escaping of its own here: it joins already-parsed
+// argument values with spaces and wraps a value in a bare `"..."` pair only
+// if that value contains whitespace. Any embedded `"` or trailing `\` is
+// then reinterpreted by the *target* executable's own argv parser
+// (CommandLineToArgvW-style, used by effectively all native Windows
+// executables, including powershell.exe itself): a run of N backslashes
+// immediately before a `"` must become 2N+1 backslashes for the quote to
+// survive as a literal character, and a run of N backslashes immediately
+// before a closing `"` that PowerShell adds must be even, or that closing
+// quote is swallowed as literal content instead of terminating the
+// argument. This mirrors the algorithm behind Go's own syscall.EscapeArg
+// (Windows argv escaping) minus the outer quote characters, which
+// PowerShell -- not this function -- adds.
+//
+// This is a documented stopgap, not the long-term fix: it only patches the
+// text-command-line-reconstruction hazard PowerShell's `&` operator creates
+// in the first place. The real fix is to stop going through a text command
+// line at all -- go-psrpcore's pipeline.Pipeline already supports invoking
+// a command via AddCommand/AddArgument, PSRP's native equivalent of a
+// parameterized query, which this bug class cannot occur against. Doing so
+// requires a client-level API this package's go-psrp dependency doesn't
+// currently expose; tracked in #244.
+//
+// See #238 for the reported defect. The algorithm itself was verified live
+// against Windows PowerShell 5.1.26100 by invoking `&` directly with
+// hand-escaped literals; the no-whitespace quote-plus-trailing-backslash
+// case (the one case the direct-`&` matrix could not settle on inspection
+// alone, since it hinges on whether PowerShell wraps a whitespace-free
+// value at all) was separately verified end-to-end through psQuote's own
+// single-quote wrapper into a native argv dumper, confirmed to round-trip.
+// Coverage stops at the generated script string, though: this package has
+// no way to run a real PSRP session against a Windows guest from this host
+// (see AGENTS.md), so the psQuote -> PSRP wire serialization -> guest
+// runspace path beyond script generation remains unverified against a real
+// guest.
+func escapeNativeArg(s string) string {
+	hasSpace := strings.ContainsAny(s, " \t")
+	var b strings.Builder
+	slashes := 0
+	for _, r := range s {
+		switch r {
+		case '\\':
+			slashes++
+			b.WriteRune(r)
+		case '"':
+			for ; slashes > 0; slashes-- {
+				b.WriteByte('\\')
+			}
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		default:
+			slashes = 0
+			b.WriteRune(r)
+		}
+	}
+	if hasSpace {
+		for ; slashes > 0; slashes-- {
+			b.WriteByte('\\')
+		}
+	}
+	return b.String()
+}
+
+// psQuote wraps s in a PowerShell single-quoted string literal, first
+// escaping it for native command-line reconstruction (escapeNativeArg, for
+// the & operator's argv rebuild -- see #238) and then doubling embedded
+// single quotes (for the PowerShell parser's own single-quoted-string
+// rule). These two escaping passes touch disjoint character classes --
+// backslash and double quote vs. single quote -- so order between them does
+// not matter; single-quote doubling is applied last only because it must
+// wrap the whole already-escaped literal.
 func psQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+	return "'" + strings.ReplaceAll(escapeNativeArg(s), "'", "''") + "'"
 }

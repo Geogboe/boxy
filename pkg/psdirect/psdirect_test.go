@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	psrpclient "github.com/smnsjas/go-psrp/client"
+	"github.com/smnsjas/go-psrpcore/serialization"
 )
 
 // mockExecutor is a test double for psrpExecutor.
@@ -223,5 +224,192 @@ func TestBuildScript_QuotesAndJoins(t *testing.T) {
 	}
 	if !strings.Contains(script, "Out-String") {
 		t.Errorf("expected Out-String in script: %s", script)
+	}
+}
+
+func TestBuildScript_QuotesEmbeddedDoubleQuotes(t *testing.T) {
+	script := buildScript("powershell", []string{"-Command", `Write-Output "MARK[a b]"`})
+	if !strings.Contains(script, `Write-Output \"MARK[a b]\"`) {
+		t.Errorf("expected native-argv-escaped embedded quotes in script: %s", script)
+	}
+}
+
+func TestBuildStreamScript_QuotesEmbeddedDoubleQuotes(t *testing.T) {
+	script := buildStreamScript("powershell", []string{"-Command", `Write-Output "MARK[a b]"`})
+	if !strings.Contains(script, `Write-Output \"MARK[a b]\"`) {
+		t.Errorf("expected native-argv-escaped embedded quotes in script: %s", script)
+	}
+}
+
+// --- escapeNativeArg / psQuote tests (#238) ---
+//
+// These pin the native-command-line-reconstruction escaping that
+// psQuote applies on top of its own single-quote doubling. See #238 and
+// psQuote's doc comment for the mechanism. This is a documented stopgap
+// pending #244 (PSRP native AddCommand/AddArgument).
+
+func TestEscapeNativeArg_EmbeddedQuote(t *testing.T) {
+	got := escapeNativeArg(`Write-Output "MARK[a b]"`)
+	want := `Write-Output \"MARK[a b]\"`
+	if got != want {
+		t.Errorf("escapeNativeArg = %q, want %q", got, want)
+	}
+}
+
+func TestEscapeNativeArg_QuotePrecededByBackslash(t *testing.T) {
+	// A literal backslash immediately before a literal quote must have its
+	// own backslash-run doubled before the escaping backslash is added, or
+	// the byte-count parity comes out wrong on the guest's argv parser. This
+	// is the case that proves a naive "just backslash-escape quotes" fix
+	// (the issue's own minimal suggestion) is wrong, not merely incomplete.
+	got := escapeNativeArg(`foo\"bar`)
+	want := `foo\\\"bar`
+	if got != want {
+		t.Errorf("escapeNativeArg = %q, want %q", got, want)
+	}
+}
+
+func TestEscapeNativeArg_TrailingBackslashWithSpace(t *testing.T) {
+	got := escapeNativeArg(`C:\some path\`)
+	want := `C:\some path\\`
+	if got != want {
+		t.Errorf("escapeNativeArg = %q, want %q", got, want)
+	}
+}
+
+func TestEscapeNativeArg_TrailingBackslashNoSpace(t *testing.T) {
+	// No whitespace means PowerShell never wraps this value in a quote, so
+	// there is nothing for a trailing backslash run to collide with -- it
+	// must stay untouched. Doubling unconditionally would be a regression.
+	got := escapeNativeArg(`C:\`)
+	want := `C:\`
+	if got != want {
+		t.Errorf("escapeNativeArg = %q, want %q", got, want)
+	}
+}
+
+func TestEscapeNativeArg_QuoteAndTrailingBackslashNoSpace(t *testing.T) {
+	// The decisive case for whether hasSpace should gate on the pre-escape
+	// or post-escape string: escaping never adds or removes whitespace, so
+	// the two always agree, and since this value has no whitespace at all,
+	// PowerShell's & operator never wraps it in an outer quote for the
+	// trailing backslash to collide with -- so it must stay undoubled.
+	// Live-verified end-to-end (2026-08-26, Windows PowerShell 5.1.26100):
+	// psQuote(`a"b\`) fed through & to a native argv dumper round-tripped
+	// to exactly a"b\.
+	got := escapeNativeArg(`a"b\`)
+	want := `a\"b\`
+	if got != want {
+		t.Errorf("escapeNativeArg = %q, want %q", got, want)
+	}
+}
+
+func TestEscapeNativeArg_PlainArgsUnchanged(t *testing.T) {
+	for _, s := range []string{"arg with spaces", "it's quoted"} {
+		if got := escapeNativeArg(s); got != s {
+			t.Errorf("escapeNativeArg(%q) = %q, want unchanged", s, got)
+		}
+	}
+}
+
+func TestPsQuote_EmbeddedQuoteAndSingleQuoteTogether(t *testing.T) {
+	got := psQuote(`it's "quoted"`)
+	if !strings.Contains(got, `it''s`) {
+		t.Errorf("expected doubled single quote in %q", got)
+	}
+	if !strings.Contains(got, `\"quoted\"`) {
+		t.Errorf("expected escaped double quotes in %q", got)
+	}
+}
+
+// --- formatStreamValue / extractOutput tests (#239) ---
+
+func TestExtractOutput_MultipleItemsGetNewlineSeparator(t *testing.T) {
+	stdout, code := extractOutput([]interface{}{"A", "B", int32(0)})
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
+	}
+	if stdout != "A\nB" {
+		t.Errorf("stdout = %q, want %q", stdout, "A\nB")
+	}
+}
+
+func TestExtractOutput_AlreadyNewlineTerminatedItemsNoBlankLine(t *testing.T) {
+	stdout, _ := extractOutput([]interface{}{"A\r\n", "B\r\n", int32(0)})
+	want := "A\r\nB\r\n"
+	if stdout != want {
+		t.Errorf("stdout = %q, want %q (no extra blank line)", stdout, want)
+	}
+}
+
+func TestExtractOutput_TwoLineCommandRoundTrips(t *testing.T) {
+	stdout, code := extractOutput([]interface{}{"MARK[a\r\n", "b]\r\n", int32(0)})
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
+	}
+	want := "MARK[a\r\nb]\r\n"
+	if stdout != want {
+		t.Errorf("stdout = %q, want %q", stdout, want)
+	}
+}
+
+type stringerStub struct{ s string }
+
+func (s stringerStub) String() string { return s.s }
+
+func TestFormatStreamValue_HonorsStringer(t *testing.T) {
+	text, drop := formatStreamValue(stringerStub{s: "hello"})
+	if drop {
+		t.Fatal("expected drop = false")
+	}
+	if text != "hello" {
+		t.Errorf("text = %q, want %q", text, "hello")
+	}
+}
+
+func TestFormatStreamValue_DropsEmptyPSObject(t *testing.T) {
+	_, drop := formatStreamValue(&serialization.PSObject{})
+	if !drop {
+		t.Error("expected an all-empty PSObject to be dropped")
+	}
+}
+
+func TestFormatStreamValue_UnwrapsPopulatedPSObject(t *testing.T) {
+	text, drop := formatStreamValue(&serialization.PSObject{ToString: "hello"})
+	if drop {
+		t.Fatal("expected drop = false for a populated PSObject")
+	}
+	if text != "hello" {
+		t.Errorf("text = %q, want %q", text, "hello")
+	}
+}
+
+func TestFormatStreamValue_UnwrapsExceptionMessageEvenWithoutToString(t *testing.T) {
+	// Regression test for a design correction found while planning this fix:
+	// dropping based on ToString/Value/TypeNames alone would silently
+	// discard a real ErrorRecord message reachable only through PSObject's
+	// deeper String() fallback (Properties["Exception"]["Message"]).
+	obj := &serialization.PSObject{
+		Properties: map[string]interface{}{
+			"Exception": &serialization.PSObject{
+				Properties: map[string]interface{}{
+					"Message": "boom",
+				},
+			},
+		},
+	}
+	text, drop := formatStreamValue(obj)
+	if drop {
+		t.Fatal("expected drop = false for a PSObject with a real exception message")
+	}
+	if text != "boom" {
+		t.Errorf("text = %q, want %q", text, "boom")
+	}
+}
+
+func TestFormatStreamValue_DropsNil(t *testing.T) {
+	_, drop := formatStreamValue(nil)
+	if !drop {
+		t.Error("expected nil to be dropped")
 	}
 }

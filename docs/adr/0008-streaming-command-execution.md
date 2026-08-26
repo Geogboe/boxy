@@ -127,3 +127,30 @@ bounded JSON convenience for scripts.
   `TestRemoteStreamSink_ConcurrentSendDoesNotRaceOrDoubleComplete`, which
   drives concurrent `Send` calls and is checked under `-race` in CI (not
   available on windows/arm64 dev hosts).
+- **2026-08-26**: Fixed two silent-corruption bugs a QA bot found in
+  `pkg/psdirect`, #238 and #239: `psQuote` only escaped embedded `'` for the
+  PowerShell parser, but Windows PowerShell 5.1's `&` call operator does its
+  own native-argument-line reconstruction for native executables that does
+  not preserve embedded `"` (verified live against a round-trip matrix,
+  including a case where the issue's own suggested minimal fix is
+  empirically wrong, not just incomplete — see `escapeNativeArg`'s doc
+  comment); and `extractOutput` concatenated PSRP stream items with no
+  separator and could render a non-string item as the literal token
+  `"PSObject"`, discarding real content. Fixed with a new `escapeNativeArg`
+  (called from `psQuote`) and a new `formatStreamValue` helper shared
+  between `extractOutput` and `ExecStream`'s per-item loop. This **partially**
+  closes the streaming test-coverage gap noted above: per-item output
+  *formatting* (`formatStreamValue`) is now unit-tested without needing a
+  `StreamResult` double, but `ExecStream`'s orchestration (fan-in goroutines,
+  `Wait()`/`Cancel()`, context-cancellation races) remains uncovered for the
+  same reason — no constructible test double for `*psrpclient.StreamResult`
+  from outside `go-psrp/client`.
+
+  `escapeNativeArg` is a documented stopgap, not the intended long-term fix.
+  The real fix is to stop reconstructing a text command line at all:
+  `go-psrpcore`'s `pipeline.Pipeline` already supports invoking a command via
+  `AddCommand`/`AddArgument` — PSRP's native equivalent of a parameterized
+  query, which this entire bug class cannot occur against — but this
+  package's `go-psrp` client dependency doesn't currently expose that at the
+  client level. Tracked in #244 (either an upstream contribution to
+  `go-psrp` or a `replace`-directive fork adding the client-level API).
