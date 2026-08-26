@@ -1607,6 +1607,70 @@ func TestDriver_PersonalizeGuest_AppliesRangeIP(t *testing.T) {
 	}
 }
 
+// TestDriver_AssignGuestIP_ScriptIsIdempotentAndVerifiesApply guards #235: a
+// second personalization of an already-configured guest (the normal path —
+// every preheated resource is personalized once to become ready, then again
+// on its first Allocate) must not destructively fail. The original script
+// removed the guest's existing IPv4 address but never its existing default
+// route, so New-NetIPAddress's own -DefaultGateway rejected the reapply
+// ("Instance DefaultGateway already exists") *after* the working address was
+// already torn out — leaving the guest on APIPA while ADR-0012's "trust the
+// ledger" design kept advertising the reserved address as healthy. This test
+// asserts the generated script both clears the stale route before reapplying
+// (idempotency) and verifies in-guest that the address actually took before
+// declaring success (closing the silent-failure gap the destructive bug hid
+// behind).
+func TestDriver_AssignGuestIP_ScriptIsIdempotentAndVerifiesApply(t *testing.T) {
+	d := mockDriver(nil)
+	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
+		return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "${BOXY_TEST_PASSWORD}"}, nil
+	}
+	var execs []*recordingGuestExec
+	d.guestExecFactory = func(_, _, _, guestPassword, _ string) vmsdk.GuestExec {
+		exec := &recordingGuestExec{password: guestPassword}
+		execs = append(execs, exec)
+		return exec
+	}
+	d.psExec = func(_ context.Context, script string) (string, error) {
+		switch {
+		case strings.Contains(script, "Get-VM -Id") && !strings.Contains(script, ".Name"):
+			return "boxy_guest_os=windows;boxy_guest_user=Administrator\n", nil
+		case strings.Contains(script, ".Name"):
+			return "boxy-abc123\n", nil
+		default:
+			return "", fmt.Errorf("unexpected ps call: %s", script)
+		}
+	}
+
+	if err := d.reserveRangeEntry(fakeGUID, &NetworkConfig{
+		Range:          "203.0.113.0/24",
+		DefaultGateway: "203.0.113.1",
+	}); err != nil {
+		t.Fatalf("reserveRangeEntry: %v", err)
+	}
+
+	if _, err := d.PersonalizeGuest(context.Background(), fakeGUID); err != nil {
+		t.Fatalf("PersonalizeGuest: %v", err)
+	}
+	if len(execs) == 0 || len(execs[0].calls) != 1 {
+		t.Fatalf("assign-IP guest exec session calls = %+v, want exactly 1 call", execs)
+	}
+	script := strings.Join(execs[0].calls[0], " ")
+
+	if !strings.Contains(script, "Remove-NetRoute") || !strings.Contains(script, "0.0.0.0/0") {
+		t.Errorf("assign script does not clear the interface's existing default route before reapplying the address, so a second personalization on an already-configured guest fails destructively (#235):\n%s", script)
+	}
+	if !strings.Contains(script, "did not apply in guest") {
+		t.Errorf("assign script does not verify in-guest that the address actually applied and fail loudly if not (#235):\n%s", script)
+	}
+	if !strings.Contains(script, "AddressState") {
+		t.Errorf("assign script's applied-address check does not filter on AddressState, so an address left Duplicate/Invalid by conflict detection would pass verification instead of being caught (#235):\n%s", script)
+	}
+	if !strings.Contains(script, "no 0.0.0.0/0 route found") {
+		t.Errorf("assign script verifies the address but not the default route it came with, leaving the exact symptom #235 reported (route rejection) unverified:\n%s", script)
+	}
+}
+
 func TestDriver_PersonalizeGuest_RangeIP_LinuxUnsupported(t *testing.T) {
 	d := mockDriver(func(_ context.Context, script string) (string, error) {
 		if strings.Contains(script, "Get-VM -Id") {
