@@ -3,6 +3,7 @@ package pool
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -799,6 +800,114 @@ func TestManager_EnsureReady_RespectsMaxTotalAcrossAllocatedResources(t *testing
 	}
 	if prov.n != 0 {
 		t.Fatalf("provision count = %d, want 0", prov.n)
+	}
+}
+
+// putAllocatedResources persists n already-allocated resources for poolName,
+// simulating sandboxes that hold resources from this pool. They are not
+// added to pool.Inventory.Resources (allocated resources never live there;
+// only ready ones do) but are counted toward totalCount via the store.
+func putAllocatedResources(t *testing.T, st store.Store, poolName model.PoolName, n int) {
+	t.Helper()
+	ctx := context.Background()
+	for i := 0; i < n; i++ {
+		res := model.Resource{
+			ID:         model.ResourceID(fmt.Sprintf("res_allocated_%d", i)),
+			Type:       model.ResourceTypeContainer,
+			Profile:    model.ResourceProfileDefault,
+			OriginPool: poolName,
+			Provider:   model.ProviderRef{Name: "prov_1"},
+			State:      model.ResourceStateAllocated,
+			CreatedAt:  time.Unix(1000, 0).UTC(),
+			UpdatedAt:  time.Unix(1000, 0).UTC(),
+		}
+		if err := st.PutResource(ctx, res); err != nil {
+			t.Fatalf("put allocated resource %q: %v", res.ID, err)
+		}
+	}
+}
+
+// putReadyResource persists one ready resource for poolName and returns it,
+// for the caller to also add to pool.Inventory.Resources.
+func putReadyResource(t *testing.T, st store.Store, poolName model.PoolName, id model.ResourceID) model.Resource {
+	t.Helper()
+	res := model.Resource{
+		ID:         id,
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		OriginPool: poolName,
+		Provider:   model.ProviderRef{Name: "prov_1"},
+		State:      model.ResourceStateReady,
+		CreatedAt:  time.Unix(1000, 0).UTC(),
+		UpdatedAt:  time.Unix(1000, 0).UTC(),
+	}
+	if err := st.PutResource(context.Background(), res); err != nil {
+		t.Fatalf("put ready resource %q: %v", res.ID, err)
+	}
+	return res
+}
+
+// newManagerWith3AllocatedAnd1Ready builds a "p1" pool with 3 allocated
+// resources + 1 ready resource already persisted (max_total 4 leaves zero
+// headroom to provision more), under the given preheat policy, and returns a
+// Manager over it. Shared fixture for the two #240 admission-gate tests
+// below, which only differ in Preheat.MinReady and the EnsureReady count.
+func newManagerWith3AllocatedAnd1Ready(t *testing.T, minReady, maxTotal int) *Manager {
+	t.Helper()
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+
+	putAllocatedResources(t, st, "p1", 3)
+	ready := putReadyResource(t, st, "p1", "res_ready_1")
+
+	pool := model.Pool{
+		Name: "p1",
+		Policies: model.PoolPolicies{
+			Preheat: model.PreheatPolicy{MinReady: minReady, MaxTotal: maxTotal},
+		},
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: model.ResourceProfileDefault,
+			Resources:       []model.Resource{ready},
+		},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	return New(st, &fakeProvisioner{})
+}
+
+// TestManager_EnsureReady_SucceedsWhenRequestBelowMinReadyButWithinMaxTotal
+// reproduces #240: a pool at max_total with min_ready configured higher than
+// the caller's actual request must still satisfy the request from the ready
+// resource already on hand, instead of treating min_ready as an admission
+// floor. 3 allocated + 1 ready == max_total 4; requesting 1 ready must
+// succeed even though min_ready is configured at 2.
+func TestManager_EnsureReady_SucceedsWhenRequestBelowMinReadyButWithinMaxTotal(t *testing.T) {
+	mgr := newManagerWith3AllocatedAnd1Ready(t, 2, 4)
+
+	if err := mgr.EnsureReady(context.Background(), "p1", 1); err != nil {
+		t.Fatalf("EnsureReady(1) = %v, want nil (1 ready resource should satisfy a request for 1)", err)
+	}
+}
+
+// TestManager_EnsureReady_ErrorReportsCallersRequestedReadyNotConfiguredMinReady
+// asserts that when a request genuinely cannot be satisfied, the resulting
+// MaxTotalReachedError reports the caller's real requested count, not the
+// preheat-widened min_ready target. MinReady is deliberately set higher (5)
+// than the request (2) so this test would catch a regression: pre-fix the
+// error reports "5" (max(2,5)); post-fix it reports the real "2".
+func TestManager_EnsureReady_ErrorReportsCallersRequestedReadyNotConfiguredMinReady(t *testing.T) {
+	mgr := newManagerWith3AllocatedAnd1Ready(t, 5, 4)
+
+	err := mgr.EnsureReady(context.Background(), "p1", 2)
+	if err == nil {
+		t.Fatal("expected ensure ready to fail: only 1 ready resource can't satisfy 2 at max_total")
+	}
+	want := `pool "p1" is at max_total 4 (4 total, 1 ready), cannot satisfy requested ready count 2`
+	if err.Error() != want {
+		t.Fatalf("ensure ready error = %q, want %q", err.Error(), want)
 	}
 }
 

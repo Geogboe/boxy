@@ -112,12 +112,16 @@ If multiple agents support the same provider type, the system picks a capable ag
 
 ```
 serveLoop ticker
-    └─ PolicyController.Reconcile(pool)
+    └─ pool.Manager.Reconcile(pool)
            observes: pool has 1 ready, policy says min_ready=3
-           gap: need 2 more
-           └─ pool.Manager.EnsureReady(pool, count=2)
-                  └─ Provisioner.Provision(pool)  ← agent impl
-                         └─ driver.CreateVM / CreateContainer
+           gap: need 2 more (background preheat target only)
+           └─ Provisioner.Provision(pool)  ← agent impl
+                  └─ driver.CreateVM / CreateContainer
+
+sandbox fulfillment (on demand, not on a timer)
+    └─ pool.Manager.EnsureReady(pool, count=1)
+           the caller's real requested count — min_ready never gates this
+           └─ Provisioner.Provision(pool), only if short of count
 ```
 
 ### Pool Build Cache (Cross-Pool Resource Reuse)
