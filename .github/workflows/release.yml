@@ -10,26 +10,33 @@ on:
   push:
     branches: [main]
 
-# Serialize runs on main: release-please-action has no lock of its own around
-# "does a release for this tag exist yet" — two pushes close enough together
-# (e.g. a release-please PR merge immediately followed by an unrelated merge)
-# can each pass that check before either has created anything, producing two
-# GitHub Release objects for the same tag. GoReleaser's subsequent update
-# then fails with a 422 tag_name conflict against whichever object it didn't
-# resolve. Reproduced 2026-08-24 (release-please PR #207 and docs-only #214,
-# 32s apart) — see the duplicate-release cleanup in that day's history.
-# cancel-in-progress: false queues the second run instead of racing or
-# dropping it, so every push still gets its own complete release pipeline.
-concurrency:
-  group: release-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
-
 permissions: {}
 
 jobs:
   release-please:
     name: Release Please
     runs-on: ubuntu-latest
+    # Serialize release-please runs on main: release-please-action has no
+    # lock of its own around "does a release for this tag exist yet" — two
+    # pushes close enough together (e.g. a release-please PR merge
+    # immediately followed by an unrelated merge) can each pass that check
+    # before either has created anything, producing two GitHub Release
+    # objects for the same tag. GoReleaser's subsequent update then fails
+    # with a 422 tag_name conflict against whichever object it didn't
+    # resolve. Reproduced 2026-08-24 (release-please PR #207 and docs-only
+    # #214, 32s apart) — see the duplicate-release cleanup in that day's
+    # history. cancel-in-progress: false queues the second run instead of
+    # racing or dropping it, so every push still gets its own release-please
+    # pass. Deliberately scoped to *this job only*, not the whole workflow
+    # (#55 follow-up, 2026-08): the goreleaser job below can pause for a
+    # while on its release-signing approval gate, and each of its runs
+    # operates on its own distinct tag — workflow-level concurrency would
+    # have queued the *next* release-please run behind that pending
+    # approval too, stalling all main-triggered release activity for as
+    # long as the click is outstanding.
+    concurrency:
+      group: release-please-${{ github.ref }}
+      cancel-in-progress: false
     permissions:
       contents: write
       pull-requests: write
@@ -49,8 +56,16 @@ jobs:
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
+    # Gates the entire build+publish behind one required-reviewer approval,
+    # not just the signing step — see docs/adr/0014 for why signing stays
+    # inside this job (testable via `task release:check`/`release:snapshot`)
+    # instead of a separate downstream job. Create this environment in repo
+    # Settings > Environments with yourself as a required reviewer before
+    # merging, or this job will hang waiting for a gate that doesn't exist.
+    environment: release-signing
     permissions:
       contents: write
+      id-token: write # required for keyless cosign signing via GitHub OIDC, #55
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -63,6 +78,9 @@ jobs:
 
       - name: Install syft (for SBOM generation)
         uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+
+      - name: Install cosign (for keyless release signing, #55)
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:

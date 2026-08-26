@@ -30,6 +30,25 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# Keyless cosign signing of checksums.txt (#55): no private key is generated
+# or stored — cosign gets a short-lived cert from Sigstore's Fulcio CA using
+# the release job's GitHub OIDC token (id-token: write in release.yml), signs,
+# and publishes a transparency-log entry to Rekor. The .sigstore.json bundle
+# published alongside checksums.txt lets consumers verify with:
+#   cosign verify-blob checksums.txt --bundle checksums.txt.sigstore.json \
+#     --certificate-identity-regexp '^https://github.com/Geogboe/boxy/\.github/workflows/release\.yml@refs/heads/main$' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+# See docs/adr/0014-release-signing-with-keyless-cosign.md.
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args:
+      - "sign-blob"
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+
 sboms:
   - artifacts: archive
 

@@ -469,7 +469,10 @@ Wrap repeated commands in `Taskfile.yml`. If a command is run more than once, ad
 - Release assets are GoReleaser archives (`boxy_<version>_<os>_<arch>.tar.gz` or `.zip`) plus `checksums.txt`.
 - `latest` in installer scripts means the newest published GitHub release, including prereleases.
 - Installers verify the downloaded binary against the published `checksums.txt`.
-- Release automation also publishes a signed `checksums.txt.sig`.
+- Release automation also publishes `checksums.txt.sigstore.json`, a keyless
+  cosign signature bundle for `checksums.txt` (#55, 2026-08, ADR-0014).
+  Installer-side automatic verification of it is deliberately deferred — see
+  #231 — installers today still verify only the checksum.
 - Default install locations are user-local:
   - Windows: `%LOCALAPPDATA%\Programs\boxy\bin`
   - Linux: `$HOME/.local/bin`
@@ -482,7 +485,7 @@ Wrap repeated commands in `Taskfile.yml`. If a command is run more than once, ad
 - `main` has no branch protection (`gh api repos/Geogboe/boxy/branches/main/protection` → 404). Merges are gated by convention and green CI, not by GitHub-enforced required checks.
 - History uses merge commits, not squash, for every PR including release-please PRs — use `gh pr merge --merge`.
 - release-please PRs reliably show their `CI` check as `action_required` with zero jobs run (seen for 0.1.27 and 0.1.29). This is a known, harmless quirk of that workflow's trigger conditions, not a real gate — safe to merge through.
-- Merging a release-please PR triggers `release.yml` on push to `main`, which tags and runs GoReleaser (5 platforms + SBOMs + checksums, ~3 min). Wait for that `Release` workflow run to complete before treating the release as published.
+- Merging a release-please PR triggers `release.yml` on push to `main`. The `release-please` job tags and completes quickly; the `goreleaser` job (5 platforms + SBOMs + checksums + cosign signing, ~3 min of actual runtime) then **pauses indefinitely on a `release-signing` GitHub Environment approval** (#55, 2026-08, ADR-0014) before it starts — it will not run to completion on its own. Go approve it in the Actions run's UI, then wait for the run to complete before treating the release as published. Don't mistake the pause for a stalled/failed run.
 
 ### GitHub Actions Node 24 migration — done
 
@@ -550,14 +553,34 @@ it's no longer needed. See #100.
 
 ### GoReleaser Signing Notes
 
-- GoReleaser publishes `checksums.txt` alongside release binaries and SBOMs.
-- Release-signing (a dedicated signing subkey, GitHub Environment approval
-  gates) is deliberately **not implemented yet** — tracked as remaining scope
-  on #55, not done in the 2026-07 security-hardening pass. Don't assume a
-  `GPG_PRIVATE_KEY`/`GPG_PASSPHRASE` secret pair exists; verify against the
-  actual `release.yml` before referencing signing in docs or code — this
-  section itself was previously stale and described signing that was never
-  actually wired up.
+- GoReleaser publishes `checksums.txt` alongside release binaries and SBOMs,
+  and (as of 2026-08, #55) signs it with **keyless cosign**
+  (Sigstore/Fulcio/Rekor via the `goreleaser` job's GitHub OIDC token), not a
+  GPG subkey — chosen so there is no long-lived private key to generate,
+  store, or rotate. `signs:` lives in `.goreleaser.yml`, so `task
+  release:check` / `task release:snapshot` exercise the config locally
+  (signing itself still fails locally with "cosign: executable file not
+  found" unless `cosign` is installed — that's expected; the real binary
+  only needs to exist in CI, via the `sigstore/cosign-installer` step in
+  `release.yml`). See [ADR-0014](docs/adr/0014-release-signing-with-keyless-cosign.md).
+- The `goreleaser` job runs under the `release-signing` GitHub Environment,
+  which requires a manual approval click before the *entire* job (not just
+  the signature) proceeds — chosen over gating a separate downstream signing
+  job specifically so `signs:` could stay locally testable; see ADR-0014 for
+  the tradeoff. This environment must be created in repo Settings before a
+  release can complete — it does not exist by default, and the job will hang
+  waiting for an approval gate that was never configured otherwise.
+- Artifact attestations (`actions/attest-build-provenance`) were considered
+  and deliberately **not** added alongside cosign signing — both deliver
+  overlapping provenance guarantees for the same artifacts, and shipping
+  both would be duplicated trust machinery for no added assurance.
+  Reconsider only with a concrete reason attestations add something cosign
+  doesn't, not by default.
+- Installer-side automatic signature verification is still **not
+  implemented** — tracked separately as #231, deliberately deferred out of
+  #55 (that issue's own text called it "long term" scope). Don't assume
+  `scripts/install.sh`/`scripts/install.ps1` verify anything beyond the
+  checksum; verify against the actual scripts before claiming otherwise.
 
 ## Current Delivery Notes
 

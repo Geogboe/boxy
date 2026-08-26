@@ -24,6 +24,7 @@ The installers target the GoReleaser archives published by [release.yml](../.git
 - `boxy_<version>_darwin_arm64.tar.gz`
 - `boxy_<version>_windows_amd64.zip`
 - `checksums.txt`
+- `checksums.txt.sigstore.json` — cosign keyless signature bundle for `checksums.txt` (see [Verify Release Signature](#verify-release-signature))
 
 ## Environment Variables
 
@@ -79,6 +80,31 @@ Important behavior:
 - Prints a shell-specific `PATH` remediation command when the install directory is not on `PATH`
 - Upgrades an existing install automatically by default
 - Skips replacing an existing install when `BOXY_SKIP_UPGRADE=1` is set
+
+## Verify Release Signature
+
+Both installers verify `checksums.txt` automatically, but neither verifies
+its signature yet — that's tracked separately in
+[#231](https://github.com/Geogboe/boxy/issues/231). Every release since #55
+also publishes `checksums.txt.sigstore.json`, a keyless [cosign](https://docs.sigstore.dev/)
+signature bundle proving `checksums.txt` was produced by this repo's own
+`release.yml` workflow (not just "someone with a key approved it" — the
+identity checked below is the workflow itself). To verify manually, with the
+[cosign CLI](https://docs.sigstore.dev/cosign/system_config/installation/)
+installed:
+
+```bash
+curl -fsSLO https://github.com/Geogboe/boxy/releases/download/<version>/checksums.txt
+curl -fsSLO https://github.com/Geogboe/boxy/releases/download/<version>/checksums.txt.sigstore.json
+
+cosign verify-blob checksums.txt \
+  --bundle checksums.txt.sigstore.json \
+  --certificate-identity-regexp '^https://github\.com/Geogboe/boxy/\.github/workflows/release\.yml@refs/heads/main$' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+See [docs/adr/0014-release-signing-with-keyless-cosign.md](adr/0014-release-signing-with-keyless-cosign.md)
+for the mechanism and why keyless was chosen over a GPG subkey.
 
 ## Update
 
