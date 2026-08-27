@@ -627,14 +627,22 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 			staleIDs := resourceIDSet(stale)
 			totalCount := countTrackedResources(p.Name, obs.resources, p.Inventory.Resources, staleIDs)
 
-			effectiveMinReady := max(minReadyOverride, p.Policies.Preheat.MinReady)
-
+			// Admission is gated on what the caller actually asked for
+			// (minReadyOverride), never on the policy's configured
+			// Preheat.MinReady -- that value sizes background preheat
+			// provisioning only, below, and must never be substituted
+			// here even by a future edit to this block. See #240.
 			if requireMinReady {
-				if capErr := maxTotalShortfall(p.Name, p.Policies.Preheat.MaxTotal, totalCount, readyCount, effectiveMinReady); capErr != nil {
+				if capErr := maxTotalShortfall(p.Name, p.Policies.Preheat.MaxTotal, totalCount, readyCount, minReadyOverride); capErr != nil {
 					return policycontroller.Decision[plan]{}, capErr
 				}
 			}
 
+			// effectiveMinReady is the background preheat provisioning
+			// target: the caller's own floor widened up to the pool's
+			// configured min_ready. It must only ever feed
+			// computeToProvision below, never the admission check above.
+			effectiveMinReady := max(minReadyOverride, p.Policies.Preheat.MinReady)
 			toProv := computeToProvision(p, effectiveMinReady, totalCount)
 			// Background reconcile passes (requireMinReady=false) respect
 			// provisioning backoff so a failing provider/host isn't hammered
