@@ -960,6 +960,65 @@ func TestManager_EnsureReady_BonusPreheatFailureAfterRequestSatisfiedIsNotFatal(
 	}
 }
 
+// fakeAdmissionPublisher fails PublishResourceProvisioned on a specific
+// call number (1-indexed), succeeding on every other call. Used to
+// simulate the lifecycle event store's Append failing transiently for a
+// bonus-preheat resource specifically (#249 follow-up: a code review
+// caught that the admission-publish failure path had its own unconditional
+// fatal return, uncovered by the Create/persist bonus tolerance above).
+type fakeAdmissionPublisher struct {
+	calls      int
+	failOnCall int
+	err        error
+}
+
+func (p *fakeAdmissionPublisher) PublishResourceProvisioned(_ context.Context, _ model.Resource) error {
+	p.calls++
+	if p.err != nil && p.calls == p.failOnCall {
+		return p.err
+	}
+	return nil
+}
+
+// TestManager_EnsureReady_BonusAdmissionPublishFailureAfterRequestSatisfiedIsNotFatal
+// extends the bonus-tolerance test above to the admission-publish step, not
+// just the Create/persist step: with SetAdmissionPublisher configured, the
+// caller's required resource (iteration 0) succeeds end to end, but the
+// bonus resource's (iteration 1) PublishResourceProvisioned call fails.
+// EnsureReady must still return nil — the failure doesn't strand the
+// resource (it stays ResourceStateProvisioning and gets its admission
+// event retried by the Observer's crash-recovery re-publish on the next
+// pass), it just delays that one bonus resource's admission.
+func TestManager_EnsureReady_BonusAdmissionPublishFailureAfterRequestSatisfiedIsNotFatal(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	pool := model.Pool{
+		Name: "p1",
+		Policies: model.PoolPolicies{
+			Preheat: model.PreheatPolicy{MinReady: 3, MaxTotal: 10},
+		},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &fakeProvisioner{}
+	mgr := New(st, prov)
+	publisher := &fakeAdmissionPublisher{failOnCall: 2, err: errors.New("event store append: disk contention")}
+	mgr.SetAdmissionPublisher(publisher)
+
+	if err := mgr.EnsureReady(ctx, "p1", 1); err != nil {
+		t.Fatalf("EnsureReady(1) = %v, want nil (the caller's own request was satisfiable; only a bonus resource's admission publish failed)", err)
+	}
+	if prov.provisionCalls != 2 {
+		t.Fatalf("provisionCalls = %d, want 2 (1 required, then 1 bonus that stops further attempts once its publish fails)", prov.provisionCalls)
+	}
+	if publisher.calls != 2 {
+		t.Fatalf("admission publish calls = %d, want 2", publisher.calls)
+	}
+}
+
 // TestManager_EnsureReady_RequiredProvisionFailureStaysFatal is the
 // complement of the bonus-failure test above: when the caller's own
 // request cannot be satisfied (the very first, required provision fails),
