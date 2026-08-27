@@ -8,6 +8,8 @@ import (
 
 	psrpclient "github.com/smnsjas/go-psrp/client"
 	"github.com/smnsjas/go-psrpcore/serialization"
+
+	"github.com/Geogboe/boxy/pkg/eventstream"
 )
 
 // mockExecutor is a test double for psrpExecutor.
@@ -350,6 +352,188 @@ func TestExtractOutput_TwoLineCommandRoundTrips(t *testing.T) {
 	want := "MARK[a\r\nb]\r\n"
 	if stdout != want {
 		t.Errorf("stdout = %q, want %q", stdout, want)
+	}
+}
+
+func TestExtractOutput_EmptyMiddleItemPreservesBlankLine(t *testing.T) {
+	// Pins newlineTracker's separator decision against the *original* item
+	// text, not the already-prefixed result: an empty item must still
+	// require a separator before whatever follows it.
+	stdout, _ := extractOutput([]interface{}{"A", "", "B", int32(0)})
+	want := "A\n\nB"
+	if stdout != want {
+		t.Errorf("stdout = %q, want %q", stdout, want)
+	}
+}
+
+// --- newlineTracker tests (#247) ---
+
+func TestNewlineTracker_NoSeparatorBeforeFirstItem(t *testing.T) {
+	tracker := &newlineTracker{}
+	if got := tracker.next("A"); got != "A" {
+		t.Errorf("next(%q) = %q, want %q (no leading separator)", "A", got, "A")
+	}
+}
+
+func TestNewlineTracker_InsertsSeparatorWhenPreviousLacksTrailingNewline(t *testing.T) {
+	tracker := &newlineTracker{}
+	tracker.next("A")
+	if got := tracker.next("B"); got != "\nB" {
+		t.Errorf("next(%q) = %q, want %q", "B", got, "\nB")
+	}
+}
+
+func TestNewlineTracker_NoSeparatorWhenPreviousEndsInNewline(t *testing.T) {
+	tracker := &newlineTracker{}
+	tracker.next("A\r\n")
+	if got := tracker.next("B"); got != "B" {
+		t.Errorf("next(%q) = %q, want %q (no separator)", "B", got, "B")
+	}
+}
+
+func TestNewlineTracker_EmptyItemStillRequiresSeparatorAfterIt(t *testing.T) {
+	tracker := &newlineTracker{}
+	tracker.next("A")
+	tracker.next("")
+	if got := tracker.next("B"); got != "\nB" {
+		t.Errorf("next(%q) = %q, want %q", "B", got, "\nB")
+	}
+}
+
+func TestNewlineTracker_InstancesAreIndependent(t *testing.T) {
+	a := &newlineTracker{}
+	b := &newlineTracker{}
+	a.next("A\r\n") // ends in newline
+	b.next("A")     // does not
+	if got := a.next("X"); got != "X" {
+		t.Errorf("tracker a: next(%q) = %q, want %q", "X", got, "X")
+	}
+	if got := b.next("X"); got != "\nX" {
+		t.Errorf("tracker b: next(%q) = %q, want %q", "X", got, "\nX")
+	}
+}
+
+// --- streamEmitter tests (#247) ---
+//
+// streamEmitter covers ExecStream's shipped per-value formatting, exit-
+// marker handling, and separator logic without needing a constructible
+// *psrpclient.StreamResult -- see ADR-0008's noted ExecStream coverage gap.
+
+type fakeSink struct {
+	events []eventstream.Event
+}
+
+func (f *fakeSink) Send(_ context.Context, event eventstream.Event) error {
+	f.events = append(f.events, event)
+	return nil
+}
+
+func (f *fakeSink) concatenated(channel eventstream.Channel) string {
+	var sb strings.Builder
+	for _, e := range f.events {
+		if e.Channel == channel {
+			sb.Write(e.Payload)
+		}
+	}
+	return sb.String()
+}
+
+type erroringSink struct {
+	err error
+}
+
+func (s *erroringSink) Send(_ context.Context, _ eventstream.Event) error {
+	return s.err
+}
+
+func TestStreamEmitter_MultiLineStdoutGetsSeparators(t *testing.T) {
+	sink := &fakeSink{}
+	emitter := newStreamEmitter(sink)
+
+	if err := emitter.emit(context.Background(), "stdout", []interface{}{"Image Name", "PID", "tasklist.exe"}); err != nil {
+		t.Fatalf("emit returned error: %v", err)
+	}
+
+	got := sink.concatenated("stdout")
+	want := "Image Name\nPID\ntasklist.exe"
+	if got != want {
+		t.Errorf("concatenated stdout = %q, want %q", got, want)
+	}
+}
+
+func TestStreamEmitter_ChannelsTrackSeparatorsIndependently(t *testing.T) {
+	sink := &fakeSink{}
+	emitter := newStreamEmitter(sink)
+
+	if err := emitter.emit(context.Background(), "stdout", []interface{}{"out1", "out2"}); err != nil {
+		t.Fatalf("emit stdout returned error: %v", err)
+	}
+	if err := emitter.emit(context.Background(), "stderr", []interface{}{"err1", "err2"}); err != nil {
+		t.Fatalf("emit stderr returned error: %v", err)
+	}
+
+	if got := sink.concatenated("stdout"); got != "out1\nout2" {
+		t.Errorf("concatenated stdout = %q, want %q", got, "out1\nout2")
+	}
+	if got := sink.concatenated("stderr"); got != "err1\nerr2" {
+		t.Errorf("concatenated stderr = %q, want %q", got, "err1\nerr2")
+	}
+}
+
+func TestStreamEmitter_ExitMarkerIsRecordedNotSent(t *testing.T) {
+	sink := &fakeSink{}
+	emitter := newStreamEmitter(sink)
+
+	if err := emitter.emit(context.Background(), "stdout", []interface{}{"A", "__BOXY_EXIT_CODE:17"}); err != nil {
+		t.Fatalf("emit returned error: %v", err)
+	}
+
+	if emitter.exitCode != 17 {
+		t.Errorf("exitCode = %d, want 17", emitter.exitCode)
+	}
+	if got := sink.concatenated("stdout"); got != "A" {
+		t.Errorf("concatenated stdout = %q, want %q (exit marker must not be sent)", got, "A")
+	}
+}
+
+func TestStreamEmitter_DropsEmptyPSObjectWithoutBreakingSeparators(t *testing.T) {
+	sink := &fakeSink{}
+	emitter := newStreamEmitter(sink)
+
+	values := []interface{}{"A", &serialization.PSObject{}, "B"}
+	if err := emitter.emit(context.Background(), "stdout", values); err != nil {
+		t.Fatalf("emit returned error: %v", err)
+	}
+
+	if got := sink.concatenated("stdout"); got != "A\nB" {
+		t.Errorf("concatenated stdout = %q, want %q", got, "A\nB")
+	}
+}
+
+func TestStreamEmitter_AlreadyNewlineTerminatedItemsMatchExtractOutput(t *testing.T) {
+	// Pins the invariant #247 is about: streamEmitter's live per-value path
+	// and extractOutput's buffered path must treat equivalent input the same.
+	sink := &fakeSink{}
+	emitter := newStreamEmitter(sink)
+	values := []interface{}{"A\r\n", "B\r\n"}
+
+	if err := emitter.emit(context.Background(), "stdout", values); err != nil {
+		t.Fatalf("emit returned error: %v", err)
+	}
+
+	wantStdout, _ := extractOutput(values)
+	if got := sink.concatenated("stdout"); got != wantStdout {
+		t.Errorf("streamEmitter stdout = %q, want %q (extractOutput's result)", got, wantStdout)
+	}
+}
+
+func TestStreamEmitter_PropagatesSendError(t *testing.T) {
+	wantErr := fmt.Errorf("sink closed")
+	emitter := newStreamEmitter(&erroringSink{err: wantErr})
+
+	err := emitter.emit(context.Background(), "stdout", []interface{}{"A"})
+	if err != wantErr {
+		t.Errorf("emit error = %v, want %v", err, wantErr)
 	}
 }
 

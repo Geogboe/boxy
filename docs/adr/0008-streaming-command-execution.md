@@ -61,6 +61,12 @@ bounded JSON convenience for scripts.
   local interface in `psdirect.go` that wraps `Wait`/`Cancel` so a mock can
   implement it — a production seam change, not a test addition, and
   deliberately not made during the 2026-08 exec-streaming hardening pass.
+  As of the #247 fix below, everything in `ExecStream`'s per-item loop
+  *except* that fan-in/`Wait`/`Cancel` orchestration is unit-tested: the
+  per-value formatting, exit-marker handling, and newline-separator logic
+  were extracted into `streamEmitter`/`newlineTracker`, both driven directly
+  against a fake `eventstream.Sink` in tests. Only the outer orchestration
+  around a real `*psrpclient.StreamResult` remains uncovered.
 
 ## Change notes
 
@@ -154,3 +160,23 @@ bounded JSON convenience for scripts.
   package's `go-psrp` client dependency doesn't currently expose that at the
   client level. Tracked in #244 (either an upstream contribution to
   `go-psrp` or a `replace`-directive fork adding the client-level API).
+- **2026-08-27**: Fixed #247, the unfixed half of #239: #239's separator
+  logic landed in `extractOutput` (used only by the non-streaming `Exec`
+  path), but `ExecStream` — the loop both public exec APIs actually go
+  through (`internal/server/api_exec.go`'s `handleBufferedExec` for plain
+  `sandbox exec`, and the CLI's `--stream` renderer) — never received it,
+  so any multi-line command output still came back as one run-on line with
+  no line breaks. Fixed by extracting the separator logic into a shared
+  `newlineTracker` type used by both `extractOutput` and a new
+  `streamEmitter` (which now holds `ExecStream`'s per-value formatting,
+  exit-marker detection, and send logic, one `newlineTracker` per output
+  channel since stdout/stderr are consumed as independently concatenated
+  streams and stderr itself merges several underlying PSRP streams —
+  Errors, Warnings, Verbose, Debug, Progress, Information). Also fixed a
+  latent bug caught during design review before it shipped: computing the
+  next call's separator decision from the *already-prefixed* text (instead
+  of the original item text) would have silently dropped a real blank line
+  whenever an empty stream item appeared mid-stream. See
+  `pkg/psdirect/psdirect.go`'s `newlineTracker`/`streamEmitter` and the
+  coverage note above for how this also extended, but did not close, the
+  `ExecStream` test-coverage gap.

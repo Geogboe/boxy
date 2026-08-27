@@ -151,7 +151,7 @@ func (e *Exec) ExecStream(ctx context.Context, cmd string, args []string, sink e
 		close(items)
 		waitCh <- err
 	}()
-	exitCode := 0
+	emitter := newStreamEmitter(sink)
 	for {
 		select {
 		case <-ctx.Done():
@@ -162,7 +162,7 @@ func (e *Exec) ExecStream(ctx context.Context, cmd string, args []string, sink e
 				if err := <-waitCh; err != nil {
 					return nil, fmt.Errorf("psdirect: stream on VM %s: %w", e.VMID, err)
 				}
-				return &vmsdk.ExecResult{ExitCode: exitCode}, nil
+				return &vmsdk.ExecResult{ExitCode: emitter.exitCode}, nil
 			}
 			if item.msg == nil {
 				continue
@@ -171,25 +171,65 @@ func (e *Exec) ExecStream(ctx context.Context, cmd string, args []string, sink e
 			if decodeErr != nil {
 				values = []interface{}{string(item.msg.Data)}
 			}
-			for _, value := range values {
-				if item.channel == eventstream.Channel("stdout") {
-					if code, ok := parseExitMarker(value); ok {
-						exitCode = code
-						continue
-					}
-				}
-				text, drop := formatStreamValue(value)
-				if drop {
-					continue
-				}
-				payload := []byte(text)
-				if err := sink.Send(ctx, eventstream.Event{Kind: eventstream.Data, Channel: item.channel, Payload: payload}); err != nil {
-					stream.Cancel()
-					return nil, err
-				}
+			if err := emitter.emit(ctx, item.channel, values); err != nil {
+				stream.Cancel()
+				return nil, err
 			}
 		}
 	}
+}
+
+// streamEmitter applies ExecStream's per-value formatting, exit-marker
+// detection, and newline-separator insertion, then sends the result to a
+// sink. It is factored out of ExecStream's per-item loop specifically so
+// this logic -- the exact logic #247 found was missing from the shipped
+// exec path, despite #239 having already fixed it in extractOutput's
+// sibling loop -- is directly unit-testable against a fake eventstream.Sink,
+// without needing a constructible *psrpclient.StreamResult (see ADR-0008's
+// noted ExecStream coverage gap). ExecStream itself supplies the real sink
+// and owns the fan-in/Wait/Cancel orchestration around this.
+type streamEmitter struct {
+	sink     eventstream.Sink
+	trackers map[eventstream.Channel]*newlineTracker
+	exitCode int
+}
+
+func newStreamEmitter(sink eventstream.Sink) *streamEmitter {
+	return &streamEmitter{sink: sink, trackers: make(map[eventstream.Channel]*newlineTracker)}
+}
+
+// emit formats and sends each decoded value on channel, skipping the exit
+// marker (stdout only -- recorded into e.exitCode instead of being sent)
+// and any value formatStreamValue drops. A separate newlineTracker is kept
+// per output channel, since stdout and stderr are consumed as independent
+// concatenated streams by both public exec paths (internal/server/
+// api_exec.go's bufferedExecSink and the CLI's --stream renderer), and each
+// merges several underlying PSRP streams (Errors, Warnings, Verbose, Debug,
+// Progress, Information all land on "stderr") that must still be separated
+// from one another. Returns the first send error, if any.
+func (e *streamEmitter) emit(ctx context.Context, channel eventstream.Channel, values []interface{}) error {
+	for _, value := range values {
+		if channel == eventstream.Channel("stdout") {
+			if code, ok := parseExitMarker(value); ok {
+				e.exitCode = code
+				continue
+			}
+		}
+		text, drop := formatStreamValue(value)
+		if drop {
+			continue
+		}
+		tracker, ok := e.trackers[channel]
+		if !ok {
+			tracker = &newlineTracker{}
+			e.trackers[channel] = tracker
+		}
+		payload := []byte(tracker.next(text))
+		if err := e.sink.Send(ctx, eventstream.Event{Kind: eventstream.Data, Channel: channel, Payload: payload}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func decodeMessage(msg *messages.Message) ([]interface{}, error) {
@@ -258,8 +298,9 @@ func buildScript(cmd string, args []string) string {
 // The last numeric item is the exit code; everything else is stdout, joined
 // with a newline between items that don't already end in one (Out-String
 // output typically already carries its own \r\n, so an unconditional join
-// would insert blank lines). Items formatStreamValue can't meaningfully
-// render are dropped rather than turned into synthetic tokens -- see #239.
+// would insert blank lines) via newlineTracker. Items formatStreamValue
+// can't meaningfully render are dropped rather than turned into synthetic
+// tokens -- see #239.
 func extractOutput(output []interface{}) (stdout string, exitCode int) {
 	if len(output) == 0 {
 		return "", 0
@@ -279,19 +320,46 @@ func extractOutput(output []interface{}) (stdout string, exitCode int) {
 	}
 
 	var sb strings.Builder
-	endsInNewline := true // no separator needed before the first item
+	tracker := &newlineTracker{}
 	for _, item := range stdoutItems {
 		text, drop := formatStreamValue(item)
 		if drop {
 			continue
 		}
-		if !endsInNewline {
-			sb.WriteByte('\n')
-		}
-		sb.WriteString(text)
-		endsInNewline = strings.HasSuffix(text, "\n")
+		sb.WriteString(tracker.next(text))
 	}
 	return sb.String(), exitCode
+}
+
+// newlineTracker inserts a leading separator before a stream item that
+// doesn't begin a fresh line, so consecutive items lacking their own
+// trailing newline don't get concatenated into one run-on line. Shared
+// between extractOutput's single accumulated stream and streamEmitter's
+// per-channel live loop so the two can't drift out of sync again the way
+// they did for #247: #239 added this exact logic to extractOutput, but
+// ExecStream's per-item loop -- the code path both public exec APIs
+// actually call -- never got it.
+//
+// The zero value is ready to use: needsSeparator starts false, so a
+// tracker's first item never gets a separator without an explicit
+// constructor.
+type newlineTracker struct {
+	needsSeparator bool
+}
+
+// next returns text, prefixed with a newline if the previous text this
+// tracker saw didn't already end in one. The separator decision for the
+// *next* call is derived from this call's original text, not the prefixed
+// result, so an empty item still correctly requires a separator before
+// whatever follows it (an unprefixed "" would otherwise look newline-
+// terminated and wrongly suppress the next separator).
+func (t *newlineTracker) next(text string) string {
+	out := text
+	if t.needsSeparator {
+		out = "\n" + text
+	}
+	t.needsSeparator = !strings.HasSuffix(text, "\n")
+	return out
 }
 
 // formatStreamValue renders one deserialized PSRP stream item as text
