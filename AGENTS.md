@@ -417,6 +417,34 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   involved, explicitly verify the issue closed (`gh issue view <N> --json
   state`) and close it manually referencing the commit SHA if it didn't.
   The `ship-it` skill's Phase 10 now covers the no-PR case explicitly.
+- **`gh pr view <N> --json comments` does not surface Copilot's (or any
+  bot's) PR review or its inline review comments** — only plain
+  issue-thread comments. During the #240 fix (PR #250, 2026-08-26), an
+  initial "check for reviewer comments" pass read this field, saw an
+  empty result, and reported the PR as having no reviews — which was
+  wrong; a `copilot-pull-request-reviewer[bot]` review with two inline
+  comments existed and was invisible to that query. Checking for bot/human
+  PR reviews before asking to merge requires the separate endpoints
+  `gh api repos/<owner>/<repo>/pulls/<N>/reviews` (the review verdict and
+  summary) and `.../pulls/<N>/comments` (the inline comments attached to
+  it) — `gh pr view --json reviews` also works and is simpler than the
+  raw API call. Don't rely on `--json comments` alone ever again for this
+  check.
+- **An automated reviewer's finding (a code-review subagent's "CONFIRMED"
+  verdict, or a bot like Copilot) is a claim to verify against the actual
+  code, not a fact to relay or dismiss on authority.** During #240 (PR
+  #250, 2026-08-26), a review subagent flagged a real, independently-
+  reproducible gap (`EnsureReady`'s background top-up toward `min_ready`
+  can still fail a request that was already satisfiable) — worth acting
+  on because tracing `internal/pool/manager.go` and
+  `internal/sandbox/fulfiller.go` confirmed it, not because the agent
+  said "CONFIRMED". Symmetrically, Copilot's review on the same PR flagged
+  two doc/comment wording issues; both were adopted only after checking
+  them against the code (`DrainedPoolError`, the provisioning-error path)
+  independently confirmed the wording was actually wrong, not because
+  Copilot proposed a fix. Treat every reviewer's output — human, subagent,
+  or bot — as a lead to check, in both directions: don't rubber-stamp a
+  finding, and don't dismiss one either without looking.
 
 ## ADRs
 
