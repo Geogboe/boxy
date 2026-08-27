@@ -108,7 +108,7 @@ boxy
 │   $ boxy status
 │     Server:     https://127.0.0.1:9090 (healthy)
 │     Pools:      2 configured, 5 resources ready
-│     Sandboxes:  1 active
+│     Sandboxes:  1 active, 0 failed
 │
 │   $ boxy status  (server not running)
 │     Error: cannot reach server at 127.0.0.1:9090
