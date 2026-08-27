@@ -87,16 +87,20 @@ func runStatus(ctx context.Context, opts statusOpts, cmd *cobra.Command) error {
 }
 
 // countSandboxesByStatus buckets sandboxes into active/failed for the
-// status summary. It switches over the known model.SandboxStatus*
-// constants rather than excluding just SandboxStatusFailed, so active+
-// failed stays exhaustive (every sandbox is counted in exactly one
-// bucket) even if a new status is added later without updating this
-// switch — an unrecognized status conservatively counts as active,
-// preserving today's total-visibility behavior rather than silently
-// dropping it from either count.
+// status summary. It enumerates every known model.SandboxStatus* constant
+// explicitly (Pending/Provisioning/Ready/Deleting as active,
+// Failed as failed) rather than excluding just SandboxStatusFailed, so
+// adding a new status is a visible decision here, not an implicit
+// default-case fallthrough. An unrecognized or empty status (the API
+// field is `omitempty`) still counts as active — preserving today's
+// total-visibility behavior, active+failed == len(sandboxes), rather than
+// silently dropping it from either count — but that's the fallback for
+// the unexpected, not the primary classification path.
 func countSandboxesByStatus(sandboxes []model.Sandbox) (active, failed int) {
 	for _, sb := range sandboxes {
 		switch sb.Status {
+		case model.SandboxStatusPending, model.SandboxStatusProvisioning, model.SandboxStatusReady, model.SandboxStatusDeleting:
+			active++
 		case model.SandboxStatusFailed:
 			failed++
 		default:
