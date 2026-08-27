@@ -798,6 +798,24 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 				}
 				if m.admission != nil {
 					if err := m.admission.PublishResourceProvisioned(ctx, res); err != nil {
+						if requireMinReady && i >= pl.requiredToProvision {
+							// Same bonus-vs-required tolerance as the
+							// Create/persist failure above, extended to
+							// the admission-publish step: the resource
+							// itself is already durably persisted (in
+							// ResourceStateProvisioning) by this point, so
+							// this isn't lost -- the Observer above
+							// re-publishes the admission event for any
+							// resource still Provisioning on the very
+							// next reconcile pass (the same crash-recovery
+							// path AdmissionPublisher's doc comment
+							// describes), so failing to publish it here
+							// doesn't strand it, only delays admission by
+							// one tick.
+							slog.Warn("bonus preheat resource's admission event failed to publish after caller's request was already satisfied; will retry next reconcile pass",
+								"pool", p.Name, "resource_id", res.ID, "error", err)
+							break
+						}
 						return fmt.Errorf("publish admission event for resource %q: %w", res.ID, err)
 					}
 				}
