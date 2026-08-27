@@ -71,14 +71,39 @@ func runStatus(ctx context.Context, opts statusOpts, cmd *cobra.Command) error {
 	}
 	_, _ = fmt.Fprintf(out, "  Pools:      %d configured, %d resources ready\n", len(pools), totalResources)
 
-	// Sandboxes
+	// Sandboxes. Counted deliberately (a switch over the known
+	// model.SandboxStatus* constants) rather than by excluding just
+	// "failed", so a future status can't silently land in the wrong
+	// bucket. A failed sandbox record holds no resources and is never
+	// reaped automatically (see #241), so it must not inflate "active".
 	sandboxes, err := fetchJSON[[]model.Sandbox](ctx, client, base+"/api/v1/sandboxes")
 	if err != nil {
 		return fmt.Errorf("fetch sandboxes: %w", err)
 	}
-	_, _ = fmt.Fprintf(out, "  Sandboxes:  %d active\n", len(sandboxes))
+	activeSandboxes, failedSandboxes := countSandboxesByStatus(sandboxes)
+	_, _ = fmt.Fprintf(out, "  Sandboxes:  %d active, %d failed\n", activeSandboxes, failedSandboxes)
 
 	return nil
+}
+
+// countSandboxesByStatus buckets sandboxes into active/failed for the
+// status summary. It switches over the known model.SandboxStatus*
+// constants rather than excluding just SandboxStatusFailed, so active+
+// failed stays exhaustive (every sandbox is counted in exactly one
+// bucket) even if a new status is added later without updating this
+// switch — an unrecognized status conservatively counts as active,
+// preserving today's total-visibility behavior rather than silently
+// dropping it from either count.
+func countSandboxesByStatus(sandboxes []model.Sandbox) (active, failed int) {
+	for _, sb := range sandboxes {
+		switch sb.Status {
+		case model.SandboxStatusFailed:
+			failed++
+		default:
+			active++
+		}
+	}
+	return active, failed
 }
 
 // resolveServerAddr determines the server address with precedence:

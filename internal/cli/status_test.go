@@ -45,10 +45,54 @@ func TestRunStatus_Healthy(t *testing.T) {
 
 	output := stdout.String()
 
-	for _, want := range []string{"healthy", "1 configured", "1 resources ready", "1 active"} {
+	for _, want := range []string{"healthy", "1 configured", "1 resources ready", "1 active, 0 failed"} {
 		if !strings.Contains(output, want) {
 			t.Errorf("expected %q in output, got: %s", want, output)
 		}
+	}
+	if got := stderr.String(); got != "" {
+		t.Fatalf("stderr = %q, want empty", got)
+	}
+}
+
+// TestRunStatus_CountsFailedSandboxesSeparately pins #241: a failed sandbox
+// record holds no resources and must not inflate the "active" headline
+// count. Statuses are counted deliberately (a switch over the known
+// model.SandboxStatus* constants), not by excluding just "failed", so the
+// two buckets stay exhaustive as new statuses are added.
+func TestRunStatus_CountsFailedSandboxesSeparately(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("GET /api/v1/pools", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `[]`)
+	})
+	mux.HandleFunc("GET /api/v1/sandboxes", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `[
+			{"id":"sb-1","name":"ready-1","status":"ready"},
+			{"id":"sb-2","name":"ready-2","status":"ready"},
+			{"id":"sb-3","name":"provisioning-1","status":"provisioning"},
+			{"id":"sb-4","name":"failed-1","status":"failed"},
+			{"id":"sb-5","name":"failed-2","status":"failed"}
+		]`)
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cmd := newStatusCommand()
+	stdout, stderr := captureCommandOutput(cmd)
+	cmd.SetArgs([]string{"--server", srv.URL})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("status error: %v", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "3 active, 2 failed") {
+		t.Errorf("expected %q in output, got: %s", "3 active, 2 failed", output)
 	}
 	if got := stderr.String(); got != "" {
 		t.Fatalf("stderr = %q, want empty", got)
