@@ -165,6 +165,22 @@ func (s *Store) GetGuestCredential(server, sandboxID, resourceID string) (provid
 	return zero, nil
 }
 
+// DeleteGuestCredential removes a previously saved guest credential from the
+// keyring. A missing entry is a no-op success, the same way Delete already
+// treats a missing API credential/CA entry — not every sandbox is created
+// with --save-guest-cred, so callers (sandbox delete) don't need to check
+// existence first.
+func (s *Store) DeleteGuestCredential(server, sandboxID, resourceID string) error {
+	user, err := guestCredentialUser(server, sandboxID, resourceID)
+	if err != nil {
+		return err
+	}
+	if err := s.backend.Delete(s.service, user); err != nil && !errors.Is(err, keyring.ErrNotFound) && !errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("delete guest credential for %s/%s: %w", sandboxID, resourceID, err)
+	}
+	return nil
+}
+
 func (s *Store) Delete(server string) error {
 	user, err := normalizeServerURL(server)
 	if err != nil {

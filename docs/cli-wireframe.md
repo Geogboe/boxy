@@ -218,6 +218,10 @@ boxy
 │   │
 │   ├── delete <id>                              Delete a sandbox
 │   │   └── --no-wait                            Return after delete request is accepted
+│   │                                               (also removes any --save-guest-cred keyring
+│   │                                                entry for each of the sandbox's resources;
+│   │                                                a cleanup failure prints a warning, it does
+│   │                                                not fail the delete)
 │   │
 │   │   $ boxy sandbox delete sb-a1b2c3
 │   │     deleted sandbox sb-a1b2c3

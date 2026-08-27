@@ -53,6 +53,24 @@ func saveGuestCredentials(server string, sandboxID model.SandboxID, deliveries [
 	return nil
 }
 
+// deleteGuestCredentials removes any keyring entries saved for a sandbox's
+// resources. It is best-effort by design: the sandbox is already deleted (or
+// accepted for deletion) by the time this runs, and most sandboxes were never
+// created with --save-guest-cred in the first place, so a missing or
+// inaccessible keyring entry must not fail `sandbox delete` itself. Callers
+// should surface returned per-resource errors as warnings, not fatal errors.
+func deleteGuestCredentials(server string, sandboxID model.SandboxID, resourceIDs []model.ResourceID) []error {
+	store := guestCredentialStore()
+	base := apiBaseURL(server)
+	var errs []error
+	for _, resourceID := range resourceIDs {
+		if err := store.DeleteGuestCredential(base, string(sandboxID), string(resourceID)); err != nil {
+			errs = append(errs, fmt.Errorf("resource %s: %w", resourceID, err))
+		}
+	}
+	return errs
+}
+
 func printGuestCredentials(sbID model.SandboxID, deliveries []sandboxGuestCredentialDelivery) error {
 	if len(deliveries) == 0 {
 		return nil
