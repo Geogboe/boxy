@@ -524,14 +524,21 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 		now       time.Time
 	}
 	type plan struct {
-		pool             model.Pool
-		stale            []model.Resource
-		drainResources   []model.Resource
-		drain            bool
-		now              time.Time
-		toProvision      int
-		inventoryChanged bool
-		reason           string
+		pool           model.Pool
+		stale          []model.Resource
+		drainResources []model.Resource
+		drain          bool
+		now            time.Time
+		toProvision    int
+		// requiredToProvision is the prefix of toProvision's iterations
+		// that satisfy the caller's own minReadyOverride request (only
+		// meaningful when requireMinReady); the remainder are bonus
+		// preheat provisioning toward the pool's wider configured
+		// min_ready. See the Actuator's provisioning loop below for how
+		// this is used, and #249 for why the split exists.
+		requiredToProvision int
+		inventoryChanged    bool
+		reason              string
 	}
 
 	ctrl := policycontroller.Controller[observed, plan]{
@@ -644,6 +651,23 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 			// computeToProvision below, never the admission check above.
 			effectiveMinReady := max(minReadyOverride, p.Policies.Preheat.MinReady)
 			toProv := computeToProvision(p, effectiveMinReady, totalCount)
+
+			// requiredToProv is how many of toProv's provisions are needed
+			// to satisfy the caller's own minReadyOverride, as opposed to
+			// bonus preheat toward the wider effectiveMinReady. It is only
+			// ever computed when requireMinReady, and is safe to treat as
+			// 0 implying "the caller's request is already satisfiable"
+			// *only* because the maxTotalShortfall gate above already
+			// returned a fatal *MaxTotalReachedError* in every case where
+			// that would be false -- a future edit must not compute this
+			// without that gate still running first. See #249.
+			requiredToProv := 0
+			if requireMinReady {
+				requiredToProv = computeToProvisionCount(
+					model.PreheatPolicy{MinReady: minReadyOverride, MaxTotal: p.Policies.Preheat.MaxTotal},
+					readyCount, totalCount,
+				)
+			}
 			// Background reconcile passes (requireMinReady=false) respect
 			// provisioning backoff so a failing provider/host isn't hammered
 			// every tick. Explicit EnsureReady calls always attempt, since
@@ -665,12 +689,13 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 			return policycontroller.Decision[plan]{
 				ShouldAct: should,
 				Plan: plan{
-					pool:             p,
-					stale:            stale,
-					now:              obs.now,
-					toProvision:      toProv,
-					inventoryChanged: rebuildReport.Changed,
-					reason:           reason,
+					pool:                p,
+					stale:               stale,
+					now:                 obs.now,
+					toProvision:         toProv,
+					requiredToProvision: requiredToProv,
+					inventoryChanged:    rebuildReport.Changed,
+					reason:              reason,
 				},
 				Reason: reason,
 			}, nil
@@ -752,6 +777,23 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 					m.recordProvisionFailure(p.Name, pl.now)
 				}
 				if err != nil {
+					if requireMinReady && i >= pl.requiredToProvision {
+						// Bonus preheat provisioning toward the pool's
+						// wider configured min_ready, beyond the caller's
+						// own request which requiredToProvision's
+						// invariant already guarantees is satisfied at
+						// this point (see the Evaluator above and #249) —
+						// log and stop attempting further bonus
+						// provisioning this tick instead of failing an
+						// EnsureReady call that already has what it
+						// asked for. Reconcile/Drain/Fill
+						// (requireMinReady=false) keep today's fully
+						// fatal behavior; they have no per-call requester
+						// to protect.
+						slog.Warn("bonus preheat provisioning failed after caller's request was already satisfied",
+							"pool", p.Name, "error", err)
+						break
+					}
 					return fmt.Errorf("provision resource for pool %q: %w", p.Name, err)
 				}
 				if m.admission != nil {
