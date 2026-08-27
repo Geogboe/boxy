@@ -120,8 +120,11 @@ serveLoop ticker
 
 sandbox fulfillment (on demand, not on a timer)
     └─ pool.Manager.EnsureReady(pool, count=1)
-           the caller's real requested count — min_ready never gates this
-           └─ Provisioner.Provision(pool), only if short of count
+           admission is gated on count=1 — min_ready never blocks this
+           └─ Provisioner.Provision(pool), synchronously — may still
+                  best-effort top up toward min_ready even past count=1,
+                  and a failure doing that can surface as an error here
+                  even though count=1 was already satisfied (see #249)
 ```
 
 ### Pool Build Cache (Cross-Pool Resource Reuse)

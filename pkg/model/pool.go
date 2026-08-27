@@ -54,13 +54,14 @@ func (p Pool) EffectivelyDrained() bool {
 type PreheatPolicy struct {
 	// MinReady is the number of ready units the pool should try to keep
 	// available in the background. It is a soft preheat target, not a
-	// second hard admission cap stacked on top of MaxTotal: an allocation
-	// request is never rejected outright just because MinReady hasn't
-	// been reached, only because MaxTotal has (see #240). A live
-	// allocation call may still opportunistically top up toward MinReady
-	// in the background, so a failure in that best-effort top-up can
-	// still surface as an error even when the request itself was
-	// satisfiable -- see #249 for that residual gap.
+	// second hard admission cap stacked on top of MaxTotal: failing to
+	// reach MinReady alone never rejects an allocation request (see
+	// #240) -- though a request can still fail for other reasons, e.g. a
+	// drained pool or a provisioning error. A live allocation call may
+	// still opportunistically top up toward MinReady in the background,
+	// so a failure in that best-effort top-up can itself surface as an
+	// error even when the request was already satisfiable -- see #249
+	// for that residual gap.
 	MinReady int `json:"min_ready,omitempty" yaml:"min_ready,omitempty"`
 
 	// MaxTotal is the maximum total units that may exist for the pool.
