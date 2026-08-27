@@ -427,9 +427,12 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   PR reviews before asking to merge requires the separate endpoints
   `gh api repos/<owner>/<repo>/pulls/<N>/reviews` (the review verdict and
   summary) and `.../pulls/<N>/comments` (the inline comments attached to
-  it) — `gh pr view --json reviews` also works and is simpler than the
-  raw API call. Don't rely on `--json comments` alone ever again for this
-  check.
+  it) — `gh pr view --json reviews` is a simpler substitute for the first
+  (the review verdict/summary) but **not** the second: it does not include
+  the per-line inline comments, so `.../pulls/<N>/comments` still has to be
+  checked separately to see those. Don't rely on `--json comments` alone
+  ever again for this check, and don't assume `--json reviews` alone
+  covers inline comments either.
 - **An automated reviewer's finding (a code-review subagent's "CONFIRMED"
   verdict, or a bot like Copilot) is a claim to verify against the actual
   code, not a fact to relay or dismiss on authority.** During #240 (PR
