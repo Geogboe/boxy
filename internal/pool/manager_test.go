@@ -91,6 +91,30 @@ func (s *putResourceFailStore) PutResource(ctx context.Context, res model.Resour
 	return s.err
 }
 
+// putResourceFailAfterStore fails PutResource on a specific call number
+// (1-indexed), delegating to the wrapped store on every other call — used
+// to simulate a persist failure for a specific (e.g. bonus-preheat)
+// provisioning iteration while earlier iterations succeed and actually
+// land in the store. See #249: a code review caught that the original
+// bonus-vs-required tolerance keyed only on err != nil, which would also
+// have downgraded this exact scenario (Create succeeded, persist failed —
+// a real provider-side resource left with no store record at all) to a
+// silent, best-effort log line.
+type putResourceFailAfterStore struct {
+	store.Store
+	calls      int
+	failOnCall int
+	err        error
+}
+
+func (s *putResourceFailAfterStore) PutResource(ctx context.Context, res model.Resource) error {
+	s.calls++
+	if s.err != nil && s.calls == s.failOnCall {
+		return s.err
+	}
+	return s.Store.PutResource(ctx, res)
+}
+
 func TestManager_Reconcile_PrefillMinReady(t *testing.T) {
 	st := store.NewMemoryStore()
 	pool := model.Pool{
@@ -1016,6 +1040,48 @@ func TestManager_EnsureReady_BonusAdmissionPublishFailureAfterRequestSatisfiedIs
 	}
 	if publisher.calls != 2 {
 		t.Fatalf("admission publish calls = %d, want 2", publisher.calls)
+	}
+}
+
+// TestManager_EnsureReady_BonusPersistFailureAfterCreateStaysFatal is the
+// complement of the two bonus-tolerance tests above: when a bonus
+// iteration's Create succeeds but the subsequent persist (store write)
+// fails, EnsureReady must still return the fatal error rather than
+// swallowing it as best-effort. Unlike a clean Create failure (nothing
+// exists) or an admission-publish failure (the resource is durably
+// persisted and gets retried), a persist failure after a successful
+// Create leaves a real provider-side resource with no store record at
+// all — that must stay loud, not become a masked orphan.
+func TestManager_EnsureReady_BonusPersistFailureAfterCreateStaysFatal(t *testing.T) {
+	ctx := context.Background()
+	failStore := &putResourceFailAfterStore{
+		Store:      store.NewMemoryStore(),
+		failOnCall: 2,
+		err:        errors.New("disk full"),
+	}
+	pool := model.Pool{
+		Name: "p1",
+		Policies: model.PoolPolicies{
+			Preheat: model.PreheatPolicy{MinReady: 3, MaxTotal: 10},
+		},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := failStore.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &fakeProvisioner{}
+	mgr := New(failStore, prov)
+
+	err := mgr.EnsureReady(ctx, "p1", 1)
+	if err == nil {
+		t.Fatal("expected EnsureReady to fail: a bonus iteration's Create succeeded but persist failed, leaving an untracked resource — must not be swallowed as best-effort")
+	}
+	if !strings.Contains(err.Error(), "disk full") {
+		t.Fatalf("EnsureReady error = %q, want it to wrap the persist failure", err.Error())
+	}
+	if prov.provisionCalls != 2 {
+		t.Fatalf("provisionCalls = %d, want 2 (required iteration succeeded, bonus iteration's Create also ran before its persist failed)", prov.provisionCalls)
 	}
 }
 

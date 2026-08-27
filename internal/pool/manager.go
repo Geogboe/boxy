@@ -777,7 +777,22 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 					m.recordProvisionFailure(p.Name, pl.now)
 				}
 				if err != nil {
-					if requireMinReady && i >= pl.requiredToProvision {
+					// created (not just "err != nil") gates the bonus
+					// tolerance: !created means Create itself failed and
+					// nothing exists anywhere, safe to skip. created &&
+					// err != nil means Create succeeded but persist (the
+					// store write) failed afterward -- a real
+					// provider-side resource now exists with no store
+					// record of it at all. Silently swallowing that as
+					// "bonus, best-effort" would mask a leaked/orphaned
+					// resource behind a single log line, a materially
+					// worse outcome than the EnsureReady call it would be
+					// hiding from -- unlike the admission-publish
+					// tolerance below, there is no guaranteed retry path
+					// for a resource the store never recorded in the
+					// first place. A code review caught the first version
+					// of this fix keying on err alone; see #249.
+					if requireMinReady && i >= pl.requiredToProvision && !created {
 						// Bonus preheat provisioning toward the pool's
 						// wider configured min_ready, beyond the caller's
 						// own request which requiredToProvision's
