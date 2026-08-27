@@ -73,9 +73,10 @@ func runStatus(ctx context.Context, opts statusOpts, cmd *cobra.Command) error {
 
 	// Sandboxes. Counted deliberately (a switch over the known
 	// model.SandboxStatus* constants) rather than by excluding just
-	// "failed", so a future status can't silently land in the wrong
-	// bucket. A failed sandbox record holds no resources and is never
-	// reaped automatically (see #241), so it must not inflate "active".
+	// "failed": failed is separated out, and an unrecognized/empty status
+	// still falls back to "active" (see countSandboxesByStatus). A failed
+	// sandbox record holds no resources and is never reaped automatically
+	// (see #241), so it must not inflate "active".
 	sandboxes, err := fetchJSON[[]model.Sandbox](ctx, client, base+"/api/v1/sandboxes")
 	if err != nil {
 		return fmt.Errorf("fetch sandboxes: %w", err)
