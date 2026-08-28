@@ -125,13 +125,14 @@ func TestOIDC_LoginFlow_MintsSessionWithMappedRole(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListSessions: %v", err)
 	}
-	var found *model.Session
-	for i := range sessions {
-		if sessions[i].Hash != "" && sessions[i].Kind == model.SessionKindOIDC {
-			found = &sessions[i]
+	var found model.Session
+	var foundOK bool
+	for _, session := range sessions {
+		if session.Hash != "" && session.Kind == model.SessionKindOIDC {
+			found, foundOK = session, true
 		}
 	}
-	if found == nil {
+	if !foundOK {
 		t.Fatal("no SessionKindOIDC session was persisted")
 	}
 	if found.Subject != "alice" || found.Role != model.APIKeyRoleAdmin {
@@ -167,13 +168,14 @@ func TestOIDC_LoginFlow_PicksMostPrivilegedMatchingRole(t *testing.T) {
 	}
 
 	sessions, _ := st.ListSessions(context.Background())
-	var found *model.Session
-	for i := range sessions {
-		if sessions[i].Subject == "bob" {
-			found = &sessions[i]
+	var found model.Session
+	var foundOK bool
+	for _, session := range sessions {
+		if session.Subject == "bob" {
+			found, foundOK = session, true
 		}
 	}
-	if found == nil {
+	if !foundOK {
 		t.Fatal("no session persisted for bob")
 	}
 	if found.Role != model.APIKeyRoleAdmin {

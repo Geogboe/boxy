@@ -26,8 +26,8 @@ type OIDCOptions struct {
 	// GET /auth/cli-config) so `boxy login --oidc` can run its own
 	// discovery -- the CLI talks to the provider directly for the
 	// device-code grant, it does not proxy through this server.
-	Issuer   string
-	OAuth2   oauth2.Config
+	Issuer string
+	OAuth2 oauth2.Config
 	// Verifier checks the audience against the confidential web client
 	// (OAuth2.ClientID) -- used only by the browser callback.
 	Verifier *oidc.IDTokenVerifier
