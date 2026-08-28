@@ -21,6 +21,7 @@ func newAdminCommand() *cobra.Command {
 	cmd.PersistentFlags().String("ca-cert", "", "Boxy CA certificate for a self-signed server")
 	cmd.PersistentFlags().Bool("insecure", false, "skip HTTPS certificate verification (development only)")
 	cmd.AddCommand(newAPIKeyAdminCommand(func() string { return server }))
+	cmd.AddCommand(newBootstrapPasswordCommand())
 	return cmd
 }
 

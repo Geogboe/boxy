@@ -43,7 +43,7 @@ func TestUI_home_renders(t *testing.T) {
 	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), true)
 
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r := server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/", nil))
 	mux.ServeHTTP(w, r)
 
 	if w.Code != http.StatusOK {
@@ -65,7 +65,7 @@ func TestUI_pools_renders(t *testing.T) {
 
 	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/ui/pools", nil)
+	r := server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/pools", nil))
 	mux.ServeHTTP(w, r)
 
 	if w.Code != http.StatusOK {
@@ -84,7 +84,7 @@ func TestUI_sandboxes_renders(t *testing.T) {
 
 	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/ui/sandboxes", nil)
+	r := server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/sandboxes", nil))
 	mux.ServeHTTP(w, r)
 
 	if w.Code != http.StatusOK {
@@ -140,7 +140,7 @@ func TestUI_sandboxes_resourceDetailExpands(t *testing.T) {
 
 	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/ui/sandboxes", nil)
+	r := server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/sandboxes", nil))
 	mux.ServeHTTP(w, r)
 
 	if w.Code != http.StatusOK {
@@ -179,7 +179,7 @@ func TestUI_sandboxes_resourceDetailHandlesMissingResourceRecord(t *testing.T) {
 
 	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/ui/sandboxes", nil)
+	r := server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/sandboxes", nil))
 	mux.ServeHTTP(w, r)
 
 	if w.Code != http.StatusOK {
@@ -198,7 +198,7 @@ func TestUI_sandboxes_pendingStatusGetsTransientBadge(t *testing.T) {
 
 	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/ui/sandboxes", nil)
+	r := server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/sandboxes", nil))
 	mux.ServeHTTP(w, r)
 
 	body := w.Body.String()
@@ -227,7 +227,7 @@ func TestUI_refreshButtons_targetTheirFragment(t *testing.T) {
 	}
 	for _, tc := range cases {
 		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, tc.path, nil))
+		mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, tc.path, nil)))
 		body := w.Body.String()
 		if !strings.Contains(body, `id="`+tc.fragmentID+`"`) {
 			t.Errorf("%s: missing fragment container id %q, body = %q", tc.path, tc.fragmentID, body)
@@ -255,7 +255,7 @@ func TestUI_fragment_stats(t *testing.T) {
 
 	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/ui/fragments/stats", nil)
+	r := server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/fragments/stats", nil))
 	mux.ServeHTTP(w, r)
 
 	if w.Code != http.StatusOK {
@@ -272,7 +272,7 @@ func TestUI_fragment_pools_table(t *testing.T) {
 	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), true)
 
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/ui/fragments/pools-table", nil)
+	r := server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/fragments/pools-table", nil))
 	mux.ServeHTTP(w, r)
 
 	if w.Code != http.StatusOK {
@@ -296,7 +296,7 @@ func TestUI_agents_rendersStatusesCapacityAndPolling(t *testing.T) {
 	mux := server.NewTestMuxWithAgentAdminUI(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), admin, true)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ui/agents", nil))
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/agents", nil)))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d", w.Code)
 	}
@@ -356,7 +356,7 @@ func TestUI_agents_devfactoryAvailabilityRendersSanely(t *testing.T) {
 	mux := server.NewTestMuxWithAgentAdminUI(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), admin, true)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ui/agents", nil))
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/agents", nil)))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d", w.Code)
 	}
@@ -380,7 +380,7 @@ func TestUI_agents_emptyInventory(t *testing.T) {
 	mux := server.NewTestMuxWithAgentAdminUI(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), admin, true)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ui/fragments/agents-table", nil))
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/fragments/agents-table", nil)))
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "No agents registered") {
 		t.Fatalf("status = %d, body = %q", w.Code, w.Body.String())
 	}
@@ -391,7 +391,7 @@ func TestUI_agents_withoutTransportShowsError(t *testing.T) {
 	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), true)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ui/fragments/agents-table", nil))
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/fragments/agents-table", nil)))
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "error") {
 		t.Fatalf("status = %d, body = %q", w.Code, w.Body.String())
 	}
@@ -403,7 +403,7 @@ func TestUI_fragment_dataError_returns200WithBanner(t *testing.T) {
 	mux := server.NewTestMux(failing, sandbox.New(store.NewMemoryStore(), nil), true)
 
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/ui/fragments/sandboxes-table", nil)
+	r := server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/fragments/sandboxes-table", nil))
 	mux.ServeHTTP(w, r)
 
 	// HTMX only swaps 2xx responses by default; a non-2xx status here means
@@ -423,7 +423,7 @@ func TestUI_page_dataError_returns500Branded(t *testing.T) {
 	mux := server.NewTestMux(failing, sandbox.New(store.NewMemoryStore(), nil), true)
 
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/ui/sandboxes", nil)
+	r := server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/sandboxes", nil))
 	mux.ServeHTTP(w, r)
 
 	if w.Code != http.StatusInternalServerError {

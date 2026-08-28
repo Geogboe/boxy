@@ -124,9 +124,19 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.Handle("/api/v1/", apiMux)
 	}
 
-	// Web UI (optional)
+	// Web UI (optional). Always behind a session — a bootstrapped local
+	// admin account covers the case where no OIDC provider is configured
+	// (see docs/superpowers/specs/2026-08-28-oidc-ui-and-cli-auth-design.md
+	// Decision 1); there is no "open dashboard" mode.
 	if s.uiEnabled {
-		s.registerUIRoutes(mux)
+		mux.Handle("GET /static/", s.staticHandler())
+		mux.HandleFunc("GET /login", s.handleLoginPage)
+		mux.HandleFunc("POST /login", s.handleLoginSubmit)
+		mux.HandleFunc("POST /logout", s.handleLogout)
+
+		protected := http.NewServeMux()
+		s.registerUIRoutes(protected)
+		mux.Handle("/", s.requireSession(protected))
 	}
 }
 

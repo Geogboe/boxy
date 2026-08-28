@@ -21,7 +21,14 @@ var staticFS embed.FS
 
 // pageData is the top-level data passed to every template.
 type pageData struct {
-	Nav           string
+	Nav string
+	// User is the logged-in session's subject (e.g. "admin" for the local
+	// admin account), shown in the sidebar with a logout link. Set by
+	// uiHandler (full-page routes) from the request's session; left empty
+	// by fragmentHandler (HTMX polling routes), whose fragment templates
+	// never reference .User — the sidebar itself is only ever rendered by
+	// a full-page response.
+	User          string
 	PoolCount     int
 	SandboxCount  int
 	ResourceCount int
@@ -84,15 +91,18 @@ func pageTemplate(page string) *template.Template {
 }
 
 // registerUIRoutes wires the web dashboard routes into the mux.
+// staticHandler serves CSS/JS assets. Registered unauthenticated (outside
+// requireSession) so the login page itself can load /static/style.css.
+func (s *Server) staticHandler() http.Handler {
+	staticContent, _ := fs.Sub(staticFS, "static")
+	return http.StripPrefix("/static/", http.FileServer(http.FS(staticContent)))
+}
+
 func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	homeTmpl := pageTemplate("index.html")
 	poolsTmpl := pageTemplate("pools.html")
 	sandboxesTmpl := pageTemplate("sandboxes.html")
 	agentsTmpl := pageTemplate("agents.html")
-
-	// Static assets (CSS, JS).
-	staticContent, _ := fs.Sub(staticFS, "static")
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticContent))))
 
 	// Full-page routes.
 	mux.HandleFunc("GET /{$}", s.uiHandler(homeTmpl, "home", s.homeData))
@@ -124,6 +134,9 @@ func (s *Server) uiHandler(tmpl *template.Template, nav string, data dataFn) htt
 			return
 		}
 		d.Nav = nav
+		if principal, ok := sessionPrincipalFromRequest(r); ok {
+			d.User = principal.Subject
+		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.ExecuteTemplate(w, "layout.html", d); err != nil {

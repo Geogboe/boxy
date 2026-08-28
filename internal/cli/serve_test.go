@@ -73,7 +73,7 @@ func TestServeReconcilePass_ReconcilesPoolsBeforeAndAfterSandboxFulfillment(t *t
 	pools := &fakeServePoolReconciler{}
 	sandboxes := &fakeServeSandboxReconciler{}
 
-	serveReconcilePass(context.Background(), pools, nil, sandboxes, []model.PoolName{"web", "win"}, newServeUI(false))
+	serveReconcilePass(context.Background(), pools, nil, sandboxes, nil, []model.PoolName{"web", "win"}, newServeUI(false))
 
 	if sandboxes.calls != 1 {
 		t.Fatalf("sandbox reconcile calls = %d, want 1", sandboxes.calls)
@@ -394,7 +394,7 @@ func TestServeReconcilePass_RunsPostFulfillmentPoolReconcileEvenAfterSandboxErro
 		return fmt.Errorf("boom")
 	})
 
-	serveReconcilePass(context.Background(), pools, nil, sandboxes, []model.PoolName{"web"}, newServeUI(false))
+	serveReconcilePass(context.Background(), pools, nil, sandboxes, nil, []model.PoolName{"web"}, newServeUI(false))
 
 	want := []model.PoolName{"web", "web"}
 	if len(pools.calls) != len(want) {
@@ -427,7 +427,7 @@ func TestServeReconcilePass_DeletesSandboxesBeforePoolRefill(t *testing.T) {
 		return nil
 	})
 
-	serveReconcilePass(context.Background(), pools, deleter, fulfiller, []model.PoolName{"web"}, newServeUI(false))
+	serveReconcilePass(context.Background(), pools, deleter, fulfiller, nil, []model.PoolName{"web"}, newServeUI(false))
 
 	want := []string{"delete", "pool:web", "fulfill", "pool:web"}
 	if len(order) != len(want) {
@@ -437,6 +437,24 @@ func TestServeReconcilePass_DeletesSandboxesBeforePoolRefill(t *testing.T) {
 		if order[i] != want[i] {
 			t.Fatalf("order = %v, want %v", order, want)
 		}
+	}
+}
+
+func TestServeReconcilePass_RunsSessionSweeper(t *testing.T) {
+	t.Parallel()
+
+	pools := &fakeServePoolReconciler{}
+	sweptCalls := 0
+	sweeper := serveSandboxReconcilerFunc(func(ctx context.Context) error {
+		_ = ctx
+		sweptCalls++
+		return nil
+	})
+
+	serveReconcilePass(context.Background(), pools, nil, nil, sweeper, []model.PoolName{"web"}, newServeUI(false))
+
+	if sweptCalls != 1 {
+		t.Fatalf("session sweeper calls = %d, want 1", sweptCalls)
 	}
 }
 

@@ -26,6 +26,7 @@ Core commands you will commonly use:
 - `boxy admin api-key create`
 - `boxy admin api-key list`
 - `boxy admin api-key revoke`
+- `boxy admin bootstrap-password`
 - `boxy config validate`
 - `boxy config client show`
 - `boxy config client set-server <url>`
@@ -75,6 +76,7 @@ Core commands you will commonly use:
 - Boxy serves REST and agent gRPC over TLS by default. Use `--ca-cert` for the generated Boxy CA; use `--insecure` only for explicit local development.
 - Pass the global `--print-curl` flag on any REST-backed command (e.g. `boxy sandbox list --print-curl`) to print the curl(1) equivalent of each request it makes to stderr — useful for converting a CLI call into a script or API call. The Authorization header is always redacted in the printed form; TLS trust flags (`-k`/`--cacert`) are not reproduced.
 - Run `boxy admin api-key bootstrap` locally once to create the first administrator key, then `boxy login --server <url> --ca-cert <path>` to store it in the OS keyring. The interactive login prompt masks the key and can be canceled with Ctrl+C. Raw keys are shown once and must not be written to config or state files.
+- The web dashboard (`--ui`, on by default) is always behind a login now — there is no unauthenticated dashboard. `boxy serve` bootstraps a local admin account (username `admin`) on its first run against a given state directory and writes a one-time password to a restricted file next to `.boxy/state.json`. Run `boxy admin bootstrap-password --config <path>` (matching the config `boxy serve` was started with) to view it and log in at `/login`; the file is deleted after being shown once.
 - Prefer `boxy serve --once` for smoke checks and `boxy serve` for daemon usage.
 - Sandbox creation is asynchronous. Use `boxy sandbox create --no-wait` if you need the request accepted quickly, then poll with `boxy sandbox get`. A ready sandbox's guest credential is delivered once: it is printed once by default, or `--save-guest-cred` stores it in the OS keyring.
 - Sandbox deletion is asynchronous. `boxy sandbox delete <id>` waits until the daemon finishes cleanup; use `--no-wait` to return after acceptance. It also removes any `--save-guest-cred` keyring entry for the sandbox's resources; a cleanup failure prints a warning but does not fail the delete.

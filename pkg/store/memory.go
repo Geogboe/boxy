@@ -20,6 +20,8 @@ type MemoryStore struct {
 	sandboxes              map[model.SandboxID]model.Sandbox
 	agentTokens            map[model.AgentTokenID]model.AgentRegistrationToken
 	apiKeys                map[model.APIKeyID]model.APIKey
+	sessions               map[model.SessionID]model.Session
+	localAdmin             *model.LocalAdminAccount
 	revokedAgentIdentities map[model.AgentIdentityID]model.RevokedAgentIdentity
 	agentIdentities        map[string]model.AgentIdentity
 	events                 map[string]lifecycle.Record
@@ -33,6 +35,7 @@ func NewMemoryStore() *MemoryStore {
 		sandboxes:              make(map[model.SandboxID]model.Sandbox),
 		agentTokens:            make(map[model.AgentTokenID]model.AgentRegistrationToken),
 		apiKeys:                make(map[model.APIKeyID]model.APIKey),
+		sessions:               make(map[model.SessionID]model.Session),
 		revokedAgentIdentities: make(map[model.AgentIdentityID]model.RevokedAgentIdentity),
 		agentIdentities:        make(map[string]model.AgentIdentity),
 		events:                 make(map[string]lifecycle.Record),
@@ -293,6 +296,71 @@ func (s *MemoryStore) ListAPIKeys(_ context.Context) ([]model.APIKey, error) {
 		out = append(out, key)
 	}
 	return out, nil
+}
+
+func (s *MemoryStore) GetSession(_ context.Context, id model.SessionID) (model.Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.sessions[id]
+	if !ok {
+		return model.Session{}, ErrNotFound
+	}
+	return session, nil
+}
+
+func (s *MemoryStore) PutSession(_ context.Context, session model.Session) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if session.ID == "" {
+		return fmt.Errorf("session id is required")
+	}
+	if session.Hash == "" {
+		return fmt.Errorf("session hash is required")
+	}
+	s.sessions[session.ID] = session
+	return nil
+}
+
+func (s *MemoryStore) DeleteSession(_ context.Context, id model.SessionID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.sessions[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.sessions, id)
+	return nil
+}
+
+func (s *MemoryStore) ListSessions(_ context.Context) ([]model.Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]model.Session, 0, len(s.sessions))
+	for _, session := range s.sessions {
+		out = append(out, session)
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) GetLocalAdmin(_ context.Context) (model.LocalAdminAccount, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.localAdmin == nil {
+		return model.LocalAdminAccount{}, ErrNotFound
+	}
+	return *s.localAdmin, nil
+}
+
+func (s *MemoryStore) PutLocalAdmin(_ context.Context, account model.LocalAdminAccount) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if account.Username == "" {
+		return fmt.Errorf("local admin username is required")
+	}
+	if account.PasswordHash == "" {
+		return fmt.Errorf("local admin password hash is required")
+	}
+	s.localAdmin = &account
+	return nil
 }
 
 func (s *MemoryStore) ListAgentTokens(_ context.Context) ([]model.AgentRegistrationToken, error) {

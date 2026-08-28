@@ -1,0 +1,222 @@
+package server
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"html/template"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"time"
+
+	"github.com/Geogboe/boxy/internal/auth"
+	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/store"
+	"github.com/google/uuid"
+)
+
+// sessionCookieName is the web-UI login session cookie. Deliberately
+// distinct from any REST bearer-token concept — this cookie only ever
+// authenticates browser requests to UI routes, never /api/v1/*.
+const sessionCookieName = "boxy_session"
+
+// sessionTTL is how long a freshly created session is valid before the
+// browser is redirected back to /login. Not yet configurable (see the OIDC
+// design spec's server.oidc.session_ttl) — fixed for the local-admin-only
+// phase of this feature.
+const sessionTTL = 12 * time.Hour
+
+// No separate CSRF token exists for POST /login or POST /logout: both are
+// covered by the session cookie's SameSite=Lax attribute, which browsers
+// don't attach to a cross-site POST, so a third-party page cannot forge
+// either request. This reasoning does not automatically extend to a future
+// state-changing endpoint that *reads* the session cookie to authorize an
+// action with real consequences beyond auth itself (e.g. the OIDC design
+// spec's self-service personal-API-key minting) — revisit whether that
+// needs an explicit CSRF token when it's built, rather than assuming
+// SameSite=Lax alone still covers it.
+type sessionContextKey struct{}
+
+// requireSession wraps a UI handler (or sub-mux of handlers) so every
+// request must carry a valid session cookie. Missing or invalid sessions
+// redirect to /login?next=<original path> rather than returning a bare
+// 401: unlike the REST API's authenticate middleware, this guards a
+// browser-navigated surface, so a redirect is the right UX.
+func (s *Server) requireSession(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie(sessionCookieName)
+		if err != nil || cookie.Value == "" {
+			redirectToLogin(w, r)
+			return
+		}
+		principal, err := auth.AuthenticateSession(r.Context(), s.store, cookie.Value, time.Now())
+		if err != nil {
+			redirectToLogin(w, r)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), sessionContextKey{}, principal)))
+	})
+}
+
+func redirectToLogin(w http.ResponseWriter, r *http.Request) {
+	next := url.QueryEscape(r.URL.RequestURI())
+	http.Redirect(w, r, "/login?next="+next, http.StatusFound)
+}
+
+func sessionPrincipalFromRequest(r *http.Request) (auth.SessionPrincipal, bool) {
+	principal, ok := r.Context().Value(sessionContextKey{}).(auth.SessionPrincipal)
+	return principal, ok
+}
+
+var loginPageTmpl = template.Must(template.ParseFS(templateFS, "templates/layout.html", "templates/login.html"))
+
+type loginPageData struct {
+	Next  string
+	Error string
+}
+
+func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
+	if cookie, err := r.Cookie(sessionCookieName); err == nil && cookie.Value != "" {
+		if _, err := auth.AuthenticateSession(r.Context(), s.store, cookie.Value, time.Now()); err == nil {
+			http.Redirect(w, r, safeNextPath(r.URL.Query().Get("next")), http.StatusFound) //nolint:gosec // safeNextPath only ever returns "/" or a same-origin relative path, never an absolute/external URL
+			return
+		}
+	}
+	data := loginPageData{Next: safeNextPath(r.URL.Query().Get("next"))}
+	if r.URL.Query().Get("error") == "1" {
+		data.Error = "Invalid username or password."
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := loginPageTmpl.ExecuteTemplate(w, "login.html", data); err != nil {
+		slog.Error("login page render", "err", err)
+	}
+}
+
+func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/login?error=1", http.StatusFound)
+		return
+	}
+	username := r.FormValue("username")
+	password := r.FormValue("password")
+	next := safeNextPath(r.FormValue("next"))
+
+	account, err := s.store.GetLocalAdmin(r.Context())
+	if err != nil || username != account.Username || !auth.VerifyPassword(account.PasswordHash, password) {
+		// Deliberately the same redirect for "no account bootstrapped yet",
+		// "unknown username", and "wrong password" — an attacker should not
+		// be able to distinguish these from the response.
+		http.Redirect(w, r, "/login?error=1&next="+url.QueryEscape(next), http.StatusFound)
+		return
+	}
+
+	raw, hash, err := auth.GenerateSessionToken()
+	if err != nil {
+		slog.Error("generate session token", "err", err)
+		http.Redirect(w, r, "/login?error=1", http.StatusFound)
+		return
+	}
+	now := time.Now()
+	session := model.Session{
+		ID:        model.SessionID(uuid.NewString()),
+		Hash:      hash,
+		Kind:      model.SessionKindLocalAdmin,
+		Subject:   account.Username,
+		Role:      model.APIKeyRoleAdmin,
+		CreatedAt: now,
+		ExpiresAt: now.Add(sessionTTL),
+	}
+	if err := s.store.PutSession(r.Context(), session); err != nil {
+		slog.Error("persist session", "err", err)
+		http.Redirect(w, r, "/login?error=1", http.StatusFound)
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // HttpOnly/Secure/SameSite are all set below; gosec's static check can't see through the !s.insecureHTTP expression (Secure is conditional, not a literal, so --insecure local dev over plain HTTP still works)
+		Name:     sessionCookieName,
+		Value:    raw,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   !s.insecureHTTP,
+		SameSite: http.SameSiteLaxMode,
+		Expires:  session.ExpiresAt,
+	})
+	http.Redirect(w, r, next, http.StatusFound) //nolint:gosec // next was assigned from safeNextPath above, never an absolute/external URL
+}
+
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if cookie, err := r.Cookie(sessionCookieName); err == nil && cookie.Value != "" {
+		if principal, err := auth.AuthenticateSession(r.Context(), s.store, cookie.Value, time.Now()); err == nil {
+			if err := s.store.DeleteSession(r.Context(), principal.SessionID); err != nil && !errors.Is(err, store.ErrNotFound) {
+				slog.Error("delete session on logout", "err", err)
+			}
+		}
+	}
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // HttpOnly/Secure/SameSite are all set below; gosec's static check can't see through the !s.insecureHTTP expression (Secure is conditional, not a literal, so --insecure local dev over plain HTTP still works)
+		Name:     sessionCookieName,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   !s.insecureHTTP,
+		SameSite: http.SameSiteLaxMode,
+		Expires:  time.Unix(0, 0),
+		MaxAge:   -1,
+	})
+	http.Redirect(w, r, "/login", http.StatusFound)
+}
+
+// SessionSweeper deletes expired sessions from the store. Without this,
+// state.json would grow every session record ever minted for the life of
+// the daemon, and AuthenticateSession's ListSessions-plus-linear-scan (the
+// same pattern as API-key auth) would keep scanning stale entries on every
+// UI request forever. Wired into the daemon's existing 10s reconcile tick
+// (internal/cli/serve.go's serveLoop) alongside the sandbox deletion
+// reconciler, rather than as a new standalone ticker.
+type SessionSweeper struct {
+	store store.Store
+}
+
+// NewSessionSweeper returns a SessionSweeper backed by st.
+func NewSessionSweeper(st store.Store) *SessionSweeper {
+	return &SessionSweeper{store: st}
+}
+
+// Reconcile deletes every session past its ExpiresAt. Matches the
+// Reconcile(ctx) error shape internal/cli/serve.go's serveSandboxReconciler
+// interface already expects, so it plugs into the existing reconcile pass
+// with no new interface.
+func (sw *SessionSweeper) Reconcile(ctx context.Context) error {
+	sessions, err := sw.store.ListSessions(ctx)
+	if err != nil {
+		return fmt.Errorf("list sessions: %w", err)
+	}
+	now := time.Now()
+	var firstErr error
+	for _, session := range sessions {
+		if !session.Expired(now) {
+			continue
+		}
+		if err := sw.store.DeleteSession(ctx, session.ID); err != nil && !errors.Is(err, store.ErrNotFound) && firstErr == nil {
+			firstErr = fmt.Errorf("delete expired session %q: %w", session.ID, err)
+		}
+	}
+	return firstErr
+}
+
+// safeNextPath only allows redirecting back to a same-origin, relative path
+// (never an absolute URL) so a crafted ?next= query value can't be used for
+// an open-redirect phishing hop off the Boxy dashboard. Rejects a leading
+// "//" or "/\" specifically: browsers normalize a backslash in the path
+// position of a Location header to a forward slash, so "/\evil.com" is
+// exactly as much a protocol-relative redirect to an external host as
+// "//evil.com" is — checking only for "//" would miss it.
+func safeNextPath(next string) string {
+	if next == "" || next[0] != '/' {
+		return "/"
+	}
+	if len(next) > 1 && (next[1] == '/' || next[1] == '\\') {
+		return "/"
+	}
+	return next
+}

@@ -9,11 +9,13 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/Geogboe/boxy/internal/agentserver"
+	"github.com/Geogboe/boxy/internal/auth"
 	boxyconfig "github.com/Geogboe/boxy/internal/config"
 	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/internal/sandbox"
@@ -194,6 +196,14 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	}
 	doneState(statePath)
 
+	bootstrapped, err := bootstrapLocalAdmin(ctx, st, statePath)
+	if err != nil {
+		return fmt.Errorf("bootstrap local admin account: %w", err)
+	}
+	if bootstrapped {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Bootstrapped a local admin web-UI account. Run `boxy admin bootstrap-password` to view the one-time password.")
+	}
+
 	guestSecrets, err := openConfiguredSecretStore(cfg.Server.Secrets, statePath, requiresGuestSecretBackend(cfg))
 	if err != nil {
 		return fmt.Errorf("open secret backend: %w", err)
@@ -252,6 +262,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	sandboxMgr := sandbox.New(st, provisioner)
 	sandboxFulfiller := sandbox.NewFulfiller(st, poolMgr, sandboxMgr)
 	sandboxDeleter := sandbox.NewDeletionReconciler(st, poolMgr)
+	sessionSweeper := server.NewSessionSweeper(st)
 
 	// Pools
 	donePools, failPools := ui.step("Initializing pools")
@@ -342,7 +353,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		return admissionDispatcher.Run(ctx)
 	})
 	g.Go(func() error {
-		return serveLoop(ctx, poolMgr, sandboxDeleter, sandboxFulfiller, poolNames, ui)
+		return serveLoop(ctx, poolMgr, sandboxDeleter, sandboxFulfiller, sessionSweeper, poolNames, ui)
 	})
 
 	printServeBanner(listenAddr, uiEnabled, len(cfg.Pools), opts.insecure)
@@ -586,6 +597,65 @@ func serveStatePath(cfgPath string) (string, error) {
 	return filepath.Join(wd, ".boxy", "state.json"), nil
 }
 
+// bootstrapPasswordFileName lives next to state.json in the same .boxy/
+// directory. See bootstrapLocalAdmin's doc comment for the one-time-read
+// contract `boxy admin bootstrap-password` relies on.
+const bootstrapPasswordFileName = "bootstrap-admin-password"
+
+func serveBootstrapPasswordPath(cfgPath string) (string, error) {
+	statePath, err := serveStatePath(cfgPath)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Dir(statePath), bootstrapPasswordFileName), nil
+}
+
+// bootstrapLocalAdmin ensures exactly one model.LocalAdminAccount exists in
+// st, generating and persisting (as a bcrypt hash) a random password the
+// very first time a daemon starts against this store. The raw password is
+// never persisted to st — it's written once to a restricted-permission
+// file next to state.json, for `boxy admin bootstrap-password` to read.
+// Idempotent: a daemon restart against an already-bootstrapped store is a
+// no-op (reports bootstrapped=false), matching the "exactly once" contract
+// the loopback API-key bootstrap endpoint already established (see
+// internal/server's handleBootstrapAPIKey and ADR-0007).
+func bootstrapLocalAdmin(ctx context.Context, st store.Store, statePath string) (bootstrapped bool, err error) {
+	if _, err := st.GetLocalAdmin(ctx); err == nil {
+		return false, nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return false, fmt.Errorf("check local admin bootstrap state: %w", err)
+	}
+
+	rawPassword, err := auth.GenerateBootstrapPassword()
+	if err != nil {
+		return false, err
+	}
+	hash, err := auth.HashPassword(rawPassword)
+	if err != nil {
+		return false, err
+	}
+	if err := st.PutLocalAdmin(ctx, model.LocalAdminAccount{
+		Username:     model.LocalAdminUsername,
+		PasswordHash: hash,
+		CreatedAt:    time.Now(),
+	}); err != nil {
+		return false, fmt.Errorf("persist local admin account: %w", err)
+	}
+
+	passwordPath := filepath.Join(filepath.Dir(statePath), bootstrapPasswordFileName)
+	if err := os.MkdirAll(filepath.Dir(passwordPath), 0o700); err != nil {
+		return false, fmt.Errorf("create state directory %q: %w", filepath.Dir(passwordPath), err)
+	}
+	// New file (this whole function only runs once, gated by GetLocalAdmin
+	// above), so WriteFile's mode argument actually takes effect — see
+	// ADR-0009's note that mode is ignored only when rewriting a
+	// pre-existing file.
+	if err := os.WriteFile(passwordPath, []byte(rawPassword+"\n"), 0o600); err != nil {
+		return false, fmt.Errorf("write bootstrap password file %q: %w", passwordPath, err)
+	}
+	return true, nil
+}
+
 func loadConfig(explicitPath string) (cfg boxyconfig.Config, usedPath string, _ error) {
 	if explicitPath != "" {
 		c, err := boxyconfig.LoadFile(explicitPath)
@@ -623,6 +693,7 @@ func serveLoop(
 	poolMgr servePoolReconciler,
 	sandboxDeleter serveSandboxReconciler,
 	sandboxFulfiller serveSandboxReconciler,
+	sessionSweeper serveSandboxReconciler,
 	poolNames []model.PoolName,
 	ui *serveUI,
 ) error {
@@ -637,7 +708,7 @@ func serveLoop(
 			ui.shutdown()
 			return nil
 		case <-ticker.C:
-			serveReconcilePass(ctx, poolMgr, sandboxDeleter, sandboxFulfiller, poolNames, ui)
+			serveReconcilePass(ctx, poolMgr, sandboxDeleter, sandboxFulfiller, sessionSweeper, poolNames, ui)
 		}
 	}
 }
@@ -661,6 +732,7 @@ func serveReconcilePass(
 	poolMgr servePoolReconciler,
 	sandboxDeleter serveSandboxReconciler,
 	sandboxFulfiller serveSandboxReconciler,
+	sessionSweeper serveSandboxReconciler,
 	poolNames []model.PoolName,
 	ui *serveUI,
 ) {
@@ -684,6 +756,11 @@ func serveReconcilePass(
 		}
 	}
 	reconcilePools()
+	if sessionSweeper != nil {
+		if err := sessionSweeper.Reconcile(ctx); err != nil {
+			ui.printErr(err)
+		}
+	}
 }
 
 // poolSpecToModel converts a config PoolSpec into a runtime model.Pool.
