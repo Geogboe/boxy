@@ -294,21 +294,26 @@ func operationTimeout(ctx context.Context) time.Duration {
 }
 
 // knownTransportErrSubstr identifies go-psrpcore's outofproc.Adapter.Read
-// idle-read error. That cap (30s of silence on the wire, reset by any byte
-// arriving) is a hardcoded literal deep in the pinned go-psrpcore dependency
-// (outofproc/adapter.go) with no configuration knob exposed by go-psrp's
-// client.Config -- it is NOT the same timeout as cfg.Timeout/operationTimeout
-// above, and raising --timeout / the request deadline does not raise it. See
-// #242: fixing the cap itself requires an upstream (or forked) go-psrpcore
-// change, tracked separately; this only makes the error say what actually
-// happened instead of surfacing a bare "runspace pool broken" wrap.
+// idle-read error -- originally a hardcoded literal (30s of silence on the
+// wire, reset by any byte arriving) with no configuration knob, unrelated to
+// cfg.Timeout/operationTimeout above and unaffected by --timeout. As of the
+// go-psrp/go-psrpcore forks this module now depends on (go.mod's replace
+// directives, see AGENTS.md's "PSRP Transport Dependency Fork" section),
+// go-psrp's HvSocketBackend.Connect disables this cap entirely
+// (Adapter.SetIdleReadTimeout(0)) in favor of the real ctx deadline, so this
+// error should no longer actually occur on boxy's HvSocket path. This
+// detection is kept as a defensive fallback -- a stale build against the
+// unforked upstream, or a future adapter/backend path that doesn't disable
+// the cap -- so the message stays actionable if it's ever hit again, rather
+// than being removed and silently regressing to the opaque wrap below.
 const knownTransportErrSubstr = "read timeout: no data received in 30s"
 
 // wrapKnownTransportError adds an explanatory prefix when err is (or wraps)
-// go-psrpcore's fixed 30s idle-read timeout, so the caller sees that a
-// timeout occurred and that it is a fixed transport-level cap independent of
-// the request's own --timeout, rather than an opaque "runspace pool broken"
-// message. Other errors pass through unchanged.
+// go-psrpcore's fixed idle-read timeout, so the caller sees that a timeout
+// occurred and that (on an unforked build) it would be a fixed
+// transport-level cap independent of the request's own --timeout, rather
+// than an opaque "runspace pool broken" message. Other errors pass through
+// unchanged.
 func wrapKnownTransportError(err error) error {
 	if err == nil || !strings.Contains(err.Error(), knownTransportErrSubstr) {
 		return err

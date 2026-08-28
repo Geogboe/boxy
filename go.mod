@@ -70,3 +70,14 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
 	gotest.tools/v3 v3.5.2 // indirect
 )
+
+// Forked from upstream to fix #242 (sandbox exec --timeout ignored: PSRP's
+// outofproc.Adapter.Read hardcoded a 30s idle-read cap with no config knob
+// and no tagged upstream release to bump to). go-psrpcore's fork adds
+// Adapter.SetIdleReadTimeout; go-psrp's fork calls it to disable the cap on
+// the HvSocket backend, deferring to the caller's own ctx deadline instead.
+// See AGENTS.md's Architectural Notes for the full trace and the fork-vs-
+// upstream decision. Revisit if/when either fix lands upstream.
+replace github.com/smnsjas/go-psrpcore => github.com/Geogboe/go-psrpcore v0.0.0-20260828053523-50f4720fbe2b
+
+replace github.com/smnsjas/go-psrp => github.com/Geogboe/go-psrp v0.2.1-boxy242
