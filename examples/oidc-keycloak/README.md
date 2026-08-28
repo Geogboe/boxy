@@ -30,6 +30,11 @@ Keycloak-in-compose need, not a second thing to build.
 - `boxy.yaml` — the matching `server.oidc.*` config, referencing the
   secret via `env:BOXY_OIDC_CLIENT_SECRET`.
 
+`realm-export.json` also registers a public `boxy-cli` client (device-code
+grant enabled, plus `standardFlowEnabled` and a `http://127.0.0.1:*`
+redirect URI for `boxy login --oidc --web`'s loopback-redirect flow) —
+`boxy.yaml`'s `cli_client_id: boxy-cli` wires it up.
+
 ## The issuer-consistency problem this compose file solves
 
 A browser (running on your host machine) and Boxy (running in a
@@ -67,6 +72,17 @@ Then open <http://localhost:9090/login> and either:
   bootstrap-password --config /etc/boxy/boxy.yaml`), or
 - click "Log in with single sign-on" and use one of the demo accounts
   above.
+
+From the CLI instead, against the same running stack:
+
+```sh
+boxy login --server http://localhost:9090 --insecure --oidc
+# or: boxy login --server http://localhost:9090 --insecure --oidc --web
+```
+
+using any of the demo accounts above. Either grant mints a self-service
+personal API key and stores it in the OS keyring, same as a directly
+supplied `--api-key`.
 
 **Note on the `boxy` image**: `ghcr.io/geogboe/boxy` is not published yet
 (GoReleaser doesn't build a container image today — a separate, pre-existing
