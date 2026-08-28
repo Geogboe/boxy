@@ -224,6 +224,36 @@ func TestSessionSweeper_DeletesOnlyExpiredSessions(t *testing.T) {
 	}
 }
 
+func TestUI_loginUsesConfiguredSessionTTL(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	seedLocalAdmin(t, st, "correct-password")
+	const ttl = 6 * time.Hour
+	mux := server.NewTestMuxWithSessionTTL(st, sandbox.New(st, nil), ttl)
+
+	form := url.Values{"username": {string(model.LocalAdminUsername)}, "password": {"correct-password"}}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want %d, body = %q", w.Code, http.StatusFound, w.Body.String())
+	}
+
+	sessions, err := st.ListSessions(context.Background())
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("sessions = %+v, want exactly one", sessions)
+	}
+	got := sessions[0].ExpiresAt.Sub(sessions[0].CreatedAt)
+	if got != ttl {
+		t.Fatalf("session TTL = %v, want %v", got, ttl)
+	}
+}
+
 func TestUI_alreadyLoggedInVisitingLoginRedirectsHome(t *testing.T) {
 	t.Parallel()
 	st := store.NewMemoryStore()

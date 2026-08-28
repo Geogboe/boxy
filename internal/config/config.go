@@ -120,6 +120,13 @@ type OIDCSpec struct {
 	// (minted via CLI device-code login) may live, as a Go duration
 	// string (e.g. "12h"). Empty defaults to 12h.
 	PersonalKeyMaxTTL string `json:"personal_key_max_ttl,omitempty" yaml:"personal_key_max_ttl,omitempty"`
+	// SessionTTL bounds how long a web-UI login session lasts before its
+	// cookie is rejected, as a Go duration string (e.g. "12h"). Empty
+	// defaults to 12h. Applies to every session regardless of how it was
+	// established (OIDC or the bootstrapped local-admin account) -- there
+	// is only one session mechanism (see ADR-0016), even though this knob
+	// lives under server.oidc for parity with PersonalKeyMaxTTL.
+	SessionTTL string `json:"session_ttl,omitempty" yaml:"session_ttl,omitempty"`
 }
 
 // Configured reports whether OIDC login is enabled.
@@ -142,9 +149,29 @@ func (o OIDCSpec) EffectivePersonalKeyMaxTTL() (time.Duration, error) {
 	return d, nil
 }
 
+// EffectiveSessionTTL parses SessionTTL, defaulting to 12h.
+func (o OIDCSpec) EffectiveSessionTTL() (time.Duration, error) {
+	if strings.TrimSpace(o.SessionTTL) == "" {
+		return 12 * time.Hour, nil
+	}
+	d, err := time.ParseDuration(o.SessionTTL)
+	if err != nil {
+		return 0, fmt.Errorf("server.oidc.session_ttl: %w", err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("server.oidc.session_ttl must be a positive duration")
+	}
+	return d, nil
+}
+
 // Validate checks field presence/shape. It does not resolve ClientSecret or
 // contact the issuer -- see internal/cli/serve.go's OIDC wiring for that.
+// SessionTTL is validated unconditionally, below, since it applies even
+// when OIDC itself is not configured.
 func (o OIDCSpec) Validate() error {
+	if _, err := o.EffectiveSessionTTL(); err != nil {
+		return err
+	}
 	if !o.Configured() {
 		return nil
 	}

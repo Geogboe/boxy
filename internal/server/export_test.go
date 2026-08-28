@@ -96,6 +96,21 @@ func NewTestMuxWithOIDC(st store.Store, sm *sandbox.Manager, oidcOpts *OIDCOptio
 	return mux
 }
 
+// NewTestMuxWithSessionTTL is NewTestMux (no pre-seeded session) plus a
+// configured session TTL, for tests verifying server.oidc.session_ttl
+// actually reaches a freshly minted session's ExpiresAt.
+func NewTestMuxWithSessionTTL(st store.Store, sm *sandbox.Manager, ttl time.Duration) *http.ServeMux {
+	s := &Server{
+		store:      st,
+		sandboxMgr: sm,
+		uiEnabled:  true,
+		sessionTTL: ttl,
+	}
+	mux := http.NewServeMux()
+	s.registerRoutes(mux)
+	return mux
+}
+
 // NewTestMuxWithGuestSecrets configures the pool credential endpoint with an
 // explicit server-owned secret store.
 func NewTestMuxWithGuestSecrets(st store.Store, sm *sandbox.Manager, secrets boxysecrets.Store) *http.ServeMux {

@@ -55,6 +55,7 @@ type Server struct {
 	executor        SandboxExecutor
 	guestSecrets    boxysecrets.Store
 	oidc            *OIDCOptions
+	sessionTTL      time.Duration
 	uiEnabled       bool
 	authRequired    bool
 	insecureHTTP    bool
@@ -76,6 +77,10 @@ type ServerOptions struct {
 	// default) means only the bootstrapped local admin account can log
 	// in -- see docs/superpowers/specs/2026-08-28-oidc-ui-and-cli-auth-design.md.
 	OIDC *OIDCOptions
+	// SessionTTL bounds how long a web-UI login session lasts, regardless
+	// of how it was established (OIDC or the local-admin account). Zero
+	// defaults to 12h (see session.go's defaultSessionTTL).
+	SessionTTL time.Duration
 }
 
 // New creates a Server that will listen on addr. It retains the in-process,
@@ -96,6 +101,7 @@ func NewWithOptions(st store.Store, sm *sandbox.Manager, pm PoolMaintenance, aa 
 		executor:        opts.Executor,
 		guestSecrets:    opts.GuestSecrets,
 		oidc:            opts.OIDC,
+		sessionTTL:      opts.SessionTTL,
 		uiEnabled:       uiEnabled,
 		authRequired:    opts.AuthRequired,
 		insecureHTTP:    opts.InsecureHTTP,

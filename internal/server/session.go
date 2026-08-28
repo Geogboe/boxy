@@ -20,11 +20,25 @@ import (
 // authenticates browser requests to UI routes, never /api/v1/*.
 const sessionCookieName = "boxy_session"
 
-// sessionTTL is how long a freshly created session is valid before the
-// browser is redirected back to /login. Not yet configurable (see the OIDC
-// design spec's server.oidc.session_ttl) — fixed for the local-admin-only
-// phase of this feature.
-const sessionTTL = 12 * time.Hour
+// defaultSessionTTL is how long a freshly created session is valid before
+// the browser is redirected back to /login, when server.oidc.session_ttl
+// is unset. Server.sessionTTL carries the configured value (see
+// effectiveSessionTTL); this applies uniformly to local-admin and OIDC
+// sessions alike, since both share the same session mechanism.
+const defaultSessionTTL = 12 * time.Hour
+
+// effectiveSessionTTL returns s.sessionTTL, falling back to
+// defaultSessionTTL when unset -- covers both NewWithOptions callers that
+// never set ServerOptions.SessionTTL (test muxes, embedded callers) and a
+// zero config.OIDCSpec.SessionTTL (EffectiveSessionTTL already defaults
+// that to 12h, but a zero-value Server built directly in a test bypasses
+// that path entirely).
+func (s *Server) effectiveSessionTTL() time.Duration {
+	if s.sessionTTL > 0 {
+		return s.sessionTTL
+	}
+	return defaultSessionTTL
+}
 
 // No separate CSRF token exists for POST /login or POST /logout: both are
 // covered by the session cookie's SameSite=Lax attribute, which browsers

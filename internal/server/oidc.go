@@ -276,7 +276,7 @@ func (s *Server) mintSession(w http.ResponseWriter, r *http.Request, kind model.
 		Subject:   subject,
 		Role:      role,
 		CreatedAt: now,
-		ExpiresAt: now.Add(sessionTTL),
+		ExpiresAt: now.Add(s.effectiveSessionTTL()),
 	}
 	if err := s.store.PutSession(r.Context(), session); err != nil {
 		return err

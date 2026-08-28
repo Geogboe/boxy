@@ -171,6 +171,9 @@ func TestOIDCSpec_Validate(t *testing.T) {
 		}, wantErr: true},
 		{name: "invalid default role", mutate: func(o OIDCSpec) OIDCSpec { o.DefaultRole = "superuser"; return o }, wantErr: true},
 		{name: "valid default role", mutate: func(o OIDCSpec) OIDCSpec { o.DefaultRole = "user"; return o }},
+		{name: "invalid session ttl", mutate: func(o OIDCSpec) OIDCSpec { o.SessionTTL = "not-a-duration"; return o }, wantErr: true},
+		{name: "non-positive session ttl", mutate: func(o OIDCSpec) OIDCSpec { o.SessionTTL = "0h"; return o }, wantErr: true},
+		{name: "valid session ttl", mutate: func(o OIDCSpec) OIDCSpec { o.SessionTTL = "6h"; return o }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

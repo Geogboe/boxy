@@ -335,6 +335,10 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	if err != nil {
 		return fmt.Errorf("configure OIDC: %w", err)
 	}
+	sessionTTL, err := cfg.Server.OIDC.EffectiveSessionTTL()
+	if err != nil {
+		return fmt.Errorf("configure OIDC: %w", err)
+	}
 
 	srv := server.NewWithOptions(st, sandboxMgr, poolMgr, agentSrv, listenAddr, uiEnabled, server.ServerOptions{
 		AuthRequired: true,
@@ -344,6 +348,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		Executor:     provisioner,
 		GuestSecrets: guestSecrets,
 		OIDC:         oidcOptions,
+		SessionTTL:   sessionTTL,
 	})
 
 	g, ctx := errgroup.WithContext(ctx)
