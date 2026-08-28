@@ -119,11 +119,20 @@ boxy
 │   ├── --server <url>                           Server URL (overrides env/global defaults)
 │   ├── --api-key <key>                          Optional non-interactive key input
 │   ├── --ca-cert <path>                         Trust a Boxy self-signed CA
-│   └── --insecure                               Skip HTTPS verification (development only)
+│   ├── --insecure                               Skip HTTPS verification (development only)
+│   ├── --oidc                                   Log in via the server's configured OIDC provider
+│   │                                             (device-code grant) instead of a static API key
+│   └── --web                                    With --oidc, use loopback-redirect (auto-launch
+│                                                 a browser) instead of the default device-code grant
 │
 │   $ boxy login --server https://boxy.example.test:9090 --ca-cert .boxy/ca.crt
 │     API key (hidden; Ctrl+C to cancel): ********
 │     Logged in to https://boxy.example.test:9090
+│
+│   $ boxy login --server https://boxy.example.test:9090 --oidc
+│     Open https://idp.example.test/device and enter code: ABCD-EFGH
+│     Waiting for login to complete...
+│     Logged in to https://boxy.example.test:9090 via OIDC
 │
 │
 ├── logout                                     Remove the stored operator credential
