@@ -13,37 +13,50 @@ func TestComputeToProvisionCount(t *testing.T) {
 	tests := []struct {
 		name       string
 		policy     model.PreheatPolicy
-		readyCount int
 		totalCount int
 		want       int
 	}{
 		{
 			name:       "no min ready target",
 			policy:     model.PreheatPolicy{MinReady: 0, MaxTotal: 10},
-			readyCount: 0,
 			totalCount: 0,
 			want:       0,
 		},
 		{
-			name:       "provision full gap when under cap",
+			name:       "provision the remaining gap when under cap",
 			policy:     model.PreheatPolicy{MinReady: 3, MaxTotal: 10},
-			readyCount: 1,
 			totalCount: 2,
-			want:       2,
+			want:       1,
 		},
 		{
 			name:       "cap provision by max total",
 			policy:     model.PreheatPolicy{MinReady: 5, MaxTotal: 3},
-			readyCount: 1,
 			totalCount: 2,
 			want:       1,
 		},
 		{
 			name:       "unbounded max total",
 			policy:     model.PreheatPolicy{MinReady: 4, MaxTotal: 0},
-			readyCount: 1,
-			totalCount: 100,
+			totalCount: 1,
 			want:       3,
+		},
+		// #258: totalCount already includes resources this pool provisioned
+		// that haven't reached ResourceStateReady yet (mid-admission). The
+		// gap must close against totalCount, not just the ready subset of
+		// it -- otherwise a reconcile tick re-requests the full remaining
+		// gap every pass until admission catches up, overshooting minReady
+		// by however many extra ticks that takes.
+		{
+			name:       "in-flight (not-yet-ready) resources already close the gap",
+			policy:     model.PreheatPolicy{MinReady: 2, MaxTotal: 4},
+			totalCount: 2, // e.g. 1 ready + 1 still admitting
+			want:       0,
+		},
+		{
+			name:       "in-flight resources partially close the gap",
+			policy:     model.PreheatPolicy{MinReady: 3, MaxTotal: 10},
+			totalCount: 2, // e.g. 0 ready + 2 still admitting
+			want:       1,
 		},
 	}
 
@@ -51,7 +64,7 @@ func TestComputeToProvisionCount(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := computeToProvisionCount(tc.policy, tc.readyCount, tc.totalCount)
+			got := computeToProvisionCount(tc.policy, tc.totalCount)
 			if got != tc.want {
 				t.Fatalf("computeToProvisionCount() = %d, want %d", got, tc.want)
 			}

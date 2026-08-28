@@ -913,13 +913,11 @@ func quarantinedOrphans(poolName model.PoolName, resources []model.Resource) []m
 }
 
 func computeToProvision(p model.Pool, minReady int, totalCount int) int {
-	readyCount := countReadyResources(p.Inventory.Resources)
 	return computeToProvisionCount(
 		model.PreheatPolicy{
 			MinReady: minReady,
 			MaxTotal: p.Policies.Preheat.MaxTotal,
 		},
-		readyCount,
 		totalCount,
 	)
 }

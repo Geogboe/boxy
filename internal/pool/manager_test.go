@@ -113,6 +113,83 @@ func TestManager_Reconcile_PrefillMinReady(t *testing.T) {
 	}
 }
 
+// TestManager_Reconcile_InFlightResourcesCountTowardMinReady pins #258: a
+// resource this pool already provisioned on a previous tick, but that
+// hasn't reached ResourceStateReady yet (still going through
+// AdmissionHandler, e.g. guest personalization), must count toward
+// min_ready just like a Ready one does. Before the fix, computeToProvision
+// measured the gap against ready count alone, so every tick before
+// admission finished re-requested the full remaining gap -- overshooting
+// min_ready by one extra resource per tick until max_total capped it.
+func TestManager_Reconcile_InFlightResourcesCountTowardMinReady(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+
+	ready := model.Resource{
+		ID:         "res_ready",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		OriginPool: "p1",
+		Provider:   model.ProviderRef{Name: "prov_1"},
+		State:      model.ResourceStateReady,
+		CreatedAt:  time.Unix(1000, 0).UTC(),
+		UpdatedAt:  time.Unix(1000, 0).UTC(),
+	}
+	if err := st.PutResource(ctx, ready); err != nil {
+		t.Fatalf("put ready resource: %v", err)
+	}
+	inFlight := model.Resource{
+		ID:         "res_provisioning",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		OriginPool: "p1",
+		Provider:   model.ProviderRef{Name: "prov_1"},
+		State:      model.ResourceStateProvisioning,
+		CreatedAt:  time.Unix(1001, 0).UTC(),
+		UpdatedAt:  time.Unix(1001, 0).UTC(),
+	}
+	if err := st.PutResource(ctx, inFlight); err != nil {
+		t.Fatalf("put in-flight resource: %v", err)
+	}
+
+	pool := model.Pool{
+		Name: "p1",
+		Policies: model.PoolPolicies{
+			Preheat: model.PreheatPolicy{MinReady: 2, MaxTotal: 4},
+		},
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: model.ResourceProfileDefault,
+			// Only the ready resource belongs here -- RebuildReadyInventory
+			// only ever re-admits ResourceStateReady resources, so this
+			// mirrors exactly what a prior tick would have left behind.
+			Resources: []model.Resource{ready},
+		},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &fakeProvisioner{}
+	mgr := New(st, prov)
+
+	if err := mgr.Reconcile(ctx, "p1"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if prov.provisionCalls != 0 {
+		t.Fatalf("provisionCalls = %d, want 0: min_ready=2 was already covered by 1 ready + 1 in-flight resource", prov.provisionCalls)
+	}
+
+	updated, err := st.GetPool(ctx, "p1")
+	if err != nil {
+		t.Fatalf("get pool: %v", err)
+	}
+	if len(updated.Inventory.Resources) != 1 {
+		t.Fatalf("inventory len = %d, want 1 (only the already-ready resource)", len(updated.Inventory.Resources))
+	}
+}
+
 func TestManager_DestroyResource_DestroysAndDeletesWithoutReturningToInventory(t *testing.T) {
 	ctx := context.Background()
 	st := store.NewMemoryStore()
