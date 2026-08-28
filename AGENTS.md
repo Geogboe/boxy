@@ -476,6 +476,23 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   Copilot proposed a fix. Treat every reviewer's output — human, subagent,
   or bot — as a lead to check, in both directions: don't rubber-stamp a
   finding, and don't dismiss one either without looking.
+- **`gofmt` rewrites two adjacent ASCII single quotes (`''`) inside a doc
+  comment into a Unicode right-double-quotation-mark (`”`), even inside a
+  backtick-quoted code span within that comment.** This is `go/printer`'s
+  doc-comment reformatting (active by default since Go added the
+  `go/doc/comment` rendering rules), not a bug in this repo's tooling — it
+  applies to any doc comment (a comment immediately preceding a
+  declaration), plain or backtick-wrapped alike. Hit for real during #237
+  (2026-08-28): a `shellQuote` doc comment describing the POSIX
+  close-quote/escaped-quote/reopen-quote idiom literally, `'\''`, silently
+  became `'\”` on every `task fmt` / `gofmt -w` pass — caught only because
+  `task ci:validate`'s `golangci-lint` gofmt check failed in CI-equivalent
+  local validation, not by reading the diff. If a doc comment needs to
+  describe a literal shell/string quoting sequence, phrase it so no two
+  single quotes land adjacently (rephrase procedurally, as this fix did) —
+  moving the sequence into backticks does not protect it. A non-doc comment
+  (one not immediately preceding a declaration) is not affected; this is
+  specific to doc comments.
 
 ## ADRs
 
