@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -275,6 +276,26 @@ func TestRunOIDCLoginWeb_StoresExchangedKey(t *testing.T) {
 	}
 }
 
+// syncBuffer is a goroutine-safe io.Writer/String() buffer, for tests that
+// need to poll printed output from one goroutine while another goroutine
+// (loopbackOIDCLogin, here) is still writing to it.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.String()
+}
+
 func TestLoopbackOIDCLogin_DuplicateCallbackDoesNotHang(t *testing.T) {
 	provider := newFakeAuthCodeOIDCProvider(t)
 	oidcProvider, err := oidc.NewProvider(context.Background(), provider.URL())
@@ -282,7 +303,12 @@ func TestLoopbackOIDCLogin_DuplicateCallbackDoesNotHang(t *testing.T) {
 		t.Fatalf("oidc.NewProvider: %v", err)
 	}
 
-	out := &strings.Builder{}
+	// A plain strings.Builder isn't safe for concurrent use: this test
+	// polls out.String() from the main goroutine while loopbackOIDCLogin
+	// writes to it from its own goroutine, so a synchronized writer is
+	// required (a bare *strings.Builder produced a real data race here,
+	// caught by `go test -race`).
+	out := &syncBuffer{}
 	type loginResult struct {
 		token string
 		err   error
