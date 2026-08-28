@@ -343,10 +343,23 @@ func TestOIDC_CLIConfig_NotFoundWhenCLIClientIDUnset(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/auth/cli-config", nil))
-	// No route registered at all when CLIClientID is unset -- falls through
-	// to the same session-gated catch-all as any other unmatched path.
-	if w.Code != http.StatusFound {
-		t.Fatalf("status = %d, want %d (redirect to login, no dedicated route)", w.Code, http.StatusFound)
+	// The route is always registered (see registerRoutes in server.go) so a
+	// misconfigured CLI gets a clear 404 here, not a redirect to /login
+	// that `boxy login --oidc` would try (and fail) to decode as JSON.
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusNotFound)
+	}
+}
+
+func TestOIDC_CLIConfig_NotFoundWhenOIDCNotConfiguredAtAll(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/auth/cli-config", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d, body = %q", w.Code, http.StatusNotFound, w.Body.String())
 	}
 }
 

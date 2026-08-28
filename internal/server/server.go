@@ -136,6 +136,16 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.Handle("/api/v1/", apiMux)
 	}
 
+	// GET /auth/cli-config is registered unconditionally (not gated on
+	// s.uiEnabled the way the rest of /auth/* and /login are): `boxy login
+	// --oidc` needs it even on a daemon running with the web dashboard
+	// disabled, and its own handler already 404s cleanly when OIDC/
+	// CLIClientID isn't configured. Registering it only when configured
+	// would instead let it fall through to the UI's session-gated catch-all
+	// route below whenever uiEnabled is true, which redirects to /login and
+	// hands the CLI's JSON decoder an HTML page instead of a clear error.
+	mux.HandleFunc("GET /auth/cli-config", s.handleCLIOIDCConfig)
+
 	// Web UI (optional). Always behind a session — a bootstrapped local
 	// admin account covers the case where no OIDC provider is configured
 	// (see docs/superpowers/specs/2026-08-28-oidc-ui-and-cli-auth-design.md
@@ -148,9 +158,6 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		if s.oidc != nil {
 			mux.HandleFunc("GET /auth/login", s.handleOIDCLogin)
 			mux.HandleFunc("GET /auth/callback", s.handleOIDCCallback)
-			if s.oidc.CLIClientID != "" {
-				mux.HandleFunc("GET /auth/cli-config", s.handleCLIOIDCConfig)
-			}
 		}
 
 		protected := http.NewServeMux()
