@@ -40,15 +40,19 @@ func (s *Server) effectiveSessionTTL() time.Duration {
 	return defaultSessionTTL
 }
 
-// No separate CSRF token exists for POST /login or POST /logout: both are
-// covered by the session cookie's SameSite=Lax attribute, which browsers
-// don't attach to a cross-site POST, so a third-party page cannot forge
-// either request. This reasoning does not automatically extend to a future
-// state-changing endpoint that *reads* the session cookie to authorize an
-// action with real consequences beyond auth itself (e.g. the OIDC design
-// spec's self-service personal-API-key minting) — revisit whether that
-// needs an explicit CSRF token when it's built, rather than assuming
-// SameSite=Lax alone still covers it.
+// No separate CSRF token exists for POST /login, POST /logout, or POST
+// /ui/profile/personal-key (profile.go's handleMintPersonalKey — the one
+// state-changing action beyond auth itself that reads the session cookie
+// to authorize something with real consequences, a self-service API key):
+// all three are covered by the session cookie's SameSite=Lax attribute,
+// which browsers don't attach to a cross-site POST, so a third-party page
+// cannot forge any of them. Revisit this reasoning if a future
+// session-authenticated route needs to be reachable via a mechanism
+// SameSite=Lax doesn't cover (e.g. a simple cross-site GET/form submission
+// treated as same-site, or a route that must also work over WebSocket/SSE
+// where SameSite enforcement differs) — don't assume SameSite=Lax alone
+// covers every future case without rechecking against how that route is
+// actually reached.
 type sessionContextKey struct{}
 
 // requireSession wraps a UI handler (or sub-mux of handlers) so every

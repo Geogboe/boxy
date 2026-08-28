@@ -218,6 +218,7 @@ tbody tr:hover {
 .badge-destroying { background: rgba(251, 146, 60, 0.15); color: var(--orange); }
 .badge-released { background: rgba(139, 143, 163, 0.15); color: var(--text-muted); }
 .badge-destroyed { background: rgba(139, 143, 163, 0.1); color: var(--text-muted); }
+.badge-unknown { background: rgba(139, 143, 163, 0.15); color: var(--text-muted); }
 /* Sandbox-status-specific badges (SandboxStatus, distinct from ResourceState above). */
 .badge-pending { background: rgba(139, 143, 163, 0.15); color: var(--text-muted); }
 .badge-deleting { background: rgba(251, 146, 60, 0.15); color: var(--orange); }

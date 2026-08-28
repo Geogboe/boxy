@@ -170,20 +170,26 @@ func loopbackOIDCLogin(ctx context.Context, provider *oidc.Provider, clientID st
 	mux := http.NewServeMux()
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
+		var result callbackResult
 		switch {
 		case query.Get("error") != "":
-			resultCh <- callbackResult{err: fmt.Errorf("authorization failed: %s", query.Get("error"))}
-			writeLoopbackCallbackPage(w, false)
+			result = callbackResult{err: fmt.Errorf("authorization failed: %s", query.Get("error"))}
 		case query.Get("state") != state:
-			resultCh <- callbackResult{err: errors.New("state mismatch on OIDC callback")}
-			writeLoopbackCallbackPage(w, false)
+			result = callbackResult{err: errors.New("state mismatch on OIDC callback")}
 		case query.Get("code") == "":
-			resultCh <- callbackResult{err: errors.New("no authorization code in OIDC callback")}
-			writeLoopbackCallbackPage(w, false)
+			result = callbackResult{err: errors.New("no authorization code in OIDC callback")}
 		default:
-			resultCh <- callbackResult{code: query.Get("code")}
-			writeLoopbackCallbackPage(w, true)
+			result = callbackResult{code: query.Get("code")}
 		}
+		// Non-blocking: resultCh is only ever read once (the first value
+		// wins), so a duplicate hit on /callback -- a browser refresh or a
+		// provider retry -- must not block this handler goroutine waiting
+		// for a read that will never come.
+		select {
+		case resultCh <- result:
+		default:
+		}
+		writeLoopbackCallbackPage(w, result.err == nil)
 	})
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() { _ = srv.Serve(listener) }()

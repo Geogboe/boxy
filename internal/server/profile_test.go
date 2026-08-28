@@ -64,6 +64,9 @@ func TestMintPersonalKey_LocalAdminSession_UsesLocalSubjectPrefix(t *testing.T) 
 	if !strings.Contains(w.Body.String(), "New key") {
 		t.Fatalf("profile page did not render the minted key, body = %q", w.Body.String())
 	}
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store on a response that can carry a raw minted key", got)
+	}
 
 	keys, err := st.ListAPIKeys(context.Background())
 	if err != nil {

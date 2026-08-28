@@ -119,6 +119,9 @@ func (s *Server) handleMintPersonalKey(profileTmpl *template.Template) http.Hand
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		// This response can carry a freshly minted raw API key -- never
+		// let it be cached by the browser or an intermediary.
+		w.Header().Set("Cache-Control", "no-store")
 		if err := profileTmpl.ExecuteTemplate(w, "layout.html", d); err != nil {
 			slog.Error("profile page render", "err", err)
 		}

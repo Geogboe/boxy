@@ -185,8 +185,12 @@ func TestUI_sandboxes_resourceDetailHandlesMissingResourceRecord(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), "res-gone") {
-		t.Fatalf("sandboxes page missing orphaned resource id, body = %q", w.Body.String())
+	body := w.Body.String()
+	if !strings.Contains(body, "res-gone") {
+		t.Fatalf("sandboxes page missing orphaned resource id, body = %q", body)
+	}
+	if !strings.Contains(body, "badge-unknown") || !strings.Contains(body, "unknown · unknown · pool unknown · unknown") {
+		t.Fatalf("sandboxes page did not render \"unknown\" placeholders for an orphaned resource, body = %q", body)
 	}
 }
 

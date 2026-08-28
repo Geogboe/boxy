@@ -241,8 +241,18 @@ func (s *Server) sandboxesData(r *http.Request) (pageData, error) {
 				// The store no longer holds a record for this ID (e.g.
 				// destroyed and purged). Still show the ID rather than
 				// silently dropping the row, so the resource count in the
-				// summary and the expanded detail agree.
-				view.Resources = append(view.Resources, resourceView{ID: string(id)})
+				// summary and the expanded detail agree -- with explicit
+				// "unknown" placeholders rather than zero-valued fields,
+				// which would otherwise render as a blank, broken-looking
+				// badge and an empty " · · pool  · " meta line.
+				view.Resources = append(view.Resources, resourceView{
+					ID:         string(id),
+					Type:       "unknown",
+					Profile:    "unknown",
+					State:      model.ResourceStateUnknown,
+					OriginPool: "unknown",
+					Provider:   "unknown",
+				})
 				continue
 			}
 			view.Resources = append(view.Resources, resourceView{
