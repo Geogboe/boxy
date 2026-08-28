@@ -265,6 +265,31 @@ tbody tr:hover {
 .sample-time { font-size: 0.75rem; }
 .agents-table { min-width: 760px; }
 
+/* Sandbox row detail disclosure (#255) */
+.sandbox-detail summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.sandbox-detail summary:hover { color: var(--text); }
+.sandbox-detail-body {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+.detail-row { font-size: 0.8rem; }
+.detail-label {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  margin-right: 0.4rem;
+}
+.detail-error { color: var(--red); }
+.resource-list { display: grid; gap: 0.4rem; margin-top: 0.2rem; }
+.resource-row { align-items: center; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.resource-meta { color: var(--text-muted); font-size: 0.8rem; }
+
 /* HTMX loading indicator */
 .htmx-indicator {
   opacity: 0;

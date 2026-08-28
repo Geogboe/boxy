@@ -26,7 +26,7 @@
       <th scope="col">ID</th>
       <th scope="col">Name</th>
       <th scope="col">Status</th>
-      <th scope="col">Resources</th>
+      <th scope="col">Details</th>
     </tr>
   </thead>
   <tbody>
@@ -41,7 +41,31 @@
         <span class="badge badge-{{.Status}}">{{.Status}}</span>
         {{end}}
       </td>
-      <td>{{len .Resources}}</td>
+      <td>
+        <details class="sandbox-detail">
+          <summary>{{len .Resources}} resource{{if ne (len .Resources) 1}}s{{end}}</summary>
+          <div class="sandbox-detail-body">
+            {{if .OwnerID}}<div class="detail-row"><span class="detail-label">Owner</span> {{.OwnerID}}</div>{{end}}
+            {{if .ExpiresAt}}<div class="detail-row"><span class="detail-label">Expires</span> <span class="timestamp">{{.ExpiresAt}}</span></div>{{end}}
+            {{if .SecurityProfile}}<div class="detail-row"><span class="detail-label">Security profile</span> {{.SecurityProfile}}</div>{{end}}
+            {{if .AutoDestroyAfter}}<div class="detail-row"><span class="detail-label">Auto-destroy after</span> {{.AutoDestroyAfter}}</div>{{end}}
+            {{if .Error}}<div class="detail-row detail-error"><span class="detail-label">Error</span> {{.Error}}</div>{{end}}
+            {{if .Resources}}
+            <div class="resource-list">
+              {{range .Resources}}
+              <div class="resource-row">
+                <code>{{.ID}}</code>
+                <span class="badge badge-{{.State}}">{{.State}}</span>
+                <span class="resource-meta">{{.Type}} · {{.Profile}} · pool {{.OriginPool}} · {{.Provider}}</span>
+              </div>
+              {{end}}
+            </div>
+            {{else}}
+            <div class="capacity-empty">No resources</div>
+            {{end}}
+          </div>
+        </details>
+      </td>
     </tr>
     {{end}}
   </tbody>
