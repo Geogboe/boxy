@@ -225,6 +225,44 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   and the driver itself normally runs on a remote agent, not the daemon
   that owns pool reconciliation).
 
+### PSRP Transport Dependency Fork (go-psrp / go-psrpcore)
+
+- `pkg/psdirect` (PowerShell Direct/HvSocket exec) depends on
+  `github.com/smnsjas/go-psrp` and `github.com/smnsjas/go-psrpcore`, two
+  third-party modules this project does not own. As of 2026-08-28 (#242),
+  `go.mod` `replace`s both to public forks under `github.com/Geogboe/` —
+  **a deliberate decision, not a default response to every upstream bug.**
+  It was made specifically because #242, #244, and #257 all independently
+  traced into the same pair of hardcoded/unconfigurable spots in these two
+  modules with no tagged release to bump to (`go list -m -versions` on the
+  pinned `go-psrpcore` returns nothing — pseudo-versions only), making it a
+  shared, recurring blocker rather than a one-off. Forking took on real
+  ongoing maintenance burden (merging upstream fixes, owning the diff) that
+  should not be repeated lightly for the next unrelated third-party
+  dependency issue — evaluate each such case on its own terms.
+- The fork commits are minimal and isolated per fix, based directly on the
+  exact pinned commit/tag (not on either fork's own `main`, which has
+  diverged with unrelated upstream work not yet vetted for boxy's use) —
+  `go-psrpcore`'s `fix/242-configurable-idle-read-timeout` (merged to that
+  fork's `main`, since `main` there exactly matched the pinned commit) adds
+  `Adapter.SetIdleReadTimeout`, defaulting to the original hardcoded 30s so
+  every other caller sees unchanged behavior; `go-psrp`'s
+  `fix/242-disable-hvsocket-idle-cap` (kept off `main`, tagged
+  `v0.2.1-boxy242` instead, since that fork's `main` had moved past the
+  pinned `v0.2.0`) calls it with `0` (disabled) on the HvSocket backend, so
+  the idle cap defers entirely to the caller's own `ctx` deadline instead
+  of an unrelated fixed timeout. Neither fork commit is verifiable against
+  a live guest from this host — validated via each module's own unit
+  tests (new ones added alongside the fix) plus confirming the *pre-existing*
+  failures in `go-psrp`'s `./client` and `./hvsock` packages are identical
+  on the unmodified pinned tag, not introduced by the fork.
+- If re-forking or updating either fork: keep the diff scoped to one issue
+  at a time (don't bundle #244's `AddCommand`/`AddArgument` work into a
+  timeout fix, for example — see `pkg/psdirect.go`'s `escapeNativeArg` doc
+  comment for that separate, still-open gap), base new work on the exact
+  commit/tag boxy currently pins rather than either fork's own `main`, and
+  update `go.mod`'s `replace` pseudo-version/tag together with a note here.
+
 ### Guest Credentials
 
 - Guest bootstrap credentials and caller-facing credentials have different

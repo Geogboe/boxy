@@ -602,13 +602,16 @@ func TestFormatStreamValue_DropsNil(t *testing.T) {
 
 // --- operationTimeout / wrapKnownTransportError tests (#242) ---
 //
-// The 30s idle-read cap a caller actually hits (go-psrpcore's
-// outofproc.Adapter.Read) is a hardcoded literal in a pinned dependency with
-// no exposed configuration -- see #242's findings comment and the doc
-// comments on these two functions. What IS fixable here is: (1) cfg.Timeout
-// no longer overrides a real caller-supplied request deadline with a fixed
-// value, and (2) the error a caller sees when that unrelated cap fires names
-// what actually happened instead of leaking an opaque vendor error string.
+// The 30s idle-read cap a caller used to hit unconditionally (go-psrpcore's
+// outofproc.Adapter.Read) is now disabled for HvSocket via the forked
+// go-psrp/go-psrpcore dependencies this module uses (see go.mod's replace
+// directives and AGENTS.md's "PSRP Transport Dependency Fork" section) --
+// the cap defers entirely to ctx now. What's tested here is what's testable
+// from this package without a live guest: (1) cfg.Timeout derives from the
+// caller's real request deadline instead of a hardcoded value, and (2) the
+// error wrap for the (now defensive-only) known transport-error string
+// still names what happened instead of leaking an opaque vendor error, in
+// case that string is ever hit again (e.g. an unforked build).
 
 func TestOperationTimeout_UsesRemainingCtxDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
