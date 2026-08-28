@@ -224,6 +224,9 @@ boxy
 │   │                                                not fail the delete)
 │   │
 │   │   $ boxy sandbox delete sb-a1b2c3
+│   │     1/3 resource(s) destroyed
+│   │     2/3 resource(s) destroyed
+│   │     3/3 resource(s) destroyed
 │   │     deleted sandbox sb-a1b2c3
 │   │
 │   │   $ boxy sandbox delete sb-a1b2c3 --no-wait

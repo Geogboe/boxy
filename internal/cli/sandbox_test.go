@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -498,7 +499,7 @@ func TestWaitForSandboxDeleted_ReturnsNilOnNotFound(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	if err := waitForSandboxDeleted(context.Background(), defaultAPIClient(), srv.URL, "sb-1"); err != nil {
+	if err := waitForSandboxDeleted(context.Background(), io.Discard, defaultAPIClient(), srv.URL, model.Sandbox{ID: "sb-1"}); err != nil {
 		t.Fatalf("waitForSandboxDeleted: %v", err)
 	}
 }
@@ -513,7 +514,7 @@ func TestWaitForSandboxDeleted_ReturnsServerErrors(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	err := waitForSandboxDeleted(context.Background(), defaultAPIClient(), srv.URL, "sb-1")
+	err := waitForSandboxDeleted(context.Background(), io.Discard, defaultAPIClient(), srv.URL, model.Sandbox{ID: "sb-1"})
 	if err == nil {
 		t.Fatal("expected wait error")
 	}
@@ -533,7 +534,7 @@ func TestWaitForSandboxDeleted_InterruptedWhileSandboxStillExists(t *testing.T) 
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := waitForSandboxDeleted(ctx, defaultAPIClient(), srv.URL, "sb-1")
+	err := waitForSandboxDeleted(ctx, io.Discard, defaultAPIClient(), srv.URL, model.Sandbox{ID: "sb-1"})
 	if err == nil {
 		t.Fatal("expected interrupted wait error")
 	}
