@@ -3,13 +3,12 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/Geogboe/boxy/internal/credentials"
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -276,88 +275,35 @@ func TestRunOIDCLoginWeb_StoresExchangedKey(t *testing.T) {
 	}
 }
 
-// syncBuffer is a goroutine-safe io.Writer/String() buffer, for tests that
-// need to poll printed output from one goroutine while another goroutine
-// (loopbackOIDCLogin, here) is still writing to it.
-type syncBuffer struct {
-	mu  sync.Mutex
-	buf strings.Builder
-}
-
-func (s *syncBuffer) Write(p []byte) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.buf.Write(p)
-}
-
-func (s *syncBuffer) String() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.buf.String()
-}
-
 func TestLoopbackOIDCLogin_DuplicateCallbackDoesNotHang(t *testing.T) {
+	// Keep the fake browser synchronous so loopbackOIDCLogin cannot consume
+	// the first callback result until both callback requests have completed.
+	// That deterministically exercises the duplicate request while resultCh
+	// is full, without launching a real browser or relying on scheduling.
+	oldOpenBrowser := openBrowser
+	openBrowser = func(authURL string) error {
+		for hit := range 2 {
+			resp, err := http.Get(authURL) //nolint:gosec,noctx // test-only fake browser hitting a localhost-bound httptest server
+			if err != nil {
+				return fmt.Errorf("callback hit %d: %w", hit, err)
+			}
+			_ = resp.Body.Close()
+		}
+		return nil
+	}
+	t.Cleanup(func() { openBrowser = oldOpenBrowser })
+
 	provider := newFakeAuthCodeOIDCProvider(t)
 	oidcProvider, err := oidc.NewProvider(context.Background(), provider.URL())
 	if err != nil {
 		t.Fatalf("oidc.NewProvider: %v", err)
 	}
 
-	// A plain strings.Builder isn't safe for concurrent use: this test
-	// polls out.String() from the main goroutine while loopbackOIDCLogin
-	// writes to it from its own goroutine, so a synchronized writer is
-	// required (a bare *strings.Builder produced a real data race here,
-	// caught by `go test -race`).
-	out := &syncBuffer{}
-	type loginResult struct {
-		token string
-		err   error
+	token, err := loopbackOIDCLogin(context.Background(), oidcProvider, "boxy-cli", &strings.Builder{})
+	if err != nil {
+		t.Fatalf("loopbackOIDCLogin: %v", err)
 	}
-	resultCh := make(chan loginResult, 1)
-	go func() {
-		token, err := loopbackOIDCLogin(context.Background(), oidcProvider, "boxy-cli", out)
-		resultCh <- loginResult{token, err}
-	}()
-
-	var authURL string
-	deadline := time.Now().Add(5 * time.Second)
-	for authURL == "" && time.Now().Before(deadline) {
-		for line := range strings.SplitSeq(out.String(), "\n") {
-			if after, ok := strings.CutPrefix(line, "Open "); ok {
-				if fields := strings.Fields(after); len(fields) > 0 {
-					authURL = fields[0]
-				}
-			}
-		}
-		if authURL == "" {
-			time.Sleep(10 * time.Millisecond)
-		}
-	}
-	if authURL == "" {
-		t.Fatalf("did not see an authorization URL printed, out = %q", out.String())
-	}
-
-	// Simulate the callback being hit twice -- a browser refresh/retry --
-	// before consuming the result. A blocking channel send in the
-	// callback handler would hang the second request (and this test)
-	// until loopbackLoginTimeout.
-	for i := range 2 {
-		resp, err := http.Get(authURL) //nolint:gosec,noctx // test-only fake browser hitting a localhost-bound httptest server
-		if err != nil {
-			t.Fatalf("GET authURL (hit %d): %v", i, err)
-		}
-		_ = resp.Body.Close()
-	}
-
-	select {
-	case result := <-resultCh:
-		if result.err != nil {
-			t.Fatalf("loopbackOIDCLogin: %v", result.err)
-		}
-		if result.token != "test-id-token" {
-			t.Fatalf("token = %q, want test-id-token", result.token)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("loopbackOIDCLogin did not return after duplicate callback hits -- likely blocked on a channel send")
+	if token != "test-id-token" {
+		t.Fatalf("token = %q, want test-id-token", token)
 	}
 }
