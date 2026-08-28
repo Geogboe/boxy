@@ -347,6 +347,11 @@ pkg/
 
 Early development. See the GitHub issue tracker for design details on upcoming work — notably #124 (an open design discussion on reframing "sandbox" toward a job/scheduler model for long-running and interactive workloads).
 
+## Contributing
+
+Not yet open to outside code contributions — issues and questions are
+welcome though. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 [Apache License 2.0](LICENSE)
