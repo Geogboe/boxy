@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -79,33 +81,48 @@ func (s *Server) handleOIDCKeyExchange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	raw, hash, err := auth.GenerateAPIKey()
+	resp, err := s.mintPersonalAPIKey(r.Context(), "oidc:"+idToken.Subject, role, "cli-oidc-login", s.oidc.PersonalKeyMaxTTL)
 	if err != nil {
-		httpjson.Error(w, http.StatusInternalServerError, "failed to generate key")
+		httpjson.Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	httpjson.Write(w, http.StatusCreated, resp)
+}
+
+// mintPersonalAPIKey creates a self-service model.APIKeyKindPersonal key
+// tied to subject (the stable identity a resource's OwnerID resolves to --
+// see docs/superpowers/specs/2026-08-28-oidc-ui-and-cli-auth-design.md's
+// Decision 5), expiring after ttl. Shared by the CLI's device-code exchange
+// (handleOIDCKeyExchange) and the web UI's profile-page self-service button
+// (handleMintPersonalKey) -- both mint the same kind of key, just from a
+// different proof of identity (a verified ID token vs. an existing browser
+// session).
+func (s *Server) mintPersonalAPIKey(ctx context.Context, subject string, role model.APIKeyRole, name string, ttl time.Duration) (createAPIKeyResponse, error) {
+	raw, hash, err := auth.GenerateAPIKey()
+	if err != nil {
+		return createAPIKeyResponse{}, fmt.Errorf("failed to generate key: %w", err)
+	}
 	now := time.Now().UTC()
-	expiresAt := now.Add(s.oidc.PersonalKeyMaxTTL)
+	expiresAt := now.Add(ttl)
 	key := model.APIKey{
 		ID:        model.APIKeyID(uuid.NewString()),
 		Hash:      hash,
 		Role:      role,
-		Name:      "cli-oidc-login",
+		Name:      name,
 		CreatedAt: now,
 		ExpiresAt: &expiresAt,
 		Kind:      model.APIKeyKindPersonal,
-		Subject:   "oidc:" + idToken.Subject,
+		Subject:   subject,
 	}
-	if err := s.store.PutAPIKey(r.Context(), key); err != nil {
-		httpjson.Error(w, http.StatusInternalServerError, "failed to persist key")
-		return
+	if err := s.store.PutAPIKey(ctx, key); err != nil {
+		return createAPIKeyResponse{}, fmt.Errorf("failed to persist key: %w", err)
 	}
-	httpjson.Write(w, http.StatusCreated, createAPIKeyResponse{
+	return createAPIKeyResponse{
 		ID:        key.ID,
 		Key:       raw,
 		Name:      key.Name,
 		Role:      key.Role,
 		CreatedAt: key.CreatedAt,
 		ExpiresAt: key.ExpiresAt,
-	})
+	}, nil
 }

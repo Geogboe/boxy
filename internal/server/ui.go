@@ -36,6 +36,7 @@ type pageData struct {
 	Sandboxes     []sandboxView
 	Resources     []model.Resource
 	Agents        []agentView
+	Profile       profileData
 }
 
 // sandboxView is the dashboard's per-sandbox row, joining the sandbox record
@@ -103,12 +104,15 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	poolsTmpl := pageTemplate("pools.html")
 	sandboxesTmpl := pageTemplate("sandboxes.html")
 	agentsTmpl := pageTemplate("agents.html")
+	profileTmpl := pageTemplate("profile.html")
 
 	// Full-page routes.
 	mux.HandleFunc("GET /{$}", s.uiHandler(homeTmpl, "home", s.homeData))
 	mux.HandleFunc("GET /ui/pools", s.uiHandler(poolsTmpl, "pools", s.poolsData))
 	mux.HandleFunc("GET /ui/sandboxes", s.uiHandler(sandboxesTmpl, "sandboxes", s.sandboxesData))
 	mux.HandleFunc("GET /ui/agents", s.uiHandler(agentsTmpl, "agents", s.agentsData))
+	mux.HandleFunc("GET /ui/profile", s.uiHandler(profileTmpl, "profile", s.profileData))
+	mux.HandleFunc("POST /ui/profile/personal-key", s.handleMintPersonalKey(profileTmpl))
 
 	// HTMX fragment routes.
 	mux.HandleFunc("GET /ui/fragments/stats", s.fragmentHandler(homeTmpl, "stats_fragment", s.homeData))

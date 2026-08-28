@@ -1,0 +1,48 @@
+{{define "title"}}Boxy — Profile{{end}}
+
+{{define "content"}}
+<h1 class="page-title">Profile</h1>
+<div class="table-card profile-card">
+  <div class="table-card-header">
+    <div>Identity</div>
+  </div>
+  <div class="profile-fields">
+    <div class="profile-field">
+      <div class="detail-label">Signed in as</div>
+      <div>{{.Profile.Subject}}</div>
+    </div>
+    <div class="profile-field">
+      <div class="detail-label">Role</div>
+      <div>{{.Profile.Role}}</div>
+    </div>
+    <div class="profile-field">
+      <div class="detail-label">Sign-in method</div>
+      <div>{{.Profile.SignInMethod}}</div>
+    </div>
+  </div>
+</div>
+
+<div class="table-card profile-card">
+  <div class="table-card-header">
+    <div>Personal API keys</div>
+  </div>
+  <div class="profile-fields">
+    <p class="profile-help">
+      Generate a short-lived personal API key for CLI or script use, tied to
+      your own identity rather than an admin-issued shared key.
+    </p>
+    {{if .Profile.MintError}}<div class="error-banner">{{.Profile.MintError}}</div>{{end}}
+    {{if .Profile.MintedKey}}
+    <div class="key-reveal">
+      <div class="detail-label">New key — copy it now, it will not be shown again</div>
+      <code>{{.Profile.MintedKey}}</code>
+    </div>
+    {{end}}
+    <form class="profile-form" method="post" action="/ui/profile/personal-key">
+      <label for="key-name">Name (optional)</label>
+      <input type="text" id="key-name" name="name" placeholder="e.g. my-laptop">
+      <button type="submit">Generate personal API key</button>
+    </form>
+  </div>
+</div>
+{{end}}

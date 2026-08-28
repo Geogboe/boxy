@@ -41,6 +41,27 @@ func AuthedRequest(r *http.Request) *http.Request {
 	return r
 }
 
+// OIDCAuthedRequest seeds st with a valid model.SessionKindOIDC session for
+// subject/role and attaches its cookie to r -- for tests exercising
+// session-kind-dependent behavior (e.g. profile-page personal-key minting's
+// "oidc:<subject>" vs. "local:<username>" split) that AuthedRequest's fixed
+// local-admin session can't cover.
+func OIDCAuthedRequest(r *http.Request, st store.Store, subject string, role model.APIKeyRole) *http.Request {
+	const cookieValue = "test-oidc-session-cookie-value"
+	now := time.Now()
+	_ = st.PutSession(context.Background(), model.Session{
+		ID:        model.SessionID("test-oidc-session-" + subject),
+		Hash:      auth.HashSessionToken(cookieValue),
+		Kind:      model.SessionKindOIDC,
+		Subject:   subject,
+		Role:      role,
+		CreatedAt: now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: cookieValue})
+	return r
+}
+
 // NewTestMux creates a configured http.ServeMux for testing without starting a listener.
 func NewTestMux(st store.Store, sm *sandbox.Manager, uiEnabled bool, pm ...PoolMaintenance) *http.ServeMux {
 	var maintenance PoolMaintenance

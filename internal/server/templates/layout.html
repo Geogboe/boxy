@@ -19,7 +19,7 @@
       </ul>
       {{if .User}}
       <form class="sidebar-user" method="post" action="/logout">
-        <span>{{.User}}</span>
+        <a href="/ui/profile">{{.User}}</a>
         <button type="submit" class="link-button">Log out</button>
       </form>
       {{end}}

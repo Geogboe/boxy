@@ -33,6 +33,10 @@ type SessionStore interface {
 // share the same three-role vocabulary.
 type SessionPrincipal struct {
 	SessionID model.SessionID
+	// Kind identifies how this session was established, so callers (e.g.
+	// self-service personal-API-key minting) know which stable-identity
+	// prefix to use for the resulting key's Subject.
+	Kind model.SessionKind
 	// Subject is the session's underlying identity: the local admin
 	// username for a SessionKindLocalAdmin session, or the OIDC subject
 	// claim for a SessionKindOIDC session.
@@ -83,7 +87,7 @@ func AuthenticateSession(ctx context.Context, sessions SessionStore, raw string,
 		if !session.Role.Valid() || session.Expired(now) {
 			return SessionPrincipal{}, ErrInvalidSession
 		}
-		return SessionPrincipal{SessionID: session.ID, Subject: session.Subject, Role: session.Role}, nil
+		return SessionPrincipal{SessionID: session.ID, Kind: session.Kind, Subject: session.Subject, Role: session.Role}, nil
 	}
 	return SessionPrincipal{}, ErrInvalidSession
 }
