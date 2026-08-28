@@ -133,6 +133,7 @@ func runSandboxExec(ctx context.Context, opts sandboxExecOptions, id string, com
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	printCurlIfEnabled(ctx, client, req)
 	resp, err := client.Do(req) //nolint:gosec // endpoint comes from the user-selected Boxy server.
 	if err != nil {
 		return wrapConnError(err, req.URL.Host)

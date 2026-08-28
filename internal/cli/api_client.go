@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -75,6 +76,7 @@ func deleteJSON[T any](ctx context.Context, client *http.Client, url string) (T,
 func doJSON[T any](client *http.Client, req *http.Request) (T, error) {
 	var zero T
 
+	printCurlIfEnabled(req.Context(), client, req)
 	resp, err := client.Do(req) //nolint:gosec // CLI requests intentionally target the user-configured Boxy server.
 	if err != nil {
 		return zero, wrapConnError(err, req.URL.Host)
@@ -277,6 +279,131 @@ func execAPIClientForServer(server string) *http.Client {
 	client := apiClientForServer(server)
 	client.Timeout = 5 * time.Minute
 	return client
+}
+
+// printCurlContextKey is the context key carrying whether --print-curl was
+// set. It's threaded via context.Context rather than a package-level
+// variable or an opts struct because the request-building helpers in this
+// file (doJSON, doNoContent, and the two commands with hand-rolled
+// *http.Request call sites: sandbox_exec.go's --stream path and
+// status.go's checkHealth) are shared across every REST-backed command and
+// don't otherwise carry per-command opts; every one of them already accepts
+// or derives a context.Context, so this reuses a vehicle already present at
+// every call site instead of adding a new one.
+type printCurlContextKey struct{}
+
+// withPrintCurl returns ctx annotated with whether the current command
+// invocation should print the curl equivalent of each REST request it
+// makes. Set once, in root.go's PersistentPreRunE, from the --print-curl
+// flag.
+func withPrintCurl(ctx context.Context, enabled bool) context.Context {
+	if !enabled {
+		return ctx
+	}
+	return context.WithValue(ctx, printCurlContextKey{}, true)
+}
+
+func printCurlEnabled(ctx context.Context) bool {
+	enabled, _ := ctx.Value(printCurlContextKey{}).(bool)
+	return enabled
+}
+
+// printCurlIfEnabled writes a curl(1) command line equivalent to req to
+// stderr when --print-curl is set, mirroring setupLogging's existing
+// default of writing diagnostic/debug output to stderr rather than
+// interleaving it with a command's normal stdout output. It is a no-op
+// otherwise, and never returns an error -- printing the curl form is a
+// best-effort debugging aid, not something a command's success should ever
+// depend on or be blocked by.
+func printCurlIfEnabled(ctx context.Context, client *http.Client, req *http.Request) {
+	if !printCurlEnabled(ctx) {
+		return
+	}
+	line, err := buildCurlCommand(client, req)
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintln(os.Stderr, line)
+}
+
+// redactedAuthHeader is printed in place of a real bearer token. The
+// request object passed to buildCurlCommand is built before
+// bearerTransport.RoundTrip adds the real Authorization header (that
+// happens inside client.Do, after this function has already run), so the
+// live token is never actually in scope here -- but a placeholder is
+// printed anyway (rather than silently omitting the header) so the emitted
+// command visibly needs an Authorization header filled in, instead of
+// looking complete and then failing opaquely if copy-pasted as-is.
+const redactedAuthHeader = "Authorization: Bearer <REDACTED>"
+
+// buildCurlCommand renders req (and, for an authenticated client, a
+// redacted Authorization header) as a single curl(1) command line, quoted
+// for a POSIX shell. It intentionally does not attempt to reproduce this
+// CLI's TLS trust configuration (--cacert, --insecure) -- that comes from
+// data (a CA path, an --insecure flag) that reaches apiClientWithMaterial's
+// caller, not the constructed *http.Client itself, and reconstructing it
+// here would mean re-deriving it a second, easily-drifting way. A reader
+// who needs TLS flags can add -k or --cacert themselves; the value this
+// command is after is the method/URL/headers/body shape of the request.
+func buildCurlCommand(client *http.Client, req *http.Request) (string, error) {
+	var b strings.Builder
+	b.WriteString("curl -X ")
+	b.WriteString(req.Method)
+	b.WriteString(" ")
+	b.WriteString(shellQuote(req.URL.String()))
+
+	headerNames := make([]string, 0, len(req.Header))
+	for name := range req.Header {
+		headerNames = append(headerNames, name)
+	}
+	sort.Strings(headerNames)
+	for _, name := range headerNames {
+		for _, value := range req.Header[name] {
+			b.WriteString(" -H ")
+			b.WriteString(shellQuote(name + ": " + value))
+		}
+	}
+	if isBearerAuthenticated(client) {
+		b.WriteString(" -H ")
+		b.WriteString(shellQuote(redactedAuthHeader))
+	}
+
+	if req.GetBody != nil {
+		rc, err := req.GetBody()
+		if err != nil {
+			return "", fmt.Errorf("read request body for curl equivalent: %w", err)
+		}
+		data, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			return "", fmt.Errorf("read request body for curl equivalent: %w", err)
+		}
+		if len(data) > 0 {
+			b.WriteString(" --data ")
+			b.WriteString(shellQuote(string(data)))
+		}
+	}
+
+	return b.String(), nil
+}
+
+// isBearerAuthenticated reports whether client sends requests through
+// bearerTransport, i.e. whether the real (unprinted) request will carry an
+// Authorization header.
+func isBearerAuthenticated(client *http.Client) bool {
+	if client == nil {
+		return false
+	}
+	_, ok := client.Transport.(bearerTransport)
+	return ok
+}
+
+// shellQuote wraps s in single quotes for a POSIX shell. Each embedded
+// single quote is escaped using the standard idiom: close the quoted
+// string, emit a backslash-escaped literal quote, then reopen the quoted
+// string (see the ReplaceAll call below for the literal replacement).
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func execAPIClient() *http.Client {

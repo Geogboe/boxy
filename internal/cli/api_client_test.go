@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -249,4 +250,119 @@ func TestExecAPIClientHasABoundedTimeout(t *testing.T) {
 	if execAPIClient().Timeout < 5*time.Minute {
 		t.Fatalf("exec client timeout = %v, want at least 5m to match the server's maxExecTimeout", execAPIClient().Timeout)
 	}
+}
+
+// --- --print-curl tests (#237) ---
+
+func TestWithPrintCurl_RoundTripsThroughContext(t *testing.T) {
+	ctx := context.Background()
+	if printCurlEnabled(ctx) {
+		t.Fatal("expected disabled by default")
+	}
+	if got := printCurlEnabled(withPrintCurl(ctx, false)); got {
+		t.Error("withPrintCurl(ctx, false) should not enable it")
+	}
+	if got := printCurlEnabled(withPrintCurl(ctx, true)); !got {
+		t.Error("withPrintCurl(ctx, true) should enable it")
+	}
+}
+
+func TestShellQuote_EscapesEmbeddedSingleQuotes(t *testing.T) {
+	got := shellQuote(`it's a "test"`)
+	want := `'it'\''s a "test"'`
+	if got != want {
+		t.Errorf("shellQuote = %q, want %q", got, want)
+	}
+}
+
+func TestBuildCurlCommand_MethodURLAndHeaders(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "https://example.invalid/api/v1/sandboxes", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	got, err := buildCurlCommand(&http.Client{}, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "curl -X GET 'https://example.invalid/api/v1/sandboxes' -H 'Accept: application/json'"
+	if got != want {
+		t.Errorf("buildCurlCommand = %q, want %q", got, want)
+	}
+}
+
+func TestBuildCurlCommand_IncludesBodyAsData(t *testing.T) {
+	req, err := http.NewRequest(http.MethodPost, "https://example.invalid/api/v1/sandboxes", strings.NewReader(`{"name":"test"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	got, err := buildCurlCommand(&http.Client{}, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `curl -X POST 'https://example.invalid/api/v1/sandboxes' -H 'Content-Type: application/json' --data '{"name":"test"}'`
+	if got != want {
+		t.Errorf("buildCurlCommand = %q, want %q", got, want)
+	}
+}
+
+func TestBuildCurlCommand_NoBodyOmitsData(t *testing.T) {
+	req, err := http.NewRequest(http.MethodDelete, "https://example.invalid/api/v1/sandboxes/abc", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := buildCurlCommand(&http.Client{}, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "--data") {
+		t.Errorf("buildCurlCommand = %q, want no --data for a bodyless request", got)
+	}
+}
+
+func TestBuildCurlCommand_RedactsBearerAuthWithoutLeakingTheRealToken(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "https://example.invalid/api/v1/sandboxes", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: bearerTransport{key: "super-secret-key"}}
+
+	got, err := buildCurlCommand(client, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "super-secret-key") {
+		t.Fatalf("buildCurlCommand leaked the real bearer token: %q", got)
+	}
+	if !strings.Contains(got, redactedAuthHeader) {
+		t.Errorf("buildCurlCommand = %q, want it to include a redacted Authorization placeholder", got)
+	}
+}
+
+func TestBuildCurlCommand_UnauthenticatedClientOmitsAuthHeader(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "https://example.invalid/api/v1/sandboxes", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := buildCurlCommand(&http.Client{}, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "Authorization") {
+		t.Errorf("buildCurlCommand = %q, want no Authorization header for an unauthenticated client", got)
+	}
+}
+
+func TestPrintCurlIfEnabled_NoopWhenDisabled(t *testing.T) {
+	// Documents the contract via the disabled-context path: this must not
+	// panic or attempt to read a nil/consumed body when print-curl is off,
+	// since it runs unconditionally at every request call site.
+	req, err := http.NewRequest(http.MethodPost, "https://example.invalid/api/v1/sandboxes", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	printCurlIfEnabled(context.Background(), &http.Client{}, req)
 }

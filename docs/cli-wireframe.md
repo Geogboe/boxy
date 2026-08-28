@@ -476,6 +476,9 @@ boxy
 Global flags (on root command):
   --log-level debug|info|warn|error              (default info)
   --log-file <path>                              Write structured logs to file
+  --print-curl                                   Print the curl(1) equivalent of each REST
+                                                  request this command makes to stderr
+                                                  (Authorization is redacted; see #237)
 
 Bundled skill notes:
   - Canonical skill copy lives at ~/.config/boxy/skills/boxy-cli on all platforms.
@@ -487,4 +490,5 @@ Output conventions:
   - Human-friendly text by default -> stdout
   - Structured slog logs -> stderr (or --log-file)
   - Errors -> stderr
+  - --print-curl lines -> stderr (alongside structured logs, not stdout)
 ```
