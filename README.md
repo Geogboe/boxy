@@ -373,4 +373,8 @@ welcome though. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-[Apache License 2.0](LICENSE)
+Copyright (c) 2026 Geogboe. Licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0).
+
+AGPL-3.0 permits personal, internal, and commercial use freely. If you modify Boxy and let users interact with the modified version over a network — including running it as an internal tool, not just as public-facing SaaS — you must make that modified source available to those users. See the [full license text](LICENSE) for the exact terms.
+
+Boxy was previously licensed under Apache 2.0; the relicense to AGPL-3.0 took effect 2026-08-28 (see [ADR-0015](docs/adr/0015-agpl-3.0-relicense.md)). No external contributors existed at the time of the change.
