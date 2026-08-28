@@ -114,6 +114,33 @@ func TestKeyringStoreGuestCredentialRoundTripUsesSeparateNamespace(t *testing.T)
 	}
 }
 
+func TestKeyringStoreDeleteGuestCredential(t *testing.T) {
+	backend := &fakeBackend{values: make(map[string]string)}
+	store := NewWithBackend("boxy", backend)
+	credential := providersdk.GuestCredential{Kind: "password", Data: json.RawMessage(`{"password":"${BOXY_TEST_PASSWORD}"}`)}
+	if err := store.SetGuestCredential("https://boxy.example:9090", "sb-1", "res-1", credential); err != nil {
+		t.Fatalf("SetGuestCredential: %v", err)
+	}
+
+	if err := store.DeleteGuestCredential("https://boxy.example:9090", "sb-1", "res-1"); err != nil {
+		t.Fatalf("DeleteGuestCredential: %v", err)
+	}
+	if _, err := store.GetGuestCredential("https://boxy.example:9090", "sb-1", "res-1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetGuestCredential after delete = %v, want ErrNotFound", err)
+	}
+}
+
+// TestKeyringStoreDeleteGuestCredential_MissingIsNoop guards the exact
+// scenario sandbox delete relies on: most sandboxes are never created with
+// --save-guest-cred, so cleanup must not fail just because there was never
+// anything to remove.
+func TestKeyringStoreDeleteGuestCredential_MissingIsNoop(t *testing.T) {
+	store := NewWithBackend("boxy", &fakeBackend{values: make(map[string]string)})
+	if err := store.DeleteGuestCredential("https://boxy.example:9090", "sb-1", "res-1"); err != nil {
+		t.Fatalf("DeleteGuestCredential on missing entry: %v", err)
+	}
+}
+
 func TestKeyringStoreGuestCredentialRejectsMissingIDs(t *testing.T) {
 	store := NewWithBackend("boxy", &fakeBackend{values: make(map[string]string)})
 	credential := providersdk.GuestCredential{Kind: "password", Data: json.RawMessage(`{"password":"secret"}`)}
