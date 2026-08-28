@@ -2,9 +2,11 @@ package psdirect
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	psrpclient "github.com/smnsjas/go-psrp/client"
 	"github.com/smnsjas/go-psrpcore/serialization"
@@ -595,5 +597,72 @@ func TestFormatStreamValue_DropsNil(t *testing.T) {
 	_, drop := formatStreamValue(nil)
 	if !drop {
 		t.Error("expected nil to be dropped")
+	}
+}
+
+// --- operationTimeout / wrapKnownTransportError tests (#242) ---
+//
+// The 30s idle-read cap a caller actually hits (go-psrpcore's
+// outofproc.Adapter.Read) is a hardcoded literal in a pinned dependency with
+// no exposed configuration -- see #242's findings comment and the doc
+// comments on these two functions. What IS fixable here is: (1) cfg.Timeout
+// no longer overrides a real caller-supplied request deadline with a fixed
+// value, and (2) the error a caller sees when that unrelated cap fires names
+// what actually happened instead of leaking an opaque vendor error string.
+
+func TestOperationTimeout_UsesRemainingCtxDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	got := operationTimeout(ctx)
+	if got <= 0 || got > 90*time.Second {
+		t.Fatalf("operationTimeout = %v, want a positive duration <= 90s", got)
+	}
+	if got < 80*time.Second {
+		t.Errorf("operationTimeout = %v, want close to the 90s deadline (test overhead aside)", got)
+	}
+}
+
+func TestOperationTimeout_FallsBackWithoutDeadline(t *testing.T) {
+	got := operationTimeout(context.Background())
+	if got != defaultOperationTimeout {
+		t.Errorf("operationTimeout = %v, want fallback %v", got, defaultOperationTimeout)
+	}
+}
+
+func TestOperationTimeout_FallsBackWhenDeadlineAlreadyPassed(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	got := operationTimeout(ctx)
+	if got != defaultOperationTimeout {
+		t.Errorf("operationTimeout = %v, want fallback %v for an already-expired deadline", got, defaultOperationTimeout)
+	}
+}
+
+func TestWrapKnownTransportError_ExplainsFixedIdleCap(t *testing.T) {
+	original := fmt.Errorf("runspace pool broken: read fragment header: read timeout: no data received in 30s")
+	wrapped := wrapKnownTransportError(original)
+	if wrapped == original { //nolint:errorlint // intentional identity check: must be a new wrapping error
+		t.Fatal("expected wrapKnownTransportError to wrap a known transport error")
+	}
+	if !strings.Contains(wrapped.Error(), "independent of --timeout") {
+		t.Errorf("wrapped error = %q, want it to explain the cap is independent of --timeout", wrapped.Error())
+	}
+	if !errors.Is(wrapped, original) {
+		t.Error("expected wrapped error to still satisfy errors.Is against the original")
+	}
+}
+
+func TestWrapKnownTransportError_PassesThroughOtherErrors(t *testing.T) {
+	original := fmt.Errorf("connection refused")
+	if got := wrapKnownTransportError(original); got != original { //nolint:errorlint // intentional identity check
+		t.Errorf("wrapKnownTransportError modified an unrelated error: got %q", got.Error())
+	}
+}
+
+func TestWrapKnownTransportError_NilPassesThrough(t *testing.T) {
+	if got := wrapKnownTransportError(nil); got != nil {
+		t.Errorf("wrapKnownTransportError(nil) = %v, want nil", got)
 	}
 }
