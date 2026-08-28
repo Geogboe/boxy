@@ -1,6 +1,7 @@
 # Design: OIDC authentication for the web UI and CLI
 
-Status: Draft — pending owner review before implementation
+Status: Accepted for implementation — the three open questions below were
+resolved by the owner on 2026-08-28 (see Decisions update at the end).
 Date: 2026-08-28
 Tracks: #172
 
@@ -50,30 +51,45 @@ the web UI, and using the profile UI to set up an API key.
 - Fine-grained per-resource RBAC beyond the existing three roles — this is
   purely about *how a principal gets established*, not a new authorization
   model.
-- Loopback-redirect CLI flow (see Decision 5) — tracked as a possible
-  follow-up, not built in v1 unless the owner picks it over device-code.
 
 ## Decisions
 
-### 1. UI auth posture
+### 1. UI auth posture — the UI always requires login; a bootstrapped local admin covers the no-OIDC case
 
-When `server.oidc` is configured: the web UI requires a valid session for
-every route except `/login`, the OIDC callback route, and static assets.
-Missing or invalid session redirects to `/login`.
+**Decided (superseding the original two options below — see Decisions
+update):** the web UI requires a valid session for every route except
+`/login`, the OIDC callback route (when configured), and static assets,
+**regardless of whether `server.oidc` is configured**. There is no "open
+dashboard" mode any more.
 
-When `server.oidc` is **not** configured: preserve exactly today's
-behavior — UI stays open, admin-equivalent fallback, unchanged. This
-mirrors the existing `ServerSpec.Secrets` pattern (`SecretSpec.Validate`'s
-comment: "intentionally not defaulted so deployment posture is explicit")
-rather than introducing a new implicit default.
+When `server.oidc` is configured, `/login` offers OIDC. When it is not
+configured (or in addition to it), `/login` accepts a **bootstrapped local
+admin account**: on first `boxy serve` startup with no local-admin account
+yet provisioned, the daemon generates one (random username or a fixed
+`admin`, random password), persists only its hash (same treatment as API
+keys — raw value never written to config/state/logs), and the raw
+password is retrievable exactly once via a CLI command (e.g. `boxy admin
+show-bootstrap-password`, reading from the daemon's own local state the
+same way the loopback API-key bootstrap endpoint already works today).
+This is the same idiom as Jenkins' `initialAdminPassword` file or
+Rancher's generated bootstrap password — a known, standard pattern for
+"there must always be a way in, even with zero external IdP configured."
 
-**Residual gap, deliberately not closed by this design:** an operator who
-sets `authRequired: true` for the API but never configures OIDC still gets
-an open, unauthenticated UI — auth on the API and auth on the UI remain
-independently configured. Closing that (e.g., disabling the UI entirely
-unless OIDC is configured or `--insecure` is passed) is a real option but
-changes behavior for any existing deployment relying on today's open UI
-with API auth on; call it out to the owner rather than deciding it here.
+This closes the gap the original two options both left open in different
+ways: unlike "stay open when unconfigured," there is no unauthenticated UI
+state ever; unlike "require auth only when `authRequired` is true," the UI
+is consistently behind login independent of the API's own
+`authRequired`/OIDC configuration, so the UI's security posture isn't a
+second, easily-forgotten toggle.
+
+Original two options considered (superseded, kept for history — see the
+original open question in the pre-decision revision of this file if
+needed): (1) UI stays open exactly as today unless OIDC is configured
+(mirrors the `ServerSpec.Secrets` "not defaulted" pattern), (2) UI
+requires *something* whenever `authRequired: true`, OIDC or not. The
+bootstrapped-local-admin approach subsumes both: it's stricter than (1)
+and doesn't couple UI auth to the API's own `authRequired` flag the way
+(2) did.
 
 Implementation note: whatever session middleware is added must not change
 `principalFromRequest`'s existing unauthenticated-admin fallback used by
@@ -152,50 +168,51 @@ type APIKey struct {
 - Admin-created keys via the existing `POST /api/v1/api-keys` stay
   `Kind: service`, `Subject: ""` — completely unaffected.
 
-### 5. `Sandbox.OwnerID` identity stability — flagged for owner decision
+### 5. `Sandbox.OwnerID` identity stability — decided: (a)
 
 `Sandbox.OwnerID` is set from `principal.KeyID` today (ADR-0007). A
 personal key is short-lived by design (12h default) and will be re-minted
-regularly — if `OwnerID` stays `KeyID`, a user's sandboxes from yesterday's
-key become invisible to them under `authorizeSandbox`'s
+regularly — if `OwnerID` stayed `KeyID`, a user's sandboxes from
+yesterday's key would become invisible to them under `authorizeSandbox`'s
 `sb.OwnerID == string(principal.KeyID)` check, even though the same human
 is asking.
 
-Two options, **not decided by this document**:
+**Decided:** option (a) — for personal keys, `OwnerID` is set to a stable
+subject identity (`"oidc:<subject>"`) instead of the ephemeral `KeyID`;
+service keys keep `OwnerID = KeyID` exactly as today (no stable human
+identity exists to fall back to for those). `authorizeSandbox`'s ownership
+check needs to compare against the *resolved owner identity* for the
+current principal (subject for personal-key principals, KeyID for
+service-key principals), not `principal.KeyID` unconditionally.
 
-- **(a)** For personal keys, set `OwnerID` to a stable subject identity
-  (e.g. `"oidc:<subject>"`) instead of the ephemeral `KeyID`; service keys
-  keep `OwnerID = KeyID` exactly as today (no stable human identity exists
-  to fall back to for those).
-- **(b)** Leave `OwnerID = KeyID` unconditionally; accept that self-service
-  key rotation makes a user's own past sandboxes admin/auditor-visible
-  only, not visible to that user via their own new key.
-
-(a) is recommended — this is a real, currently-shipped ownership field and
-changing its semantics deserves explicit sign-off rather than a
-judgment call buried in an implementation PR.
-
-### 6. CLI OIDC flow — flagged for owner decision
+### 6. CLI OIDC flow — decided: device-code by default, `--web` opts into loopback-redirect
 
 Two standard shapes, with a real discriminator specific to Boxy's actual
 deployment shape:
 
-- **Loopback-redirect** (`gh auth login`-style): CLI spins up a local
-  `127.0.0.1:<port>` HTTP server, opens the system browser to the IdP,
-  captures the redirect. Requires a browser co-located with the CLI
-  process on the same network-local host.
 - **Device-code grant** (RFC 8628): CLI prints a URL + short code, user
   opens it on *any* device, CLI polls the token endpoint. Works headless —
   no local browser required — but needs the IdP to support the device
   grant (Keycloak does; some SaaS IdPs restrict it to specific client
   registrations).
+- **Loopback-redirect** (`gh auth login`-style): CLI spins up a local
+  `127.0.0.1:<port>` HTTP server, opens the system browser to the IdP,
+  captures the redirect. Requires a browser co-located with the CLI
+  process on the same network-local host.
 
 Boxy agents commonly run on remote or headless Windows Hyper-V hosts
 reached over SSH/RDP with no locally-reachable browser at `127.0.0.1` from
 the CLI's own perspective — loopback-redirect breaks in exactly that shape.
-**Recommendation: device-code as the primary/only v1 CLI flow.**
-Loopback-redirect is left as a possible follow-up for interactive-desktop
-use, not built now (see Non-goals).
+
+**Decided:** `boxy login --oidc` defaults to device-code (works
+everywhere, including headless/remote). An explicit `--web` flag switches
+to loopback-redirect and attempts to auto-launch the system browser
+(`os/exec` invoking the platform-specific `open`/`xdg-open`/`start`
+equivalent — Go's stdlib has no "open URL in browser," so this needs a
+small per-OS helper, kept internal rather than pulled in as a dependency
+for something this small). Both flows share the same
+token-exchange/session-minting backend; only the authorization step
+differs.
 
 ### 7. Local integration testing: Keycloak in Docker Compose
 
@@ -221,7 +238,15 @@ examples independently.
   is needed, sized like the existing `APIKey` store methods.
 - `internal/server` needs new routes (`/login`, `/auth/callback`,
   `/logout`, a profile page/partial) and session middleware wrapping
-  `registerUIRoutes`'s mux only when `server.oidc` is configured.
+  `registerUIRoutes`'s mux unconditionally now (Decision 1) — not gated on
+  `server.oidc` being configured, since the bootstrapped local-admin path
+  must work with no OIDC set up at all.
+- A local-admin account record (username + password hash, persisted like
+  an `APIKey`) plus a bootstrap mechanism that provisions it once on first
+  startup and a CLI command (`boxy admin show-bootstrap-password` or
+  similar) to retrieve the raw password exactly once — same "hash
+  persisted, raw value shown once" discipline as the existing API-key
+  bootstrap endpoint.
 - New dependency: an OIDC/OAuth2 client library. `golang.org/x/oauth2` +
   `github.com/coreos/go-oidc/v3` are the standard, well-maintained choice
   (matches the project's dependency philosophy — reputable, well
@@ -236,17 +261,28 @@ examples independently.
 
 ## Open questions for the owner (before implementation starts)
 
-1. **UI-open-when-unconfigured posture** (Decision 1) — acceptable as a
-   standing gap, or should `authRequired: true` alone start requiring
-   *something* for the UI even without OIDC configured?
-2. **`Sandbox.OwnerID` identity stability** (Decision 5) — option (a)
-   [stable subject for personal keys] vs (b) [always `KeyID`, accept the
-   visibility gap].
-3. **CLI flow** (Decision 6) — device-code as recommended, or is
-   loopback-redirect (or both) wanted in v1 after all?
+All three resolved — see Decisions update below. None remain blocking.
 
 ## Follow-ups (not in this design)
 
 - Multiple simultaneous OIDC providers.
-- Loopback-redirect CLI flow, if device-code alone proves insufficient.
 - Fine-grained RBAC beyond the three existing roles.
+
+## Decisions update — 2026-08-28
+
+Owner resolved all three open questions in the same scoping conversation
+that produced this document:
+
+1. **UI posture**: neither original option — the UI now always requires
+   login (OIDC when configured, a bootstrapped local-admin account
+   otherwise), rather than staying open when unconfigured. See the
+   rewritten Decision 1.
+2. **`Sandbox.OwnerID`**: option (a), stable subject identity for personal
+   keys. See the rewritten Decision 5.
+3. **CLI flow**: device-code by default; `--web` opts into
+   loopback-redirect with browser auto-launch. See the rewritten
+   Decision 6 (this also removed loopback-redirect from Non-goals/
+   Follow-ups — it's in scope now, just not the default).
+
+Status moved from "Draft — pending owner review" to "Accepted for
+implementation."

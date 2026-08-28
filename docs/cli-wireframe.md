@@ -135,13 +135,21 @@ boxy
 │   ├── --ca-cert <path>                         Trust a Boxy self-signed CA
 │   ├── --insecure                               Skip HTTPS verification (development only)
 │   │
-│   └── api-key
-│       ├── bootstrap [--name <name>]             First local administrator key; shown once
-│       ├── create --role user|auditor|admin      Create a key; shown once
-│       │   ├── --name <name>
-│       │   └── --expires <duration>
-│       ├── list                                  List key metadata, never raw keys
-│       └── revoke <id>                            Revoke a key
+│   ├── api-key
+│   │   ├── bootstrap [--name <name>]             First local administrator key; shown once
+│   │   ├── create --role user|auditor|admin      Create a key; shown once
+│   │   │   ├── --name <name>
+│   │   │   └── --expires <duration>
+│   │   ├── list                                  List key metadata, never raw keys
+│   │   └── revoke <id>                            Revoke a key
+│   │
+│   └── bootstrap-password                        Show/clear the one-time web-UI local admin password
+│       └── --config <path>                         Must match the config `boxy serve` was started with
+│
+│       $ boxy admin bootstrap-password
+│         username: admin
+│         password: <one-time generated password>
+│         This password will not be shown again.
 │
 │
 ├── config                                      (alias: cfg)

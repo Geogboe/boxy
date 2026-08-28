@@ -31,6 +31,8 @@ type diskState struct {
 	Sandboxes              map[model.SandboxID]model.Sandbox                    `json:"sandboxes"`
 	AgentTokens            map[model.AgentTokenID]model.AgentRegistrationToken  `json:"agent_tokens"`
 	APIKeys                map[model.APIKeyID]model.APIKey                      `json:"api_keys"`
+	Sessions               map[model.SessionID]model.Session                    `json:"sessions"`
+	LocalAdmin             *model.LocalAdminAccount                             `json:"local_admin,omitempty"`
 	RevokedAgentIdentities map[model.AgentIdentityID]model.RevokedAgentIdentity `json:"revoked_agent_identities"`
 	AgentIdentities        map[string]model.AgentIdentity                       `json:"agent_identities"`
 	Events                 map[string]lifecycle.Record                          `json:"lifecycle_events"`
@@ -49,6 +51,7 @@ func NewDiskStore(path string) (*DiskStore, error) {
 			Sandboxes:              make(map[model.SandboxID]model.Sandbox),
 			AgentTokens:            make(map[model.AgentTokenID]model.AgentRegistrationToken),
 			APIKeys:                make(map[model.APIKeyID]model.APIKey),
+			Sessions:               make(map[model.SessionID]model.Session),
 			RevokedAgentIdentities: make(map[model.AgentIdentityID]model.RevokedAgentIdentity),
 			AgentIdentities:        make(map[string]model.AgentIdentity),
 			Events:                 make(map[string]lifecycle.Record),
@@ -95,6 +98,9 @@ func (s *DiskStore) load() error {
 	}
 	if st.APIKeys == nil {
 		st.APIKeys = make(map[model.APIKeyID]model.APIKey)
+	}
+	if st.Sessions == nil {
+		st.Sessions = make(map[model.SessionID]model.Session)
 	}
 	if st.RevokedAgentIdentities == nil {
 		st.RevokedAgentIdentities = make(map[model.AgentIdentityID]model.RevokedAgentIdentity)
@@ -394,6 +400,71 @@ func (s *DiskStore) ListAPIKeys(_ context.Context) ([]model.APIKey, error) {
 		out = append(out, key)
 	}
 	return out, nil
+}
+
+func (s *DiskStore) GetSession(_ context.Context, id model.SessionID) (model.Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.data.Sessions[id]
+	if !ok {
+		return model.Session{}, ErrNotFound
+	}
+	return session, nil
+}
+
+func (s *DiskStore) PutSession(_ context.Context, session model.Session) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if session.ID == "" {
+		return fmt.Errorf("session id is required")
+	}
+	if session.Hash == "" {
+		return fmt.Errorf("session hash is required")
+	}
+	s.data.Sessions[session.ID] = session
+	return s.persistLocked()
+}
+
+func (s *DiskStore) DeleteSession(_ context.Context, id model.SessionID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.data.Sessions[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.data.Sessions, id)
+	return s.persistLocked()
+}
+
+func (s *DiskStore) ListSessions(_ context.Context) ([]model.Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]model.Session, 0, len(s.data.Sessions))
+	for _, session := range s.data.Sessions {
+		out = append(out, session)
+	}
+	return out, nil
+}
+
+func (s *DiskStore) GetLocalAdmin(_ context.Context) (model.LocalAdminAccount, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.data.LocalAdmin == nil {
+		return model.LocalAdminAccount{}, ErrNotFound
+	}
+	return *s.data.LocalAdmin, nil
+}
+
+func (s *DiskStore) PutLocalAdmin(_ context.Context, account model.LocalAdminAccount) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if account.Username == "" {
+		return fmt.Errorf("local admin username is required")
+	}
+	if account.PasswordHash == "" {
+		return fmt.Errorf("local admin password hash is required")
+	}
+	s.data.LocalAdmin = &account
+	return s.persistLocked()
 }
 
 func (s *DiskStore) PutRevokedAgentIdentity(_ context.Context, rev model.RevokedAgentIdentity) error {

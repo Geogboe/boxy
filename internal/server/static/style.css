@@ -371,3 +371,79 @@ tbody tr:hover {
   color: var(--text-muted);
   font-size: 0.875rem;
 }
+
+/* Login page (unauthenticated — no sidebar shell) */
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  width: 100%;
+  max-width: 320px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 1.5rem;
+}
+
+.login-form label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.login-form input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  color: var(--text);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.9rem;
+}
+
+.login-form button {
+  margin-top: 0.5rem;
+  background: var(--accent);
+  border: none;
+  border-radius: 0.375rem;
+  color: #0f1117;
+  font-weight: 600;
+  padding: 0.6rem;
+  cursor: pointer;
+}
+
+.login-form button:hover {
+  background: var(--accent-hover);
+}
+
+/* Sidebar user/logout footer */
+.sidebar-user {
+  margin-top: 1.5rem;
+  padding: 1rem 1.25rem 0;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.link-button {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding: 0;
+}
+
+.link-button:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
