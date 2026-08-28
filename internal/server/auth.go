@@ -21,6 +21,17 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// Unlike bootstrap (loopback-only, exactly one use ever),
+		// oidc-exchange's security comes from requiring a cryptographically
+		// verified ID token as the credential -- verified inside the
+		// handler itself, not by this middleware. It must be reachable
+		// without an existing bearer key since minting one is the whole
+		// point (see docs/superpowers/specs/2026-08-28-oidc-ui-and-cli-
+		// auth-design.md's Decision 4).
+		if r.URL.Path == "/api/v1/api-keys/oidc-exchange" {
+			next.ServeHTTP(w, r)
+			return
+		}
 
 		const prefix = "Bearer "
 		header := r.Header.Get("Authorization")
@@ -73,7 +84,7 @@ func (s *Server) authorizeSandbox(w http.ResponseWriter, r *http.Request, sb mod
 		}
 		return true
 	case model.APIKeyRoleUser:
-		if !s.authRequired || sb.OwnerID == string(principal.KeyID) {
+		if !s.authRequired || sb.OwnerID == principal.OwnerIdentity() {
 			return true
 		}
 		httpjson.Error(w, http.StatusForbidden, "sandbox belongs to another API-key owner")

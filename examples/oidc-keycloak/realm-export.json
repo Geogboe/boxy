@@ -1,0 +1,140 @@
+{
+  "realm": "boxy",
+  "enabled": true,
+  "sslRequired": "none",
+  "clients": [
+    {
+      "clientId": "boxy",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "boxy-example-dev-secret-not-for-production",
+      "redirectUris": [
+        "http://localhost:9090/auth/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:9090"
+      ],
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "claim.name": "groups"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "boxy-cli",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "consentRequired": false,
+      "redirectUris": [
+        "http://127.0.0.1:*"
+      ],
+      "attributes": {
+        "oauth2.device.authorization.grant.enabled": "true",
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "claim.name": "groups"
+          }
+        }
+      ]
+    }
+  ],
+  "groups": [
+    {
+      "name": "boxy-admins"
+    },
+    {
+      "name": "boxy-auditors"
+    },
+    {
+      "name": "boxy-users"
+    }
+  ],
+  "users": [
+    {
+      "username": "admin-demo",
+      "enabled": true,
+      "email": "admin-demo@boxy.example.invalid",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "boxy-example-dev-password",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/boxy-admins"
+      ],
+      "requiredActions": [],
+      "firstName": "Admin",
+      "lastName": "Demo"
+    },
+    {
+      "username": "auditor-demo",
+      "enabled": true,
+      "email": "auditor-demo@boxy.example.invalid",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "boxy-example-dev-password",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/boxy-auditors"
+      ],
+      "requiredActions": [],
+      "firstName": "Auditor",
+      "lastName": "Demo"
+    },
+    {
+      "username": "user-demo",
+      "enabled": true,
+      "email": "user-demo@boxy.example.invalid",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "boxy-example-dev-password",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/boxy-users"
+      ],
+      "requiredActions": [],
+      "firstName": "User",
+      "lastName": "Demo"
+    }
+  ]
+}

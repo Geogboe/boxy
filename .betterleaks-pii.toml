@@ -59,7 +59,13 @@ filter.matchesAny(finding["secret"], [
 [[rules]]
 id = "boxy-pii-username"
 description = "Detected an uncontrolled username-like value in an identity field."
-regex = '''(?i)(?:^|[^a-z0-9])(?:username|user[_-]+name|login|account[_-]+name|guest[_-]+user|ssh[_-]+user)\b[ \t'"\x60]{0,3}(?:=>|:=|=|:)[ \t'"\x60]*(?:\$\{[^}\r\n]+\}|[a-z][a-z0-9._ -]{2,63})'''
+# Deliberately no ":=" alternative in the operator group (unlike the other
+# rules in this file): ":=" is Go's (and a few other languages') short
+# variable-declaration operator, not a data-serialization key/value
+# separator -- config/data formats (YAML, TOML, JSON, .env) use ":", "=",
+# or "=>". Including it here matched ordinary Go source like
+# `username := r.FormValue(...)` as if it were a literal identity value.
+regex = '''(?i)(?:^|[^a-z0-9])(?:username|user[_-]+name|login|account[_-]+name|guest[_-]+user|ssh[_-]+user)\b[ \t'"\x60]{0,3}(?:=>|=|:)[ \t'"\x60]*(?:\$\{[^}\r\n]+\}|[a-z][a-z0-9._ -]{2,63})'''
 keywords = ["username", "user_name", "login", "account", "guest_user", "ssh_user"]
 confidence = "medium"
 filter = '''

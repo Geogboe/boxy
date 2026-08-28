@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/Geogboe/rog v0.6.1
 	github.com/containerd/errdefs v1.0.0
+	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.6.0
 	github.com/google/uuid v1.6.0
@@ -15,6 +16,7 @@ require (
 	github.com/spf13/cobra v1.10.1
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/crypto v0.50.0
+	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sync v0.20.0
 	golang.org/x/sys v0.43.0
 	golang.org/x/term v0.42.0
@@ -41,6 +43,7 @@ require (
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-crypt/x v0.4.10 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-krb5/krb5 v0.0.0-20251226122733-d0288459fc25 // indirect
 	github.com/go-krb5/x v0.3.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
@@ -70,3 +73,14 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
 	gotest.tools/v3 v3.5.2 // indirect
 )
+
+// Forked from upstream to fix #242 (sandbox exec --timeout ignored: PSRP's
+// outofproc.Adapter.Read hardcoded a 30s idle-read cap with no config knob
+// and no tagged upstream release to bump to). go-psrpcore's fork adds
+// Adapter.SetIdleReadTimeout; go-psrp's fork calls it to disable the cap on
+// the HvSocket backend, deferring to the caller's own ctx deadline instead.
+// See AGENTS.md's Architectural Notes for the full trace and the fork-vs-
+// upstream decision. Revisit if/when either fix lands upstream.
+replace github.com/smnsjas/go-psrpcore => github.com/Geogboe/go-psrpcore v0.0.0-20260828053523-50f4720fbe2b
+
+replace github.com/smnsjas/go-psrp => github.com/Geogboe/go-psrp v0.2.1-boxy242

@@ -26,8 +26,23 @@ type APIKeyStore interface {
 
 // Principal identifies the API key that authenticated a request.
 type Principal struct {
-	KeyID model.APIKeyID
-	Role  model.APIKeyRole
+	KeyID   model.APIKeyID
+	Role    model.APIKeyRole
+	Kind    model.APIKeyKind
+	Subject string
+}
+
+// OwnerIdentity returns the stable identity to record as a resource's
+// owner (e.g. Sandbox.OwnerID): the OIDC subject for a personal key, so a
+// user's own resources stay visible to them across key rotation (personal
+// keys are short-lived by design), or the key ID itself for a service key,
+// which has no stable human identity to fall back to. See the OIDC design
+// spec's Decision 5.
+func (p Principal) OwnerIdentity() string {
+	if p.Kind == model.APIKeyKindPersonal && p.Subject != "" {
+		return p.Subject
+	}
+	return string(p.KeyID)
 }
 
 // GenerateAPIKey creates a raw API key and its SHA-256 hash. Only the caller
@@ -66,7 +81,7 @@ func Authenticate(ctx context.Context, keys APIKeyStore, raw string, now time.Ti
 		if !key.Role.Valid() || key.Revoked() || key.Expired(now) {
 			return Principal{}, ErrInvalidCredentials
 		}
-		return Principal{KeyID: key.ID, Role: key.Role}, nil
+		return Principal{KeyID: key.ID, Role: key.Role, Kind: key.EffectiveKind(), Subject: key.Subject}, nil
 	}
 	return Principal{}, ErrInvalidCredentials
 }

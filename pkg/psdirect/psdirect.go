@@ -65,7 +65,7 @@ func New(vmID, username, password string) *Exec {
 // Exec runs cmd with args on the Windows guest via PowerShell Direct (HvSocket).
 // Stdout is captured via Out-String; $LASTEXITCODE is returned as the exit code.
 func (e *Exec) Exec(ctx context.Context, cmd string, args ...string) (*vmsdk.ExecResult, error) {
-	executor, err := e.newExecutor()
+	executor, err := e.newExecutor(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("psdirect: create client for VM %s: %w", e.VMID, err)
 	}
@@ -79,7 +79,7 @@ func (e *Exec) Exec(ctx context.Context, cmd string, args ...string) (*vmsdk.Exe
 
 	result, err := executor.Execute(ctx, script)
 	if err != nil {
-		return nil, fmt.Errorf("psdirect: exec on VM %s: %w", e.VMID, err)
+		return nil, fmt.Errorf("psdirect: exec on VM %s: %w", e.VMID, wrapKnownTransportError(err))
 	}
 
 	stdout, exitCode := extractOutput(result.Output)
@@ -99,7 +99,7 @@ func (e *Exec) ExecStream(ctx context.Context, cmd string, args []string, sink e
 	if sink == nil {
 		return nil, fmt.Errorf("psdirect: stream sink is required")
 	}
-	executor, err := e.newExecutor()
+	executor, err := e.newExecutor(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("psdirect: create client for VM %s: %w", e.VMID, err)
 	}
@@ -160,7 +160,7 @@ func (e *Exec) ExecStream(ctx context.Context, cmd string, args []string, sink e
 		case item, ok := <-items:
 			if !ok {
 				if err := <-waitCh; err != nil {
-					return nil, fmt.Errorf("psdirect: stream on VM %s: %w", e.VMID, err)
+					return nil, fmt.Errorf("psdirect: stream on VM %s: %w", e.VMID, wrapKnownTransportError(err))
 				}
 				return &vmsdk.ExecResult{ExitCode: emitter.exitCode}, nil
 			}
@@ -248,7 +248,7 @@ func parseExitMarker(value interface{}) (int, bool) {
 }
 
 // newExecutor returns a psrpExecutor, using the injected factory if set.
-func (e *Exec) newExecutor() (psrpExecutor, error) {
+func (e *Exec) newExecutor(ctx context.Context) (psrpExecutor, error) {
 	if e.execFactory != nil {
 		return e.execFactory()
 	}
@@ -264,9 +264,61 @@ func (e *Exec) newExecutor() (psrpExecutor, error) {
 	cfg.Username = e.Username
 	cfg.Password = e.Password
 	cfg.Domain = domain
-	cfg.Timeout = 30 * time.Second
+	cfg.Timeout = operationTimeout(ctx)
 
 	return psrpclient.New("", cfg)
+}
+
+// defaultOperationTimeout is used when ctx carries no deadline. It matches
+// this package's previous hardcoded cfg.Timeout value, so a caller that
+// doesn't set a deadline sees unchanged behavior.
+const defaultOperationTimeout = 30 * time.Second
+
+// operationTimeout derives psrpclient.Config.Timeout (which bounds
+// operations such as runspace-slot semaphore acquisition, not the transport's
+// own idle-read cap -- see wrapKnownTransportError) from ctx's deadline, so a
+// caller's real request timeout (internal/server/api_exec.go's
+// context.WithTimeout, clamped to a 5m maximum) actually reaches the PSRP
+// client instead of being silently overridden by a fixed value. Boxy's own
+// entry points always set a deadline; the no-deadline fallback exists for
+// direct callers of this package (tests, future integrations) that don't.
+func operationTimeout(ctx context.Context) time.Duration {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return defaultOperationTimeout
+	}
+	if remaining := time.Until(deadline); remaining > 0 {
+		return remaining
+	}
+	return defaultOperationTimeout
+}
+
+// knownTransportErrSubstr identifies go-psrpcore's outofproc.Adapter.Read
+// idle-read error -- originally a hardcoded literal (30s of silence on the
+// wire, reset by any byte arriving) with no configuration knob, unrelated to
+// cfg.Timeout/operationTimeout above and unaffected by --timeout. As of the
+// go-psrp/go-psrpcore forks this module now depends on (go.mod's replace
+// directives, see AGENTS.md's "PSRP Transport Dependency Fork" section),
+// go-psrp's HvSocketBackend.Connect disables this cap entirely
+// (Adapter.SetIdleReadTimeout(0)) in favor of the real ctx deadline, so this
+// error should no longer actually occur on boxy's HvSocket path. This
+// detection is kept as a defensive fallback -- a stale build against the
+// unforked upstream, or a future adapter/backend path that doesn't disable
+// the cap -- so the message stays actionable if it's ever hit again, rather
+// than being removed and silently regressing to the opaque wrap below.
+const knownTransportErrSubstr = "read timeout: no data received in 30s"
+
+// wrapKnownTransportError adds an explanatory prefix when err is (or wraps)
+// go-psrpcore's fixed idle-read timeout, so the caller sees that a timeout
+// occurred and that (on an unforked build) it would be a fixed
+// transport-level cap independent of the request's own --timeout, rather
+// than an opaque "runspace pool broken" message. Other errors pass through
+// unchanged.
+func wrapKnownTransportError(err error) error {
+	if err == nil || !strings.Contains(err.Error(), knownTransportErrSubstr) {
+		return err
+	}
+	return fmt.Errorf("guest produced no output for a fixed ~30s and the underlying PSRP transport gave up (independent of --timeout, which only bounds the overall request): %w", err)
 }
 
 func buildStreamScript(cmd string, args []string) string {

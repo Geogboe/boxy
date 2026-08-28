@@ -10,8 +10,9 @@ import (
 )
 
 type rootOpts struct {
-	logLevel string
-	logFile  string
+	logLevel  string
+	logFile   string
+	printCurl bool
 }
 
 func NewRootCommand() *cobra.Command {
@@ -27,6 +28,7 @@ func NewRootCommand() *cobra.Command {
 			if err := resolveClientServerFlag(cmd); err != nil {
 				return err
 			}
+			cmd.SetContext(withPrintCurl(cmd.Context(), opts.printCurl))
 			return setupLogging(opts)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -37,6 +39,7 @@ func NewRootCommand() *cobra.Command {
 
 	root.PersistentFlags().StringVar(&opts.logLevel, "log-level", "info", "log verbosity (debug, info, warn, error)")
 	root.PersistentFlags().StringVar(&opts.logFile, "log-file", "", "write structured logs to file instead of stderr")
+	root.PersistentFlags().BoolVar(&opts.printCurl, "print-curl", false, "print the curl(1) equivalent of each REST request this command makes to stderr (Authorization is redacted)")
 
 	root.AddCommand(newServeCommand())
 	root.AddCommand(newConfigCommand())

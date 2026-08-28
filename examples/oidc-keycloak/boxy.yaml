@@ -1,0 +1,27 @@
+---
+# oidc-keycloak — boxy serve with OIDC login against a local Keycloak,
+# requires a running Docker daemon.
+#
+# Run: docker compose up
+# Then open http://localhost:9090/login and either:
+#   - log in with the bootstrapped local admin (see `docker compose logs boxy`
+#     for the one-time password, or `docker compose exec boxy boxy admin
+#     bootstrap-password --config /etc/boxy/boxy.yaml`), or
+#   - click "Log in with single sign-on" and use one of the demo accounts
+#     from README.md (admin-demo / auditor-demo / user-demo, all password
+#     "boxy-example-dev-password").
+server:
+  listen: ":9090"
+  oidc:
+    issuer: "http://localhost:8081/realms/boxy"
+    client_id: "boxy"
+    client_secret: "env:BOXY_OIDC_CLIENT_SECRET"
+    redirect_url: "http://localhost:9090/auth/callback"
+    cli_client_id: "boxy-cli"
+    role_claim: "groups"
+    role_mapping:
+      boxy-admins: admin
+      boxy-auditors: auditor
+      boxy-users: user
+
+providers: []

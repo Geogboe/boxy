@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Geogboe/boxy/internal/credentials"
@@ -92,6 +93,51 @@ func TestSandboxDelete_CredentialCleanupFailureIsAWarningNotAFatalError(t *testi
 	}
 	if !strings.Contains(stderr.String(), "Warning:") {
 		t.Fatalf("stderr = %q, want a cleanup warning", stderr.String())
+	}
+}
+
+func TestSandboxDelete_ShowsResourceDestroyProgress(t *testing.T) {
+	var mu sync.Mutex
+	getCalls := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodDelete:
+			_, _ = io.WriteString(w, `{"id":"sb-1","status":"deleting","resources":["res-1","res-2","res-3"]}`)
+		case http.MethodGet:
+			mu.Lock()
+			getCalls++
+			call := getCalls
+			mu.Unlock()
+			if call == 1 {
+				// One resource has been destroyed since the delete request
+				// was accepted: 2 of 3 remain.
+				_, _ = io.WriteString(w, `{"id":"sb-1","status":"deleting","resources":["res-1","res-2"]}`)
+				return
+			}
+			// Fully cleaned up and purged from the store.
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"error":"sandbox not found"}`)
+		default:
+			t.Fatalf("unexpected method %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	cmd := NewRootCommand()
+	stdout := &strings.Builder{}
+	cmd.SetOut(stdout)
+	cmd.SetArgs([]string{"sandbox", "--server", server.URL, "delete", "sb-1"})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "1/3 resource(s) destroyed") {
+		t.Fatalf("output = %q, want progress showing 1/3 resources destroyed", out)
+	}
+	if !strings.Contains(out, "deleted sandbox sb-1") {
+		t.Fatalf("output = %q, want final deletion confirmation", out)
 	}
 }
 

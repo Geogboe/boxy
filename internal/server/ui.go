@@ -21,14 +21,48 @@ var staticFS embed.FS
 
 // pageData is the top-level data passed to every template.
 type pageData struct {
-	Nav           string
+	Nav string
+	// User is the logged-in session's subject (e.g. "admin" for the local
+	// admin account), shown in the sidebar with a logout link. Set by
+	// uiHandler (full-page routes) from the request's session; left empty
+	// by fragmentHandler (HTMX polling routes), whose fragment templates
+	// never reference .User — the sidebar itself is only ever rendered by
+	// a full-page response.
+	User          string
 	PoolCount     int
 	SandboxCount  int
 	ResourceCount int
 	Pools         []model.Pool
-	Sandboxes     []model.Sandbox
+	Sandboxes     []sandboxView
 	Resources     []model.Resource
 	Agents        []agentView
+	Profile       profileData
+}
+
+// sandboxView is the dashboard's per-sandbox row, joining the sandbox record
+// with the full resource details (model.Sandbox.Resources is only a list of
+// IDs) so the table can expand a row to real detail instead of a bare count.
+// See #255.
+type sandboxView struct {
+	ID               string
+	Name             string
+	Status           model.SandboxStatus
+	OwnerID          string
+	Error            string
+	SecurityProfile  string
+	AutoDestroyAfter string
+	ExpiresAt        string
+	Resources        []resourceView
+}
+
+// resourceView is one resource's detail within an expanded sandbox row.
+type resourceView struct {
+	ID         string
+	Type       string
+	Profile    string
+	State      model.ResourceState
+	OriginPool string
+	Provider   string
 }
 
 type agentView struct {
@@ -58,21 +92,27 @@ func pageTemplate(page string) *template.Template {
 }
 
 // registerUIRoutes wires the web dashboard routes into the mux.
+// staticHandler serves CSS/JS assets. Registered unauthenticated (outside
+// requireSession) so the login page itself can load /static/style.css.
+func (s *Server) staticHandler() http.Handler {
+	staticContent, _ := fs.Sub(staticFS, "static")
+	return http.StripPrefix("/static/", http.FileServer(http.FS(staticContent)))
+}
+
 func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	homeTmpl := pageTemplate("index.html")
 	poolsTmpl := pageTemplate("pools.html")
 	sandboxesTmpl := pageTemplate("sandboxes.html")
 	agentsTmpl := pageTemplate("agents.html")
-
-	// Static assets (CSS, JS).
-	staticContent, _ := fs.Sub(staticFS, "static")
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticContent))))
+	profileTmpl := pageTemplate("profile.html")
 
 	// Full-page routes.
 	mux.HandleFunc("GET /{$}", s.uiHandler(homeTmpl, "home", s.homeData))
 	mux.HandleFunc("GET /ui/pools", s.uiHandler(poolsTmpl, "pools", s.poolsData))
 	mux.HandleFunc("GET /ui/sandboxes", s.uiHandler(sandboxesTmpl, "sandboxes", s.sandboxesData))
 	mux.HandleFunc("GET /ui/agents", s.uiHandler(agentsTmpl, "agents", s.agentsData))
+	mux.HandleFunc("GET /ui/profile", s.uiHandler(profileTmpl, "profile", s.profileData))
+	mux.HandleFunc("POST /ui/profile/personal-key", s.handleMintPersonalKey(profileTmpl))
 
 	// HTMX fragment routes.
 	mux.HandleFunc("GET /ui/fragments/stats", s.fragmentHandler(homeTmpl, "stats_fragment", s.homeData))
@@ -98,6 +138,9 @@ func (s *Server) uiHandler(tmpl *template.Template, nav string, data dataFn) htt
 			return
 		}
 		d.Nav = nav
+		if principal, ok := sessionPrincipalFromRequest(r); ok {
+			d.User = principal.Subject
+		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.ExecuteTemplate(w, "layout.html", d); err != nil {
@@ -163,11 +206,67 @@ func (s *Server) poolsData(r *http.Request) (pageData, error) {
 }
 
 func (s *Server) sandboxesData(r *http.Request) (pageData, error) {
-	sandboxes, err := s.store.ListSandboxes(r.Context())
+	ctx := r.Context()
+	sandboxes, err := s.store.ListSandboxes(ctx)
 	if err != nil {
 		return pageData{}, err
 	}
-	return pageData{Sandboxes: sandboxes}, nil
+	resources, err := s.store.ListResources(ctx)
+	if err != nil {
+		return pageData{}, err
+	}
+	byID := make(map[model.ResourceID]model.Resource, len(resources))
+	for _, res := range resources {
+		byID[res.ID] = res
+	}
+
+	views := make([]sandboxView, 0, len(sandboxes))
+	for _, sb := range sandboxes {
+		view := sandboxView{
+			ID:               string(sb.ID),
+			Name:             sb.Name,
+			Status:           sb.Status,
+			OwnerID:          sb.OwnerID,
+			Error:            sb.Error,
+			SecurityProfile:  sb.Policies.SecurityProfile,
+			AutoDestroyAfter: sb.Policies.AutoDestroyAfter,
+			Resources:        make([]resourceView, 0, len(sb.Resources)),
+		}
+		if sb.ExpiresAt != nil {
+			view.ExpiresAt = dashboardTime(*sb.ExpiresAt)
+		}
+		for _, id := range sb.Resources {
+			res, ok := byID[id]
+			if !ok {
+				// The store no longer holds a record for this ID (e.g.
+				// destroyed and purged). Still show the ID rather than
+				// silently dropping the row, so the resource count in the
+				// summary and the expanded detail agree -- with explicit
+				// "unknown" placeholders rather than zero-valued fields,
+				// which would otherwise render as a blank, broken-looking
+				// badge and an empty " · · pool  · " meta line.
+				view.Resources = append(view.Resources, resourceView{
+					ID:         string(id),
+					Type:       "unknown",
+					Profile:    "unknown",
+					State:      model.ResourceStateUnknown,
+					OriginPool: "unknown",
+					Provider:   "unknown",
+				})
+				continue
+			}
+			view.Resources = append(view.Resources, resourceView{
+				ID:         string(res.ID),
+				Type:       string(res.Type),
+				Profile:    string(res.Profile),
+				State:      res.State,
+				OriginPool: string(res.OriginPool),
+				Provider:   res.Provider.Name,
+			})
+		}
+		views = append(views, view)
+	}
+	return pageData{Sandboxes: views}, nil
 }
 
 func (s *Server) agentsData(_ *http.Request) (pageData, error) {

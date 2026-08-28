@@ -225,6 +225,44 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   and the driver itself normally runs on a remote agent, not the daemon
   that owns pool reconciliation).
 
+### PSRP Transport Dependency Fork (go-psrp / go-psrpcore)
+
+- `pkg/psdirect` (PowerShell Direct/HvSocket exec) depends on
+  `github.com/smnsjas/go-psrp` and `github.com/smnsjas/go-psrpcore`, two
+  third-party modules this project does not own. As of 2026-08-28 (#242),
+  `go.mod` `replace`s both to public forks under `github.com/Geogboe/` —
+  **a deliberate decision, not a default response to every upstream bug.**
+  It was made specifically because #242, #244, and #257 all independently
+  traced into the same pair of hardcoded/unconfigurable spots in these two
+  modules with no tagged release to bump to (`go list -m -versions` on the
+  pinned `go-psrpcore` returns nothing — pseudo-versions only), making it a
+  shared, recurring blocker rather than a one-off. Forking took on real
+  ongoing maintenance burden (merging upstream fixes, owning the diff) that
+  should not be repeated lightly for the next unrelated third-party
+  dependency issue — evaluate each such case on its own terms.
+- The fork commits are minimal and isolated per fix, based directly on the
+  exact pinned commit/tag (not on either fork's own `main`, which has
+  diverged with unrelated upstream work not yet vetted for boxy's use) —
+  `go-psrpcore`'s `fix/242-configurable-idle-read-timeout` (merged to that
+  fork's `main`, since `main` there exactly matched the pinned commit) adds
+  `Adapter.SetIdleReadTimeout`, defaulting to the original hardcoded 30s so
+  every other caller sees unchanged behavior; `go-psrp`'s
+  `fix/242-disable-hvsocket-idle-cap` (kept off `main`, tagged
+  `v0.2.1-boxy242` instead, since that fork's `main` had moved past the
+  pinned `v0.2.0`) calls it with `0` (disabled) on the HvSocket backend, so
+  the idle cap defers entirely to the caller's own `ctx` deadline instead
+  of an unrelated fixed timeout. Neither fork commit is verifiable against
+  a live guest from this host — validated via each module's own unit
+  tests (new ones added alongside the fix) plus confirming the *pre-existing*
+  failures in `go-psrp`'s `./client` and `./hvsock` packages are identical
+  on the unmodified pinned tag, not introduced by the fork.
+- If re-forking or updating either fork: keep the diff scoped to one issue
+  at a time (don't bundle #244's `AddCommand`/`AddArgument` work into a
+  timeout fix, for example — see `pkg/psdirect.go`'s `escapeNativeArg` doc
+  comment for that separate, still-open gap), base new work on the exact
+  commit/tag boxy currently pins rather than either fork's own `main`, and
+  update `go.mod`'s `replace` pseudo-version/tag together with a note here.
+
 ### Guest Credentials
 
 - Guest bootstrap credentials and caller-facing credentials have different
@@ -476,6 +514,23 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   Copilot proposed a fix. Treat every reviewer's output — human, subagent,
   or bot — as a lead to check, in both directions: don't rubber-stamp a
   finding, and don't dismiss one either without looking.
+- **`gofmt` rewrites two adjacent ASCII single quotes (`''`) inside a doc
+  comment into a Unicode right-double-quotation-mark (`”`), even inside a
+  backtick-quoted code span within that comment.** This is `go/printer`'s
+  doc-comment reformatting (active by default since Go added the
+  `go/doc/comment` rendering rules), not a bug in this repo's tooling — it
+  applies to any doc comment (a comment immediately preceding a
+  declaration), plain or backtick-wrapped alike. Hit for real during #237
+  (2026-08-28): a `shellQuote` doc comment describing the POSIX
+  close-quote/escaped-quote/reopen-quote idiom literally, `'\''`, silently
+  became `'\”` on every `task fmt` / `gofmt -w` pass — caught only because
+  `task ci:validate`'s `golangci-lint` gofmt check failed in CI-equivalent
+  local validation, not by reading the diff. If a doc comment needs to
+  describe a literal shell/string quoting sequence, phrase it so no two
+  single quotes land adjacently (rephrase procedurally, as this fix did) —
+  moving the sequence into backticks does not protect it. A non-doc comment
+  (one not immediately preceding a declaration) is not affected; this is
+  specific to doc comments.
 
 ## ADRs
 
@@ -560,6 +615,23 @@ Wrap repeated commands in `Taskfile.yml`. If a command is run more than once, ad
   branch already has open PRs from an earlier attempt at per-issue branches
   covering some of the same commits, close those as superseded (referencing
   the new batch PR) once the batch PR exists — don't leave both live.
+- **Push/PR/CI cadence is deliberately low, separate from the batching
+  pattern above (2026-08-28 decision).** The mechanics above (topic branch
+  per fix, merged into one local integration branch, full `task ci:validate`
+  after every merge) are the unit of work; pushing that branch, opening a
+  PR, and letting GitHub Actions run is a separate, coarser-grained step —
+  and the point of doing all validation locally first is specifically to
+  avoid needing that remote round-trip more than necessary. Default to
+  working through as much of the backlog as is actually batch-shaped (see
+  the per-issue scoping judgment used for #264: skip anything needing live
+  Hyper-V/macOS validation this host can't do, skip anything design/ADR-
+  shaped, skip anything with no real scope yet) on one local branch across
+  a whole session or more, closing a real batch of issues, before pushing
+  and opening a PR at all. Push once that batch is substantial, not after
+  every few items — local `task ci:validate` is what actually needs to pass
+  before every push either way, so batching doesn't lower validation rigor,
+  it just moves the GitHub Actions run (and the release-please/GoReleaser
+  cadence question — see "Release cadence" above) to fire less often.
 - Merging a release-please PR triggers `release.yml` on push to `main`. The `release-please` job tags and completes quickly; the `goreleaser` job (5 platforms + SBOMs + checksums + cosign signing, ~3 min of actual runtime) then **pauses indefinitely on a `release-signing` GitHub Environment approval** (#55, 2026-08, ADR-0014) before it starts — it will not run to completion on its own. Go approve it in the Actions run's UI, then wait for the run to complete before treating the release as published. Don't mistake the pause for a stalled/failed run.
 - **Release cadence is deliberately not "cut a release after every merged fix" (2026-08-27 decision).** The project stays prerelease (`prerelease: true` in both `release-please-config.json` and `.goreleaser.yml`) until the owner says otherwise, but a prerelease that ships after a single one-line bugfix is still a wasted release: a full 5-platform GoReleaser run (SBOMs, checksums, cosign signing, a manual approval click) for one commit's worth of change. release-please already supports this — it keeps exactly one open release PR that accumulates every commit landed on `main` since the last release, updating in place, until that PR is merged. The fix is workflow discipline, not tooling: **don't merge the release-please PR just because it appeared.** Let multiple fix/feat PRs land on `main` first so the pending release PR accumulates a real batch of changelog-worthy entries, and only merge it — cutting the actual tagged release — when there's enough substance to justify a release, or when the owner explicitly asks for one. This overrides the ship-it skill's Phase 8 default (which treats "approve and merge the release PR" as an automatic follow-on to a self-approved fix PR merge) — ask before merging a release-please PR rather than doing it on autopilot.
 

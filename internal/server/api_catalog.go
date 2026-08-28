@@ -18,6 +18,7 @@ func APIRouteCatalog() []APIRoute {
 		{Group: "API keys", Method: "POST", Path: "/api/v1/api-keys", Auth: "admin", Description: "Create a user, auditor, or admin key; raw value is returned once."},
 		{Group: "API keys", Method: "GET", Path: "/api/v1/api-keys", Auth: "admin", Description: "List key metadata without hashes or raw values."},
 		{Group: "API keys", Method: "DELETE", Path: "/api/v1/api-keys/{id}", Auth: "admin", Description: "Revoke an API key."},
+		{Group: "API keys", Method: "POST", Path: "/api/v1/api-keys/oidc-exchange", Auth: "id_token", Description: "Exchange a verified OIDC ID token (from `boxy login --oidc`) for a self-service personal API key; raw value is returned once."},
 		{Group: "Pools", Method: "GET", Path: "/api/v1/pools", Auth: "auditor/admin", Description: "List configured pools and ready inventory."},
 		{Group: "Pools", Method: "GET", Path: "/api/v1/pools/{name}", Auth: "auditor/admin", Description: "Inspect one pool."},
 		{Group: "Pools", Method: "POST", Path: "/api/v1/pools/{name}/drain", Auth: "admin", Description: "Drain unused ready inventory."},

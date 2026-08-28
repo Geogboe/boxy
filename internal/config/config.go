@@ -63,6 +63,145 @@ type ServerSpec struct {
 	// a provider admission policy needs guest credentials; it is intentionally
 	// not defaulted so deployment posture is explicit.
 	Secrets SecretSpec `json:"secrets,omitzero" yaml:"secrets,omitempty"`
+
+	// OIDC configures browser login against an external OpenID Connect
+	// provider. Not configured by default: the web UI's bootstrapped local
+	// admin account (see internal/cli/serve.go's bootstrapLocalAdmin) is
+	// always available as a fallback/break-glass login regardless of this
+	// setting. See docs/superpowers/specs/2026-08-28-oidc-ui-and-cli-auth-design.md.
+	OIDC OIDCSpec `json:"oidc,omitzero" yaml:"oidc,omitempty"`
+}
+
+// OIDCSpec configures browser and CLI login against an external OpenID
+// Connect provider.
+type OIDCSpec struct {
+	// Issuer is the provider's issuer URL (e.g.
+	// "https://keycloak.example.invalid/realms/boxy"), used both as the
+	// discovery-document base and the expected "iss" claim value.
+	Issuer string `json:"issuer,omitempty" yaml:"issuer,omitempty"`
+	// ClientID is the OAuth2 client ID registered with the provider for
+	// this boxy daemon.
+	ClientID string `json:"client_id,omitempty" yaml:"client_id,omitempty"`
+	// ClientSecret must be an "env:NAME" reference (see
+	// pkg/providersdk.ResolveSecretRef), never a literal value -- the raw
+	// secret must not live in a config file that might be committed or
+	// copied around. Resolved once at daemon startup.
+	ClientSecret string `json:"client_secret,omitempty" yaml:"client_secret,omitempty"`
+	// RedirectURL is this daemon's own callback URL (e.g.
+	// "https://boxy.example.invalid/auth/callback"), registered with the
+	// provider as an allowed redirect target.
+	RedirectURL string `json:"redirect_url,omitempty" yaml:"redirect_url,omitempty"`
+	// RoleClaim names the ID token claim (e.g. "groups", "roles") whose
+	// value(s) are looked up in RoleMapping to resolve a Boxy role. The
+	// claim may be a single string or an array of strings (e.g. a
+	// "groups" claim); every matching value's mapped role is considered
+	// and the most-privileged one wins (admin > auditor > user) so a
+	// principal in multiple groups isn't order-dependent on the
+	// provider's own claim ordering.
+	RoleClaim string `json:"role_claim,omitempty" yaml:"role_claim,omitempty"`
+	// RoleMapping maps a RoleClaim value to a Boxy role
+	// (user/auditor/admin).
+	RoleMapping map[string]string `json:"role_mapping,omitempty" yaml:"role_mapping,omitempty"`
+	// DefaultRole is used when no RoleClaim value matches RoleMapping.
+	// Empty (the default) fails closed: a login with no mapped role is
+	// rejected rather than silently granted the lowest role, since "IdP
+	// claims drifted" and "this person genuinely has no boxy role" must
+	// not look the same as a working login.
+	DefaultRole string `json:"default_role,omitempty" yaml:"default_role,omitempty"`
+
+	// CLIClientID, if set, enables `boxy login --oidc`: a public
+	// (no-secret) OAuth2 client registered with the provider for the
+	// RFC 8628 device-authorization grant, distinct from ClientID (the
+	// confidential web client) since a CLI binary cannot safely hold a
+	// client secret. Empty means CLI OIDC login is unavailable; the web
+	// UI login above is unaffected either way.
+	CLIClientID string `json:"cli_client_id,omitempty" yaml:"cli_client_id,omitempty"`
+	// PersonalKeyMaxTTL bounds how long a self-service personal API key
+	// (minted via CLI device-code login) may live, as a Go duration
+	// string (e.g. "12h"). Empty defaults to 12h.
+	PersonalKeyMaxTTL string `json:"personal_key_max_ttl,omitempty" yaml:"personal_key_max_ttl,omitempty"`
+	// SessionTTL bounds how long a web-UI login session lasts before its
+	// cookie is rejected, as a Go duration string (e.g. "12h"). Empty
+	// defaults to 12h. Applies to every session regardless of how it was
+	// established (OIDC or the bootstrapped local-admin account) -- there
+	// is only one session mechanism (see ADR-0016), even though this knob
+	// lives under server.oidc for parity with PersonalKeyMaxTTL.
+	SessionTTL string `json:"session_ttl,omitempty" yaml:"session_ttl,omitempty"`
+}
+
+// Configured reports whether OIDC login is enabled.
+func (o OIDCSpec) Configured() bool {
+	return strings.TrimSpace(o.Issuer) != ""
+}
+
+// EffectivePersonalKeyMaxTTL parses PersonalKeyMaxTTL, defaulting to 12h.
+func (o OIDCSpec) EffectivePersonalKeyMaxTTL() (time.Duration, error) {
+	if strings.TrimSpace(o.PersonalKeyMaxTTL) == "" {
+		return 12 * time.Hour, nil
+	}
+	d, err := time.ParseDuration(o.PersonalKeyMaxTTL)
+	if err != nil {
+		return 0, fmt.Errorf("server.oidc.personal_key_max_ttl: %w", err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("server.oidc.personal_key_max_ttl must be a positive duration")
+	}
+	return d, nil
+}
+
+// EffectiveSessionTTL parses SessionTTL, defaulting to 12h.
+func (o OIDCSpec) EffectiveSessionTTL() (time.Duration, error) {
+	if strings.TrimSpace(o.SessionTTL) == "" {
+		return 12 * time.Hour, nil
+	}
+	d, err := time.ParseDuration(o.SessionTTL)
+	if err != nil {
+		return 0, fmt.Errorf("server.oidc.session_ttl: %w", err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("server.oidc.session_ttl must be a positive duration")
+	}
+	return d, nil
+}
+
+// Validate checks field presence/shape. It does not resolve ClientSecret or
+// contact the issuer -- see internal/cli/serve.go's OIDC wiring for that.
+// SessionTTL is validated unconditionally, below, since it applies even
+// when OIDC itself is not configured.
+func (o OIDCSpec) Validate() error {
+	if _, err := o.EffectiveSessionTTL(); err != nil {
+		return err
+	}
+	if !o.Configured() {
+		return nil
+	}
+	if strings.TrimSpace(o.ClientID) == "" {
+		return fmt.Errorf("server.oidc.client_id is required when server.oidc.issuer is set")
+	}
+	if !strings.HasPrefix(strings.TrimSpace(o.ClientSecret), "env:") {
+		return fmt.Errorf(`server.oidc.client_secret must be an "env:NAME" reference, not a literal value`)
+	}
+	if strings.TrimSpace(o.RedirectURL) == "" {
+		return fmt.Errorf("server.oidc.redirect_url is required when server.oidc.issuer is set")
+	}
+	if strings.TrimSpace(o.RoleClaim) == "" {
+		return fmt.Errorf("server.oidc.role_claim is required when server.oidc.issuer is set")
+	}
+	if len(o.RoleMapping) == 0 {
+		return fmt.Errorf("server.oidc.role_mapping must have at least one entry when server.oidc.issuer is set")
+	}
+	for claimValue, role := range o.RoleMapping {
+		if !model.APIKeyRole(role).Valid() {
+			return fmt.Errorf("server.oidc.role_mapping[%q] = %q is not a valid role", claimValue, role)
+		}
+	}
+	if o.DefaultRole != "" && !model.APIKeyRole(o.DefaultRole).Valid() {
+		return fmt.Errorf("server.oidc.default_role %q is not a valid role", o.DefaultRole)
+	}
+	if _, err := o.EffectivePersonalKeyMaxTTL(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // SecretSpec configures the server-owned secret backend.
@@ -197,6 +336,9 @@ func (c Config) Validate() error {
 		return fmt.Errorf("server: %w", err)
 	}
 	if err := c.Server.Secrets.Validate(); err != nil {
+		return err
+	}
+	if err := c.Server.OIDC.Validate(); err != nil {
 		return err
 	}
 	for i, san := range c.Server.GRPCCertSANs {

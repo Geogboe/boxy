@@ -46,6 +46,21 @@ type Store interface {
 	DeleteAPIKey(ctx context.Context, id model.APIKeyID) error
 	ListAPIKeys(ctx context.Context) ([]model.APIKey, error)
 
+	// Web-UI login sessions (see model.Session). Only hashes and metadata
+	// are persisted, the same discipline as API keys; ListSessions backs
+	// authentication (linear scan + constant-time compare, same pattern
+	// as ListAPIKeys/auth.Authenticate) and expiry sweeping.
+	GetSession(ctx context.Context, id model.SessionID) (model.Session, error)
+	PutSession(ctx context.Context, session model.Session) error
+	DeleteSession(ctx context.Context, id model.SessionID) error
+	ListSessions(ctx context.Context) ([]model.Session, error)
+
+	// LocalAdminAccount is the single bootstrapped local-admin account (see
+	// model.LocalAdminAccount). GetLocalAdmin returns ErrNotFound before
+	// the daemon has ever bootstrapped one.
+	GetLocalAdmin(ctx context.Context) (model.LocalAdminAccount, error)
+	PutLocalAdmin(ctx context.Context, account model.LocalAdminAccount) error
+
 	// Revoked agent identities (deny-list, keyed by client certificate
 	// serial). No bbolt or other new persistence engine — this reuses the
 	// same Store this interface already defines, since revocation counts

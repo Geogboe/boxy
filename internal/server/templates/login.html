@@ -1,0 +1,28 @@
+{{define "login.html"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Boxy — Log in</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="login-page">
+    <form class="login-form" method="post" action="/login">
+      <div class="sidebar-brand">Boxy</div>
+      {{if .Error}}<div class="error-banner">{{.Error}}</div>{{end}}
+      <input type="hidden" name="next" value="{{.Next}}">
+      <label for="username">Username</label>
+      <input type="text" id="username" name="username" autocomplete="username" autofocus required>
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" autocomplete="current-password" required>
+      <button type="submit">Log in</button>
+      {{if .OIDCEnabled}}
+      <div class="login-divider">or</div>
+      <a class="link-button login-sso-link" href="/auth/login?next={{.Next}}">Log in with single sign-on</a>
+      {{end}}
+    </form>
+  </div>
+</body>
+</html>
+{{end}}

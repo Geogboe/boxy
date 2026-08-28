@@ -17,6 +17,12 @@
         <li><a href="/ui/sandboxes" {{if eq .Nav "sandboxes"}}class="active" aria-current="page"{{end}}>Sandboxes</a></li>
         <li><a href="/ui/agents" {{if eq .Nav "agents"}}class="active" aria-current="page"{{end}}>Agents</a></li>
       </ul>
+      {{if .User}}
+      <form class="sidebar-user" method="post" action="/logout">
+        <a href="/ui/profile">{{.User}}</a>
+        <button type="submit" class="link-button">Log out</button>
+      </form>
+      {{end}}
     </nav>
     <main class="main">
       {{block "content" .}}{{end}}

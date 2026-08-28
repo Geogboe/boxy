@@ -21,6 +21,8 @@ type loginOptions struct {
 	apiKey   string
 	caCert   string
 	insecure bool
+	oidc     bool
+	web      bool
 }
 
 var loginCredentialsStore = credentials.New
@@ -49,18 +51,27 @@ func newLoginCommand() *cobra.Command {
 		Short: "Store an API key for a Boxy server",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !cmd.Flags().Changed("insecure") {
+				opts.insecure = apiInsecureFromEnvironment()
+			}
+			if !cmd.Flags().Changed("ca-cert") {
+				opts.caCert = os.Getenv("BOXY_CA_CERT")
+			}
+			if opts.oidc {
+				if opts.apiKey != "" {
+					return fmt.Errorf("--oidc and --api-key are mutually exclusive")
+				}
+				return runOIDCLogin(cmd.Context(), opts, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			}
+			if opts.web {
+				return fmt.Errorf("--web requires --oidc")
+			}
 			if opts.apiKey == "" {
 				key, err := promptAPIKey(cmd)
 				if err != nil {
 					return err
 				}
 				opts.apiKey = key
-			}
-			if !cmd.Flags().Changed("insecure") {
-				opts.insecure = apiInsecureFromEnvironment()
-			}
-			if !cmd.Flags().Changed("ca-cert") {
-				opts.caCert = os.Getenv("BOXY_CA_CERT")
 			}
 			return runLogin(cmd.Context(), opts, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
@@ -69,6 +80,8 @@ func newLoginCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opts.apiKey, "api-key", "", "API key (prefer interactive prompt to avoid shell history/process-list exposure)")
 	cmd.Flags().StringVar(&opts.caCert, "ca-cert", "", "Boxy CA certificate for a self-signed server")
 	cmd.Flags().BoolVar(&opts.insecure, "insecure", false, "skip HTTPS certificate verification (development only)")
+	cmd.Flags().BoolVar(&opts.oidc, "oidc", false, "log in via the server's configured OIDC provider (device-code grant) instead of a static API key")
+	cmd.Flags().BoolVar(&opts.web, "web", false, "with --oidc, use loopback-redirect (auto-launch a browser) instead of the default device-code grant")
 	return cmd
 }
 

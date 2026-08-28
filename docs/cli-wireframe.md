@@ -119,11 +119,20 @@ boxy
 │   ├── --server <url>                           Server URL (overrides env/global defaults)
 │   ├── --api-key <key>                          Optional non-interactive key input
 │   ├── --ca-cert <path>                         Trust a Boxy self-signed CA
-│   └── --insecure                               Skip HTTPS verification (development only)
+│   ├── --insecure                               Skip HTTPS verification (development only)
+│   ├── --oidc                                   Log in via the server's configured OIDC provider
+│   │                                             (device-code grant) instead of a static API key
+│   └── --web                                    With --oidc, use loopback-redirect (auto-launch
+│                                                 a browser) instead of the default device-code grant
 │
 │   $ boxy login --server https://boxy.example.test:9090 --ca-cert .boxy/ca.crt
 │     API key (hidden; Ctrl+C to cancel): ********
 │     Logged in to https://boxy.example.test:9090
+│
+│   $ boxy login --server https://boxy.example.test:9090 --oidc
+│     Open https://idp.example.test/device and enter code: ABCD-EFGH
+│     Waiting for login to complete...
+│     Logged in to https://boxy.example.test:9090 via OIDC
 │
 │
 ├── logout                                     Remove the stored operator credential
@@ -135,13 +144,21 @@ boxy
 │   ├── --ca-cert <path>                         Trust a Boxy self-signed CA
 │   ├── --insecure                               Skip HTTPS verification (development only)
 │   │
-│   └── api-key
-│       ├── bootstrap [--name <name>]             First local administrator key; shown once
-│       ├── create --role user|auditor|admin      Create a key; shown once
-│       │   ├── --name <name>
-│       │   └── --expires <duration>
-│       ├── list                                  List key metadata, never raw keys
-│       └── revoke <id>                            Revoke a key
+│   ├── api-key
+│   │   ├── bootstrap [--name <name>]             First local administrator key; shown once
+│   │   ├── create --role user|auditor|admin      Create a key; shown once
+│   │   │   ├── --name <name>
+│   │   │   └── --expires <duration>
+│   │   ├── list                                  List key metadata, never raw keys
+│   │   └── revoke <id>                            Revoke a key
+│   │
+│   └── bootstrap-password                        Show/clear the one-time web-UI local admin password
+│       └── --config <path>                         Must match the config `boxy serve` was started with
+│
+│       $ boxy admin bootstrap-password
+│         username: admin
+│         password: <one-time generated password>
+│         This password will not be shown again.
 │
 │
 ├── config                                      (alias: cfg)
@@ -224,6 +241,9 @@ boxy
 │   │                                                not fail the delete)
 │   │
 │   │   $ boxy sandbox delete sb-a1b2c3
+│   │     1/3 resource(s) destroyed
+│   │     2/3 resource(s) destroyed
+│   │     3/3 resource(s) destroyed
 │   │     deleted sandbox sb-a1b2c3
 │   │
 │   │   $ boxy sandbox delete sb-a1b2c3 --no-wait
@@ -476,6 +496,9 @@ boxy
 Global flags (on root command):
   --log-level debug|info|warn|error              (default info)
   --log-file <path>                              Write structured logs to file
+  --print-curl                                   Print the curl(1) equivalent of each REST
+                                                  request this command makes to stderr
+                                                  (Authorization is redacted; see #237)
 
 Bundled skill notes:
   - Canonical skill copy lives at ~/.config/boxy/skills/boxy-cli on all platforms.
@@ -487,4 +510,5 @@ Output conventions:
   - Human-friendly text by default -> stdout
   - Structured slog logs -> stderr (or --log-file)
   - Errors -> stderr
+  - --print-curl lines -> stderr (alongside structured logs, not stdout)
 ```

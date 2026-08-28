@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -41,7 +42,7 @@ func newSandboxDeleteCommand(serverAddr func() string) *cobra.Command {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "accepted deletion of sandbox %s\n", sb.ID)
 				return nil
 			}
-			if err := waitForSandboxDeleted(cmd.Context(), client, base, sb.ID); err != nil {
+			if err := waitForSandboxDeleted(cmd.Context(), cmd.OutOrStdout(), client, base, sb); err != nil {
 				return err
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "deleted sandbox %s\n", sb.ID)
@@ -52,13 +53,30 @@ func newSandboxDeleteCommand(serverAddr func() string) *cobra.Command {
 	return cmd
 }
 
-func waitForSandboxDeleted(ctx context.Context, client *http.Client, base string, id model.SandboxID) error {
+// waitForSandboxDeleted polls until the sandbox is fully torn down (the
+// server purges the record once every resource is destroyed — see
+// internal/sandbox.DeletionReconciler.cleanupSandbox). While it waits, it
+// reports progress by watching sb.Resources shrink: cleanupSandbox destroys
+// resources one at a time and persists the sandbox after each removal, so
+// each poll's resource count is a real, live destroy-progress signal, not
+// just an opaque "still deleting" state.
+func waitForSandboxDeleted(ctx context.Context, out io.Writer, client *http.Client, base string, sb model.Sandbox) error {
+	id := sb.ID
+	total := len(sb.Resources)
+	remaining := total
+
 	ticker := time.NewTicker(sandboxPollInterval)
 	defer ticker.Stop()
 
 	for {
-		_, err := fetchJSON[model.Sandbox](ctx, client, base+"/api/v1/sandboxes/"+string(id))
+		next, err := fetchJSON[model.Sandbox](ctx, client, base+"/api/v1/sandboxes/"+string(id))
 		if err == nil {
+			if total > 0 {
+				if n := len(next.Resources); n != remaining {
+					remaining = n
+					_, _ = fmt.Fprintf(out, "  %d/%d resource(s) destroyed\n", total-remaining, total)
+				}
+			}
 			select {
 			case <-ctx.Done():
 				return fmt.Errorf("sandbox %q deletion accepted but wait was interrupted: %w", id, ctx.Err())
@@ -69,6 +87,9 @@ func waitForSandboxDeleted(ctx context.Context, client *http.Client, base string
 		var apiErr *apiError
 		if errors.As(err, &apiErr) {
 			if apiErr.StatusCode == http.StatusNotFound {
+				if total > 0 && remaining != 0 {
+					_, _ = fmt.Fprintf(out, "  %d/%d resource(s) destroyed\n", total, total)
+				}
 				return nil
 			}
 			return fmt.Errorf("wait for sandbox %q deletion: %w", id, err)

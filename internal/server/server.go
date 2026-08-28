@@ -54,6 +54,8 @@ type Server struct {
 	agentAdmin      AgentAdmin
 	executor        SandboxExecutor
 	guestSecrets    boxysecrets.Store
+	oidc            *OIDCOptions
+	sessionTTL      time.Duration
 	uiEnabled       bool
 	authRequired    bool
 	insecureHTTP    bool
@@ -71,6 +73,14 @@ type ServerOptions struct {
 	TLSKeyPEM    []byte
 	Executor     SandboxExecutor
 	GuestSecrets boxysecrets.Store
+	// OIDC enables provider login on the web UI's /login page. nil (the
+	// default) means only the bootstrapped local admin account can log
+	// in -- see docs/superpowers/specs/2026-08-28-oidc-ui-and-cli-auth-design.md.
+	OIDC *OIDCOptions
+	// SessionTTL bounds how long a web-UI login session lasts, regardless
+	// of how it was established (OIDC or the local-admin account). Zero
+	// defaults to 12h (see session.go's defaultSessionTTL).
+	SessionTTL time.Duration
 }
 
 // New creates a Server that will listen on addr. It retains the in-process,
@@ -90,6 +100,8 @@ func NewWithOptions(st store.Store, sm *sandbox.Manager, pm PoolMaintenance, aa 
 		agentAdmin:      aa,
 		executor:        opts.Executor,
 		guestSecrets:    opts.GuestSecrets,
+		oidc:            opts.OIDC,
+		sessionTTL:      opts.SessionTTL,
 		uiEnabled:       uiEnabled,
 		authRequired:    opts.AuthRequired,
 		insecureHTTP:    opts.InsecureHTTP,
@@ -124,9 +136,33 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.Handle("/api/v1/", apiMux)
 	}
 
-	// Web UI (optional)
+	// GET /auth/cli-config is registered unconditionally (not gated on
+	// s.uiEnabled the way the rest of /auth/* and /login are): `boxy login
+	// --oidc` needs it even on a daemon running with the web dashboard
+	// disabled, and its own handler already 404s cleanly when OIDC/
+	// CLIClientID isn't configured. Registering it only when configured
+	// would instead let it fall through to the UI's session-gated catch-all
+	// route below whenever uiEnabled is true, which redirects to /login and
+	// hands the CLI's JSON decoder an HTML page instead of a clear error.
+	mux.HandleFunc("GET /auth/cli-config", s.handleCLIOIDCConfig)
+
+	// Web UI (optional). Always behind a session — a bootstrapped local
+	// admin account covers the case where no OIDC provider is configured
+	// (see docs/superpowers/specs/2026-08-28-oidc-ui-and-cli-auth-design.md
+	// Decision 1); there is no "open dashboard" mode.
 	if s.uiEnabled {
-		s.registerUIRoutes(mux)
+		mux.Handle("GET /static/", s.staticHandler())
+		mux.HandleFunc("GET /login", s.handleLoginPage)
+		mux.HandleFunc("POST /login", s.handleLoginSubmit)
+		mux.HandleFunc("POST /logout", s.handleLogout)
+		if s.oidc != nil {
+			mux.HandleFunc("GET /auth/login", s.handleOIDCLogin)
+			mux.HandleFunc("GET /auth/callback", s.handleOIDCCallback)
+		}
+
+		protected := http.NewServeMux()
+		s.registerUIRoutes(protected)
+		mux.Handle("/", s.requireSession(protected))
 	}
 }
 

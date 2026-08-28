@@ -140,6 +140,58 @@ func TestSecretSpec_RequiresExplicitValidBackend(t *testing.T) {
 	}
 }
 
+func TestOIDCSpec_Validate(t *testing.T) {
+	t.Parallel()
+
+	valid := OIDCSpec{
+		Issuer:       "https://idp.example.invalid/realms/boxy",
+		ClientID:     "boxy",
+		ClientSecret: "env:BOXY_TEST_OIDC_CLIENT_SECRET",
+		RedirectURL:  "https://boxy.example.invalid/auth/callback",
+		RoleClaim:    "groups",
+		RoleMapping:  map[string]string{"boxy-admins": "admin"},
+	}
+
+	tests := []struct {
+		name    string
+		mutate  func(o OIDCSpec) OIDCSpec
+		wantErr bool
+	}{
+		{name: "unset", mutate: func(OIDCSpec) OIDCSpec { return OIDCSpec{} }},
+		{name: "valid", mutate: func(o OIDCSpec) OIDCSpec { return o }},
+		{name: "missing client id", mutate: func(o OIDCSpec) OIDCSpec { o.ClientID = ""; return o }, wantErr: true},
+		{name: "literal client secret", mutate: func(o OIDCSpec) OIDCSpec { o.ClientSecret = "not-an-env-ref"; return o }, wantErr: true},
+		{name: "missing client secret", mutate: func(o OIDCSpec) OIDCSpec { o.ClientSecret = ""; return o }, wantErr: true},
+		{name: "missing redirect url", mutate: func(o OIDCSpec) OIDCSpec { o.RedirectURL = ""; return o }, wantErr: true},
+		{name: "missing role claim", mutate: func(o OIDCSpec) OIDCSpec { o.RoleClaim = ""; return o }, wantErr: true},
+		{name: "empty role mapping", mutate: func(o OIDCSpec) OIDCSpec { o.RoleMapping = nil; return o }, wantErr: true},
+		{name: "invalid role mapping value", mutate: func(o OIDCSpec) OIDCSpec {
+			o.RoleMapping = map[string]string{"x": "superuser"}
+			return o
+		}, wantErr: true},
+		{name: "invalid default role", mutate: func(o OIDCSpec) OIDCSpec { o.DefaultRole = "superuser"; return o }, wantErr: true},
+		{name: "valid default role", mutate: func(o OIDCSpec) OIDCSpec { o.DefaultRole = "user"; return o }},
+		{name: "invalid session ttl", mutate: func(o OIDCSpec) OIDCSpec { o.SessionTTL = "not-a-duration"; return o }, wantErr: true},
+		{name: "non-positive session ttl", mutate: func(o OIDCSpec) OIDCSpec { o.SessionTTL = "0h"; return o }, wantErr: true},
+		{name: "valid session ttl", mutate: func(o OIDCSpec) OIDCSpec { o.SessionTTL = "6h"; return o }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.mutate(valid).Validate()
+			if tt.wantErr && err == nil {
+				t.Fatal("Validate() = nil, want error")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("Validate() = %v, want nil", err)
+			}
+		})
+	}
+
+	if err := (Config{Server: ServerSpec{OIDC: valid}}).Validate(); err != nil {
+		t.Fatalf("Config.Validate() = %v, want nil", err)
+	}
+}
+
 func TestLoadFile_YAML_HappyPath(t *testing.T) {
 	t.Parallel()
 

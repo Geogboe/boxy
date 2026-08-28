@@ -16,6 +16,7 @@ import (
 // registerAPIRoutes wires the JSON REST API endpoints into the mux.
 func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/api-keys/bootstrap", s.handleBootstrapAPIKey)
+	mux.HandleFunc("POST /api/v1/api-keys/oidc-exchange", s.handleOIDCKeyExchange)
 	mux.HandleFunc("POST /api/v1/api-keys", s.handleCreateAPIKey)
 	mux.HandleFunc("GET /api/v1/api-keys", s.handleListAPIKeys)
 	mux.HandleFunc("DELETE /api/v1/api-keys/{id}", s.handleRevokeAPIKey)

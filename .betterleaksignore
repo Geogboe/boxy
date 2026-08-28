@@ -328,3 +328,15 @@ fe966b5b5aad2535b1c0a56b8f323925fdb44231:internal/core/resource/types_test.go:bo
 # these entries only cover the already-merged historical commit's patch text.
 8ef37e529ff504d1e4583e82959d48537a17b1ef:pkg/providersdk/providers/hyperv/config.go:boxy-pii-private-ipv4:89
 8ef37e529ff504d1e4583e82959d48537a17b1ef:pkg/providersdk/providers/hyperv/config.go:boxy-pii-private-ipv4:95
+
+# Reviewed on 2026-08-28. examples/oidc-keycloak/ (PR #266) is a throwaway,
+# documented local-only Keycloak dev stack (see its README's client-secret
+# note referencing this same discipline). "admin"/"admin" is Keycloak's own
+# well-known dev-mode bootstrap admin console credential (KC_BOOTSTRAP_ADMIN_
+# PASSWORD in compose.yaml), and admin-demo/auditor-demo/user-demo are
+# fictional realm users documented in the README as demo accounts, not real
+# people.
+b1a18db76a214250a69bea864a099f3aba50a239:examples/oidc-keycloak/compose.yaml:generic-password:7
+b1a18db76a214250a69bea864a099f3aba50a239:examples/oidc-keycloak/realm-export.json:boxy-pii-username:79
+b1a18db76a214250a69bea864a099f3aba50a239:examples/oidc-keycloak/realm-export.json:boxy-pii-username:98
+b1a18db76a214250a69bea864a099f3aba50a239:examples/oidc-keycloak/realm-export.json:boxy-pii-username:117
