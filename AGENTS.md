@@ -560,6 +560,23 @@ Wrap repeated commands in `Taskfile.yml`. If a command is run more than once, ad
   branch already has open PRs from an earlier attempt at per-issue branches
   covering some of the same commits, close those as superseded (referencing
   the new batch PR) once the batch PR exists — don't leave both live.
+- **Push/PR/CI cadence is deliberately low, separate from the batching
+  pattern above (2026-08-28 decision).** The mechanics above (topic branch
+  per fix, merged into one local integration branch, full `task ci:validate`
+  after every merge) are the unit of work; pushing that branch, opening a
+  PR, and letting GitHub Actions run is a separate, coarser-grained step —
+  and the point of doing all validation locally first is specifically to
+  avoid needing that remote round-trip more than necessary. Default to
+  working through as much of the backlog as is actually batch-shaped (see
+  the per-issue scoping judgment used for #264: skip anything needing live
+  Hyper-V/macOS validation this host can't do, skip anything design/ADR-
+  shaped, skip anything with no real scope yet) on one local branch across
+  a whole session or more, closing a real batch of issues, before pushing
+  and opening a PR at all. Push once that batch is substantial, not after
+  every few items — local `task ci:validate` is what actually needs to pass
+  before every push either way, so batching doesn't lower validation rigor,
+  it just moves the GitHub Actions run (and the release-please/GoReleaser
+  cadence question — see "Release cadence" above) to fire less often.
 - Merging a release-please PR triggers `release.yml` on push to `main`. The `release-please` job tags and completes quickly; the `goreleaser` job (5 platforms + SBOMs + checksums + cosign signing, ~3 min of actual runtime) then **pauses indefinitely on a `release-signing` GitHub Environment approval** (#55, 2026-08, ADR-0014) before it starts — it will not run to completion on its own. Go approve it in the Actions run's UI, then wait for the run to complete before treating the release as published. Don't mistake the pause for a stalled/failed run.
 - **Release cadence is deliberately not "cut a release after every merged fix" (2026-08-27 decision).** The project stays prerelease (`prerelease: true` in both `release-please-config.json` and `.goreleaser.yml`) until the owner says otherwise, but a prerelease that ships after a single one-line bugfix is still a wasted release: a full 5-platform GoReleaser run (SBOMs, checksums, cosign signing, a manual approval click) for one commit's worth of change. release-please already supports this — it keeps exactly one open release PR that accumulates every commit landed on `main` since the last release, updating in place, until that PR is merged. The fix is workflow discipline, not tooling: **don't merge the release-please PR just because it appeared.** Let multiple fix/feat PRs land on `main` first so the pending release PR accumulates a real batch of changelog-worthy entries, and only merge it — cutting the actual tagged release — when there's enough substance to justify a release, or when the owner explicitly asks for one. This overrides the ship-it skill's Phase 8 default (which treats "approve and merge the release PR" as an automatic follow-on to a self-approved fix PR merge) — ask before merging a release-please PR rather than doing it on autopilot.
 
