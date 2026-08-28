@@ -37,22 +37,20 @@ in [docs/api.md](docs/api.md).
 
 Boxy keeps pools of generic, ready-to-use resources warm ahead of time. When a user requests a sandbox, resources are pulled from pools and personalized via hooks — credentials are set, networking is configured, and connection info is returned. The user connects with their native client (SSH, RDP, SMB, etc.). Boxy is not a proxy.
 
-```
-┌──────────────────────────────────────────┐
-│               boxy serve                 │
-│                                          │
-│         REST API + web dashboard         │
-│                    │                     │
-│  ┌─────────────────▼───────────────────┐ │
-│  │  Core: Pool Manager, Sandbox Mgr    │ │
-│  │  PolicyController (reconciler)      │ │
-│  └─────────────────┬───────────────────┘ │
-│                    │                     │
-│  ┌─────────────────▼───────────────────┐ │
-│  │       Embedded local agent          │ │
-│  │    (Docker, Hyper-V drivers)        │ │
-│  └─────────────────────────────────────┘ │
-└──────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    client(["boxy CLI / REST client"]) -- "REST + mTLS" --> api
+
+    subgraph daemon["boxy serve"]
+        api["REST API + web dashboard"]
+        core["Core: Pool Manager, Sandbox Manager<br/>PolicyController (reconciler)"]
+        embedded["Embedded local agent<br/>(Docker, Hyper-V drivers)"]
+        api --> core --> embedded
+    end
+
+    embedded --> providers[("Local providers<br/>Docker, Hyper-V, ...")]
+    remote["boxy agent (remote host)"] -. "gRPC + mTLS, agent dials out" .-> core
+    remote --> remoteProviders[("Remote providers")]
 ```
 
 A remote agent mode (`boxy agent`, connecting to the server over gRPC from a
@@ -156,6 +154,27 @@ Sandbox creation is a server-side async workflow:
 2. Server persists the sandbox and returns `202 Accepted` with `status: "pending"`
 3. The daemon reconcile loop provisions and allocates resources
 4. Client polls `GET /api/v1/sandboxes/{id}` until status becomes `ready` or `failed`
+
+```mermaid
+sequenceDiagram
+    actor Client
+    participant API as REST API
+    participant Reconciler as Reconcile loop
+
+    Client->>API: POST /api/v1/sandboxes {requests}
+    API-->>Client: 202 Accepted {status: pending}
+
+    loop every reconcile tick
+        Reconciler->>Reconciler: provision + allocate resources
+    end
+
+    loop poll until settled
+        Client->>API: GET /api/v1/sandboxes/{id}
+        API-->>Client: status: pending / provisioning
+    end
+    Client->>API: GET /api/v1/sandboxes/{id}
+    API-->>Client: status: ready (connection info) or failed
+```
 
 The create API uses resource requests rather than allocated resource IDs:
 
