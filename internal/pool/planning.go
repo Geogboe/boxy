@@ -6,14 +6,23 @@ import (
 	"github.com/Geogboe/boxy/pkg/model"
 )
 
-// computeToProvisionCount returns how many additional ready resources are needed to
+// computeToProvisionCount returns how many additional resources are needed to
 // satisfy minReady, capped by MaxTotal when MaxTotal > 0.
-func computeToProvisionCount(policy model.PreheatPolicy, readyCount int, totalCount int) int {
+//
+// The gap is measured against totalCount, not readyCount that arrived a
+// resource ago: totalCount already includes resources this same pool
+// provisioned but that haven't reached ResourceStateReady yet (they're
+// mid-admission -- e.g. guest personalization, per AdmissionHandler). A
+// reconcile tick that instead compared minReady only against readyCount
+// would treat every one of those in-flight resources as if it didn't exist,
+// re-request the full remaining gap on every tick until they landed, and
+// overshoot minReady by however many ticks admission took -- see #258.
+func computeToProvisionCount(policy model.PreheatPolicy, totalCount int) int {
 	if policy.MinReady <= 0 {
 		return 0
 	}
 
-	need := policy.MinReady - readyCount
+	need := policy.MinReady - totalCount
 	if need <= 0 {
 		return 0
 	}

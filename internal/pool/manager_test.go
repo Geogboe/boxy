@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,8 +20,15 @@ type fakeProvisioner struct {
 	// it instead of the zero Resource — mirrors DriverProvisioner/
 	// AgentProvisioner's quarantine contract (see #174 Task 4).
 	provisionResultOnErr model.Resource
-	destroyed            []model.ResourceID
-	destroyErr           error
+	// failAfter, when > 0, makes Provision succeed for the first failAfter
+	// calls and only start returning provisionErr from call failAfter+1
+	// onward — used to simulate a bonus/background top-up failing only
+	// after the caller's real request has already been satisfied (#249).
+	// Zero (the default) preserves the existing always-fails-if-set
+	// behavior for every test that doesn't set it.
+	failAfter  int
+	destroyed  []model.ResourceID
+	destroyErr error
 	// onDestroy, if set, is called at the top of Destroy — before the
 	// (possibly failing) provider call — so a test can observe state
 	// persisted just before teardown (e.g. via the store).
@@ -30,7 +38,7 @@ type fakeProvisioner struct {
 func (p *fakeProvisioner) Provision(ctx context.Context, pool model.Pool) (model.Resource, error) {
 	_ = ctx
 	p.provisionCalls++
-	if p.provisionErr != nil {
+	if p.provisionErr != nil && (p.failAfter == 0 || p.provisionCalls > p.failAfter) {
 		return p.provisionResultOnErr, p.provisionErr
 	}
 	p.n++
@@ -83,6 +91,30 @@ func (s *putResourceFailStore) PutResource(ctx context.Context, res model.Resour
 	return s.err
 }
 
+// putResourceFailAfterStore fails PutResource on a specific call number
+// (1-indexed), delegating to the wrapped store on every other call — used
+// to simulate a persist failure for a specific (e.g. bonus-preheat)
+// provisioning iteration while earlier iterations succeed and actually
+// land in the store. See #249: a code review caught that the original
+// bonus-vs-required tolerance keyed only on err != nil, which would also
+// have downgraded this exact scenario (Create succeeded, persist failed —
+// a real provider-side resource left with no store record at all) to a
+// silent, best-effort log line.
+type putResourceFailAfterStore struct {
+	store.Store
+	calls      int
+	failOnCall int
+	err        error
+}
+
+func (s *putResourceFailAfterStore) PutResource(ctx context.Context, res model.Resource) error {
+	s.calls++
+	if s.err != nil && s.calls == s.failOnCall {
+		return s.err
+	}
+	return s.Store.PutResource(ctx, res)
+}
+
 func TestManager_Reconcile_PrefillMinReady(t *testing.T) {
 	st := store.NewMemoryStore()
 	pool := model.Pool{
@@ -110,6 +142,83 @@ func TestManager_Reconcile_PrefillMinReady(t *testing.T) {
 	}
 	if len(updated.Inventory.Resources) != 2 {
 		t.Fatalf("expected 2 resources, got %d", len(updated.Inventory.Resources))
+	}
+}
+
+// TestManager_Reconcile_InFlightResourcesCountTowardMinReady pins #258: a
+// resource this pool already provisioned on a previous tick, but that
+// hasn't reached ResourceStateReady yet (still going through
+// AdmissionHandler, e.g. guest personalization), must count toward
+// min_ready just like a Ready one does. Before the fix, computeToProvision
+// measured the gap against ready count alone, so every tick before
+// admission finished re-requested the full remaining gap -- overshooting
+// min_ready by one extra resource per tick until max_total capped it.
+func TestManager_Reconcile_InFlightResourcesCountTowardMinReady(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+
+	ready := model.Resource{
+		ID:         "res_ready",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		OriginPool: "p1",
+		Provider:   model.ProviderRef{Name: "prov_1"},
+		State:      model.ResourceStateReady,
+		CreatedAt:  time.Unix(1000, 0).UTC(),
+		UpdatedAt:  time.Unix(1000, 0).UTC(),
+	}
+	if err := st.PutResource(ctx, ready); err != nil {
+		t.Fatalf("put ready resource: %v", err)
+	}
+	inFlight := model.Resource{
+		ID:         "res_provisioning",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		OriginPool: "p1",
+		Provider:   model.ProviderRef{Name: "prov_1"},
+		State:      model.ResourceStateProvisioning,
+		CreatedAt:  time.Unix(1001, 0).UTC(),
+		UpdatedAt:  time.Unix(1001, 0).UTC(),
+	}
+	if err := st.PutResource(ctx, inFlight); err != nil {
+		t.Fatalf("put in-flight resource: %v", err)
+	}
+
+	pool := model.Pool{
+		Name: "p1",
+		Policies: model.PoolPolicies{
+			Preheat: model.PreheatPolicy{MinReady: 2, MaxTotal: 4},
+		},
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: model.ResourceProfileDefault,
+			// Only the ready resource belongs here -- RebuildReadyInventory
+			// only ever re-admits ResourceStateReady resources, so this
+			// mirrors exactly what a prior tick would have left behind.
+			Resources: []model.Resource{ready},
+		},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &fakeProvisioner{}
+	mgr := New(st, prov)
+
+	if err := mgr.Reconcile(ctx, "p1"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if prov.provisionCalls != 0 {
+		t.Fatalf("provisionCalls = %d, want 0: min_ready=2 was already covered by 1 ready + 1 in-flight resource", prov.provisionCalls)
+	}
+
+	updated, err := st.GetPool(ctx, "p1")
+	if err != nil {
+		t.Fatalf("get pool: %v", err)
+	}
+	if len(updated.Inventory.Resources) != 1 {
+		t.Fatalf("inventory len = %d, want 1 (only the already-ready resource)", len(updated.Inventory.Resources))
 	}
 }
 
@@ -908,6 +1017,246 @@ func TestManager_EnsureReady_ErrorReportsCallersRequestedReadyNotConfiguredMinRe
 	want := `pool "p1" is at max_total 4 (4 total, 1 ready), cannot satisfy requested ready count 2`
 	if err.Error() != want {
 		t.Fatalf("ensure ready error = %q, want %q", err.Error(), want)
+	}
+}
+
+// TestManager_EnsureReady_BonusPreheatFailureAfterRequestSatisfiedIsNotFatal
+// reproduces #249: EnsureReady's background top-up toward the pool's
+// configured (wider) min_ready must not fail the caller once the caller's
+// own request is already satisfiable from required provisioning alone.
+// Policy MinReady=3 (widened target) vs a request for 1: the first
+// provision (the caller's real requirement) succeeds, the next two (bonus
+// preheat toward min_ready=3) fail — EnsureReady must still return nil,
+// and the one required resource must actually be ready.
+func TestManager_EnsureReady_BonusPreheatFailureAfterRequestSatisfiedIsNotFatal(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	pool := model.Pool{
+		Name: "p1",
+		Policies: model.PoolPolicies{
+			Preheat: model.PreheatPolicy{MinReady: 3, MaxTotal: 10},
+		},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &fakeProvisioner{failAfter: 1, provisionErr: errors.New("transient provider error")}
+	mgr := New(st, prov)
+
+	if err := mgr.EnsureReady(ctx, "p1", 1); err != nil {
+		t.Fatalf("EnsureReady(1) = %v, want nil (the caller's own request was satisfiable; only bonus preheat provisioning failed)", err)
+	}
+	if prov.provisionCalls != 2 {
+		t.Fatalf("provisionCalls = %d, want 2 (1 required success, then 1 bonus failure that stops further bonus attempts)", prov.provisionCalls)
+	}
+
+	updated, err := st.GetPool(ctx, "p1")
+	if err != nil {
+		t.Fatalf("get pool: %v", err)
+	}
+	if got := countReadyResources(updated.Inventory.Resources); got != 1 {
+		t.Fatalf("ready resources = %d, want 1 (the required provision must have actually persisted)", got)
+	}
+}
+
+// fakeAdmissionPublisher fails PublishResourceProvisioned on a specific
+// call number (1-indexed), succeeding on every other call. Used to
+// simulate the lifecycle event store's Append failing transiently for a
+// bonus-preheat resource specifically (#249 follow-up: a code review
+// caught that the admission-publish failure path had its own unconditional
+// fatal return, uncovered by the Create/persist bonus tolerance above).
+type fakeAdmissionPublisher struct {
+	calls      int
+	failOnCall int
+	err        error
+}
+
+func (p *fakeAdmissionPublisher) PublishResourceProvisioned(_ context.Context, _ model.Resource) error {
+	p.calls++
+	if p.err != nil && p.calls == p.failOnCall {
+		return p.err
+	}
+	return nil
+}
+
+// TestManager_EnsureReady_BonusAdmissionPublishFailureAfterRequestSatisfiedIsNotFatal
+// extends the bonus-tolerance test above to the admission-publish step, not
+// just the Create/persist step: with SetAdmissionPublisher configured, the
+// caller's required resource (iteration 0) succeeds end to end, but the
+// bonus resource's (iteration 1) PublishResourceProvisioned call fails.
+// EnsureReady must still return nil — the failure doesn't strand the
+// resource (it stays ResourceStateProvisioning and gets its admission
+// event retried by the Observer's crash-recovery re-publish on the next
+// pass), it just delays that one bonus resource's admission.
+func TestManager_EnsureReady_BonusAdmissionPublishFailureAfterRequestSatisfiedIsNotFatal(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	pool := model.Pool{
+		Name: "p1",
+		Policies: model.PoolPolicies{
+			Preheat: model.PreheatPolicy{MinReady: 3, MaxTotal: 10},
+		},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &fakeProvisioner{}
+	mgr := New(st, prov)
+	publisher := &fakeAdmissionPublisher{failOnCall: 2, err: errors.New("event store append: disk contention")}
+	mgr.SetAdmissionPublisher(publisher)
+
+	if err := mgr.EnsureReady(ctx, "p1", 1); err != nil {
+		t.Fatalf("EnsureReady(1) = %v, want nil (the caller's own request was satisfiable; only a bonus resource's admission publish failed)", err)
+	}
+	if prov.provisionCalls != 2 {
+		t.Fatalf("provisionCalls = %d, want 2 (1 required, then 1 bonus that stops further attempts once its publish fails)", prov.provisionCalls)
+	}
+	if publisher.calls != 2 {
+		t.Fatalf("admission publish calls = %d, want 2", publisher.calls)
+	}
+}
+
+// TestManager_EnsureReady_BonusPersistFailureAfterCreateStaysFatal is the
+// complement of the two bonus-tolerance tests above: when a bonus
+// iteration's Create succeeds but the subsequent persist (store write)
+// fails, EnsureReady must still return the fatal error rather than
+// swallowing it as best-effort. Unlike a clean Create failure (nothing
+// exists) or an admission-publish failure (the resource is durably
+// persisted and gets retried), a persist failure after a successful
+// Create leaves a real provider-side resource with no store record at
+// all — that must stay loud, not become a masked orphan.
+func TestManager_EnsureReady_BonusPersistFailureAfterCreateStaysFatal(t *testing.T) {
+	ctx := context.Background()
+	failStore := &putResourceFailAfterStore{
+		Store:      store.NewMemoryStore(),
+		failOnCall: 2,
+		err:        errors.New("disk full"),
+	}
+	pool := model.Pool{
+		Name: "p1",
+		Policies: model.PoolPolicies{
+			Preheat: model.PreheatPolicy{MinReady: 3, MaxTotal: 10},
+		},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := failStore.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &fakeProvisioner{}
+	mgr := New(failStore, prov)
+
+	err := mgr.EnsureReady(ctx, "p1", 1)
+	if err == nil {
+		t.Fatal("expected EnsureReady to fail: a bonus iteration's Create succeeded but persist failed, leaving an untracked resource — must not be swallowed as best-effort")
+	}
+	if !strings.Contains(err.Error(), "disk full") {
+		t.Fatalf("EnsureReady error = %q, want it to wrap the persist failure", err.Error())
+	}
+	if prov.provisionCalls != 2 {
+		t.Fatalf("provisionCalls = %d, want 2 (required iteration succeeded, bonus iteration's Create also ran before its persist failed)", prov.provisionCalls)
+	}
+}
+
+// TestManager_EnsureReady_RequiredProvisionFailureStaysFatal is the
+// complement of the bonus-failure test above: when the caller's own
+// request cannot be satisfied (the very first, required provision fails),
+// EnsureReady must still return the fatal error exactly as before #249.
+func TestManager_EnsureReady_RequiredProvisionFailureStaysFatal(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	pool := model.Pool{
+		Name: "p1",
+		Policies: model.PoolPolicies{
+			Preheat: model.PreheatPolicy{MinReady: 1, MaxTotal: 10},
+		},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &fakeProvisioner{provisionErr: errors.New("New-VHD failed: VMMS degraded")}
+	mgr := New(st, prov)
+
+	err := mgr.EnsureReady(ctx, "p1", 1)
+	if err == nil {
+		t.Fatal("expected EnsureReady to fail: the caller's own required provisioning failed, not just bonus preheat")
+	}
+	if !strings.Contains(err.Error(), "VMMS degraded") {
+		t.Fatalf("EnsureReady error = %q, want it to wrap the underlying provisioning failure", err.Error())
+	}
+}
+
+// TestManager_Reconcile_BackgroundProvisionFailureStaysFatal is a
+// regression guard for #249: background Reconcile (requireMinReady=false)
+// has no per-call requester to protect, so any provisioning failure toward
+// the widened preheat target must remain fatal exactly as before — the new
+// bonus/required split only applies to EnsureReady's synchronous path.
+func TestManager_Reconcile_BackgroundProvisionFailureStaysFatal(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	pool := model.Pool{
+		Name: "p1",
+		Policies: model.PoolPolicies{
+			Preheat: model.PreheatPolicy{MinReady: 3, MaxTotal: 10},
+		},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &fakeProvisioner{failAfter: 1, provisionErr: errors.New("transient provider error")}
+	mgr := New(st, prov)
+
+	if err := mgr.Reconcile(ctx, "p1"); err == nil {
+		t.Fatal("expected background Reconcile to surface the provisioning failure, unlike EnsureReady's bonus-failure tolerance")
+	}
+}
+
+// TestManager_EnsureReady_MaxTotalShortfallStillFatalWhenUnsatisfiable pins
+// the invariant #249's fix depends on: requiredToProvision is only ever 0
+// when the caller's request is already satisfiable. When it genuinely
+// isn't (pool pinned at max_total, ready count below the request), the
+// existing admission gate (maxTotalShortfall) must still fire and return
+// *MaxTotalReachedError before any provisioning is even attempted — not
+// silently succeed because every provision got misclassified as "bonus".
+func TestManager_EnsureReady_MaxTotalShortfallStillFatalWhenUnsatisfiable(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+
+	putAllocatedResources(t, st, "p1", 3)
+	ready := putReadyResource(t, st, "p1", "res_ready_1")
+	pool := model.Pool{
+		Name: "p1",
+		Policies: model.PoolPolicies{
+			Preheat: model.PreheatPolicy{MinReady: 5, MaxTotal: 4},
+		},
+		Inventory: model.ResourceCollection{
+			ExpectedType:    model.ResourceTypeContainer,
+			ExpectedProfile: model.ResourceProfileDefault,
+			Resources:       []model.Resource{ready},
+		},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+
+	prov := &fakeProvisioner{provisionErr: errors.New("must never be called")}
+	mgr := New(st, prov)
+
+	err := mgr.EnsureReady(ctx, "p1", 2)
+	var capErr *MaxTotalReachedError
+	if !errors.As(err, &capErr) {
+		t.Fatalf("EnsureReady error = %v, want *MaxTotalReachedError", err)
+	}
+	if prov.provisionCalls != 0 {
+		t.Fatalf("provisionCalls = %d, want 0 (the admission gate must reject before attempting any provisioning)", prov.provisionCalls)
 	}
 }
 

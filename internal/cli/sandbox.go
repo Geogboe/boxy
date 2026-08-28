@@ -21,8 +21,9 @@ func newSandboxCommand() *cobra.Command {
 	var file, server string
 
 	cmd := &cobra.Command{
-		Use:   "sandbox",
-		Short: "Manage sandboxes",
+		Use:     "sandbox",
+		Aliases: []string{"sbx"},
+		Short:   "Manage sandboxes",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()
 		},

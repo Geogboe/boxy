@@ -70,6 +70,7 @@ docs/adr/             # Architecture Decision Records
 - Docker pool provisioning auto-pulls a configured image when it is missing locally; first-run Docker pools should not require a manual `docker pull`.
 - `model.Resource.OriginPool` is immutable provenance: it records which pool provisioned the resource, and `pool.preheat.max_total` is enforced against all non-destroyed resources with that origin, not just current ready inventory.
 - The daemon reconcile loop runs pool reconciliation both before and after sandbox fulfillment so preheat targets are restored in the same tick after allocations drain a pool.
+- `computeToProvisionCount` (`internal/pool/planning.go`) measures the min_ready gap against `totalCount` (all non-stale, non-destroyed resources tracked for the pool), not `readyCount` (only `ResourceStateReady`). A resource this pool already provisioned but that hasn't reached `Ready` yet (mid-admission — e.g. guest personalization via `AdmissionHandler`) is real inventory-in-progress and must count toward the target; comparing against `readyCount` alone made every reconcile tick before admission finished re-request the *full* remaining gap, overshooting `min_ready` by one extra resource per tick until `max_total` capped it (#258, 2026-08).
 - Resource destroy paths (recycle-by-max-age, drain, sandbox-triggered `DestroyResource`) persist a transient state (`recycling` or `destroying`) *before* calling the provisioner, so a resource mid-teardown is observable via the REST API (`GET /api/v1/resources[/{id}]`) and `.boxy/state.json` instead of just vanishing once the destroy completes. No CLI command surfaces individual pool-resource state today (`boxy status` only aggregates ready-inventory counts; `boxy debug pool` only has `drain`/`fill`) — that's deliberately out of scope, see ADR-0006's Non-goals. An orphan sweep in `internal/pool/manager.go` recovers resources left stuck in a transient state by a crash; both sweep sites cover both transient states (safe because every driver's `Delete` is idempotent on an already-gone resource) — see ADR-0006 for why an earlier, narrower split turned out to leave a real recovery gap.
 
 ### Sandboxes
@@ -322,6 +323,33 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   without conflict. After rebasing, run the complete local CI gate on each
   split branch independently; do not trust a clean rebase or a green combined
   branch as proof that every standalone branch still builds and tests.
+- **`git rebase --rebase-merges` re-runs the merge algorithm at every replayed
+  merge commit — it does not just re-sign/relocate the existing merge
+  result.** Bulk-re-signing a branch (e.g. `git -c commit.gpgsign=false commit`
+  now, `git rebase --rebase-merges --exec 'git commit --amend --no-edit -S'
+  main` later once signing is unblocked) silently reintroduced a bug this
+  way (2026-08-27, batch PR #264): an earlier manual fix-up had been folded
+  *into* a merge commit via `git commit --amend` after resolving it (see the
+  "clean textual rebase" entry above — this was the exact same
+  `computeToProvisionCount` 3-arg-vs-2-arg conflict, caught and fixed once
+  already). The rebase replayed both branch tips from their original
+  pre-fix commits and re-ran `git merge` fresh at that point, which
+  reproduced the identical no-conflict-but-wrong auto-resolution — the
+  manual amendment wasn't a separate commit, so replay had nothing to
+  reapply. Caught before pushing only because the tree was diffed against a
+  pre-rebase recovery tag (`git tag recovery/<branch> <sha>` before
+  rewriting, `git diff recovery/<branch> <branch>` after) and the diff
+  wasn't empty. Fixed by re-applying the fix as a `git commit --fixup=<merge-sha>`
+  targeting the specific merge commit, then re-running the rebase with
+  `--autosquash` added so the fixup folds into the right commit instead of
+  landing as its own; the diff-against-recovery-tag check came back empty
+  the second time, confirmed by a full `task ci:validate` pass. The general
+  rule: any history-rewriting rebase that touches a merge commit needs the
+  same "don't trust it, verify the resulting tree" treatment as a normal
+  rebase, and a merge commit that was hand-amended after resolution is the
+  specific shape most likely to silently regress on replay — prefer a
+  separate follow-up commit over amending a merge commit when a fix-up is
+  likely to survive a later rebase.
 - **Reconcile history from `origin/main` before changing local `main`.** Fetch
   first, map the commit DAG, and preserve a named recovery ref before resetting
   a diverged local branch. When splitting stacked work, verify which commits
@@ -514,9 +542,26 @@ Wrap repeated commands in `Taskfile.yml`. If a command is run more than once, ad
 ### Merging PRs
 
 - `main` has no branch protection (`gh api repos/Geogboe/boxy/branches/main/protection` → 404). Merges are gated by convention and green CI, not by GitHub-enforced required checks.
-- History uses merge commits, not squash, for every PR including release-please PRs — use `gh pr merge --merge`.
+- History uses merge commits, not squash, for every PR including release-please PRs — use `gh pr merge --merge --body ""`. The trailing `--body ""` is load-bearing, not cosmetic — see the changelog-duplication note below.
+- **Every regular fix/feat PR's changelog entry was appearing twice in release-please's notes until 2026-08-27 — always pass `--body ""`.** Root cause: the repo's merge-commit template (`merge_commit_message: "PR_TITLE"`) puts the PR title into the merge commit's *body*, and PR titles here are themselves Conventional-Commit-formatted (`fix(pool): ...`) — identical in shape to the underlying fix commit already in history. release-please's commit parser walks every commit including merge commits, so it picked up both as separate entries for the same change (see `v0.1.50`'s release notes for a live example: `#240`'s fix is listed twice, once per commit SHA). There is **no repo-settings fix** for this: GitHub only allows three `(merge_commit_title, merge_commit_message)` combinations — `(PR_TITLE, PR_BODY)`, `(PR_TITLE, BLANK)`, `(MERGE_MESSAGE, PR_TITLE)` — and every combination other than the current one either keeps the duplicate body or moves the same duplicate text into the merge commit's *subject* instead. The fix has to happen per-merge: `gh pr merge --merge --body ""` explicitly overrides the template with an empty body via the API, leaving the merge commit as subject-only (`Merge pull request #N from owner/branch`), which doesn't match Conventional-Commit shape and isn't picked up as its own entry. This only prevents *future* duplication — releases already cut (`v0.1.50` and earlier) keep their duplicated notes unless hand-edited separately.
 - release-please PRs reliably show their `CI` check as `action_required` with zero jobs run (seen for 0.1.27 and 0.1.29). This is a known, harmless quirk of that workflow's trigger conditions, not a real gate — safe to merge through.
+- **Batching several small, independent fixes into one local integration
+  branch before opening any PR** (rather than one branch-and-PR per issue
+  against a moving `main`) is a deliberate, requested pattern, not just a
+  shortcut — see PR #264 (2026-08-27, six issues: #241/#251/#258/#249/#213/#104).
+  Build each fix on its own short-lived topic branch off the integration
+  branch as usual (keeps commit messages/`Closes #N` and, if plans change,
+  the option to cherry-pick just one fix out later), `git merge` it into the
+  integration branch immediately, and **run the full build/test/`task
+  ci:validate` gate again after every single merge**, not just once at the
+  end — this caught two separate real semantic-merge regressions in the
+  same session (see the two entries above) that a single end-of-batch check
+  would have found much later and made harder to bisect. If the integration
+  branch already has open PRs from an earlier attempt at per-issue branches
+  covering some of the same commits, close those as superseded (referencing
+  the new batch PR) once the batch PR exists — don't leave both live.
 - Merging a release-please PR triggers `release.yml` on push to `main`. The `release-please` job tags and completes quickly; the `goreleaser` job (5 platforms + SBOMs + checksums + cosign signing, ~3 min of actual runtime) then **pauses indefinitely on a `release-signing` GitHub Environment approval** (#55, 2026-08, ADR-0014) before it starts — it will not run to completion on its own. Go approve it in the Actions run's UI, then wait for the run to complete before treating the release as published. Don't mistake the pause for a stalled/failed run.
+- **Release cadence is deliberately not "cut a release after every merged fix" (2026-08-27 decision).** The project stays prerelease (`prerelease: true` in both `release-please-config.json` and `.goreleaser.yml`) until the owner says otherwise, but a prerelease that ships after a single one-line bugfix is still a wasted release: a full 5-platform GoReleaser run (SBOMs, checksums, cosign signing, a manual approval click) for one commit's worth of change. release-please already supports this — it keeps exactly one open release PR that accumulates every commit landed on `main` since the last release, updating in place, until that PR is merged. The fix is workflow discipline, not tooling: **don't merge the release-please PR just because it appeared.** Let multiple fix/feat PRs land on `main` first so the pending release PR accumulates a real batch of changelog-worthy entries, and only merge it — cutting the actual tagged release — when there's enough substance to justify a release, or when the owner explicitly asks for one. This overrides the ship-it skill's Phase 8 default (which treats "approve and merge the release PR" as an automatic follow-on to a self-approved fix PR merge) — ask before merging a release-please PR rather than doing it on autopilot.
 
 ### GitHub Actions Node 24 migration — done
 

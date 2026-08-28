@@ -71,14 +71,44 @@ func runStatus(ctx context.Context, opts statusOpts, cmd *cobra.Command) error {
 	}
 	_, _ = fmt.Fprintf(out, "  Pools:      %d configured, %d resources ready\n", len(pools), totalResources)
 
-	// Sandboxes
+	// Sandboxes. Counted deliberately (a switch over the known
+	// model.SandboxStatus* constants) rather than by excluding just
+	// "failed": failed is separated out, and an unrecognized/empty status
+	// still falls back to "active" (see countSandboxesByStatus). A failed
+	// sandbox record holds no resources and is never reaped automatically
+	// (see #241), so it must not inflate "active".
 	sandboxes, err := fetchJSON[[]model.Sandbox](ctx, client, base+"/api/v1/sandboxes")
 	if err != nil {
 		return fmt.Errorf("fetch sandboxes: %w", err)
 	}
-	_, _ = fmt.Fprintf(out, "  Sandboxes:  %d active\n", len(sandboxes))
+	activeSandboxes, failedSandboxes := countSandboxesByStatus(sandboxes)
+	_, _ = fmt.Fprintf(out, "  Sandboxes:  %d active, %d failed\n", activeSandboxes, failedSandboxes)
 
 	return nil
+}
+
+// countSandboxesByStatus buckets sandboxes into active/failed for the
+// status summary. It enumerates every known model.SandboxStatus* constant
+// explicitly (Pending/Provisioning/Ready/Deleting as active,
+// Failed as failed) rather than excluding just SandboxStatusFailed, so
+// adding a new status is a visible decision here, not an implicit
+// default-case fallthrough. An unrecognized or empty status (the API
+// field is `omitempty`) still counts as active — preserving today's
+// total-visibility behavior, active+failed == len(sandboxes), rather than
+// silently dropping it from either count — but that's the fallback for
+// the unexpected, not the primary classification path.
+func countSandboxesByStatus(sandboxes []model.Sandbox) (active, failed int) {
+	for _, sb := range sandboxes {
+		switch sb.Status {
+		case model.SandboxStatusPending, model.SandboxStatusProvisioning, model.SandboxStatusReady, model.SandboxStatusDeleting:
+			active++
+		case model.SandboxStatusFailed:
+			failed++
+		default:
+			active++
+		}
+	}
+	return active, failed
 }
 
 // resolveServerAddr determines the server address with precedence:

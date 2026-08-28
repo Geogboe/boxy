@@ -34,6 +34,9 @@ func newSandboxDeleteCommand(serverAddr func() string) *cobra.Command {
 				}
 				return fmt.Errorf("delete sandbox %q: %w", args[0], err)
 			}
+			for _, cleanupErr := range deleteGuestCredentials(serverAddr(), sb.ID, sb.Resources) {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "  Warning: %v\n", cleanupErr)
+			}
 			if noWait {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "accepted deletion of sandbox %s\n", sb.ID)
 				return nil

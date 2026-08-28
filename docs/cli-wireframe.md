@@ -108,7 +108,7 @@ boxy
 │   $ boxy status
 │     Server:     https://127.0.0.1:9090 (healthy)
 │     Pools:      2 configured, 5 resources ready
-│     Sandboxes:  1 active
+│     Sandboxes:  1 active, 0 failed
 │
 │   $ boxy status  (server not running)
 │     Error: cannot reach server at 127.0.0.1:9090
@@ -144,7 +144,7 @@ boxy
 │       └── revoke <id>                            Revoke a key
 │
 │
-├── config
+├── config                                      (alias: cfg)
 │   ├── validate                               Validate config file and exit
 │   │   └── --config <path>
 │   └── client
@@ -183,7 +183,7 @@ boxy
 │       Boxy never silently migrates or falls back between secret backends.
 │
 │
-├── sandbox                                    Manage sandboxes
+├── sandbox                                    Manage sandboxes (alias: sbx)
 │   ├── --server <addr>                          Server address (overrides env/global defaults)
 │   │
 │   ├── create -f <spec>                         Create sandbox from spec file
@@ -218,6 +218,10 @@ boxy
 │   │
 │   ├── delete <id>                              Delete a sandbox
 │   │   └── --no-wait                            Return after delete request is accepted
+│   │                                               (also removes any --save-guest-cred keyring
+│   │                                                entry for each of the sandbox's resources;
+│   │                                                a cleanup failure prints a warning, it does
+│   │                                                not fail the delete)
 │   │
 │   │   $ boxy sandbox delete sb-a1b2c3
 │   │     deleted sandbox sb-a1b2c3
