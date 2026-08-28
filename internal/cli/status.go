@@ -155,6 +155,7 @@ func checkHealth(ctx context.Context, client *http.Client, base string) (bool, e
 	if err != nil {
 		return false, err
 	}
+	printCurlIfEnabled(ctx, client, req)
 	resp, err := client.Do(req)
 	if err != nil {
 		return false, wrapConnError(err, req.URL.Host)
