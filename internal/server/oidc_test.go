@@ -399,6 +399,8 @@ func TestOIDC_KeyExchange_RejectsInvalidIDToken(t *testing.T) {
 	t.Parallel()
 	provider := newFakeOIDCProvider(t)
 	oidcOpts := newTestOIDCOptions(t, provider, "groups", map[string]string{"boxy-admins": "admin"}, "")
+	oidcOpts.CLIClientID = testOIDCClientID
+	oidcOpts.CLIVerifier = oidcOpts.Verifier // fake provider signs every test token with the same audience regardless of which "client" conceptually requested it
 
 	st := store.NewMemoryStore()
 	mux := server.NewTestMuxWithOIDC(st, sandbox.New(st, nil), oidcOpts)
