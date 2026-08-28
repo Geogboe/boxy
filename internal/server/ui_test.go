@@ -103,6 +103,93 @@ func TestUI_sandboxes_renders(t *testing.T) {
 	}
 }
 
+// TestUI_sandboxes_resourceDetailExpands closes #255: the sandboxes table
+// previously rendered only a resource count (len .Resources), even though
+// the underlying model.Sandbox.Resources is just a list of IDs the operator
+// has no way to inspect from the dashboard. This asserts the expandable
+// per-row detail actually surfaces resource identity/state plus the other
+// sandbox-level fields (owner, expiry, security profile) the table also
+// didn't show before.
+func TestUI_sandboxes_resourceDetailExpands(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	expires := time.Date(2026, time.August, 28, 12, 0, 0, 0, time.UTC)
+
+	if err := st.PutResource(ctx, model.Resource{
+		ID:         "res-1",
+		Type:       model.ResourceTypeContainer,
+		Profile:    "ubuntu-2204",
+		OriginPool: "pool-a",
+		Provider:   model.ProviderRef{Name: "docker"},
+		State:      model.ResourceStateReady,
+	}); err != nil {
+		t.Fatalf("PutResource: %v", err)
+	}
+	if err := st.CreateSandbox(ctx, model.Sandbox{
+		ID:        "sb-detail",
+		Name:      "detailed-sandbox",
+		Status:    model.SandboxStatusReady,
+		OwnerID:   "owner-1",
+		Policies:  model.SandboxPolicies{SecurityProfile: "lab"},
+		Resources: []model.ResourceID{"res-1"},
+		ExpiresAt: &expires,
+	}); err != nil {
+		t.Fatalf("CreateSandbox: %v", err)
+	}
+
+	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/ui/sandboxes", nil)
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	body := w.Body.String()
+	for _, want := range []string{
+		"<details", "res-1", "docker", "ubuntu-2204", "pool-a",
+		"owner-1", "lab", "2026-08-28 12:00:00 UTC",
+		`class="badge badge-ready"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("sandboxes page missing %q; body = %q", want, body)
+		}
+	}
+}
+
+// TestUI_sandboxes_resourceDetailHandlesMissingResourceRecord guards a real
+// edge case: Sandbox.Resources is a list of IDs, so it can reference a
+// resource the store no longer holds a record for (e.g. purged after
+// destroy). The detail view must still render that ID rather than panicking
+// on a missing map lookup or silently dropping the row.
+func TestUI_sandboxes_resourceDetailHandlesMissingResourceRecord(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+
+	if err := st.CreateSandbox(ctx, model.Sandbox{
+		ID:        "sb-missing-res",
+		Name:      "orphan-ref-sandbox",
+		Status:    model.SandboxStatusReady,
+		Resources: []model.ResourceID{"res-gone"},
+	}); err != nil {
+		t.Fatalf("CreateSandbox: %v", err)
+	}
+
+	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/ui/sandboxes", nil)
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "res-gone") {
+		t.Fatalf("sandboxes page missing orphaned resource id, body = %q", w.Body.String())
+	}
+}
+
 func TestUI_sandboxes_pendingStatusGetsTransientBadge(t *testing.T) {
 	t.Parallel()
 	st := store.NewMemoryStore()

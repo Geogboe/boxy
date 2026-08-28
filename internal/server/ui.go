@@ -26,9 +26,35 @@ type pageData struct {
 	SandboxCount  int
 	ResourceCount int
 	Pools         []model.Pool
-	Sandboxes     []model.Sandbox
+	Sandboxes     []sandboxView
 	Resources     []model.Resource
 	Agents        []agentView
+}
+
+// sandboxView is the dashboard's per-sandbox row, joining the sandbox record
+// with the full resource details (model.Sandbox.Resources is only a list of
+// IDs) so the table can expand a row to real detail instead of a bare count.
+// See #255.
+type sandboxView struct {
+	ID               string
+	Name             string
+	Status           model.SandboxStatus
+	OwnerID          string
+	Error            string
+	SecurityProfile  string
+	AutoDestroyAfter string
+	ExpiresAt        string
+	Resources        []resourceView
+}
+
+// resourceView is one resource's detail within an expanded sandbox row.
+type resourceView struct {
+	ID         string
+	Type       string
+	Profile    string
+	State      model.ResourceState
+	OriginPool string
+	Provider   string
 }
 
 type agentView struct {
@@ -163,11 +189,57 @@ func (s *Server) poolsData(r *http.Request) (pageData, error) {
 }
 
 func (s *Server) sandboxesData(r *http.Request) (pageData, error) {
-	sandboxes, err := s.store.ListSandboxes(r.Context())
+	ctx := r.Context()
+	sandboxes, err := s.store.ListSandboxes(ctx)
 	if err != nil {
 		return pageData{}, err
 	}
-	return pageData{Sandboxes: sandboxes}, nil
+	resources, err := s.store.ListResources(ctx)
+	if err != nil {
+		return pageData{}, err
+	}
+	byID := make(map[model.ResourceID]model.Resource, len(resources))
+	for _, res := range resources {
+		byID[res.ID] = res
+	}
+
+	views := make([]sandboxView, 0, len(sandboxes))
+	for _, sb := range sandboxes {
+		view := sandboxView{
+			ID:               string(sb.ID),
+			Name:             sb.Name,
+			Status:           sb.Status,
+			OwnerID:          sb.OwnerID,
+			Error:            sb.Error,
+			SecurityProfile:  sb.Policies.SecurityProfile,
+			AutoDestroyAfter: sb.Policies.AutoDestroyAfter,
+			Resources:        make([]resourceView, 0, len(sb.Resources)),
+		}
+		if sb.ExpiresAt != nil {
+			view.ExpiresAt = dashboardTime(*sb.ExpiresAt)
+		}
+		for _, id := range sb.Resources {
+			res, ok := byID[id]
+			if !ok {
+				// The store no longer holds a record for this ID (e.g.
+				// destroyed and purged). Still show the ID rather than
+				// silently dropping the row, so the resource count in the
+				// summary and the expanded detail agree.
+				view.Resources = append(view.Resources, resourceView{ID: string(id)})
+				continue
+			}
+			view.Resources = append(view.Resources, resourceView{
+				ID:         string(res.ID),
+				Type:       string(res.Type),
+				Profile:    string(res.Profile),
+				State:      res.State,
+				OriginPool: string(res.OriginPool),
+				Provider:   res.Provider.Name,
+			})
+		}
+		views = append(views, view)
+	}
+	return pageData{Sandboxes: views}, nil
 }
 
 func (s *Server) agentsData(_ *http.Request) (pageData, error) {
