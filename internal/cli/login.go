@@ -22,6 +22,7 @@ type loginOptions struct {
 	caCert   string
 	insecure bool
 	oidc     bool
+	web      bool
 }
 
 var loginCredentialsStore = credentials.New
@@ -62,6 +63,9 @@ func newLoginCommand() *cobra.Command {
 				}
 				return runOIDCLogin(cmd.Context(), opts, cmd.OutOrStdout(), cmd.ErrOrStderr())
 			}
+			if opts.web {
+				return fmt.Errorf("--web requires --oidc")
+			}
 			if opts.apiKey == "" {
 				key, err := promptAPIKey(cmd)
 				if err != nil {
@@ -77,6 +81,7 @@ func newLoginCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opts.caCert, "ca-cert", "", "Boxy CA certificate for a self-signed server")
 	cmd.Flags().BoolVar(&opts.insecure, "insecure", false, "skip HTTPS certificate verification (development only)")
 	cmd.Flags().BoolVar(&opts.oidc, "oidc", false, "log in via the server's configured OIDC provider (device-code grant) instead of a static API key")
+	cmd.Flags().BoolVar(&opts.web, "web", false, "with --oidc, use loopback-redirect (auto-launch a browser) instead of the default device-code grant")
 	return cmd
 }
 
