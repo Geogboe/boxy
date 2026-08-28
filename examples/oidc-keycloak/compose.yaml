@@ -1,0 +1,44 @@
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      # KC_HOSTNAME fixes the issuer/authorization_endpoint Keycloak reports
+      # to this one canonical value regardless of which network path a
+      # request arrived on (internal Docker DNS from boxy, or the published
+      # host port from a browser) -- required so both sides agree on the
+      # same OIDC issuer. See ../../docs/superpowers/specs/
+      # 2026-08-28-oidc-ui-and-cli-auth-design.md's Decision 7.
+      KC_HOSTNAME: "http://localhost:8081"
+      KC_HTTP_ENABLED: "true"
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+
+  boxy:
+    image: ghcr.io/geogboe/boxy:latest
+    command: ["serve", "--config", "/etc/boxy/boxy.yaml", "--insecure"]
+    environment:
+      # A committed, self-evidently-non-production dev secret for a
+      # throwaway local realm with no real users or data -- see
+      # realm-export.json's matching client "secret" value and README.md.
+      BOXY_OIDC_CLIENT_SECRET: "boxy-example-dev-secret-not-for-production"
+    ports:
+      - "9090:9090"
+    # boxy's server-side discovery/token-exchange calls hit the same
+    # published "localhost:8081" a browser on the host uses -- see
+    # KC_HOSTNAME above. Without this, "localhost" inside the boxy
+    # container would resolve to the container itself, not Keycloak.
+    extra_hosts:
+      - "localhost:host-gateway"
+    volumes:
+      - ./boxy.yaml:/etc/boxy/boxy.yaml:ro
+      - boxy-state:/var/lib/boxy
+    depends_on:
+      - keycloak
+
+volumes:
+  boxy-state:

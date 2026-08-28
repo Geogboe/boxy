@@ -17,6 +17,10 @@
       <label for="password">Password</label>
       <input type="password" id="password" name="password" autocomplete="current-password" required>
       <button type="submit">Log in</button>
+      {{if .OIDCEnabled}}
+      <div class="login-divider">or</div>
+      <a class="link-button login-sso-link" href="/auth/login?next={{.Next}}">Log in with single sign-on</a>
+      {{end}}
     </form>
   </div>
 </body>

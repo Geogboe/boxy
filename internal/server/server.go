@@ -54,6 +54,7 @@ type Server struct {
 	agentAdmin      AgentAdmin
 	executor        SandboxExecutor
 	guestSecrets    boxysecrets.Store
+	oidc            *OIDCOptions
 	uiEnabled       bool
 	authRequired    bool
 	insecureHTTP    bool
@@ -71,6 +72,10 @@ type ServerOptions struct {
 	TLSKeyPEM    []byte
 	Executor     SandboxExecutor
 	GuestSecrets boxysecrets.Store
+	// OIDC enables provider login on the web UI's /login page. nil (the
+	// default) means only the bootstrapped local admin account can log
+	// in -- see docs/superpowers/specs/2026-08-28-oidc-ui-and-cli-auth-design.md.
+	OIDC *OIDCOptions
 }
 
 // New creates a Server that will listen on addr. It retains the in-process,
@@ -90,6 +95,7 @@ func NewWithOptions(st store.Store, sm *sandbox.Manager, pm PoolMaintenance, aa 
 		agentAdmin:      aa,
 		executor:        opts.Executor,
 		guestSecrets:    opts.GuestSecrets,
+		oidc:            opts.OIDC,
 		uiEnabled:       uiEnabled,
 		authRequired:    opts.AuthRequired,
 		insecureHTTP:    opts.InsecureHTTP,
@@ -133,6 +139,13 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("GET /login", s.handleLoginPage)
 		mux.HandleFunc("POST /login", s.handleLoginSubmit)
 		mux.HandleFunc("POST /logout", s.handleLogout)
+		if s.oidc != nil {
+			mux.HandleFunc("GET /auth/login", s.handleOIDCLogin)
+			mux.HandleFunc("GET /auth/callback", s.handleOIDCCallback)
+			if s.oidc.CLIClientID != "" {
+				mux.HandleFunc("GET /auth/cli-config", s.handleCLIOIDCConfig)
+			}
+		}
 
 		protected := http.NewServeMux()
 		s.registerUIRoutes(protected)

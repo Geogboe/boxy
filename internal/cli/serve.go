@@ -30,8 +30,10 @@ import (
 	"github.com/Geogboe/boxy/pkg/providersdk/builtins"
 	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
 	"github.com/Geogboe/boxy/pkg/store"
+	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
+	"golang.org/x/oauth2"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -329,6 +331,11 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		httpKeyPEM = serverCert.KeyPEM
 	}
 
+	oidcOptions, err := buildOIDCOptions(ctx, cfg.Server.OIDC)
+	if err != nil {
+		return fmt.Errorf("configure OIDC: %w", err)
+	}
+
 	srv := server.NewWithOptions(st, sandboxMgr, poolMgr, agentSrv, listenAddr, uiEnabled, server.ServerOptions{
 		AuthRequired: true,
 		InsecureHTTP: opts.insecure,
@@ -336,6 +343,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		TLSKeyPEM:    httpKeyPEM,
 		Executor:     provisioner,
 		GuestSecrets: guestSecrets,
+		OIDC:         oidcOptions,
 	})
 
 	g, ctx := errgroup.WithContext(ctx)
@@ -583,6 +591,57 @@ func openServeStore(cfgPath string) (store.Store, string, error) {
 		return nil, "", err
 	}
 	return st, statePath, nil
+}
+
+// buildOIDCOptions returns nil (OIDC not configured -- the web UI's
+// bootstrapped local admin account remains the only login path) when
+// spec.Configured() is false, so this only does a live discovery-document
+// fetch against the issuer when OIDC is actually set up.
+func buildOIDCOptions(ctx context.Context, spec boxyconfig.OIDCSpec) (*server.OIDCOptions, error) {
+	if !spec.Configured() {
+		return nil, nil
+	}
+	clientSecret, err := providersdk.ResolveSecretRef(ctx, providersdk.SecretRef(spec.ClientSecret))
+	if err != nil {
+		return nil, fmt.Errorf("resolve server.oidc.client_secret: %w", err)
+	}
+	provider, err := oidc.NewProvider(ctx, spec.Issuer)
+	if err != nil {
+		return nil, fmt.Errorf("discover OIDC issuer %q: %w", spec.Issuer, err)
+	}
+	roleMapping := make(map[string]string, len(spec.RoleMapping))
+	for claimValue, role := range spec.RoleMapping {
+		roleMapping[claimValue] = role
+	}
+	personalKeyMaxTTL, err := spec.EffectivePersonalKeyMaxTTL()
+	if err != nil {
+		return nil, err
+	}
+	var cliVerifier *oidc.IDTokenVerifier
+	if spec.CLIClientID != "" {
+		// A separate verifier: an ID token minted for the CLI's own
+		// device-flow client carries CLIClientID as its audience, not
+		// spec.ClientID (the confidential web client) -- see
+		// server.OIDCOptions.CLIVerifier's doc comment.
+		cliVerifier = provider.Verifier(&oidc.Config{ClientID: spec.CLIClientID})
+	}
+	return &server.OIDCOptions{
+		Issuer: spec.Issuer,
+		OAuth2: oauth2.Config{
+			ClientID:     spec.ClientID,
+			ClientSecret: clientSecret,
+			RedirectURL:  spec.RedirectURL,
+			Endpoint:     provider.Endpoint(),
+			Scopes:       []string{oidc.ScopeOpenID, "profile", "email"},
+		},
+		Verifier:          provider.Verifier(&oidc.Config{ClientID: spec.ClientID}),
+		RoleClaim:         spec.RoleClaim,
+		RoleMapping:       roleMapping,
+		DefaultRole:       model.APIKeyRole(spec.DefaultRole),
+		CLIClientID:       spec.CLIClientID,
+		CLIVerifier:       cliVerifier,
+		PersonalKeyMaxTTL: personalKeyMaxTTL,
+	}, nil
 }
 
 func serveStatePath(cfgPath string) (string, error) {

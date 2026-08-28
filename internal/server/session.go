@@ -13,7 +13,6 @@ import (
 	"github.com/Geogboe/boxy/internal/auth"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/store"
-	"github.com/google/uuid"
 )
 
 // sessionCookieName is the web-UI login session cookie. Deliberately
@@ -72,8 +71,9 @@ func sessionPrincipalFromRequest(r *http.Request) (auth.SessionPrincipal, bool) 
 var loginPageTmpl = template.Must(template.ParseFS(templateFS, "templates/layout.html", "templates/login.html"))
 
 type loginPageData struct {
-	Next  string
-	Error string
+	Next        string
+	Error       string
+	OIDCEnabled bool
 }
 
 func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
@@ -83,9 +83,9 @@ func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	data := loginPageData{Next: safeNextPath(r.URL.Query().Get("next"))}
+	data := loginPageData{Next: safeNextPath(r.URL.Query().Get("next")), OIDCEnabled: s.oidc != nil}
 	if r.URL.Query().Get("error") == "1" {
-		data.Error = "Invalid username or password."
+		data.Error = "Invalid username or password, or single sign-on login failed."
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := loginPageTmpl.ExecuteTemplate(w, "login.html", data); err != nil {
@@ -111,37 +111,11 @@ func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	raw, hash, err := auth.GenerateSessionToken()
-	if err != nil {
-		slog.Error("generate session token", "err", err)
+	if err := s.mintSession(w, r, model.SessionKindLocalAdmin, account.Username, model.APIKeyRoleAdmin); err != nil {
+		slog.Error("mint session", "err", err)
 		http.Redirect(w, r, "/login?error=1", http.StatusFound)
 		return
 	}
-	now := time.Now()
-	session := model.Session{
-		ID:        model.SessionID(uuid.NewString()),
-		Hash:      hash,
-		Kind:      model.SessionKindLocalAdmin,
-		Subject:   account.Username,
-		Role:      model.APIKeyRoleAdmin,
-		CreatedAt: now,
-		ExpiresAt: now.Add(sessionTTL),
-	}
-	if err := s.store.PutSession(r.Context(), session); err != nil {
-		slog.Error("persist session", "err", err)
-		http.Redirect(w, r, "/login?error=1", http.StatusFound)
-		return
-	}
-
-	http.SetCookie(w, &http.Cookie{ //nolint:gosec // HttpOnly/Secure/SameSite are all set below; gosec's static check can't see through the !s.insecureHTTP expression (Secure is conditional, not a literal, so --insecure local dev over plain HTTP still works)
-		Name:     sessionCookieName,
-		Value:    raw,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   !s.insecureHTTP,
-		SameSite: http.SameSiteLaxMode,
-		Expires:  session.ExpiresAt,
-	})
 	http.Redirect(w, r, next, http.StatusFound) //nolint:gosec // next was assigned from safeNextPath above, never an absolute/external URL
 }
 

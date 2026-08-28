@@ -61,6 +61,20 @@ func NewTestMux(st store.Store, sm *sandbox.Manager, uiEnabled bool, pm ...PoolM
 	return mux
 }
 
+// NewTestMuxWithOIDC is NewTestMux plus OIDC login enabled.
+func NewTestMuxWithOIDC(st store.Store, sm *sandbox.Manager, oidcOpts *OIDCOptions) *http.ServeMux {
+	seedTestSession(st)
+	s := &Server{
+		store:      st,
+		sandboxMgr: sm,
+		uiEnabled:  true,
+		oidc:       oidcOpts,
+	}
+	mux := http.NewServeMux()
+	s.registerRoutes(mux)
+	return mux
+}
+
 // NewTestMuxWithGuestSecrets configures the pool credential endpoint with an
 // explicit server-owned secret store.
 func NewTestMuxWithGuestSecrets(st store.Store, sm *sandbox.Manager, secrets boxysecrets.Store) *http.ServeMux {

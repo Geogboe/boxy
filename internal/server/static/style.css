@@ -422,6 +422,17 @@ tbody tr:hover {
   background: var(--accent-hover);
 }
 
+.login-divider {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  margin: 0.25rem 0;
+}
+
+.login-sso-link {
+  text-align: center;
+}
+
 /* Sidebar user/logout footer */
 .sidebar-user {
   margin-top: 1.5rem;

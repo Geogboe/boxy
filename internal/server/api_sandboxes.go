@@ -26,7 +26,7 @@ func (s *Server) handleListSandboxes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if principalFromRequest(r).Role == model.APIKeyRoleUser && s.authRequired {
-		ownerID := string(principalFromRequest(r).KeyID)
+		ownerID := principalFromRequest(r).OwnerIdentity()
 		filtered := sbs[:0]
 		for _, sb := range sbs {
 			if sb.OwnerID == ownerID {
@@ -92,7 +92,7 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 	ownerID := ""
 	if s.authRequired {
-		ownerID = string(principalFromRequest(r).KeyID)
+		ownerID = principalFromRequest(r).OwnerIdentity()
 	}
 	sb, err := s.sandboxMgr.CreateRequestedOwned(r.Context(), req.Name, req.Policies, req.Requests, ownerID)
 	if err != nil {
