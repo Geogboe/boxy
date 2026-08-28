@@ -14,6 +14,9 @@ Do not guess command syntax.
 Run `boxy help all` first when you need the current command surface.
 Run `boxy <command> --help` before using a command you have not executed yet.
 
+`sandbox` and `config` have short aliases (`sbx`, `cfg`) — either form works
+identically; the commands below are listed under their full names.
+
 Core commands you will commonly use:
 - `boxy init`
 - `boxy serve`

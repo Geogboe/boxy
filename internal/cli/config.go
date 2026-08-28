@@ -11,8 +11,9 @@ import (
 
 func newConfigCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "config",
-		Short: "Configuration management",
+		Use:     "config",
+		Aliases: []string{"cfg"},
+		Short:   "Configuration management",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()
 		},

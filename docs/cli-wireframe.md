@@ -144,7 +144,7 @@ boxy
 │       └── revoke <id>                            Revoke a key
 │
 │
-├── config
+├── config                                      (alias: cfg)
 │   ├── validate                               Validate config file and exit
 │   │   └── --config <path>
 │   └── client
@@ -183,7 +183,7 @@ boxy
 │       Boxy never silently migrates or falls back between secret backends.
 │
 │
-├── sandbox                                    Manage sandboxes
+├── sandbox                                    Manage sandboxes (alias: sbx)
 │   ├── --server <addr>                          Server address (overrides env/global defaults)
 │   │
 │   ├── create -f <spec>                         Create sandbox from spec file
