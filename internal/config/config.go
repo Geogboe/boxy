@@ -374,6 +374,9 @@ func (c Config) Validate() error {
 		if err := manifest.Validate(); err != nil {
 			return fmt.Errorf("package %q: %w", name, err)
 		}
+		if !manifest.Method.Supported() {
+			return fmt.Errorf("package %q uses unsupported method %q", name, manifest.Method)
+		}
 	}
 	for name := range c.Templates {
 		resolved, err := c.ResolveTemplate(name)
@@ -450,6 +453,9 @@ func (c Config) validatePackageRefs(refs []string, scope resourcepack.Scope, eve
 		}
 		if err := manifest.Validate(); err != nil {
 			return err
+		}
+		if !manifest.Method.Supported() {
+			return fmt.Errorf("package %q uses unsupported method %q", rawRef, manifest.Method)
 		}
 		if !containsPackageScope(manifest.Scopes, scope) {
 			return fmt.Errorf("package %q does not declare scope %q", rawRef, scope)

@@ -23,8 +23,8 @@ func TestParseRef(t *testing.T) {
 func TestMemoryRegistryPublishesImmutableArtifacts(t *testing.T) {
 	ctx := context.Background()
 	reg := NewMemoryRegistry()
-	ref := Ref{Kind: KindPackage, Name: "app3", Version: "1.0.0"}
-	want := Artifact{Kind: KindPackage, Ref: ref, Manifest: []byte("name: app3\nversion: 1.0.0\n")}
+	ref := Ref{Type: ArtifactTypePackage, Name: "app3", Version: "1.0.0"}
+	want := Artifact{Type: ArtifactTypePackage, Ref: ref, Manifest: []byte("name: app3\nversion: 1.0.0\n")}
 	if err := reg.Publish(ctx, want); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestMemoryRegistryPublishesImmutableArtifacts(t *testing.T) {
 	if strings.HasPrefix(string(again.Manifest), "X") {
 		t.Fatal("Resolve returned mutable registry storage")
 	}
-	if err := reg.Publish(ctx, Artifact{Kind: KindPackage, Ref: ref, Manifest: []byte("different")}); err == nil {
+	if err := reg.Publish(ctx, Artifact{Type: ArtifactTypePackage, Ref: ref, Manifest: []byte("different")}); err == nil {
 		t.Fatal("conflicting republish succeeded")
 	}
 }
@@ -71,8 +71,8 @@ func TestDirectoryRegistryPersistsImmutableArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Artifact{
-		Kind:     KindPackage,
-		Ref:      Ref{Kind: KindPackage, Name: "baseline", Version: "1.0.0"},
+		Type:     ArtifactTypePackage,
+		Ref:      Ref{Type: ArtifactTypePackage, Name: "baseline", Version: "1.0.0"},
 		Manifest: []byte("name: baseline\nversion: 1.0.0\n"),
 		Blobs:    map[string][]byte{"script": []byte("echo ready")},
 	}
@@ -93,6 +93,24 @@ func TestDirectoryRegistryPersistsImmutableArtifacts(t *testing.T) {
 	want.Manifest = []byte("changed")
 	if err := reg.Publish(ctx, want); err == nil || !strings.Contains(err.Error(), "immutable") {
 		t.Fatalf("republish error = %v, want immutable error", err)
+	}
+}
+
+func TestDirectoryRegistryRejectsInvalidArtifactTypes(t *testing.T) {
+	reg, err := NewDirectoryRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, artifactType := range []ArtifactType{"../outside", "custom"} {
+		err := reg.Publish(context.Background(), Artifact{
+			Type:     artifactType,
+			Ref:      Ref{Name: "baseline", Version: "1.0.0"},
+			Manifest: []byte("name: baseline\nversion: 1.0.0\n"),
+		})
+		if err == nil {
+			t.Fatalf("Publish with artifact type %q succeeded", artifactType)
+		}
 	}
 }
 

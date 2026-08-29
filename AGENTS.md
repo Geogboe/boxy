@@ -79,6 +79,22 @@ docs/adr/             # Architecture Decision Records
 - `computeToProvisionCount` (`internal/pool/planning.go`) measures the min_ready gap against `totalCount` (all non-stale, non-destroyed resources tracked for the pool), not `readyCount` (only `ResourceStateReady`). A resource this pool already provisioned but that hasn't reached `Ready` yet (mid-admission — e.g. guest personalization via `AdmissionHandler`) is real inventory-in-progress and must count toward the target; comparing against `readyCount` alone made every reconcile tick before admission finished re-request the *full* remaining gap, overshooting `min_ready` by one extra resource per tick until `max_total` capped it (#258, 2026-08).
 - Resource destroy paths (recycle-by-max-age, drain, sandbox-triggered `DestroyResource`) persist a transient state (`recycling` or `destroying`) *before* calling the provisioner, so a resource mid-teardown is observable via the REST API (`GET /api/v1/resources[/{id}]`) and `.boxy/state.json` instead of just vanishing once the destroy completes. No CLI command surfaces individual pool-resource state today (`boxy status` only aggregates ready-inventory counts; `boxy debug pool` only has `drain`/`fill`) — that's deliberately out of scope, see ADR-0006's Non-goals. An orphan sweep in `internal/pool/manager.go` recovers resources left stuck in a transient state by a crash; both sweep sites cover both transient states (safe because every driver's `Delete` is idempotent on an already-gone resource) — see ADR-0006 for why an earlier, narrower split turned out to leave a real recovery gap.
 
+### Resource Templates, Packages, and Artifact Types
+
+- `pkg/resourcepack` is provider-neutral. `Manifest.Validate` recognizes
+  reserved future methods such as DSC and Ansible, while `Method.Supported`
+  describes methods the current executor can actually run. Config validation
+  must reject unsupported methods before the daemon starts; runtime planning
+  keeps the same guard for artifacts resolved from the registry.
+- Promotion may move resources only when the destination's resolved provider
+  type matches the resource's recorded provider type. Matching abstract shape
+  (resource type/profile) is not sufficient because allocation sends the
+  destination driver type to the creating agent.
+- The artifact registry uses `ArtifactType` and validates every filesystem
+  path component, including the artifact type. Keep Boxy terminology in terms
+  of types; do not introduce Kubernetes-style discriminator fields for new
+  domain objects.
+
 ### Sandboxes
 
 - A sandbox is an environment that can be as small as a single resource or as large as a full lab.

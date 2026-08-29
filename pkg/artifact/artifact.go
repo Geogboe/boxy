@@ -12,21 +12,21 @@ import (
 	"sync"
 )
 
-// Kind identifies the typed artifact manifest stored in the registry.
-type Kind string
+// ArtifactType identifies the typed artifact manifest stored in the registry.
+type ArtifactType string
 
 const (
-	KindSource  Kind = "source"
-	KindPackage Kind = "package"
+	ArtifactTypeSource  ArtifactType = "source"
+	ArtifactTypePackage ArtifactType = "package"
 )
 
 // Ref is an immutable artifact identity. Version is required for published
 // package references so a configuration cannot silently resolve to mutable
 // content.
 type Ref struct {
-	Kind    Kind   `json:"kind" yaml:"kind"`
-	Name    string `json:"name" yaml:"name"`
-	Version string `json:"version" yaml:"version"`
+	Type    ArtifactType `json:"type" yaml:"type"`
+	Name    string       `json:"name" yaml:"name"`
+	Version string       `json:"version" yaml:"version"`
 }
 
 func (r Ref) String() string {
@@ -55,7 +55,7 @@ func ParseRef(raw string) (Ref, error) {
 // Manifest is the typed artifact's YAML or JSON manifest; Blobs contains
 // content-addressed supporting files keyed by their digest or manifest name.
 type Artifact struct {
-	Kind     Kind              `json:"kind" yaml:"kind"`
+	Type     ArtifactType      `json:"type" yaml:"type"`
 	Ref      Ref               `json:"ref" yaml:"ref"`
 	Manifest []byte            `json:"manifest" yaml:"manifest"`
 	Blobs    map[string][]byte `json:"blobs,omitempty" yaml:"blobs,omitempty"`
@@ -102,23 +102,23 @@ func (r *MemoryRegistry) Publish(_ context.Context, value Artifact) error {
 	if r == nil {
 		return fmt.Errorf("artifact registry is nil")
 	}
-	if value.Kind == "" {
-		return fmt.Errorf("artifact kind is required")
+	if value.Type == "" {
+		return fmt.Errorf("artifact type is required")
 	}
 	if value.Ref.Name == "" || value.Ref.Version == "" {
 		return fmt.Errorf("artifact name and version are required")
 	}
-	value.Ref.Kind = value.Kind
+	value.Ref.Type = value.Type
 	key := value.Ref.String()
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if existing, ok := r.artifacts[keyFor(value.Kind, key)]; ok {
+	if existing, ok := r.artifacts[keyFor(value.Type, key)]; ok {
 		if string(existing.Manifest) != string(value.Manifest) || !sameBlobs(existing.Blobs, value.Blobs) {
 			return fmt.Errorf("artifact %q is immutable and already published with different content", key)
 		}
 		return nil
 	}
-	r.artifacts[keyFor(value.Kind, key)] = cloneArtifact(value)
+	r.artifacts[keyFor(value.Type, key)] = cloneArtifact(value)
 	return nil
 }
 
@@ -126,14 +126,14 @@ func (r *MemoryRegistry) Resolve(_ context.Context, ref Ref) (Artifact, error) {
 	if r == nil {
 		return Artifact{}, fmt.Errorf("artifact registry is nil")
 	}
-	if ref.Kind == "" {
-		return Artifact{}, fmt.Errorf("artifact kind is required for %q", ref.String())
+	if ref.Type == "" {
+		return Artifact{}, fmt.Errorf("artifact type is required for %q", ref.String())
 	}
 	r.mu.RLock()
-	value, ok := r.artifacts[keyFor(ref.Kind, ref.String())]
+	value, ok := r.artifacts[keyFor(ref.Type, ref.String())]
 	r.mu.RUnlock()
 	if !ok {
-		return Artifact{}, fmt.Errorf("artifact %q %s not found", ref.Kind, ref.String())
+		return Artifact{}, fmt.Errorf("artifact %q %s not found", ref.Type, ref.String())
 	}
 	return cloneArtifact(value), nil
 }
@@ -185,7 +185,7 @@ func (r *MemoryRegistry) ResolveSource(_ context.Context, name string) (Source, 
 	return cloneSource(source), nil
 }
 
-func keyFor(kind Kind, ref string) string { return string(kind) + ":" + ref }
+func keyFor(artifactType ArtifactType, ref string) string { return string(artifactType) + ":" + ref }
 
 func cloneArtifact(value Artifact) Artifact {
 	value.Manifest = append([]byte(nil), value.Manifest...)

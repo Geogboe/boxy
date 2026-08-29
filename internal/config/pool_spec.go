@@ -14,7 +14,7 @@ import (
 type PoolSpec struct {
 	Name string `json:"name" yaml:"name"`
 
-	// Type is the pool kind as expressed in config.
+	// Type is the pool type as expressed in config.
 	//
 	// Examples: "container", "vm", and (for docker-based container pools) "docker".
 	Type string `json:"type" yaml:"type"`

@@ -52,7 +52,7 @@ the source bytes may remain in an externally owned store.
 ### Artifact
 
 An immutable, addressable payload with a digest. Sources and published resource
-packages are different typed artifact kinds that share retrieval and identity
+packages are different typed artifact types that share retrieval and identity
 infrastructure.
 
 ### Store
@@ -144,7 +144,7 @@ list, for example `scopes: [resource, allocation]`.
 ### Event
 
 When a package is applied: `provision`, `promotion`, or `allocation`. Scope
-and event are separate: scope authorizes the target kind, while event selects
+and event are separate: scope authorizes the target type, while event selects
 the lifecycle moment.
 
 ### Input

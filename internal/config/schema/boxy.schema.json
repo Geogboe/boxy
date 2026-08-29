@@ -197,7 +197,7 @@
             "type": "string"
           },
           "type": {
-            "description": "Pool kind. \"\" and \"container\" and \"docker\" all resolve to a container pool.",
+            "description": "Pool type. \"\" and \"container\" and \"docker\" all resolve to a container pool.",
             "enum": [
               "",
               "container",

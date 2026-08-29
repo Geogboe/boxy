@@ -188,8 +188,8 @@ func (c Config) PackageRegistry(ctx context.Context) (*artifact.MemoryRegistry, 
 			return nil, fmt.Errorf("encode package %q: %w", key, err)
 		}
 		if err := registry.Publish(ctx, artifact.Artifact{
-			Kind:     artifact.KindPackage,
-			Ref:      artifact.Ref{Kind: artifact.KindPackage, Name: manifest.Name, Version: manifest.Version},
+			Type:     artifact.ArtifactTypePackage,
+			Ref:      artifact.Ref{Type: artifact.ArtifactTypePackage, Name: manifest.Name, Version: manifest.Version},
 			Manifest: payload,
 		}); err != nil {
 			return nil, err

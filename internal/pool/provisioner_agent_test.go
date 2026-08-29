@@ -785,6 +785,30 @@ func TestAgentProvisioner_DriverTypeForPool_ExplicitProvider(t *testing.T) {
 	}
 }
 
+func TestAgentProvisioner_CompatibleWithPool(t *testing.T) {
+	provisioner := &AgentProvisioner{
+		Specs: map[model.PoolName]boxyconfig.PoolSpec{
+			"apps": {Type: "vm", Provider: "hyperv"},
+		},
+	}
+	p := model.Pool{Name: "apps"}
+
+	for name, resourceProvider := range map[string]string{
+		"matching provider": "hyperv",
+		"different provider": "docker",
+		"missing provider":   "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			res := model.Resource{Provider: model.ProviderRef{Name: resourceProvider}}
+			got := provisioner.CompatibleWithPool(p, res)
+			want := name == "matching provider"
+			if got != want {
+				t.Fatalf("CompatibleWithPool() = %t, want %t", got, want)
+			}
+		})
+	}
+}
+
 // TestAgentProvisioner_ForceOrphan_SucceedsWhenAgentGone proves ForceOrphan
 // succeeds (never contacts any agent) once the owning agent is entirely
 // absent from the registry — the state Revoke leaves behind after

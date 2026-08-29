@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/resourcepack"
 	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
 )
 
@@ -621,5 +622,26 @@ func TestConfigValidate_rejectsInvalidArtifactStoreReferences(t *testing.T) {
 				t.Fatalf("Validate() error = %v, want substring %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestConfigValidate_rejectsUnsupportedPackageMethod(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		Packages: map[string]resourcepack.Manifest{
+			"future-config": {
+				Name:    "future-config",
+				Version: "1.0.0",
+				Method:  resourcepack.MethodDSC,
+				Scopes:  []resourcepack.Scope{resourcepack.ScopeResource},
+				Events:  []resourcepack.Event{resourcepack.EventProvision},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "unsupported") {
+		t.Fatalf("Validate() error = %v, want unsupported package method error", err)
 	}
 }

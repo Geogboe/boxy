@@ -258,6 +258,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	poolMgr.SetPromoter(&pool.PromotionService{
 		Store:           st,
 		Provisioner:     provisioner,
+		Compatibility:   provisioner,
 		Packages:        provisioner,
 		Personalizer:    provisioner,
 		Secrets:         guestSecrets,

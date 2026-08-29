@@ -32,10 +32,10 @@ func (r *DirectoryRegistry) Publish(ctx context.Context, value Artifact) error {
 	if err := contextErr(ctx); err != nil {
 		return err
 	}
-	if value.Kind == "" || value.Ref.Name == "" || value.Ref.Version == "" {
-		return fmt.Errorf("artifact kind, name, and version are required")
+	if value.Type == "" || value.Ref.Name == "" || value.Ref.Version == "" {
+		return fmt.Errorf("artifact type, name, and version are required")
 	}
-	value.Ref.Kind = value.Kind
+	value.Ref.Type = value.Type
 	path, err := r.artifactPath(value.Ref)
 	if err != nil {
 		return err
@@ -66,7 +66,7 @@ func (r *DirectoryRegistry) Resolve(ctx context.Context, ref Ref) (Artifact, err
 		}
 		return Artifact{}, err
 	}
-	if value.Kind != ref.Kind || value.Ref.Name != ref.Name || value.Ref.Version != ref.Version {
+	if value.Type != ref.Type || value.Ref.Name != ref.Name || value.Ref.Version != ref.Version {
 		return Artifact{}, fmt.Errorf("artifact %q has inconsistent identity", ref.String())
 	}
 	return value, nil
@@ -119,10 +119,10 @@ func (r *DirectoryRegistry) artifactPath(ref Ref) (string, error) {
 	if r == nil || strings.TrimSpace(r.Root) == "" {
 		return "", fmt.Errorf("artifact registry directory is required")
 	}
-	if ref.Kind == "" || !safeComponent(ref.Name) || !safeComponent(ref.Version) {
-		return "", fmt.Errorf("artifact reference contains an unsafe path component")
+	if !validArtifactType(ref.Type) || !safeComponent(ref.Name) || !safeComponent(ref.Version) {
+		return "", fmt.Errorf("artifact reference contains an unsafe type or path component")
 	}
-	return filepath.Join(r.Root, "artifacts", string(ref.Kind), ref.Name, ref.Version+".json"), nil
+	return filepath.Join(r.Root, "artifacts", string(ref.Type), ref.Name, ref.Version+".json"), nil
 }
 
 func (r *DirectoryRegistry) sourcePath(name string) (string, error) {
@@ -191,7 +191,7 @@ func (r *DirectoryRegistry) writeJSON(path string, value any) error {
 }
 
 func sameArtifact(left, right Artifact) bool {
-	return left.Kind == right.Kind && left.Ref == right.Ref && string(left.Manifest) == string(right.Manifest) && sameBlobs(left.Blobs, right.Blobs) && reflectStrings(left.Metadata, right.Metadata)
+	return left.Type == right.Type && left.Ref == right.Ref && string(left.Manifest) == string(right.Manifest) && sameBlobs(left.Blobs, right.Blobs) && reflectStrings(left.Metadata, right.Metadata)
 }
 
 func sameSource(left, right Source) bool {
@@ -200,6 +200,15 @@ func sameSource(left, right Source) bool {
 
 func safeComponent(value string) bool {
 	return value != "" && value != "." && value != ".." && !strings.ContainsAny(value, `/\\:`)
+}
+
+func validArtifactType(value ArtifactType) bool {
+	switch value {
+	case ArtifactTypeSource, ArtifactTypePackage:
+		return true
+	default:
+		return false
+	}
 }
 
 func contextErr(ctx context.Context) error {

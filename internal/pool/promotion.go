@@ -20,16 +20,23 @@ import (
 // ancestor, applies the destination package delta, and commits ownership only
 // after the destination is usable.
 type PromotionService struct {
-	Store        store.Store
-	Provisioner  Provisioner
-	Packages     ResourcePackageApplier
-	Personalizer GuestAdmissionPersonalizer
-	Secrets      boxysecrets.Store
+	Store         store.Store
+	Provisioner   Provisioner
+	Compatibility ResourcePoolCompatibility
+	Packages      ResourcePackageApplier
+	Personalizer  GuestAdmissionPersonalizer
+	Secrets       boxysecrets.Store
 
 	// TemplateParents maps a template name to its single parent template.
 	TemplateParents map[string]string
 	Clock           Clock
 	lockPool        func(model.PoolName) func()
+}
+
+// ResourcePoolCompatibility determines whether an existing resource can be
+// operated on by the provider selected for a destination pool.
+type ResourcePoolCompatibility interface {
+	CompatibleWithPool(pool model.Pool, resource model.Resource) bool
 }
 
 // SetPoolLocker gives promotion the manager's existing per-pool lock. It is
@@ -49,6 +56,9 @@ func (p *PromotionService) Promote(ctx context.Context, destinationName model.Po
 	}
 	if p.Provisioner == nil {
 		return fmt.Errorf("promotion provisioner is required")
+	}
+	if p.Compatibility == nil {
+		return fmt.Errorf("promotion compatibility checker is required")
 	}
 	destination, err := p.Store.GetPool(ctx, destinationName)
 	if err != nil {
@@ -98,7 +108,7 @@ func (p *PromotionService) selectCandidate(destination model.Pool, pools []model
 		for _, source := range candidates {
 			ready := make([]model.Resource, 0)
 			for _, resource := range resources {
-				if resource.EffectivePool() == source.Name && resource.State == model.ResourceStateReady && matchesPoolShape(destination, resource) {
+				if resource.EffectivePool() == source.Name && resource.State == model.ResourceStateReady && matchesPoolShape(destination, resource) && p.Compatibility.CompatibleWithPool(destination, resource) {
 					ready = append(ready, resource)
 				}
 			}
@@ -119,6 +129,9 @@ func (p *PromotionService) promoteOne(ctx context.Context, source, destination m
 		return fmt.Errorf("get promotion resource %q: %w", candidate.ID, err)
 	}
 	if res.State != model.ResourceStateReady || res.EffectivePool() != source.Name {
+		return nil
+	}
+	if !p.Compatibility.CompatibleWithPool(destination, res) {
 		return nil
 	}
 

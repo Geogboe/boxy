@@ -258,7 +258,7 @@ func buildPoolsSchema() map[string]any {
 				// and omitting "type" entirely are both valid but distinct
 				// inputs.
 				"enum":        []string{"", "container", "docker", "vm", "share"},
-				"description": `Pool kind. "" and "container" and "docker" all resolve to a container pool.`,
+				"description": `Pool type. "" and "container" and "docker" all resolve to a container pool.`,
 			},
 			"provider": map[string]any{
 				"type":        "string",

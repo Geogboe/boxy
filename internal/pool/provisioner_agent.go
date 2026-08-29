@@ -439,3 +439,14 @@ func (ap *AgentProvisioner) driverTypeForPool(spec boxyconfig.PoolSpec) provider
 		return providersdk.Type(spec.Type)
 	}
 }
+
+func (ap *AgentProvisioner) CompatibleWithPool(pool model.Pool, res model.Resource) bool {
+	if ap == nil || strings.TrimSpace(res.Provider.Name) == "" {
+		return false
+	}
+	spec, ok := ap.Specs[pool.Name]
+	if !ok {
+		return false
+	}
+	return string(ap.driverTypeForPool(spec)) == strings.TrimSpace(res.Provider.Name)
+}

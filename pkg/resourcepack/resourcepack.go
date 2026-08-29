@@ -27,6 +27,13 @@ const (
 	MethodAnsible    Method = "ansible"
 )
 
+// Supported reports whether Boxy currently has an executor for the method.
+// DSC and Ansible remain valid manifest vocabulary for future implementations,
+// but cannot be used by the current lifecycle executor.
+func (m Method) Supported() bool {
+	return m == MethodShell || m == MethodPowerShell
+}
+
 type Scope string
 
 const (
@@ -165,7 +172,7 @@ func (e Engine) Plan(ctx context.Context, request Request) (Plan, error) {
 		if err != nil {
 			return Plan{}, err
 		}
-		ref.Kind = artifact.KindPackage
+		ref.Type = artifact.ArtifactTypePackage
 		value, err := e.Registry.Resolve(ctx, ref)
 		if err != nil {
 			return Plan{}, fmt.Errorf("resolve package %q: %w", rawRef, err)
@@ -186,7 +193,7 @@ func (e Engine) Plan(ctx context.Context, request Request) (Plan, error) {
 		if !containsEvent(manifest.Events, request.Event) {
 			return Plan{}, fmt.Errorf("%w: package %q does not declare event %q", ErrInvalidPackageScope, rawRef, request.Event)
 		}
-		if manifest.Method != MethodShell && manifest.Method != MethodPowerShell {
+		if !manifest.Method.Supported() {
 			return Plan{}, fmt.Errorf("%w: package %q uses method %q", ErrUnsupportedMethod, rawRef, manifest.Method)
 		}
 		parameters := mergeMaps(manifest.Defaults, inputParameters(manifest.Inputs))

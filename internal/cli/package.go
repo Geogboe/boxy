@@ -62,8 +62,8 @@ func runPackageBuild(ctx context.Context, manifestPath, outputPath string) error
 		return err
 	}
 	value := artifact.Artifact{
-		Kind:     artifact.KindPackage,
-		Ref:      artifact.Ref{Kind: artifact.KindPackage, Name: manifest.Name, Version: manifest.Version},
+		Type:     artifact.ArtifactTypePackage,
+		Ref:      artifact.Ref{Type: artifact.ArtifactTypePackage, Name: manifest.Name, Version: manifest.Version},
 		Manifest: data,
 	}
 	if script, _ := manifest.Inputs["script"].(string); script != "" {
@@ -139,8 +139,8 @@ func readPackageArtifact(path string) (artifact.Artifact, error) {
 	if err := json.Unmarshal(data, &value); err != nil {
 		return artifact.Artifact{}, fmt.Errorf("decode package artifact: %w", err)
 	}
-	if value.Kind != artifact.KindPackage {
-		return artifact.Artifact{}, fmt.Errorf("artifact kind %q is not a package", value.Kind)
+	if value.Type != artifact.ArtifactTypePackage {
+		return artifact.Artifact{}, fmt.Errorf("artifact type %q is not a package", value.Type)
 	}
 	if value.Ref.Name == "" || value.Ref.Version == "" {
 		return artifact.Artifact{}, fmt.Errorf("package artifact identity is incomplete")

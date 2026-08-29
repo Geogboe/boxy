@@ -9,8 +9,8 @@ import (
 
 func packageArtifact(manifest string) artifact.Artifact {
 	return artifact.Artifact{
-		Kind:     artifact.KindPackage,
-		Ref:      artifact.Ref{Kind: artifact.KindPackage, Name: "app3", Version: "1.0.0"},
+		Type:     artifact.ArtifactTypePackage,
+		Ref:      artifact.Ref{Type: artifact.ArtifactTypePackage, Name: "app3", Version: "1.0.0"},
 		Manifest: []byte(manifest),
 	}
 }
@@ -82,8 +82,8 @@ scopes: [resource]
 events: [provision]`,
 	} {
 		if err := reg.Publish(context.Background(), artifact.Artifact{
-			Kind:     artifact.KindPackage,
-			Ref:      artifact.Ref{Kind: artifact.KindPackage, Name: name, Version: "1.0.0"},
+			Type:     artifact.ArtifactTypePackage,
+			Ref:      artifact.Ref{Type: artifact.ArtifactTypePackage, Name: name, Version: "1.0.0"},
 			Manifest: []byte(manifest),
 		}); err != nil {
 			t.Fatalf("Publish %s: %v", name, err)

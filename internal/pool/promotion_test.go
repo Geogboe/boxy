@@ -14,6 +14,7 @@ import (
 type promotionProvisioner struct {
 	destroyed  []model.ResourceID
 	destroyErr error
+	compatible bool
 }
 
 func (p *promotionProvisioner) Provision(context.Context, model.Pool) (model.Resource, error) {
@@ -23,6 +24,10 @@ func (p *promotionProvisioner) Provision(context.Context, model.Pool) (model.Res
 func (p *promotionProvisioner) Destroy(_ context.Context, _ model.Pool, res model.Resource) error {
 	p.destroyed = append(p.destroyed, res.ID)
 	return p.destroyErr
+}
+
+func (p *promotionProvisioner) CompatibleWithPool(model.Pool, model.Resource) bool {
+	return p.compatible
 }
 
 type promotionPackageApplier struct {
@@ -73,11 +78,12 @@ func TestPromotionServicePromotesAfterDestinationPackagesSucceed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	provisioner := &promotionProvisioner{}
+	provisioner := &promotionProvisioner{compatible: true}
 	packages := &promotionPackageApplier{}
 	service := &PromotionService{
 		Store:           st,
 		Provisioner:     provisioner,
+		Compatibility:   provisioner,
 		Packages:        packages,
 		TemplateParents: map[string]string{"apps": "base"},
 		Clock:           fixedClock{t: time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)},
@@ -134,7 +140,7 @@ func TestPromotionServicePreservesSourceMinimumReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	provisioner := &promotionProvisioner{}
-	service := &PromotionService{Store: st, Provisioner: provisioner, TemplateParents: map[string]string{"apps": "base"}}
+	service := &PromotionService{Store: st, Provisioner: provisioner, Compatibility: provisioner, TemplateParents: map[string]string{"apps": "base"}}
 	if err := service.Promote(ctx, destination.Name, 0); err != nil {
 		t.Fatalf("Promote: %v", err)
 	}
@@ -164,10 +170,11 @@ func TestPromotionServiceDestroysResourceWhenPackageApplicationFails(t *testing.
 	if err := st.PutResource(ctx, resource); err != nil {
 		t.Fatal(err)
 	}
-	provisioner := &promotionProvisioner{}
+	provisioner := &promotionProvisioner{compatible: true}
 	service := &PromotionService{
 		Store:           st,
 		Provisioner:     provisioner,
+		Compatibility:   provisioner,
 		Packages:        &promotionPackageApplier{err: errors.New("package failed")},
 		TemplateParents: map[string]string{"apps": "base"},
 	}
@@ -179,5 +186,50 @@ func TestPromotionServiceDestroysResourceWhenPackageApplicationFails(t *testing.
 	}
 	if _, err := st.GetResource(ctx, resource.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("resource lookup error = %v, want not found", err)
+	}
+}
+
+func TestPromotionServiceSkipsIncompatibleProvider(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	source := promotionPool("base", "base", 0)
+	destination := promotionPool("apps", "apps", 1)
+	resource := model.Resource{
+		ID:          "vm-1",
+		Type:        model.ResourceTypeVM,
+		Profile:     "windows",
+		OriginPool:  source.Name,
+		CurrentPool: source.Name,
+		Provider:    model.ProviderRef{Name: "hyperv"},
+		State:       model.ResourceStateReady,
+	}
+	for _, pool := range []model.Pool{source, destination} {
+		if err := st.PutPool(ctx, pool); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.PutResource(ctx, resource); err != nil {
+		t.Fatal(err)
+	}
+
+	provisioner := &promotionProvisioner{}
+	service := &PromotionService{
+		Store:           st,
+		Provisioner:     provisioner,
+		Compatibility:   provisioner,
+		TemplateParents: map[string]string{"apps": "base"},
+	}
+	if err := service.Promote(ctx, destination.Name, 0); err != nil {
+		t.Fatalf("Promote: %v", err)
+	}
+	if len(provisioner.destroyed) != 0 {
+		t.Fatalf("destroyed resources = %+v", provisioner.destroyed)
+	}
+	got, err := st.GetResource(ctx, resource.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CurrentPool != source.Name || got.State != model.ResourceStateReady {
+		t.Fatalf("incompatible resource changed = %+v", got)
 	}
 }
