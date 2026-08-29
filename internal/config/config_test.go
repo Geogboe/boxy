@@ -625,6 +625,41 @@ func TestConfigValidate_rejectsInvalidArtifactStoreReferences(t *testing.T) {
 	}
 }
 
+func TestConfigValidate_rejectsInvalidSourceMetadata(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		source  SourceSpec
+		wantErr string
+	}{
+		"missing store": {
+			source:  SourceSpec{Path: "images/windows.vhdx", Digest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+			wantErr: `source "windows-2022" store is required`,
+		},
+		"missing path": {
+			source:  SourceSpec{Store: "images", Digest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+			wantErr: `source "windows-2022" path is required`,
+		},
+		"invalid digest": {
+			source:  SourceSpec{Store: "images", Path: "images/windows.vhdx", Digest: "sha1:bad"},
+			wantErr: `source "windows-2022": digest must use sha256:<64 hex characters>`,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			cfg := Config{
+				ArtifactStores: map[string]ArtifactStoreSpec{"images": {Type: "local"}},
+				Sources:        map[string]SourceSpec{"windows-2022": tt.source},
+			}
+			err := cfg.Validate()
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Validate() error = %v, want substring %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestConfigValidate_rejectsUnsupportedPackageMethod(t *testing.T) {
 	t.Parallel()
 

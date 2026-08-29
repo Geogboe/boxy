@@ -94,6 +94,12 @@ docs/adr/             # Architecture Decision Records
   path component, including the artifact type. Keep Boxy terminology in terms
   of types; do not introduce Kubernetes-style discriminator fields for new
   domain objects.
+- Source catalog entries are configuration data, so validate their store,
+  path, and digest at the configuration boundary rather than deferring bad
+  metadata to a later registry operation.
+- A package script reference is executable content only when it is inline or
+  backed by a materialized package blob. Never assume a script filename exists
+  in the guest just because it appears in package inputs.
 
 ### Sandboxes
 

@@ -360,6 +360,15 @@ func (c Config) Validate() error {
 		}
 	}
 	for name, source := range c.Sources {
+		if strings.TrimSpace(source.Store) == "" {
+			return fmt.Errorf("source %q store is required", name)
+		}
+		if strings.TrimSpace(source.Path) == "" {
+			return fmt.Errorf("source %q path is required", name)
+		}
+		if err := artifact.ValidateDigest(source.Digest); err != nil {
+			return fmt.Errorf("source %q: %w", name, err)
+		}
 		if _, ok := c.ArtifactStores[source.Store]; !ok {
 			return fmt.Errorf("source %q references unknown artifact store %q", name, source.Store)
 		}

@@ -279,6 +279,9 @@ func packageCommand(operation resourcepack.Operation) ([]string, error) {
 	if len(operation.Content) != 0 {
 		inline = string(operation.Content)
 	}
+	if inline == "" && script != "" && len(operation.Content) == 0 {
+		return nil, fmt.Errorf("package %q script input has no materialized content; use inputs.inline or publish the script as a package blob", operation.Reference)
+	}
 	switch operation.Method {
 	case resourcepack.MethodShell:
 		if inline != "" {

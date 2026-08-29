@@ -150,6 +150,11 @@ The engine emits provider-neutral operation data containing package identity,
 method, materialized input references, and resolved parameters. It never emits
 package registry policy to an agent.
 
+An operation that names `inputs.script` must have matching package content
+materialized as a blob, unless the operation also supplies `inputs.inline`.
+The executor must not treat an unmaterialized script name as a path that already
+exists in the guest.
+
 ### Artifact registry and sources
 
 `pkg/artifact` is the single public `Registry` facade for typed artifacts. It

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/Geogboe/boxy/pkg/agentsdk"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
+	"github.com/Geogboe/boxy/pkg/resourcepack"
 )
 
 var (
@@ -806,6 +808,17 @@ func TestAgentProvisioner_CompatibleWithPool(t *testing.T) {
 				t.Fatalf("CompatibleWithPool() = %t, want %t", got, want)
 			}
 		})
+	}
+}
+
+func TestPackageCommandRejectsUnmaterializedScript(t *testing.T) {
+	_, err := packageCommand(resourcepack.Operation{
+		Reference: "install@1.0.0",
+		Method:    resourcepack.MethodShell,
+		Inputs:    map[string]any{"script": "install.sh"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "materialized content") {
+		t.Fatalf("packageCommand() error = %v, want materialized content error", err)
 	}
 }
 
