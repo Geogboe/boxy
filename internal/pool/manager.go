@@ -83,6 +83,17 @@ type ProvisionLocker interface {
 	LockProvisioning(agentID string) func()
 }
 
+// ResourcePromoter moves an eligible ready resource into a derived pool. The
+// manager invokes it before the normal pool reconciliation pass so promotion
+// can satisfy demand without changing the existing provisioning fallback.
+type ResourcePromoter interface {
+	Promote(context.Context, model.PoolName, int) error
+}
+
+type promotionPoolLocker interface {
+	SetPoolLocker(func(model.PoolName) func())
+}
+
 // Manager reconciles a pool's inventory against its policies.
 type Manager struct {
 	store           store.Store
@@ -90,6 +101,7 @@ type Manager struct {
 	admission       AdmissionPublisher
 	guestSecrets    boxysecrets.Store
 	provisionLocker ProvisionLocker
+	promoter        ResourcePromoter
 	clock           Clock
 	locksMu         sync.Mutex
 	poolLocks       map[model.PoolName]*sync.Mutex
@@ -125,6 +137,18 @@ func (m *Manager) SetGuestSecretStore(secrets boxysecrets.Store) {
 func (m *Manager) SetProvisionLocker(locker ProvisionLocker) {
 	if m != nil {
 		m.provisionLocker = locker
+	}
+}
+
+// SetPromoter enables template-based resource promotion. A promoter that
+// accepts the manager's pool locker gets the same per-pool serialization as
+// normal reconciliation.
+func (m *Manager) SetPromoter(promoter ResourcePromoter) {
+	if m != nil {
+		m.promoter = promoter
+		if locker, ok := promoter.(promotionPoolLocker); ok {
+			locker.SetPoolLocker(m.lockPool)
+		}
 	}
 }
 
@@ -222,6 +246,11 @@ func (m *Manager) Reconcile(ctx context.Context, poolName model.PoolName) error 
 	}
 	unlock := m.lockPool(poolName)
 	defer unlock()
+	if m.promoter != nil {
+		if err := m.promoter.Promote(ctx, poolName, 0); err != nil {
+			return fmt.Errorf("promote resource into pool %q: %w", poolName, err)
+		}
+	}
 	return m.reconcileLocked(ctx, poolName, 0, false)
 }
 
@@ -236,6 +265,11 @@ func (m *Manager) EnsureReady(ctx context.Context, poolName model.PoolName, minR
 	}
 	unlock := m.lockPool(poolName)
 	defer unlock()
+	if m.promoter != nil {
+		if err := m.promoter.Promote(ctx, poolName, minReady); err != nil {
+			return fmt.Errorf("promote resource into pool %q: %w", poolName, err)
+		}
+	}
 	return m.reconcileLocked(ctx, poolName, minReady, true)
 }
 
@@ -449,7 +483,7 @@ func (m *Manager) ForceOrphanAgentResources(ctx context.Context, agentID, reason
 // (e.g. the orphan sweep) doesn't need to re-persist the same transient
 // state before calling the provisioner again.
 func isTransientDestroyState(s model.ResourceState) bool {
-	return s == model.ResourceStateRecycling || s == model.ResourceStateDestroying
+	return s == model.ResourceStateRecycling || s == model.ResourceStateDestroying || s == model.ResourceStatePromoting
 }
 
 // destroyAndMark is the shared "mark transient (if not already), call the
@@ -953,8 +987,8 @@ func orphanedTransientResources(
 		if !isTransientDestroyState(res.State) {
 			continue
 		}
-		if res.OriginPool != poolName {
-			if res.OriginPool != "" {
+		if res.EffectivePool() != poolName {
+			if res.EffectivePool() != "" {
 				continue
 			}
 			if _, legacyOwned := fallbackInventoryIDs[res.ID]; !legacyOwned {
@@ -980,7 +1014,7 @@ func orphanedTransientResources(
 func quarantinedOrphans(poolName model.PoolName, resources []model.Resource) []model.Resource {
 	var quarantined []model.Resource
 	for _, res := range resources {
-		if res.State == model.ResourceStateError && res.OriginPool == poolName {
+		if res.State == model.ResourceStateError && res.EffectivePool() == poolName {
 			quarantined = append(quarantined, res)
 		}
 	}
@@ -1036,11 +1070,11 @@ func countTrackedResources(
 		if res.State == model.ResourceStateDestroyed {
 			continue
 		}
-		if res.OriginPool == poolName {
+		if res.EffectivePool() == poolName {
 			total++
 			continue
 		}
-		if res.OriginPool == "" {
+		if res.EffectivePool() == "" {
 			if _, ok := inventoryIDs[res.ID]; ok {
 				total++
 			}

@@ -128,6 +128,11 @@ func loadSandboxSpec(path string) (boxyconfig.SandboxSpec, error) {
 		if res.Count <= 0 {
 			return boxyconfig.SandboxSpec{}, fmt.Errorf("resources[%d].count must be > 0", i)
 		}
+		for j, packageRef := range res.Packages {
+			if strings.TrimSpace(packageRef) == "" {
+				return boxyconfig.SandboxSpec{}, fmt.Errorf("resources[%d].packages[%d] must not be empty", i, j)
+			}
+		}
 	}
 	return spec, nil
 }
@@ -154,9 +159,10 @@ func compileSandboxRequests(spec boxyconfig.SandboxSpec, pools []model.Pool) ([]
 		}
 
 		requests = append(requests, model.ResourceRequest{
-			Type:    pool.Inventory.ExpectedType,
-			Profile: pool.Inventory.ExpectedProfile,
-			Count:   res.Count,
+			Type:     pool.Inventory.ExpectedType,
+			Profile:  pool.Inventory.ExpectedProfile,
+			Count:    res.Count,
+			Packages: append([]string(nil), res.Packages...),
 		})
 	}
 

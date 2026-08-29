@@ -17,6 +17,24 @@ providers:
       data_dir: .boxy/devfactory
       latency: 800ms   # simulate realistic container startup time
 
+packages:
+  mark-resource:
+    version: 1.0.0
+    method: shell
+    scopes: [resource]
+    events: [provision]
+    inputs:
+      inline: echo "resource package applied"
+      parameters:
+        PackageName: devfactory
+  mark-allocation:
+    version: 1.0.0
+    method: shell
+    scopes: [allocation]
+    events: [allocation]
+    inputs:
+      inline: echo "allocation package applied"
+
 pools:
   - name: web
     type: container
@@ -27,3 +45,5 @@ pools:
         max_total: 4
       recycle:
         max_age: 1h
+    packages:
+      - mark-resource@1.0.0

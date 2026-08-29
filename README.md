@@ -62,23 +62,29 @@ embedded local agent inside `boxy serve` remains available for local providers.
 
 ## Core Domain Model
 
-**Resource** — A runtime record of a provisioned instance (VM, container, share, network, etc.). Has an ID, type, state, provider handle, and properties. Resources are single-use: once allocated to a sandbox they are never returned to a pool (ADR-0002). Resources also retain immutable pool provenance so the daemon can reason about capacity even after allocation removes them from ready inventory.
+The canonical vocabulary for this model is in [docs/domain-language.md](docs/domain-language.md).
 
-**Pool** — A named, homogeneous inventory of pre-provisioned resources. Declared in config. Each pool carries its own provisioning config (`type` identifies the provider/driver, `config` is a driver-interpreted opaque blob) and policy (preheat, recycle). The pool IS the spec — there is no separate "blueprint", "template", or "spec" entity.
+**Resource** — A runtime record of a provisioned instance (VM, container, share, network, etc.). Has an ID, type, state, provider handle, and properties. Resources are single-use: once allocated to a sandbox they are never returned to a pool (ADR-0002). Resources retain immutable `origin_pool` provenance and a mutable `current_pool` ownership so promotion can move inventory without losing history.
 
-**Sandbox** — A user-facing environment containing 1..N resources drawn from pools. Sandbox creation is asynchronous on the server: the API persists a sandbox request in `pending`, the reconcile loop fulfills it, and the sandbox transitions to `ready` or `failed`. When resources move from pool to sandbox, post-allocation hooks run to personalize them (set credentials, configure networking, etc.). Boxy returns connection info to the user; it is not a proxy.
+**Pool** — A named, homogeneous inventory of pre-provisioned resources. Declared in config with a policy and either inline provisioning fields or a reusable `template:` reference.
+
+**Template** — A reusable resource shape containing provider/source configuration and resource packages. Templates may extend one parent template; derived pools can promote surplus resources from an ancestor pool and apply the package delta.
+
+**Package** — An immutable, parameterized configuration artifact applied at a lifecycle event. A package has a method (`shell`, `powershell`, or a future method), a list of scopes, events, and inputs. A script is only one possible package input; it is not the domain object.
+
+**Sandbox** — A user-facing environment containing 1..N resources drawn from pools. Sandbox creation is asynchronous on the server: the API persists a sandbox request in `pending`, the reconcile loop fulfills it, and the sandbox transitions to `ready` or `failed`. Allocation-scoped packages can configure each resource with sandbox parameters before it is returned to the user. Boxy returns connection info; it is not a proxy.
 
 **Provider** — An external system that provides resources (Docker, Hyper-V, Podman, VMware, etc.). Providers have a type that maps to a driver. Provider connection details (socket, host, certs) are owned by the agent, not the server. Drivers auto-discover their environment where possible.
 
 **Driver** — Code that knows how to talk to a specific provider type. Interprets pool provisioning config. Lives in `pkg/providersdk/drivers/`. Drivers auto-discover their environment (e.g., Docker checks for local socket, Hyper-V discovers via PowerShell). A pool's `type` field maps directly to a driver (e.g., `type: docker` → Docker driver, `type: hyperv` → Hyper-V driver). Docker pools automatically pull a missing image on first provision instead of requiring a manual `docker pull`.
 
-**Agent** — The runtime entity that executes provider operations using drivers. Two forms, both real today: **embedded (local)** runs in-process inside `boxy serve` and handles providers declared in `server.providers`; **remote (distributed)** is a separate `boxy agent serve` process that dials the daemon over gRPC with full mTLS (a push model — the agent connects out, the server never dials in) and executes provider operations on its own host. See [ADR-0005](docs/adr/0005-remote-agent-transport-and-registration.md) for the transport/registration design and `pkg/agentsdk/` for the shared `Agent` interface both forms implement.
+**Agent** — The runtime entity that transports provider operations using drivers. Two forms, both real today: **embedded (local)** runs in-process inside `boxy serve` and handles providers declared in `server.providers`; **remote (distributed)** is a separate `boxy agent serve` process that dials the daemon over gRPC with full mTLS (a push model — the agent connects out, the server never dials in) and executes provider operations on its own host. Agents are dumb pipes: the server resolves templates, packages, credentials, and policy; agents do not resolve package references or make lifecycle decisions. See [ADR-0005](docs/adr/0005-remote-agent-transport-and-registration.md).
 
 The agent is the execution layer — Boxy core delegates all provider IO through the agent, never directly to drivers. The `Provisioner` interface is the agent seam.
 
-**PolicyController** — The reconciler. Runs on a tick inside `boxy serve`. Compares desired pool state (from policy) to actual state and triggers provisioning/destruction via the agent. Stateless and idempotent — every tick re-derives what's needed from scratch. One controller reconciles all pools.
+**PolicyController** — The reconciler. Runs on a tick inside `boxy serve`. Compares desired pool state (from policy) to actual state and triggers promotion, provisioning, or destruction via the agent. Stateless and idempotent — every tick re-derives what's needed from scratch. One controller reconciles all pools.
 
-**Hooks** — Side-effect notifications that run after events occur (resource provisioned, sandbox created, etc.). Not the control flow — hooks are for "resource provisioned -> send webhook" or "sandbox allocated -> set credentials", not for triggering provisioning itself. Lives in `pkg/hooks/`.
+**Event** — A lifecycle boundary such as `provision`, `promotion`, or `allocation` at which matching packages are applied. Notifications remain separate from configuration packages; package application is part of the controlled lifecycle flow.
 
 ---
 
@@ -205,30 +211,55 @@ The user connects with their native client. Connection info is generated by post
 
 ### Server Config (`boxy.yaml`)
 
-Two top-level sections: `server` (listen address, embedded agent providers, web UI toggle) and `pools` (what should be running). Remote agents are not config-declared — a `boxy agent serve` process dials the daemon and registers itself (push model, see [ADR-0005](docs/adr/0005-remote-agent-transport-and-registration.md)); an earlier pull-model `agents:` config section was removed as dead code (2026-07) since nothing ever read it.
+The main sections are `server`, `templates`, `packages`, and `pools`. `templates` and `packages` are optional; old pool-only files remain valid. Remote agents are not config-declared — a `boxy agent serve` process dials the daemon and registers itself (push model, see [ADR-0005](docs/adr/0005-remote-agent-transport-and-registration.md)).
 
 ```yaml
 server:
   listen: ":9090"
   providers: [docker, hyperv]
 
-pools:
-  - name: win2022-base
+packages:
+  baseline:
+    version: 1.0.0
+    method: powershell
+    scopes: [resource]
+    events: [provision, promotion]
+    inputs:
+      script: baseline.ps1
+      parameters:
+        Environment: lab
+
+templates:
+  windows-base:
     type: vm
     provider: hyperv-local
-    config: &win2022
+    config:
       template: "Windows Server 2022 Standard"
       generation: 2
       cpu: 4
       memory_mb: 8192
       disk_gb: 80
       network_switch: "LabSwitch"
+    packages: [baseline@1.0.0]
+  windows-apps:
+    extends: windows-base
+
+pools:
+  - name: win2022-base
+    template: windows-base
     policy:
       preheat:
         min_ready: 5
         max_total: 10
       recycle:
         max_age: 168h
+
+  - name: win2022-apps
+    template: windows-apps
+    policy:
+      preheat:
+        min_ready: 2
+        max_total: 5
 
   - name: kali
     type: docker
@@ -246,7 +277,7 @@ pools:
 - `server.grpc_cert_sans` (repeatable CLI flag equivalent: `--grpc-cert-san`) adds extra DNS names/IPs to the agent gRPC server certificate's SANs, on top of the always-included `localhost`/`127.0.0.1`/listen-host entries — needed when remote agents connect through a passthrough route or load balancer using an external DNS name. The flag fully overrides the config value when passed (does not merge). Changing this takes effect automatically on the next `boxy serve` start — see [ADR-0005](docs/adr/0005-remote-agent-transport-and-registration.md) for the full gRPC transport/TLS design.
 - Pool `type` is the abstract resource category boxy provisions: `container`, `vm`, or `share` (`""`/`container`/`docker` all resolve to a container pool — see `ResolvePoolExpectedType`). `provider` picks which driver instance actually fulfills it (e.g. `hyperv-local`, `docker-local`) — omit it and boxy resolves by provider type across all available agents.
 - Pool `config:` is an opaque blob interpreted by the driver. Different providers expose different config options.
-- Specs/blueprints are NOT a separate entity. The pool owns its provisioning config inline.
+- `templates` are reusable desired resource shapes; `pools` own inventory policy and may override template fields for a particular pool.
 - Config is stateless and declarative and is read once on startup. Runtime state (resources, sandboxes) lives in the state store — see [State Store](#state-store) below.
 
 ### Pool Policy Structure

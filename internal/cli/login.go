@@ -17,12 +17,13 @@ import (
 )
 
 type loginOptions struct {
-	server   string
-	apiKey   string
-	caCert   string
-	insecure bool
-	oidc     bool
-	web      bool
+	server       string
+	apiKey       string
+	caCert       string
+	insecure     bool
+	oidc         bool
+	web          bool
+	loopbackPort int
 }
 
 var loginCredentialsStore = credentials.New
@@ -82,6 +83,7 @@ func newLoginCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.insecure, "insecure", false, "skip HTTPS certificate verification (development only)")
 	cmd.Flags().BoolVar(&opts.oidc, "oidc", false, "log in via the server's configured OIDC provider (device-code grant) instead of a static API key")
 	cmd.Flags().BoolVar(&opts.web, "web", false, "with --oidc, use loopback-redirect (auto-launch a browser) instead of the default device-code grant")
+	cmd.Flags().IntVar(&opts.loopbackPort, "oidc-loopback-port", 0, "with --oidc --web, use this loopback callback port (0 selects one dynamically)")
 	return cmd
 }
 

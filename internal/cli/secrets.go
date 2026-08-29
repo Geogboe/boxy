@@ -38,11 +38,15 @@ func openConfiguredSecretStore(spec boxyconfig.SecretSpec, statePath string, req
 }
 
 func requiresGuestSecretBackend(cfg boxyconfig.Config) bool {
+	poolSpecs, err := cfg.ResolvePoolSpecs()
+	if err != nil {
+		return false
+	}
 	providerTypes := make(map[string]string, len(cfg.Providers))
 	for _, provider := range cfg.Providers {
 		providerTypes[provider.Name] = strings.ToLower(strings.TrimSpace(string(provider.Type)))
 	}
-	for _, pool := range cfg.Pools {
+	for _, pool := range poolSpecs {
 		poolType := strings.ToLower(strings.TrimSpace(pool.Type))
 		providerType := providerTypes[pool.Provider]
 		if poolType == "hyperv" || providerType == "hyperv" || (poolType == "vm" && providerType == "") {

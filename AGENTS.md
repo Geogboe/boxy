@@ -37,6 +37,12 @@ task go:run -- <args> # Run boxy via go run with arbitrary args
 task release:check    # Validate GoReleaser config via the pinned tools module
 ```
 
+**Startup tool check:** when available, use `ast-grep` for structural code
+searches, `jq` for JSON inspection, `yq` for YAML inspection, and `gopls` for
+Go symbol/reference checks. Prefer these for targeted discovery over dumping
+large files or writing ad-hoc parsing scripts. Continue with `rg` and the
+repository's Taskfile commands when one of them is unavailable.
+
 ## Project Structure
 
 ```
@@ -575,6 +581,30 @@ Wrap repeated commands in `Taskfile.yml`. If a command is run more than once, ad
 - `task lint` mirrors CI by running `golangci-lint` v2 from source via `go run`, so it does not depend on a preinstalled local binary version.
 - Tool dependencies used by Taskfile tasks and CI must use explicit pinned versions, kept at the latest stable release compatible with the repository's declared toolchain. Update the pin intentionally in both local and CI workflows and validate the full task/check surface; do not use moving `@latest` references.
 - GoReleaser is pinned in the isolated `tools/` module; use `task release:check` and `task release:snapshot` instead of assuming a global `goreleaser` binary is installed.
+
+### Windows/WSL GitHub Actions validation
+
+- This Windows ARM64 checkout can run Linux GitHub Actions jobs locally with
+  `act` and Docker. Install `act` into the WSL user-local path; sudo is not
+  required:
+
+  ```powershell
+  wsl.exe --cd D:\projects\code\boxy bash -lc "mkdir -p ~/.local/bin"
+  wsl.exe --cd D:\projects\code\boxy bash -lc "curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/nektos/act/master/install.sh | sh -s -- -b ~/.local/bin"
+  ```
+
+- List or run Linux CI jobs from the Windows checkout with the ARM64 runner
+  image:
+
+  ```powershell
+  wsl.exe --cd D:\projects\code\boxy bash -lc "~/.local/bin/act -l -W .github/workflows/ci.yml"
+  wsl.exe --cd D:\projects\code\boxy bash -lc "~/.local/bin/act pull_request -j lint -W .github/workflows/ci.yml -P ubuntu-latest=catthehacker/ubuntu:act-latest --container-architecture linux/arm64"
+  ```
+
+- Use targeted Linux jobs such as `lint`, `build`, or `installer-smoke`.
+  `act` does not reproduce GitHub-hosted Windows runners or release
+  permissions; the repository test suite, `task ci:validate`, and GitHub
+  Actions remain authoritative. Docker Engine must be available to WSL.
 
 ## Installer Notes
 

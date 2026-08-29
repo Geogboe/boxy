@@ -13,9 +13,10 @@ import "fmt"
 //   - {Type: container, Profile: "ubuntu-2204", Count: 1}
 //   - {Type: share, Profile: "default", Count: 1}
 type ResourceRequest struct {
-	Type    ResourceType    `json:"type" yaml:"type"`
-	Profile ResourceProfile `json:"profile" yaml:"profile"`
-	Count   int             `json:"count" yaml:"count"`
+	Type     ResourceType    `json:"type" yaml:"type"`
+	Profile  ResourceProfile `json:"profile" yaml:"profile"`
+	Count    int             `json:"count" yaml:"count"`
+	Packages []string        `json:"packages,omitempty" yaml:"packages,omitempty"`
 }
 
 func (r ResourceRequest) Validate() error {

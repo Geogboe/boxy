@@ -25,6 +25,7 @@ type Fulfiller struct {
 type poolAllocation struct {
 	poolName model.PoolName
 	count    int
+	packages []string
 }
 
 type allocationSnapshot struct {
@@ -152,7 +153,7 @@ func (f *Fulfiller) reconcileSandbox(ctx context.Context, id model.SandboxID) er
 		if current.Status == model.SandboxStatusDeleting {
 			return nil
 		}
-		if _, err := f.sandboxMgr.AddFromPool(ctx, sb.ID, alloc.poolName, alloc.count); err != nil {
+		if _, err := f.sandboxMgr.AddFromPoolWithPackages(ctx, sb.ID, alloc.poolName, alloc.count, alloc.packages); err != nil {
 			if errors.Is(err, ErrSandboxDeleting) {
 				return nil
 			}
@@ -294,13 +295,29 @@ func buildAllocations(requests []model.ResourceRequest, pools []model.Pool) ([]p
 		}
 		if idx, ok := indexByPool[poolName]; ok {
 			allocations[idx].count += req.Count
+			allocations[idx].packages = appendUnique(allocations[idx].packages, req.Packages...)
 			continue
 		}
 		indexByPool[poolName] = len(allocations)
-		allocations = append(allocations, poolAllocation{poolName: poolName, count: req.Count})
+		allocations = append(allocations, poolAllocation{poolName: poolName, count: req.Count, packages: append([]string(nil), req.Packages...)})
 	}
 
 	return allocations, nil
+}
+
+func appendUnique(values []string, additions ...string) []string {
+	seen := make(map[string]struct{}, len(values)+len(additions))
+	for _, value := range values {
+		seen[value] = struct{}{}
+	}
+	for _, value := range additions {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		values = append(values, value)
+	}
+	return values
 }
 
 func matchPool(req model.ResourceRequest, pools []model.Pool) (model.PoolName, error) {

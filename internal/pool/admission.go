@@ -11,6 +11,7 @@ import (
 	"github.com/Geogboe/boxy/pkg/lifecycle"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
+	"github.com/Geogboe/boxy/pkg/resourcepack"
 	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
 	"github.com/Geogboe/boxy/pkg/store"
 )
@@ -81,12 +82,19 @@ type AdmissionFailureRecorder interface {
 	FailAdmission(context.Context, model.Resource, error) error
 }
 
+// ResourcePackageApplier applies packages at lifecycle boundaries after the
+// resource has been admitted and any guest credential has been rotated.
+type ResourcePackageApplier interface {
+	ApplyResourcePackages(context.Context, model.Pool, model.Resource, resourcepack.Event) ([]resourcepack.AppliedPackage, error)
+}
+
 // AdmissionHandler applies the policy for resource.provisioned events.
 type AdmissionHandler struct {
 	Store        store.Store
 	Secrets      boxysecrets.Store
 	Personalizer GuestAdmissionPersonalizer
 	Failures     AdmissionFailureRecorder
+	Packages     ResourcePackageApplier
 }
 
 func (h *AdmissionHandler) Handle(ctx context.Context, event lifecycle.Event) (lifecycle.Outcome, error) {
@@ -124,14 +132,14 @@ func (h *AdmissionHandler) Handle(ctx context.Context, event lifecycle.Event) (l
 			if strings.TrimSpace(string(credential.Data)) == "" {
 				return h.fail(ctx, res, fmt.Errorf("validate stored resource credential: empty credential data"))
 			}
-			return h.markReady(ctx, res, nil)
+			return h.markReadyWithPackages(ctx, res, nil, resourcepack.EventProvision)
 		} else if !errors.Is(getErr, boxysecrets.ErrNotFound) {
 			return lifecycle.OutcomeRetry, fmt.Errorf("get resource credential: %w", getErr)
 		}
 	}
 
 	if h.Personalizer == nil {
-		return h.markReady(ctx, res, nil)
+		return h.markReadyWithPackages(ctx, res, nil, resourcepack.EventProvision)
 	}
 	supports, err := h.Personalizer.SupportsGuestPersonalization(ctx, pool, res)
 	if err != nil {
@@ -145,7 +153,7 @@ func (h *AdmissionHandler) Handle(ctx context.Context, event lifecycle.Event) (l
 		// GuestPersonalizer would produce. Requiring h.Secrets unconditionally
 		// would demand a secret backend for every pool in the server, not
 		// just ones that need one. See #181's design spec follow-ups.
-		return h.markReady(ctx, res, nil)
+		return h.markReadyWithPackages(ctx, res, nil, resourcepack.EventProvision)
 	}
 	if h.Secrets == nil {
 		// Checked here, before PersonalizeGuestForPool is ever called: that
@@ -165,7 +173,7 @@ func (h *AdmissionHandler) Handle(ctx context.Context, event lifecycle.Event) (l
 		// raced against a driver capability that changed in between, or the
 		// driver legitimately has nothing to rotate this time) — fall back
 		// to the routine no-op path rather than treating it as an error.
-		return h.markReady(ctx, res, nil)
+		return h.markReadyWithPackages(ctx, res, nil, resourcepack.EventProvision)
 	}
 	if result.EphemeralCredential == nil || len(result.EphemeralCredential.Data) == 0 {
 		return h.fail(ctx, res, fmt.Errorf("personalization returned no credential for resource %q", res.ID))
@@ -177,7 +185,22 @@ func (h *AdmissionHandler) Handle(ctx context.Context, event lifecycle.Event) (l
 	if err := h.Secrets.Put(ctx, boxysecrets.ResourceCredentialKey(string(res.ID)), credentialJSON); err != nil {
 		return h.fail(ctx, res, fmt.Errorf("store resource credential: %w", err))
 	}
-	return h.markReady(ctx, res, result.AccessDetails.ToProperties())
+	return h.markReadyWithPackages(ctx, res, result.AccessDetails.ToProperties(), resourcepack.EventProvision)
+}
+
+func (h *AdmissionHandler) markReadyWithPackages(ctx context.Context, res model.Resource, properties map[string]any, event resourcepack.Event) (lifecycle.Outcome, error) {
+	if h.Packages != nil {
+		pool, err := h.Store.GetPool(ctx, res.OriginPool)
+		if err != nil {
+			return h.fail(ctx, res, fmt.Errorf("get origin pool %q for resource packages: %w", res.OriginPool, err))
+		}
+		applied, err := h.Packages.ApplyResourcePackages(ctx, pool, res, event)
+		if err != nil {
+			return h.fail(ctx, res, fmt.Errorf("apply resource packages for %q: %w", res.ID, err))
+		}
+		res.AppliedPackages = append(res.AppliedPackages, applied...)
+	}
+	return h.markReady(ctx, res, properties)
 }
 
 func (h *AdmissionHandler) markReady(ctx context.Context, res model.Resource, properties map[string]any) (lifecycle.Outcome, error) {

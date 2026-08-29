@@ -539,7 +539,8 @@ graph LR
 **Key design decisions:**
 - Pool `config:` is an **opaque blob** — interpreted only by the driver, not by Boxy core
 - Pool `type:` maps directly to a driver (e.g., `type: docker` → Docker driver)
-- No separate "blueprint" or "template" entity — the pool IS the spec
+- Reusable `templates` describe resource shape; pools own inventory policy and
+  may reference a template or retain legacy inline configuration
 - Sandbox definitions are separate files, version-controllable
 
 ---

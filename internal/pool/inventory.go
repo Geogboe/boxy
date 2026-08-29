@@ -44,11 +44,12 @@ func RebuildReadyInventory(
 		globalIDs[res.ID] = struct{}{}
 
 		_, inFallback := fallbackByID[res.ID]
-		if res.OriginPool != p.Name && (!inFallback || res.OriginPool != "") {
+		owner := res.EffectivePool()
+		if owner != p.Name && (!inFallback || owner != "") {
 			continue
 		}
 		if !matchesPoolShape(p, res) {
-			if res.OriginPool == p.Name {
+			if owner == p.Name {
 				report.Skipped = append(report.Skipped, InventoryRebuildSkip{
 					ResourceID: res.ID,
 					Reason:     "resource type/profile no longer matches pool config",

@@ -33,6 +33,15 @@ type PoolSpec struct {
 	// agents existed).
 	Agent string `json:"agent,omitempty" yaml:"agent,omitempty"`
 
+	// Template references a reusable resource template. Empty preserves the
+	// legacy inline pool configuration.
+	Template string `json:"template,omitempty" yaml:"template,omitempty"`
+
+	// Source and Packages are the optional inline resource configuration for a
+	// pool. Template values are inherited before these pool values are applied.
+	Source   string   `json:"source,omitempty" yaml:"source,omitempty"`
+	Packages []string `json:"packages,omitempty" yaml:"packages,omitempty"`
+
 	// Policy is the pool policy surface in config (examples use `policy:`).
 	Policy PoolPolicySpec `json:"policy,omitempty" yaml:"policy,omitempty"`
 
@@ -204,6 +213,18 @@ func (p *PoolSpec) UnmarshalJSON(b []byte) error {
 			if err := json.Unmarshal(raw, &p.Agent); err != nil {
 				return fmt.Errorf("agent: %w", err)
 			}
+		case "template":
+			if err := json.Unmarshal(raw, &p.Template); err != nil {
+				return fmt.Errorf("template: %w", err)
+			}
+		case "source":
+			if err := json.Unmarshal(raw, &p.Source); err != nil {
+				return fmt.Errorf("source: %w", err)
+			}
+		case "packages":
+			if err := json.Unmarshal(raw, &p.Packages); err != nil {
+				return fmt.Errorf("packages: %w", err)
+			}
 		case "policy":
 			p.policySet = true
 			if err := json.Unmarshal(raw, &p.Policy); err != nil {
@@ -248,6 +269,18 @@ func (p *PoolSpec) UnmarshalYAML(value *yaml.Node) error {
 		case "agent":
 			if err := val.Decode(&p.Agent); err != nil {
 				return fmt.Errorf("agent: %w", err)
+			}
+		case "template":
+			if err := val.Decode(&p.Template); err != nil {
+				return fmt.Errorf("template: %w", err)
+			}
+		case "source":
+			if err := val.Decode(&p.Source); err != nil {
+				return fmt.Errorf("source: %w", err)
+			}
+		case "packages":
+			if err := val.Decode(&p.Packages); err != nil {
+				return fmt.Errorf("packages: %w", err)
 			}
 		case "policy":
 			p.policySet = true

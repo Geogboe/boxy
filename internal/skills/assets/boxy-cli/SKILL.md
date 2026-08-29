@@ -18,6 +18,9 @@ Run `boxy <command> --help` before using a command you have not executed yet.
 identically; the commands below are listed under their full names.
 
 Core commands you will commonly use:
+- `boxy package build`
+- `boxy package publish`
+- `boxy package inspect`
 - `boxy init`
 - `boxy serve`
 - `boxy login`
@@ -78,6 +81,7 @@ Core commands you will commonly use:
 - Run `boxy admin api-key bootstrap` locally once to create the first administrator key, then `boxy login --server <url> --ca-cert <path>` to store it in the OS keyring. The interactive login prompt masks the key and can be canceled with Ctrl+C. Raw keys are shown once and must not be written to config or state files.
 - The web dashboard (`--ui`, on by default) is always behind a login now — there is no unauthenticated dashboard. `boxy serve` bootstraps a local admin account (username `admin`) on its first run against a given state directory and writes a one-time password to a restricted file next to `.boxy/state.json`. Run `boxy admin bootstrap-password --config <path>` (matching the config `boxy serve` was started with) to view it and log in at `/login`; the file is deleted after being shown once. If `server.oidc` is configured in `boxy.yaml`, the login page also offers a single sign-on link, and a logged-in user's `/ui/profile` page can self-mint their own personal API key.
 - `boxy login --oidc` logs in against the server's configured OIDC provider and self-mints a personal API key — no admin has to issue one. Defaults to a headless device-code grant (prints a URL and a short code); pass `--web` to instead spin up a local loopback listener and auto-launch a browser. Either way the resulting key is stored in the OS keyring exactly like a directly-supplied `--api-key`.
+- Resource packages are immutable configuration artifacts. Build one with `boxy package build --manifest package.yaml --output package.json`, publish local artifacts with `boxy package publish --artifact package.json --registry <dir>`, and inspect them with `boxy package inspect --artifact package.json`. The daemon resolves package policy; agents only transport the resulting provider operation.
 - Prefer `boxy serve --once` for smoke checks and `boxy serve` for daemon usage.
 - Sandbox creation is asynchronous. Use `boxy sandbox create --no-wait` if you need the request accepted quickly, then poll with `boxy sandbox get`. A ready sandbox's guest credential is delivered once: it is printed once by default, or `--save-guest-cred` stores it in the OS keyring.
 - Sandbox deletion is asynchronous. `boxy sandbox delete <id>` waits until the daemon finishes cleanup; use `--no-wait` to return after acceptance. It also removes any `--save-guest-cred` keyring entry for the sandbox's resources; a cleanup failure prints a warning but does not fail the delete.

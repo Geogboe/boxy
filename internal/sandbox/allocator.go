@@ -16,3 +16,11 @@ import (
 type SandboxAllocator interface {
 	Allocate(ctx context.Context, pool model.Pool, res model.Resource) (providersdk.AllocationResult, error)
 }
+
+// PackageSandboxAllocator is an optional capability for allocators that can
+// apply allocation-scoped resource packages while retaining the base
+// allocator contract for existing providers and embedders.
+type PackageSandboxAllocator interface {
+	SandboxAllocator
+	AllocateWithPackages(ctx context.Context, pool model.Pool, res model.Resource, packages []string) (providersdk.AllocationResult, error)
+}

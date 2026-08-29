@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -582,5 +583,43 @@ pools:
 	}
 	if got, want := err.Error(), `pool "web" preheat max_total: 0 conflicts with min_ready: 1`; got != want {
 		t.Fatalf("Validate() error = %q, want %q", got, want)
+	}
+}
+
+func TestConfigValidate_rejectsInvalidArtifactStoreReferences(t *testing.T) {
+	t.Parallel()
+
+	digest := "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	tests := map[string]struct {
+		stores  map[string]ArtifactStoreSpec
+		wantErr string
+	}{
+		"unknown store": {
+			stores:  map[string]ArtifactStoreSpec{"images": {Type: "local", Path: t.TempDir()}},
+			wantErr: `source "windows-2022" references unknown artifact store "missing"`,
+		},
+		"unsupported type": {
+			stores:  map[string]ArtifactStoreSpec{"images": {Type: "ftp"}},
+			wantErr: `artifact store "images" has unsupported type "ftp"`,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cfg := Config{
+				ArtifactStores: tt.stores,
+				Sources: map[string]SourceSpec{
+					"windows-2022": {Store: "missing", Path: "images/windows.vhdx", Digest: digest},
+				},
+			}
+			if name == "unsupported type" {
+				cfg.Sources["windows-2022"] = SourceSpec{Store: "images", Path: "images/windows.vhdx", Digest: digest}
+			}
+			err := cfg.Validate()
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Validate() error = %v, want substring %q", err, tt.wantErr)
+			}
+		})
 	}
 }

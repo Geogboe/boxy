@@ -147,6 +147,20 @@ func (m *Manager) AddFromPool(
 	poolName model.PoolName,
 	count int,
 ) (model.Sandbox, error) {
+	return m.AddFromPoolWithPackages(ctx, sbID, poolName, count, nil)
+}
+
+// AddFromPoolWithPackages attaches ready resources and optionally applies
+// allocation-scoped packages through an allocator capability. The original
+// AddFromPool method remains the compatibility path for callers with no
+// package request.
+func (m *Manager) AddFromPoolWithPackages(
+	ctx context.Context,
+	sbID model.SandboxID,
+	poolName model.PoolName,
+	count int,
+	packages []string,
+) (model.Sandbox, error) {
 	if m == nil {
 		return model.Sandbox{}, fmt.Errorf("sandbox manager is nil")
 	}
@@ -200,7 +214,13 @@ func (m *Manager) AddFromPool(
 			res.OriginPool = pool.Name
 		}
 		if m.allocator != nil {
-			allocation, err := m.allocator.Allocate(ctx, pool, res)
+			var allocation providersdk.AllocationResult
+			var err error
+			if packageAllocator, ok := m.allocator.(PackageSandboxAllocator); ok {
+				allocation, err = packageAllocator.AllocateWithPackages(ctx, pool, res, packages)
+			} else {
+				allocation, err = m.allocator.Allocate(ctx, pool, res)
+			}
 			if err != nil {
 				return model.Sandbox{}, fmt.Errorf("allocate resource %q: %w", res.ID, err)
 			}
@@ -212,6 +232,9 @@ func (m *Manager) AddFromPool(
 			}
 			if allocation.GuestCredential != nil {
 				m.rememberGuestCredential(sb.ID, res.ID, allocation.GuestCredential)
+			}
+			if len(allocation.AppliedPackages) != 0 {
+				res.AppliedPackages = append(res.AppliedPackages, allocation.AppliedPackages...)
 			}
 		}
 		res.State = model.ResourceStateAllocated
