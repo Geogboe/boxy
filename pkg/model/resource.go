@@ -1,6 +1,10 @@
 package model
 
-import "time"
+import (
+	"time"
+
+	"github.com/Geogboe/boxy/pkg/resourcepack"
+)
 
 // ResourceID is a stable identifier for a resource tracked by Boxy.
 type ResourceID string
@@ -35,6 +39,7 @@ const (
 	// stalled/hung backend.
 	ResourceStateRecycling  ResourceState = "recycling"
 	ResourceStateDestroying ResourceState = "destroying"
+	ResourceStatePromoting  ResourceState = "promoting"
 	ResourceStateDestroyed  ResourceState = "destroyed"
 	ResourceStateError      ResourceState = "error"
 )
@@ -55,6 +60,14 @@ type Resource struct {
 	// the resource from ready inventory.
 	OriginPool PoolName `json:"origin_pool,omitempty" yaml:"origin_pool,omitempty"`
 
+	// CurrentPool is the pool that currently owns this resource for inventory
+	// and capacity accounting. Empty on legacy records means OriginPool.
+	CurrentPool PoolName `json:"current_pool,omitempty" yaml:"current_pool,omitempty"`
+
+	// PendingPool is set while a resource is being promoted into another pool.
+	// It is cleared when promotion succeeds or the resource is quarantined.
+	PendingPool PoolName `json:"pending_pool,omitempty" yaml:"pending_pool,omitempty"`
+
 	// Provider identifies the external system instance this resource belongs to.
 	Provider ProviderRef `json:"provider" yaml:"provider"`
 
@@ -63,6 +76,20 @@ type Resource struct {
 	// Properties holds provider-specific data that Boxy core should not interpret.
 	Properties map[string]any `json:"properties,omitempty" yaml:"properties,omitempty"`
 
+	// AppliedPackages records successful resource-package applications. The
+	// package engine uses the immutable reference and canonical input digest for
+	// idempotency; this is not a guest drift detector.
+	AppliedPackages []resourcepack.AppliedPackage `json:"applied_packages,omitempty" yaml:"applied_packages,omitempty"`
+
 	CreatedAt time.Time `json:"created_at,omitempty" yaml:"created_at,omitempty"`
 	UpdatedAt time.Time `json:"updated_at,omitempty" yaml:"updated_at,omitempty"`
+}
+
+// EffectivePool returns the current inventory owner, preserving compatibility
+// with resources persisted before current ownership was introduced.
+func (r Resource) EffectivePool() PoolName {
+	if r.CurrentPool != "" {
+		return r.CurrentPool
+	}
+	return r.OriginPool
 }

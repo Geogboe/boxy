@@ -1,270 +1,289 @@
-# Design (exploratory): resource templates, guest configuration, and pool-to-pool promotion
+# Resource templates, resource packages, artifact sources, and promotion
 
-Status: Exploratory — captures a live design conversation, not an
-implementation-ready spec. Several sections end in an open question rather
-than a decision. Nothing here should be built until the open questions are
-resolved.
+Status: Implementation-ready
 Date: 2026-08-28
-Tracks: #234 (started narrower — "resource templates" — and grew into this
-during discussion)
+Tracks: #234, #268
+Vocabulary: [Boxy domain language](../../domain-language.md)
 
-## How we got here (keep for context, don't re-litigate)
+## Purpose
 
-#234's issue text ("allow you to build and template our resources to go
-into a pool... maybe use something else to orchestrate builds though?") was
-originally scoped down to "a named, reusable preset for `PoolSpec.Config`"
-— pure DRY, no new machinery. Talking it through surfaced a bigger, real
-scenario: three Windows Server VM pools that share a common base but differ
-in installed apps (pool A has app1+app2, pool B needs app1+app2+app3), and
-the owner wants pool B able to take a ready pool-A resource and layer app3
-on top instead of provisioning app1+app2+app3 from scratch every time. That
-is not "templating a resource config" — it's **incremental guest
-configuration** plus **moving a resource from one pool's inventory into
-another's**, neither of which exists in Boxy today. This document is about
-that larger thing.
+Extend Boxy from a pool-only resource shape to a reusable resource-template
+model. A template describes the desired state of a resource independently of
+the pool policy that preheats it. A resource package is an immutable,
+parameterized artifact that can be applied to a resource at a lifecycle event.
+Templates let a derived pool promote a ready resource from an ancestor pool
+and apply only the package delta instead of building the final image from
+scratch.
 
-Two claims from the conversation, checked against the code, corrected here
-so the rest of this document doesn't build on a wrong premise:
+This release also includes #268, a small independent CLI improvement that lets
+OIDC loopback login use a fixed callback port for providers that require an
+exact redirect URI.
 
-- **Cross-pool inventory sharing is not already established.**
-  `internal/sandbox/fulfiller.go`'s `matchPool` requires an exact
-  one-to-one match between a request's `(Type, Profile)` and a single
-  pool's `Inventory.ExpectedType`/`ExpectedProfile` — zero matches or more
-  than one both error. Every pool is fully self-contained today.
-- **This is explicitly the gap ADR-0002 left open.** ADR-0002 ("Resources
-  Never Return to a Pool") states resources are single-use and anticipates
-  that *"any future 'reuse' capability would need a new concept and ADR."*
-  Pool-to-pool promotion is that capability. It is not "returning to a
-  pool" (the resource never goes back to pool A once claimed by pool B) —
-  it's a new, one-directional move that ADR-0002 didn't rule out, just
-  didn't design.
+## Decisions
 
-## Vocabulary this conversation introduced
+### User-facing vocabulary and configuration
 
-- **Resource template**: a named, reusable definition of a resource's
-  shape — base provider config plus a chain of configuration steps applied
-  after creation. A pool references a template instead of (or in addition
-  to) inlining its own `Config`.
-- **Derivation**: a template can build on another template (`derives_from:
-  win-server-base-apps12`), inheriting its base config and configuration
-  steps, then adding more on top. Pool A's template and pool B's template
-  in the motivating example are related this way.
-- **Promotion**: pool B claiming a *ready* resource whose lineage traces
-  back through pool B's template's ancestor chain (e.g. a pool-A resource,
-  since B's template derives from A's), then running only the *delta*
-  configuration steps (B's steps minus the ancestor's already-applied
-  steps) to bring it up to B's spec, then folding it into B's inventory.
-  This is a new resource lifecycle event, not sandbox allocation and not
-  destruction.
-- **Guest configurer** (name not settled — see Naming below): a new,
-  pluggable capability for "bring a guest from state A to state B" — e.g.
-  install/configure software — distinct from resource *creation*
-  (`providersdk.Driver.Create`) and from `providersdk.GuestPersonalizer`
-  (which is narrowly allocation-time credential rotation only, not general
-  configuration; see its doc comment in `pkg/providersdk/guest_personalization.go`).
+The existing `pools:` list remains valid and keeps its current `name`, `type`,
+`provider`, `config`, `agent`, and policy fields. It gains an optional
+`template:` reference. Reusable definitions are user-facing `templates:`;
+the internal domain type is `model.ResourceTemplate`.
 
-## Proposed shape
+Templates have a single optional `extends:` parent. A child inherits the
+parent's provider/resource shape and package references, then appends its own
+package references. There is no synthetic root. A cycle or missing parent is
+a configuration error before the daemon starts.
 
-### Templates form a tree, not a graph — and that's enough
+Example daemon configuration:
 
-`derives_from` is single-parent in every example discussed. A template
-tree needs ancestor-chain resolution ("what steps has this template
-already accumulated") and cycle rejection ("does this derive_from chain
-loop back on itself") — both a `for` loop over a map with a visited set,
-maybe 20 lines, belonging in `internal/`. This does **not** justify a new
-`pkg/graph` primitive: AGENTS.md is explicit that a `pkg/` package
-shouldn't be shaped by exactly one consumer, and a graph library whose
-only caller is template lineage would be shaped by template lineage.
-Revisit if templates ever need multiple parents (composing two unrelated
-template lineages) or a second unrelated consumer shows up (e.g. tracing
-provider/agent dependencies was floated once, elsewhere, but isn't a
-concrete need today) — that's the point at which extracting a real `pkg/`
-primitive from the (by-then-duplicated) traversal logic is justified, not
-before.
+```yaml
+artifact_stores:
+  images:
+    type: s3
+    endpoint: https://s3.example.test
+    bucket: boxy-images
+    access_key: env:BOXY_IMAGES_ACCESS_KEY
+    secret_key: env:BOXY_IMAGES_SECRET_KEY
 
-This gives the owner's "easily traceable dependencies" goal directly: the
-tree *is* the trace. "What does template X derive from" and "what
-templates derive from X" are both cheap queries over that tree without any
-new abstraction.
+sources:
+  windows-2022:
+    store: images
+    path: base/windows-2022.vhdx
+    digest: sha256:0123456789abcdef...
+    format: hyperv-vhdx
 
-### The "invisible system base pool" — recommend: no synthetic record
+templates:
+  windows-base:
+    type: vm
+    provider: hyperv-local
+    source: windows-2022
 
-Two ways to give every pool "the same architectural shape, all deriving
-from something":
+  windows-apps12:
+    extends: windows-base
+    packages:
+      - app1@1.0.0
+      - app2@1.0.0
 
-- **(a) Literal base pool**: an actual `Pool` record every template chain
-  roots at, that every reconciler, `ListPools` caller, and `matchPool`
-  path has to learn to recognize and skip (it presumably never serves
-  sandbox requests directly).
-- **(b) Implicit root**: "no `derives_from`" *is* the root. The "base
-  pool" is a documentation/mental-model concept ("this pool has no
-  ancestor, so it provisions everything from its own driver from
-  scratch"), not a stored entity.
+  windows-apps123:
+    extends: windows-apps12
+    packages:
+      - app3@1.0.0
 
-Recommend (b): it gets the stated goal (every pool is describable the same
-way — "derives from X" or "derives from nothing") without a synthetic
-record every other pool/resource code path must special-case. Flagged as
-an open question, not a settled decision, since "keep our architecture
-consistent" was explicitly the owner's own reason for wanting (a).
-
-### A new pluggable capability, not folded into `providersdk`
-
-The owner's instinct — "boxy should rely on a new type, similar to how we
-have drivers and providers... maybe the first implementation is ansible" —
-is architecturally right: this is a distinct concern from resource
-*creation* (`providersdk.Driver`) and deserves its own contract + registry,
-mirroring how `providersdk` and `agentsdk` are each scoped to one concern.
-
-**Naming collision to resolve before writing code**: `internal/pool`
-already has `Provisioner`, `AgentProvisioner`, `LockedProvisioner`,
-`DriverProvisioner`, and `ProvisionLocker` — all meaning "the thing that
-*creates* a resource." A second, unrelated `Provisioner` interface meaning
-"the thing that *configures* a resource" in a new package would be a real
-readability trap in a codebase that already overloads the word. Candidate
-alternatives, none chosen yet: `configuresdk`/`Configurer`,
-`bakesdk`/`Baker` (image-layering metaphor), `guestconfig`/`Applier`. Pick
-one before implementation starts.
-
-Sketch of the contract (illustrative, not final):
-
-```go
-package configuresdk // name TBD
-
-// Target is what a configuration step runs against — the same connection
-// shape providers already use to reach a guest (host + credential +
-// transport hint), not a new one.
-type Target struct {
-    ResourceID string
-    // ... connection details, reusing existing guest-credential/exec
-    // plumbing rather than inventing a second one.
-}
-
-type Step struct {
-    Kind string         // e.g. "ansible", "dsc", "shell"
-    Spec map[string]any // kind-specific payload (playbook ref, script, ...)
-}
-
-// Configurer applies one Step to a Target. Implementations are
-// kind-specific, discovered via a registry the same way providersdk.Driver
-// implementations are.
-type Configurer interface {
-    Apply(ctx context.Context, target Target, step Step) error
-}
+pools:
+  - name: apps12
+    template: windows-apps12
+    policy:
+      preheat:
+        min_ready: 2
 ```
 
-### The Ansible-over-PSRP problem — the biggest open technical risk
+Existing inline pool configuration remains supported. A pool with no
+`template:` behaves exactly as it does today. A template may be used by more
+than one pool; each pool still owns its own inventory and policy.
 
-"First implementation is Ansible" needs a concrete target-connection
-answer, and the obvious one doesn't work cleanly for Boxy's actual Windows
-story:
+Sandbox files keep their existing top-level `resources:` list. Each resource
+request may add allocation package references:
 
-- Ansible's Windows story is WinRM (or SSH on newer Windows) — it does not
-  speak PSRP-over-HvSocket, which is exactly what `pkg/psdirect` gives
-  Boxy (guest exec **with no guest networking required**, the entire point
-  of #222/#223's range-based IP allocation work being optional rather than
-  load-bearing).
-- Three real options, different costs:
-  1. **Guest gets a routable IP, Ansible connects over WinRM directly.**
-     Simplest to build, but abandons the no-network-required advantage
-     PowerShell Direct exists for.
-  2. **A custom Ansible connection plugin that proxies through Boxy's own
-     exec transport.** Real engineering, and in Python — a second language
-     surface this Go-only project doesn't have today.
-  3. **Ansible targets Linux/SSH guests only** (`pkg/vmsdk`'s existing SSH
-     exec path already used for Linux). **Windows guests get a separate,
-     PowerShell/DSC-based `Configurer` implementation** that runs directly
-     over the existing `psdirect` transport, with no Ansible involved for
-     Windows at all.
+```yaml
+name: test-lab
 
-**Recommend option 3 as the honest v1** — it reuses transport Boxy already
-has for both guest OSes instead of adding a new one, and "Ansible" stops
-being "the" first implementation and becomes "the Linux-guest
-implementation," with a separate Windows-guest implementation alongside
-it. This changes what the owner's "first impl is ansible" framing means in
-practice — worth an explicit yes/no before building either one.
+resources:
+  - pool: apps123
+    count: 1
+    packages:
+      - debugging-tools@1.0.0
+```
 
-### Promotion breaks a real, already-documented capacity invariant
+Package manifests use the following stable terms:
 
-AGENTS.md documents that `pool.preheat.max_total` is enforced against
-*all* non-destroyed resources with a given `OriginPool`, and that
-`OriginPool` is "immutable provenance." Promotion directly collides with
-both:
+```yaml
+name: app3
+version: 1.0.0
+method: powershell
+scopes: [resource]
+events: [provision, promotion]
 
-- If pool B drains pool A's ready inventory via promotion, pool A's
-  `computeToProvisionCount` sees the same gap an ordinary sandbox
-  allocation would have left and re-provisions to refill — meaning a
-  promotion-heavy pool B silently drives pool A's ongoing provisioning
-  volume. Pool A's `min_ready` was sized to serve pool A's own sandbox
-  demand; it is now implicitly also sizing pool B's supply chain, with no
-  visibility of that at pool A's config.
-- A resource promoted out of pool A still counts against pool A's
-  `max_total` forever, per the "immutable `OriginPool`" rule — unless
-  promotion is allowed to mutate it, which is exactly what ADR-0002 calls
-  immutable, for provenance reasons that still matter (e.g. guest
-  credential bootstrap authorization is scoped by `OriginPool` +
-  `Provider.AgentID` today — see the Guest Credentials section of
-  AGENTS.md).
+inputs:
+  script: install-app3.ps1
+  parameters:
+    Foo: bar
+    Boo: baz
+```
 
-**This needs an explicit position, not an implementation-time
-discovery**: does promotion release the resource from pool A's
-`max_total` accounting? Does `OriginPool` stay immutable (provenance) with
-a *separate* new field recording promotion lineage/current-pool
-membership, so the credential-authorization check and the capacity check
-can use different fields for different purposes? This is real ADR
-material — likely its own ADR (a sibling to ADR-0002, not a silent
-amendment to it), not something folded into this exploratory doc.
+`method` describes the executor, not a pool provisioner. This avoids the
+existing `internal/pool.Provisioner` naming collision. `scopes` is always a
+list and declares where the package is legal: `resource`, `allocation`, or
+both. `events` declares when it is applied: `provision`, `promotion`, or
+`allocation`. A resource template can reference only packages that include
+`resource`; a sandbox resource request can reference only packages that
+include `allocation`. An event outside the package's declared scope is a
+validation error.
 
-## Consequences / scope this touches
+This release implements `shell` and `powershell`. DSC and Ansible are
+recognized as reserved future methods but fail with a clear unsupported-method
+error until their bootstrap requirements have a separate design.
 
-- `model.Pool`/`config.PoolSpec` gain a template reference.
-- A new `model.ResourceTemplate` (or similar) type: name, optional
-  `derives_from`, base config, ordered configuration steps.
-- A new SDK package (name TBD, see Naming) for the `Configurer` contract +
-  registry, parallel to `providersdk`/`agentsdk`.
-- At least one new resource transient state for promotion-in-progress,
-  mirroring the existing `recycling`/`destroying` pattern (AGENTS.md) so a
-  resource mid-promotion is observable via the REST API instead of
-  vanishing from one pool and reappearing in another with no visible
-  in-between state.
-- A new ADR for the capacity/provenance questions above — a sibling to
-  ADR-0002, since ADR-0002 explicitly deferred this rather than settled
-  it.
-- `internal/pool`'s fill/reconcile logic needs a promotion path alongside
-  its existing from-scratch provisioning path.
+### Resource package engine
 
-## Open questions (all unresolved — pick before implementing)
+`pkg/resourcepack` is a public, provider-neutral package. It owns package
+manifest validation, canonical identity, parameter resolution, desired-set
+planning, and applied-package records. It does not own guest transport,
+provider selection, credentials, or pool policy.
 
-1. **Naming**: what does the new SDK package/interface get called, given
-   `internal/pool.Provisioner` already means something else?
-2. **Base pool**: implicit root (recommended) vs. a literal synthetic
-   `Pool` record?
-3. **First `Configurer` implementation(s)**: Ansible-for-Linux +
-   separate-Windows-implementation (recommended), vs. Ansible-over-WinRM
-   for both (abandons the no-network PowerShell-Direct story), vs. a
-   custom Ansible connection plugin (adds a Python surface)?
-4. **Promotion vs. capacity accounting**: does `OriginPool` stay immutable
-   with a new lineage field, or does promotion mutate it? Does a promoted
-   resource still count against its origin pool's `max_total`?
-5. **Multi-parent templates**: confirmed out of scope per this
-   conversation (tree, not graph) — revisit only if a real need for
-   composing two unrelated template lineages shows up.
+The public seam is:
 
-## Suggested phased build order (once the above is settled)
+- `Engine.Plan` is side-effect free. It resolves package references, validates
+  scope/event/method, applies defaults and overrides, canonicalizes inputs,
+  and returns a deterministic plan and package identities.
+- `Engine.Apply` executes a previously planned set through an injected
+  executor and returns applied identities. The executor is the only side
+  effecting dependency.
+- Parameter precedence is package defaults, then resource/template overrides,
+  then lifecycle-hook overrides, then sandbox-request overrides. Secret
+  values are accepted only as secret references and are never persisted in
+  plans, applied records, or logs.
+- Applying an already recorded package identity with the same inputs is a
+  no-op. The engine does not attempt guest drift detection.
+- Package removal and inverse operations are explicitly out of scope. Failed
+  application does not attempt an automatic rollback script.
 
-1. `model.ResourceTemplate` + `derives_from` tree + pool references a
-   template — pure DRY, no promotion, no new SDK package yet. Delivers the
-   original narrow #234 ask on its own.
-2. New `Configurer` SDK package + registry + one real implementation
-   (Linux/Ansible or Windows/PowerShell, whichever the owner wants first)
-   — configuration steps run once, at resource-creation time, within a
-   single pool. No cross-pool promotion yet.
-3. Cross-pool promotion, gated on the new ADR resolving the capacity/
-   provenance questions above, plus the new transient resource state.
+The engine emits provider-neutral operation data containing package identity,
+method, materialized input references, and resolved parameters. It never emits
+package registry policy to an agent.
 
-## Scope note for this session
+An operation that names `inputs.script` must have matching package content
+materialized as a blob, unless the operation also supplies `inputs.inline`.
+The executor must not treat an unmaterialized script name as a path that already
+exists in the guest.
 
-This document and `2026-08-28-oidc-ui-and-cli-auth-design.md` are both
-exploratory/design specs written this session — **neither has any
-accompanying implementation**. `dev` gained zero new production code in
-this half of the session; the deliverable is two durable design documents
-for review before either becomes real work.
+### Artifact registry and sources
+
+`pkg/artifact` is the single public `Registry` facade for typed artifacts. It
+may use separate internal stores/caches, but callers do not choose between
+multiple registry interfaces.
+
+Sources are catalog records for externally owned immutable bytes. A source
+contains a named store, path/key, digest, format, and optional provider/OS
+metadata. Boxy does not require copying the source into a Boxy-managed store.
+The configured store may provide a direct pull descriptor to the provider or
+agent. If it cannot, the server streams the verified bytes to the executor.
+
+The first store adapters are local filesystem and S3-compatible object stores.
+Credentials are configuration references such as `env:NAME`; raw credentials
+must not appear in persisted configuration, package records, plans, or logs.
+
+Published packages use one immutable artifact identity containing a manifest
+and content-addressed blobs. `boxy package build` creates the artifact,
+`boxy package publish` writes it to an artifact store, and `boxy package
+inspect` verifies and displays its manifest. Inline package content is a local
+build input and does not implicitly publish.
+
+### Agents and providers
+
+Agents remain dumb pipes. The server resolves the template lineage, package
+set, artifact references, credentials, lifecycle event, and policy. Embedded
+and remote agents carry opaque provider operations and execute them through
+their local provider driver. They do not load package manifests, decide which
+packages apply, or access the package registry as a policy engine.
+
+Hyper-V uses the existing Windows guest transport for PowerShell and the
+existing Linux guest transport for shell. Devfactory supplies deterministic
+simulation of those two methods for tests and local integration checks; it is
+not a Hyper-V emulator.
+
+### Provision, promotion, and allocation
+
+Resource-scoped packages run after a resource is created and admitted, at the
+`provision` event. A derived template may promote an eligible ready resource
+from an ancestor pool and apply only the package identities absent from the
+resource's applied set at the `promotion` event. Allocation-scoped packages
+run for each selected sandbox resource at the `allocation` event.
+
+Promotion is explicit and one-directional. A resource is marked
+`promoting`, receives a pending destination ownership record, and is removed
+from ordinary source selection while work is in progress. The source pool's
+minimum-ready protection is respected; if no eligible surplus resource exists,
+the destination provisions from scratch.
+
+`OriginPool` remains immutable provenance. A separate current/pending pool
+ownership field controls inventory membership and capacity accounting, so a
+promoted resource is no longer counted against the source pool's
+`max_total` while its origin remains available for provenance and credential
+authorization.
+
+Promotion rotates the destination bootstrap credential first. The resulting
+resource credential is then used for package application. Only after all
+required packages succeed does Boxy commit current ownership and mark the
+resource ready in the destination pool. Any failure quarantines or destroys
+the resource through the existing fail-closed cleanup path; it never returns
+the resource to the source pool with ambiguous ownership or credentials.
+
+The existing states and failure behavior remain unchanged for ordinary
+provisioning, allocation, recycling, and destruction. The new `promoting`
+state is observable through the model, REST resource output, and persisted
+state. Configurable circuit breakers, failure thresholds, and forensic
+retention are deferred to a separate issue.
+
+### OIDC loopback callback port (#268)
+
+`boxy login --oidc --web` gains `--oidc-loopback-port`, an integer flag whose
+default is `0`. Zero preserves kernel-selected dynamic ports. A nonzero value
+must be in the TCP port range and is bound only as `127.0.0.1:<port>`.
+
+The selected listener port is used in the OAuth redirect URI. The change does
+not alter device-code login, PKCE/S256, public-client behavior, browser
+launching, callback state validation, or token exchange. Documentation must
+show that an exact-match issuer registers
+`http://127.0.0.1:<port>/callback` exactly.
+
+## Public interfaces and persisted data
+
+- Add `model.ResourceTemplate`, template references to `config.PoolSpec`, and
+  typed template/package/source configuration models.
+- Add `ResourceStatePromoting` and current/pending ownership fields to
+  `model.Resource`. Existing JSON without those fields remains readable.
+- Add `pkg/resourcepack` and `pkg/artifact` public contracts. Do not add
+  package semantics to `providersdk.Driver` or `agentsdk.Agent`.
+- Extend the remote operation envelope only enough to carry opaque generic
+  package execution/materialization data; remote decoding must remain
+  provider-operation based.
+- Extend `SandboxResource` parsing and the sandbox request model with
+  allocation package references. Existing requests without packages are
+  unchanged.
+- Update the generated configuration schema and all user-facing examples.
+
+## Failure and compatibility rules
+
+- Unknown configuration fields, duplicate names, missing references, cycles,
+  invalid digests, invalid scopes/events, and unsupported methods fail during
+  configuration validation.
+- Old pool-only configurations and old persisted resources continue to work.
+- No raw secrets are serialized or logged.
+- Package application is idempotent by immutable package identity plus
+  canonical resolved inputs.
+- Existing quarantine, cleanup retry, and capped provisioning backoff remain
+  the only automated failure controls in this release.
+
+## Implementation order and acceptance
+
+1. This document, the glossary, and the related ADRs are updated and reviewed
+   first. No production code or test implementation begins before the
+   contract is complete in the repository.
+2. Add failing tests for config/template resolution, graph traversal, artifact
+   registry behavior, package planning/application, and #268.
+3. Implement the public packages and configuration models, then integrate
+   provisioning, promotion, allocation, and remote opaque operations.
+4. Implement shell/PowerShell Hyper-V adapters and devfactory simulation.
+5. Add CLI/package workflows, generated schema, examples, lifecycle/API docs,
+   and the OIDC fixed-port documentation.
+6. Acceptance requires focused tests, `go test ./...`, `task lint`, `task
+   build`, devfactory smoke coverage, and `task ci:validate` with the race
+   portion run through WSL on Windows ARM64.
+
+## Explicit non-goals
+
+- DSC or Ansible execution.
+- Package removal, inverse configuration, or guest drift detection.
+- Multi-parent template composition or package dependency graphs.
+- Provider-specific package policy inside agents.
+- Managed copying of every external source into Boxy storage.
+- Generalized pool circuit breakers, failure thresholds, or forensic retention.

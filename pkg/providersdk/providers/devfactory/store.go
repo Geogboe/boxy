@@ -17,6 +17,17 @@ type resourceRecord struct {
 	ConnectionInfo map[string]string `json:"connection_info"`
 	CreatedAt      time.Time         `json:"created_at"`
 	Updates        []string          `json:"updates,omitempty"`
+	Execs          []ExecRecord      `json:"execs,omitempty"`
+}
+
+// ExecRecord is the simulator's non-secret record of an opaque guest
+// execution. Environment values are deliberately omitted; only their names
+// are retained so tests can verify parameter plumbing without persisting
+// secrets.
+type ExecRecord struct {
+	Command            []string `json:"command"`
+	EnvironmentKeys    []string `json:"environment_keys,omitempty"`
+	CredentialProvided bool     `json:"credential_provided,omitempty"`
 }
 
 // storeData is the top-level structure persisted to devfactory.json.

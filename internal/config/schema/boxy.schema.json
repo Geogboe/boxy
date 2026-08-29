@@ -2,6 +2,103 @@
   "$id": "boxy://schemas/boxy.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
+    "artifact_stores": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "access_key": {
+            "pattern": "^env:.+",
+            "type": "string"
+          },
+          "bucket": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "secret_key": {
+            "pattern": "^env:.+",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "local",
+              "filesystem",
+              "s3"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "type": "object"
+    },
+    "packages": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "defaults": {
+            "type": "object"
+          },
+          "events": {
+            "items": {
+              "enum": [
+                "provision",
+                "promotion",
+                "allocation"
+              ],
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "inputs": {
+            "type": "object"
+          },
+          "method": {
+            "enum": [
+              "shell",
+              "powershell",
+              "dsc",
+              "ansible"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "scopes": {
+            "items": {
+              "enum": [
+                "resource",
+                "allocation"
+              ],
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "version": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "method",
+          "scopes",
+          "events"
+        ],
+        "type": "object"
+      },
+      "type": "object"
+    },
     "pools": {
       "items": {
         "additionalProperties": false,
@@ -17,6 +114,13 @@
           "name": {
             "minLength": 1,
             "type": "string"
+          },
+          "packages": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array"
           },
           "policies": {
             "additionalProperties": false,
@@ -84,8 +188,16 @@
             "description": "Optional provider instance name. Some pool types (like \"docker\") may imply a default provider.",
             "type": "string"
           },
+          "source": {
+            "description": "Immutable resource source name.",
+            "type": "string"
+          },
+          "template": {
+            "description": "Reusable resource template name.",
+            "type": "string"
+          },
           "type": {
-            "description": "Pool kind. \"\" and \"container\" and \"docker\" all resolve to a container pool.",
+            "description": "Pool type. \"\" and \"container\" and \"docker\" all resolve to a container pool.",
             "enum": [
               "",
               "container",
@@ -244,6 +356,88 @@
           "description": "Whether the web dashboard is served alongside the API. Default: true.",
           "type": "boolean"
         }
+      },
+      "type": "object"
+    },
+    "sources": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "digest": {
+            "pattern": "^sha256:[0-9a-fA-F]{64}$",
+            "type": "string"
+          },
+          "format": {
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "os": {
+            "type": "string"
+          },
+          "path": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "store": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "store",
+          "path",
+          "digest"
+        ],
+        "type": "object"
+      },
+      "type": "object"
+    },
+    "templates": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "agent": {
+            "type": "string"
+          },
+          "config": {
+            "type": "object"
+          },
+          "extends": {
+            "type": "string"
+          },
+          "packages": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "",
+              "container",
+              "docker",
+              "vm",
+              "share"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
       },
       "type": "object"
     }

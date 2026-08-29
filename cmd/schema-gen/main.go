@@ -119,6 +119,22 @@ func buildTopLevelSchema() (map[string]any, error) {
 			},
 			"server": buildServerSchema(),
 			"pools":  buildPoolsSchema(),
+			"templates": map[string]any{
+				"type":                 "object",
+				"additionalProperties": templateSchema(),
+			},
+			"packages": map[string]any{
+				"type":                 "object",
+				"additionalProperties": packageSchema(),
+			},
+			"sources": map[string]any{
+				"type":                 "object",
+				"additionalProperties": sourceSchema(),
+			},
+			"artifact_stores": map[string]any{
+				"type":                 "object",
+				"additionalProperties": artifactStoreSchema(),
+			},
 		},
 	}, nil
 }
@@ -242,7 +258,7 @@ func buildPoolsSchema() map[string]any {
 				// and omitting "type" entirely are both valid but distinct
 				// inputs.
 				"enum":        []string{"", "container", "docker", "vm", "share"},
-				"description": `Pool kind. "" and "container" and "docker" all resolve to a container pool.`,
+				"description": `Pool type. "" and "container" and "docker" all resolve to a container pool.`,
 			},
 			"provider": map[string]any{
 				"type":        "string",
@@ -256,6 +272,18 @@ func buildPoolsSchema() map[string]any {
 				"type":        "string",
 				"description": "Optional agent instance ID this pool is pinned to.",
 			},
+			"template": map[string]any{
+				"type":        "string",
+				"description": "Reusable resource template name.",
+			},
+			"source": map[string]any{
+				"type":        "string",
+				"description": "Immutable resource source name.",
+			},
+			"packages": map[string]any{
+				"type":  "array",
+				"items": map[string]any{"type": "string", "minLength": 1},
+			},
 			"policy":   policySchema,
 			"policies": policySchema,
 		},
@@ -264,5 +292,71 @@ func buildPoolsSchema() map[string]any {
 	return map[string]any{
 		"type":  "array",
 		"items": poolItem,
+	}
+}
+
+func packageSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"version", "method", "scopes", "events"},
+		"properties": map[string]any{
+			"name":     map[string]any{"type": "string"},
+			"version":  map[string]any{"type": "string", "minLength": 1},
+			"method":   map[string]any{"type": "string", "enum": []string{"shell", "powershell", "dsc", "ansible"}},
+			"scopes":   map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "enum": []string{"resource", "allocation"}}},
+			"events":   map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "enum": []string{"provision", "promotion", "allocation"}}},
+			"defaults": map[string]any{"type": "object"},
+			"inputs":   map[string]any{"type": "object"},
+		},
+	}
+}
+
+func templateSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"extends":  map[string]any{"type": "string"},
+			"type":     map[string]any{"type": "string", "enum": []string{"", "container", "docker", "vm", "share"}},
+			"provider": map[string]any{"type": "string"},
+			"agent":    map[string]any{"type": "string"},
+			"source":   map[string]any{"type": "string"},
+			"config":   map[string]any{"type": "object"},
+			"packages": map[string]any{"type": "array", "items": map[string]any{"type": "string", "minLength": 1}},
+		},
+	}
+}
+
+func sourceSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"store", "path", "digest"},
+		"properties": map[string]any{
+			"store":    map[string]any{"type": "string", "minLength": 1},
+			"path":     map[string]any{"type": "string", "minLength": 1},
+			"digest":   map[string]any{"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"},
+			"format":   map[string]any{"type": "string"},
+			"os":       map[string]any{"type": "string"},
+			"provider": map[string]any{"type": "string"},
+			"metadata": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
+		},
+	}
+}
+
+func artifactStoreSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"type"},
+		"properties": map[string]any{
+			"type":       map[string]any{"type": "string", "enum": []string{"local", "filesystem", "s3"}},
+			"endpoint":   map[string]any{"type": "string"},
+			"bucket":     map[string]any{"type": "string"},
+			"path":       map[string]any{"type": "string"},
+			"access_key": map[string]any{"type": "string", "pattern": "^env:.+"},
+			"secret_key": map[string]any{"type": "string", "pattern": "^env:.+"},
+		},
 	}
 }

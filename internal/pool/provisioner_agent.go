@@ -2,6 +2,7 @@ package pool
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
+	"github.com/Geogboe/boxy/pkg/resourcepack"
 	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
 )
 
@@ -38,7 +40,8 @@ type AgentProvisioner struct {
 	Now       func() time.Time
 	// GuestSecrets holds the resource-scoped credential produced during pool
 	// admission. It is consumed and removed after allocation-time rotation.
-	GuestSecrets boxysecrets.Store
+	GuestSecrets  boxysecrets.Store
+	PackageEngine *resourcepack.Engine
 }
 
 // Provision implements pool.Provisioner. It's a thin wrapper around
@@ -105,15 +108,16 @@ func (ap *AgentProvisioner) ProvisionLocked(ctx context.Context, pool model.Pool
 	}
 
 	built := model.Resource{
-		ID:         model.ResourceID(res.ID),
-		Type:       pool.Inventory.ExpectedType,
-		Profile:    pool.Inventory.ExpectedProfile,
-		OriginPool: pool.Name,
-		Provider:   model.ProviderRef{Name: string(driverType), AgentID: agent.Info().ID},
-		State:      model.ResourceStateReady,
-		Properties: props,
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		ID:          model.ResourceID(res.ID),
+		Type:        pool.Inventory.ExpectedType,
+		Profile:     pool.Inventory.ExpectedProfile,
+		OriginPool:  pool.Name,
+		CurrentPool: pool.Name,
+		Provider:    model.ProviderRef{Name: string(driverType), AgentID: agent.Info().ID},
+		State:       model.ResourceStateReady,
+		Properties:  props,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 	if persist != nil {
 		if perr := persist(&built); perr != nil {
@@ -160,6 +164,147 @@ func (ap *AgentProvisioner) Allocate(ctx context.Context, pool model.Pool, res m
 	}
 	properties, err := agent.Allocate(ctx, driverType, string(res.ID))
 	return providersdk.AllocationResult{Properties: properties}, err
+}
+
+// AllocateWithPackages preserves the existing allocation behavior and then
+// applies the explicitly requested allocation-scoped packages. It is an
+// optional sandbox allocator capability so callers without package requests
+// retain the old path.
+func (ap *AgentProvisioner) AllocateWithPackages(ctx context.Context, pool model.Pool, res model.Resource, packages []string) (providersdk.AllocationResult, error) {
+	allocation, err := ap.Allocate(ctx, pool, res)
+	if err != nil || len(packages) == 0 {
+		return allocation, err
+	}
+	if ap.PackageEngine == nil {
+		return providersdk.AllocationResult{}, fmt.Errorf("resource package engine is not configured")
+	}
+	plan, err := ap.PackageEngine.Plan(ctx, resourcepack.Request{
+		Target:     resourcepack.Target{ResourceID: string(res.ID), Provider: string(res.Provider.Name), AgentID: res.Provider.AgentID},
+		Event:      resourcepack.EventAllocation,
+		Scope:      resourcepack.ScopeAllocation,
+		References: packages,
+		Applied:    convertAppliedPackages(res.AppliedPackages),
+	})
+	if err != nil {
+		return providersdk.AllocationResult{}, err
+	}
+	applied, err := ap.PackageEngine.Apply(ctx, plan, packageExecutor{provisioner: ap, credential: allocation.GuestCredential})
+	if err != nil {
+		return providersdk.AllocationResult{}, err
+	}
+	allocation.AppliedPackages = applied
+	return allocation, nil
+}
+
+// ApplyResourcePackages applies resource-scoped packages for an admission or
+// promotion event. The caller persists the returned applied records together
+// with the resource state transition.
+func (ap *AgentProvisioner) ApplyResourcePackages(ctx context.Context, pool model.Pool, res model.Resource, event resourcepack.Event) ([]resourcepack.AppliedPackage, error) {
+	if len(pool.Packages) == 0 {
+		return nil, nil
+	}
+	if ap.PackageEngine == nil {
+		return nil, fmt.Errorf("resource package engine is not configured")
+	}
+	plan, err := ap.PackageEngine.Plan(ctx, resourcepack.Request{
+		Target:     resourcepack.Target{ResourceID: string(res.ID), Provider: string(res.Provider.Name), AgentID: res.Provider.AgentID},
+		Event:      event,
+		Scope:      resourcepack.ScopeResource,
+		References: pool.Packages,
+		Applied:    res.AppliedPackages,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return ap.PackageEngine.Apply(ctx, plan, ap)
+}
+
+// Execute implements resourcepack.Executor. Package execution is translated
+// to the existing provider-neutral ExecOperation and sent through the exact
+// owning agent; package policy never crosses this boundary.
+func (ap *AgentProvisioner) Execute(ctx context.Context, target resourcepack.Target, operation resourcepack.Operation) error {
+	return ap.executePackage(ctx, target, operation, nil)
+}
+
+type packageExecutor struct {
+	provisioner *AgentProvisioner
+	credential  *providersdk.GuestCredential
+}
+
+func (e packageExecutor) Execute(ctx context.Context, target resourcepack.Target, operation resourcepack.Operation) error {
+	return e.provisioner.executePackage(ctx, target, operation, e.credential)
+}
+
+func (ap *AgentProvisioner) executePackage(ctx context.Context, target resourcepack.Target, operation resourcepack.Operation, credential *providersdk.GuestCredential) error {
+	if strings.TrimSpace(target.AgentID) == "" {
+		return fmt.Errorf("package target agent is required")
+	}
+	agent, ok := ap.Registry.Get(target.AgentID)
+	if !ok {
+		return fmt.Errorf("agent %q unavailable for package target %q", target.AgentID, target.ResourceID)
+	}
+	if credential == nil && ap.GuestSecrets != nil {
+		if raw, err := ap.GuestSecrets.Get(ctx, boxysecrets.ResourceCredentialKey(target.ResourceID)); err == nil {
+			var stored providersdk.GuestCredential
+			if err := json.Unmarshal(raw, &stored); err != nil {
+				return fmt.Errorf("decode resource package credential: %w", err)
+			}
+			credential = &stored
+		} else if !errors.Is(err, boxysecrets.ErrNotFound) {
+			return fmt.Errorf("get resource package credential: %w", err)
+		}
+	}
+	command, err := packageCommand(operation)
+	if err != nil {
+		return err
+	}
+	env := make(map[string]string, len(operation.Parameters))
+	for key, value := range operation.Parameters {
+		env[key] = fmt.Sprint(value)
+	}
+	_, err = agent.Update(ctx, providersdk.Type(target.Provider), target.ResourceID, &providersdk.ExecOperation{
+		Command:         command,
+		Env:             env,
+		GuestCredential: credential,
+	})
+	if err != nil {
+		return fmt.Errorf("execute package %q: %w", operation.Reference, err)
+	}
+	return nil
+}
+
+func packageCommand(operation resourcepack.Operation) ([]string, error) {
+	inline, _ := operation.Inputs["inline"].(string)
+	script, _ := operation.Inputs["script"].(string)
+	if len(operation.Content) != 0 {
+		inline = string(operation.Content)
+	}
+	if inline == "" && script != "" && len(operation.Content) == 0 {
+		return nil, fmt.Errorf("package %q script input has no materialized content; use inputs.inline or publish the script as a package blob", operation.Reference)
+	}
+	switch operation.Method {
+	case resourcepack.MethodShell:
+		if inline != "" {
+			return []string{"sh", "-c", inline}, nil
+		}
+		if script != "" {
+			return []string{"sh", script}, nil
+		}
+	case resourcepack.MethodPowerShell:
+		if inline != "" {
+			return []string{"powershell.exe", "-NoProfile", "-NonInteractive", "-Command", inline}, nil
+		}
+		if script != "" {
+			return []string{"powershell.exe", "-NoProfile", "-NonInteractive", "-File", script}, nil
+		}
+	default:
+		return nil, fmt.Errorf("unsupported package method %q", operation.Method)
+	}
+	return nil, fmt.Errorf("package %q must provide inputs.inline or inputs.script", operation.Reference)
+}
+
+func convertAppliedPackages(records []resourcepack.AppliedPackage) []resourcepack.AppliedPackage {
+	return append([]resourcepack.AppliedPackage(nil), records...)
 }
 
 // PersonalizeGuestForPool runs only the guest-personalization capability for
@@ -296,4 +441,15 @@ func (ap *AgentProvisioner) driverTypeForPool(spec boxyconfig.PoolSpec) provider
 	default:
 		return providersdk.Type(spec.Type)
 	}
+}
+
+func (ap *AgentProvisioner) CompatibleWithPool(pool model.Pool, res model.Resource) bool {
+	if ap == nil || strings.TrimSpace(res.Provider.Name) == "" {
+		return false
+	}
+	spec, ok := ap.Specs[pool.Name]
+	if !ok {
+		return false
+	}
+	return string(ap.driverTypeForPool(spec)) == strings.TrimSpace(res.Provider.Name)
 }

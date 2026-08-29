@@ -28,6 +28,7 @@ import (
 	"github.com/Geogboe/boxy/pkg/pki"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/providersdk/builtins"
+	"github.com/Geogboe/boxy/pkg/resourcepack"
 	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
 	"github.com/Geogboe/boxy/pkg/store"
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -178,11 +179,21 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		failValidate(err.Error())
 		return err
 	}
+	poolSpecs, err := cfg.ResolvePoolSpecs()
+	if err != nil {
+		failValidate(err.Error())
+		return fmt.Errorf("resolve pool specs: %w", err)
+	}
+	packageRegistry, err := cfg.PackageRegistry(ctx)
+	if err != nil {
+		failValidate(err.Error())
+		return fmt.Errorf("build resource package registry: %w", err)
+	}
 	doneValidate(fmt.Sprintf("%d configured", len(cfg.Providers)))
 
 	// Build lookup maps for the DriverProvisioner.
-	specsMap := make(map[model.PoolName]boxyconfig.PoolSpec, len(cfg.Pools))
-	for _, spec := range cfg.Pools {
+	specsMap := make(map[model.PoolName]boxyconfig.PoolSpec, len(poolSpecs))
+	for _, spec := range poolSpecs {
 		specsMap[model.PoolName(spec.Name)] = spec
 	}
 	providersMap := make(map[string]providersdk.Instance, len(cfg.Providers))
@@ -237,12 +248,22 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 
 	// Use AgentProvisioner to route pool operations through the registry.
 	provisioner := &pool.AgentProvisioner{
-		Registry:     agentRegistry,
-		Specs:        specsMap,
-		Providers:    providersMap,
-		GuestSecrets: guestSecrets,
+		Registry:      agentRegistry,
+		Specs:         specsMap,
+		Providers:     providersMap,
+		GuestSecrets:  guestSecrets,
+		PackageEngine: &resourcepack.Engine{Registry: packageRegistry},
 	}
 	poolMgr := pool.New(st, provisioner)
+	poolMgr.SetPromoter(&pool.PromotionService{
+		Store:           st,
+		Provisioner:     provisioner,
+		Compatibility:   provisioner,
+		Packages:        provisioner,
+		Personalizer:    provisioner,
+		Secrets:         guestSecrets,
+		TemplateParents: cfg.TemplateParents(),
+	})
 	poolMgr.SetGuestSecretStore(guestSecrets)
 	// Shares agentRegistry's per-agent lock with RunAgentReconciliation's
 	// sweep below, closing a race exposed by fast ResourceLister drivers
@@ -258,6 +279,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		Secrets:      guestSecrets,
 		Personalizer: provisioner,
 		Failures:     poolMgr,
+		Packages:     provisioner,
 	}
 	admissionDispatcher := lifecycle.NewDispatcher(eventStore, admissionHandler)
 	poolMgr.SetAdmissionPublisher(admissionPublisher)
@@ -268,7 +290,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 
 	// Pools
 	donePools, failPools := ui.step("Initializing pools")
-	poolNames, err := seedConfiguredPools(ctx, st, cfg.Pools)
+	poolNames, err := seedConfiguredPools(ctx, st, poolSpecs)
 	if err != nil {
 		failPools(err.Error())
 		return err
@@ -369,7 +391,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		return serveLoop(ctx, poolMgr, sandboxDeleter, sandboxFulfiller, sessionSweeper, poolNames, ui)
 	})
 
-	printServeBanner(listenAddr, uiEnabled, len(cfg.Pools), opts.insecure)
+	printServeBanner(listenAddr, uiEnabled, len(poolSpecs), opts.insecure)
 
 	return g.Wait()
 }
@@ -836,7 +858,10 @@ func poolSpecToModel(spec boxyconfig.PoolSpec) (model.Pool, error) {
 	}
 	policy := spec.EffectivePolicy()
 	return model.Pool{
-		Name: model.PoolName(spec.Name),
+		Name:     model.PoolName(spec.Name),
+		Template: spec.Template,
+		Source:   spec.Source,
+		Packages: append([]string(nil), spec.Packages...),
 		Policies: model.PoolPolicies{
 			Preheat: model.PreheatPolicy{
 				MinReady: policy.Preheat.MinReady,

@@ -37,6 +37,12 @@ task go:run -- <args> # Run boxy via go run with arbitrary args
 task release:check    # Validate GoReleaser config via the pinned tools module
 ```
 
+**Startup tool check:** when available, use `ast-grep` for structural code
+searches, `jq` for JSON inspection, `yq` for YAML inspection, and `gopls` for
+Go symbol/reference checks. Prefer these for targeted discovery over dumping
+large files or writing ad-hoc parsing scripts. Continue with `rg` and the
+repository's Taskfile commands when one of them is unavailable.
+
 ## Project Structure
 
 ```
@@ -72,6 +78,35 @@ docs/adr/             # Architecture Decision Records
 - The daemon reconcile loop runs pool reconciliation both before and after sandbox fulfillment so preheat targets are restored in the same tick after allocations drain a pool.
 - `computeToProvisionCount` (`internal/pool/planning.go`) measures the min_ready gap against `totalCount` (all non-stale, non-destroyed resources tracked for the pool), not `readyCount` (only `ResourceStateReady`). A resource this pool already provisioned but that hasn't reached `Ready` yet (mid-admission — e.g. guest personalization via `AdmissionHandler`) is real inventory-in-progress and must count toward the target; comparing against `readyCount` alone made every reconcile tick before admission finished re-request the *full* remaining gap, overshooting `min_ready` by one extra resource per tick until `max_total` capped it (#258, 2026-08).
 - Resource destroy paths (recycle-by-max-age, drain, sandbox-triggered `DestroyResource`) persist a transient state (`recycling` or `destroying`) *before* calling the provisioner, so a resource mid-teardown is observable via the REST API (`GET /api/v1/resources[/{id}]`) and `.boxy/state.json` instead of just vanishing once the destroy completes. No CLI command surfaces individual pool-resource state today (`boxy status` only aggregates ready-inventory counts; `boxy debug pool` only has `drain`/`fill`) — that's deliberately out of scope, see ADR-0006's Non-goals. An orphan sweep in `internal/pool/manager.go` recovers resources left stuck in a transient state by a crash; both sweep sites cover both transient states (safe because every driver's `Delete` is idempotent on an already-gone resource) — see ADR-0006 for why an earlier, narrower split turned out to leave a real recovery gap.
+
+### Resource Templates, Packages, and Artifact Types
+
+- `pkg/resourcepack` is provider-neutral. `Manifest.Validate` recognizes
+  reserved future methods such as DSC and Ansible, while `Method.Supported`
+  describes methods the current executor can actually run. Config validation
+  must reject unsupported methods before the daemon starts; runtime planning
+  keeps the same guard for artifacts resolved from the registry.
+- Promotion may move resources only when the destination's resolved provider
+  type matches the resource's recorded provider type. Matching abstract shape
+  (resource type/profile) is not sufficient because allocation sends the
+  destination driver type to the creating agent.
+- The artifact registry uses `ArtifactType` and validates every filesystem
+  path component, including the artifact type. Keep Boxy terminology in terms
+  of types; do not introduce Kubernetes-style discriminator fields for new
+  domain objects.
+- Source catalog entries are configuration data, so validate their store,
+  path, and digest at the configuration boundary rather than deferring bad
+  metadata to a later registry operation.
+- A package script reference is executable content only when it is inline or
+  backed by a materialized package blob. Never assume a script filename exists
+  in the guest just because it appears in package inputs.
+- Promotion state is not a destroy transient: promotion recovery must not send
+  an in-flight resource through the teardown orphan sweep, and source-pool
+  surplus must be re-read after acquiring the source lock before inventory is
+  persisted.
+- Validate immutable package references as `name@version` at CLI boundaries;
+  derived template pools also need promotion-event validation because their
+  packages run during promotion as well as provisioning.
 
 ### Sandboxes
 
@@ -575,6 +610,30 @@ Wrap repeated commands in `Taskfile.yml`. If a command is run more than once, ad
 - `task lint` mirrors CI by running `golangci-lint` v2 from source via `go run`, so it does not depend on a preinstalled local binary version.
 - Tool dependencies used by Taskfile tasks and CI must use explicit pinned versions, kept at the latest stable release compatible with the repository's declared toolchain. Update the pin intentionally in both local and CI workflows and validate the full task/check surface; do not use moving `@latest` references.
 - GoReleaser is pinned in the isolated `tools/` module; use `task release:check` and `task release:snapshot` instead of assuming a global `goreleaser` binary is installed.
+
+### Windows/WSL GitHub Actions validation
+
+- This Windows ARM64 checkout can run Linux GitHub Actions jobs locally with
+  `act` and Docker. Install `act` into the WSL user-local path; sudo is not
+  required:
+
+  ```powershell
+  wsl.exe --cd D:\projects\code\boxy bash -lc "mkdir -p ~/.local/bin"
+  wsl.exe --cd D:\projects\code\boxy bash -lc "curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/nektos/act/master/install.sh | sh -s -- -b ~/.local/bin"
+  ```
+
+- List or run Linux CI jobs from the Windows checkout with the ARM64 runner
+  image:
+
+  ```powershell
+  wsl.exe --cd D:\projects\code\boxy bash -lc "~/.local/bin/act -l -W .github/workflows/ci.yml"
+  wsl.exe --cd D:\projects\code\boxy bash -lc "~/.local/bin/act pull_request -j lint -W .github/workflows/ci.yml -P ubuntu-latest=catthehacker/ubuntu:act-latest --container-architecture linux/arm64"
+  ```
+
+- Use targeted Linux jobs such as `lint`, `build`, or `installer-smoke`.
+  `act` does not reproduce GitHub-hosted Windows runners or release
+  permissions; the repository test suite, `task ci:validate`, and GitHub
+  Actions remain authoritative. Docker Engine must be available to WSL.
 
 ## Installer Notes
 

@@ -24,6 +24,10 @@ type SandboxResource struct {
 
 	Pool  string `json:"pool" yaml:"pool"`
 	Count int    `json:"count" yaml:"count"`
+
+	// Packages are allocation-scoped resource package references applied to
+	// each resource selected for this request.
+	Packages []string `json:"packages,omitempty" yaml:"packages,omitempty"`
 }
 
 func LoadSandboxFile(path string) (SandboxSpec, error) {

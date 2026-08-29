@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -299,11 +300,66 @@ func TestLoopbackOIDCLogin_DuplicateCallbackDoesNotHang(t *testing.T) {
 		t.Fatalf("oidc.NewProvider: %v", err)
 	}
 
-	token, err := loopbackOIDCLogin(context.Background(), oidcProvider, "boxy-cli", &strings.Builder{})
+	token, err := loopbackOIDCLogin(context.Background(), oidcProvider, "boxy-cli", &strings.Builder{}, 0)
 	if err != nil {
 		t.Fatalf("loopbackOIDCLogin: %v", err)
 	}
 	if token != "test-id-token" {
 		t.Fatalf("token = %q, want test-id-token", token)
+	}
+}
+
+func TestLoopbackOIDCLogin_UsesRequestedPort(t *testing.T) {
+	oldOpenBrowser := openBrowser
+	openBrowser = func(authURL string) error {
+		go func() {
+			resp, err := http.Get(authURL) //nolint:gosec,noctx // test-only fake browser hitting localhost
+			if err == nil {
+				_ = resp.Body.Close()
+			}
+		}()
+		return nil
+	}
+	t.Cleanup(func() { openBrowser = oldOpenBrowser })
+
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve callback port: %v", err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	_ = probe.Close()
+
+	provider := newFakeAuthCodeOIDCProvider(t)
+	oidcProvider, err := oidc.NewProvider(context.Background(), provider.URL())
+	if err != nil {
+		t.Fatalf("oidc.NewProvider: %v", err)
+	}
+
+	out := &strings.Builder{}
+	token, err := loopbackOIDCLogin(context.Background(), oidcProvider, "boxy-cli", out, port)
+	if err != nil {
+		t.Fatalf("loopbackOIDCLogin: %v", err)
+	}
+	if token != "test-id-token" {
+		t.Fatalf("token = %q, want test-id-token", token)
+	}
+	if !strings.Contains(out.String(), fmt.Sprintf("127.0.0.1%%3A%d%%2Fcallback", port)) {
+		t.Fatalf("output = %q, want requested callback port %d", out.String(), port)
+	}
+}
+
+func TestLoopbackOIDCLogin_RejectsInvalidPort(t *testing.T) {
+	provider := newFakeAuthCodeOIDCProvider(t)
+	oidcProvider, err := oidc.NewProvider(context.Background(), provider.URL())
+	if err != nil {
+		t.Fatalf("oidc.NewProvider: %v", err)
+	}
+	for _, port := range []int{-1, 65536} {
+		t.Run(fmt.Sprintf("port-%d", port), func(t *testing.T) {
+			_, err := loopbackOIDCLogin(context.Background(), oidcProvider, "boxy-cli", &strings.Builder{}, port)
+			if err == nil {
+				t.Fatalf("loopbackOIDCLogin(%d) succeeded, want validation error", port)
+			}
+		})
 	}
 }

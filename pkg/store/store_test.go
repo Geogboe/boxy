@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -237,7 +238,7 @@ func testStoreSandboxFieldsRoundTrip(t *testing.T, newStore storeFactory) {
 		if len(got.Requests) != 1 {
 			t.Fatalf("requests len = %d, want 1", len(got.Requests))
 		}
-		if got.Requests[0] != want.Requests[0] {
+		if !reflect.DeepEqual(got.Requests[0], want.Requests[0]) {
 			t.Fatalf("request = %+v, want %+v", got.Requests[0], want.Requests[0])
 		}
 	})

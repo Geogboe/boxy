@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/Geogboe/boxy/pkg/resourcepack"
 )
 
 // SecretRef is an opaque provider-managed lookup handle for a secret.
@@ -89,6 +91,7 @@ type GuestBootstrapResolver func(ctx context.Context, resourceID string) (GuestB
 type AllocationResult struct {
 	Properties      map[string]any
 	GuestCredential *GuestCredential
+	AppliedPackages []resourcepack.AppliedPackage
 }
 
 // GuestPersonalizationResult is the typed result of allocation-time guest

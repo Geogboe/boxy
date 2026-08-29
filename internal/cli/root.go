@@ -53,6 +53,7 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newVersionCommand())
 	root.AddCommand(newUpdateCommand())
 	root.AddCommand(newLoginCommand())
+	root.AddCommand(newPackageCommand())
 	root.AddCommand(newLogoutCommand())
 	root.AddCommand(newAdminCommand())
 	root.AddCommand(newDoctorCommand())

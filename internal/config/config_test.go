@@ -4,10 +4,12 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/resourcepack"
 	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
 )
 
@@ -582,5 +584,123 @@ pools:
 	}
 	if got, want := err.Error(), `pool "web" preheat max_total: 0 conflicts with min_ready: 1`; got != want {
 		t.Fatalf("Validate() error = %q, want %q", got, want)
+	}
+}
+
+func TestConfigValidate_rejectsInvalidArtifactStoreReferences(t *testing.T) {
+	t.Parallel()
+
+	digest := "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	tests := map[string]struct {
+		stores  map[string]ArtifactStoreSpec
+		wantErr string
+	}{
+		"unknown store": {
+			stores:  map[string]ArtifactStoreSpec{"images": {Type: "local", Path: t.TempDir()}},
+			wantErr: `source "windows-2022" references unknown artifact store "missing"`,
+		},
+		"unsupported type": {
+			stores:  map[string]ArtifactStoreSpec{"images": {Type: "ftp"}},
+			wantErr: `artifact store "images" has unsupported type "ftp"`,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cfg := Config{
+				ArtifactStores: tt.stores,
+				Sources: map[string]SourceSpec{
+					"windows-2022": {Store: "missing", Path: "images/windows.vhdx", Digest: digest},
+				},
+			}
+			if name == "unsupported type" {
+				cfg.Sources["windows-2022"] = SourceSpec{Store: "images", Path: "images/windows.vhdx", Digest: digest}
+			}
+			err := cfg.Validate()
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Validate() error = %v, want substring %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestConfigValidate_rejectsInvalidSourceMetadata(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		source  SourceSpec
+		wantErr string
+	}{
+		"missing store": {
+			source:  SourceSpec{Path: "images/windows.vhdx", Digest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+			wantErr: `source "windows-2022" store is required`,
+		},
+		"missing path": {
+			source:  SourceSpec{Store: "images", Digest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+			wantErr: `source "windows-2022" path is required`,
+		},
+		"invalid digest": {
+			source:  SourceSpec{Store: "images", Path: "images/windows.vhdx", Digest: "sha1:bad"},
+			wantErr: `source "windows-2022": digest must use sha256:<64 hex characters>`,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			cfg := Config{
+				ArtifactStores: map[string]ArtifactStoreSpec{"images": {Type: "local"}},
+				Sources:        map[string]SourceSpec{"windows-2022": tt.source},
+			}
+			err := cfg.Validate()
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Validate() error = %v, want substring %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestConfigValidate_rejectsPromotionPackageWithoutPromotionEvent(t *testing.T) {
+	cfg := Config{
+		Packages: map[string]resourcepack.Manifest{
+			"base": {
+				Name:    "base",
+				Version: "1.0.0",
+				Method:  resourcepack.MethodShell,
+				Scopes:  []resourcepack.Scope{resourcepack.ScopeResource},
+				Events:  []resourcepack.Event{resourcepack.EventProvision},
+			},
+		},
+		Templates: map[string]TemplateSpec{
+			"base":    {Type: "container", Packages: []string{"base@1.0.0"}},
+			"derived": {Extends: "base"},
+		},
+		Pools: []PoolSpec{{Name: "derived", Template: "derived"}},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "promotion") {
+		t.Fatalf("Validate() error = %v, want promotion event validation error", err)
+	}
+}
+
+func TestConfigValidate_rejectsUnsupportedPackageMethod(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		Packages: map[string]resourcepack.Manifest{
+			"future-config": {
+				Name:    "future-config",
+				Version: "1.0.0",
+				Method:  resourcepack.MethodDSC,
+				Scopes:  []resourcepack.Scope{resourcepack.ScopeResource},
+				Events:  []resourcepack.Event{resourcepack.EventProvision},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "unsupported") {
+		t.Fatalf("Validate() error = %v, want unsupported package method error", err)
 	}
 }

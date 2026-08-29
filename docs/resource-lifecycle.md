@@ -1,8 +1,9 @@
 # Resource Lifecycle
 
 Resources move through two distinct phases: **supply side** (pool management) and
-**demand side** (sandbox allocation). Credentials and connection details are only
-generated when a resource is allocated — the pool carries only generic location info.
+**demand side** (sandbox allocation). Resource packages may configure a resource
+after provision or promotion; credentials and connection details are still only
+generated when a resource is allocated.
 
 ## Full Lifecycle Diagram
 
@@ -14,9 +15,12 @@ generated when a resource is allocated — the pool carries only generic locatio
 │    │                                                                │
 │    ├─ driver.Create(cfg)          provisioning                      │
 │    │       │                           │                            │
-│    │       └── resource born ──────► ready                         │
+│    │       ├── resource born ──► packages ──► ready                │
 │    │              Properties: host, IP, type                        │
 │    │              (generic — no credentials)                        │
+│    │                                                                │
+│    ├─ ancestor surplus ─────────► promoting ─► packages ─► ready   │
+│    │                              (current_pool changes on success) │
 │    │                                                                │
 │    └─ driver.Delete(id)            ready ──► destroyed              │
 │         (MaxAge exceeded or pool oversize)                          │
@@ -67,12 +71,15 @@ generated when a resource is allocated — the pool carries only generic locatio
 ## State Transitions
 
 ```
-provisioning → ready → allocated → released → destroying → destroyed
+provisioning → ready ⇄ promoting → ready → allocated → released → destroying → destroyed
                                                  ▲
                               (MaxAge / manual delete)
 ```
 
 `ready`: resource is in the pool, available for allocation.
+`promoting`: resource is temporarily unavailable while destination packages
+are applied; `origin_pool` remains immutable and `current_pool` changes only
+after promotion succeeds.
 `allocated`: resource has been assigned to a sandbox; allocation hooks have run.
 `released`: sandbox has been deleted; resource awaits cleanup.
 `destroying` / `destroyed`: driver.Delete() called / completed.
@@ -90,3 +97,5 @@ type SandboxAllocator interface {
 
 Implemented by both `pool.DriverProvisioner` and `pool.AgentProvisioner`.
 Returns extra Properties to merge; `nil, nil` means no allocation work needed.
+`pool.AgentProvisioner` also applies allocation-scoped resource packages before
+the allocation result is persisted.

@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -63,7 +64,7 @@ func runOIDCLogin(ctx context.Context, opts loginOptions, out, errOut io.Writer)
 
 	var rawIDToken string
 	if opts.web {
-		rawIDToken, err = loopbackOIDCLogin(ctx, provider, cfg.CLIClientID, out)
+		rawIDToken, err = loopbackOIDCLogin(ctx, provider, cfg.CLIClientID, out, opts.loopbackPort)
 	} else {
 		rawIDToken, err = deviceCodeOIDCLogin(ctx, provider, cfg.CLIClientID, out)
 	}
@@ -140,8 +141,11 @@ const loopbackLoginTimeout = 5 * time.Minute
 // process on the same network-local host, which loopback-redirect breaks
 // without. PKCE (S256) replaces a client secret: the CLI is a public
 // client with no secret to present.
-func loopbackOIDCLogin(ctx context.Context, provider *oidc.Provider, clientID string, out io.Writer) (string, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+func loopbackOIDCLogin(ctx context.Context, provider *oidc.Provider, clientID string, out io.Writer, port int) (string, error) {
+	if port < 0 || port > 65535 {
+		return "", fmt.Errorf("OIDC loopback port %d is outside the valid TCP port range 0-65535", port)
+	}
+	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
 		return "", fmt.Errorf("start local callback listener: %w", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/Geogboe/boxy/pkg/agentsdk"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
+	"github.com/Geogboe/boxy/pkg/resourcepack"
 )
 
 var (
@@ -782,6 +784,41 @@ func TestAgentProvisioner_DriverTypeForPool_ExplicitProvider(t *testing.T) {
 	got2 := provisioner.driverTypeForPool(spec2)
 	if got2 != "hyperv" {
 		t.Errorf("expected hyperv, got %q", got2)
+	}
+}
+
+func TestAgentProvisioner_CompatibleWithPool(t *testing.T) {
+	provisioner := &AgentProvisioner{
+		Specs: map[model.PoolName]boxyconfig.PoolSpec{
+			"apps": {Type: "vm", Provider: "hyperv"},
+		},
+	}
+	p := model.Pool{Name: "apps"}
+
+	for name, resourceProvider := range map[string]string{
+		"matching provider":  "hyperv",
+		"different provider": "docker",
+		"missing provider":   "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			res := model.Resource{Provider: model.ProviderRef{Name: resourceProvider}}
+			got := provisioner.CompatibleWithPool(p, res)
+			want := name == "matching provider"
+			if got != want {
+				t.Fatalf("CompatibleWithPool() = %t, want %t", got, want)
+			}
+		})
+	}
+}
+
+func TestPackageCommandRejectsUnmaterializedScript(t *testing.T) {
+	_, err := packageCommand(resourcepack.Operation{
+		Reference: "install@1.0.0",
+		Method:    resourcepack.MethodShell,
+		Inputs:    map[string]any{"script": "install.sh"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "materialized content") {
+		t.Fatalf("packageCommand() error = %v, want materialized content error", err)
 	}
 }
 

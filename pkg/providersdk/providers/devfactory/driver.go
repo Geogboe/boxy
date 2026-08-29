@@ -312,10 +312,23 @@ func (d *Driver) Update(ctx context.Context, id string, op providersdk.Operation
 
 		switch o := op.(type) {
 		case *ExecOp:
+			if len(o.Command) == 0 {
+				return s, fmt.Errorf("devfactory: exec command is empty")
+			}
 			desc = fmt.Sprintf("exec: %v", o.Command)
 			outputs["operation"] = desc
 			outputs["stdout"] = fmt.Sprintf("[simulated output of: %v]", o.Command)
 			outputs["exit_code"] = "0"
+			envKeys := make([]string, 0, len(o.Env))
+			for key := range o.Env {
+				envKeys = append(envKeys, key)
+			}
+			sort.Strings(envKeys)
+			r.Execs = append(r.Execs, ExecRecord{
+				Command:            append([]string(nil), o.Command...),
+				EnvironmentKeys:    envKeys,
+				CredentialProvided: o.GuestCredential != nil,
+			})
 		case *SetStateOp:
 			prev := r.State
 			desc = fmt.Sprintf("set_state: %s → %s", prev, o.State)
@@ -470,6 +483,21 @@ func (d *Driver) ResourceUpdates(id string) ([]string, bool) {
 	}
 	out := make([]string, len(r.Updates))
 	copy(out, r.Updates)
+	return out, true
+}
+
+// ResourceExecs returns the non-secret guest execution records for a resource.
+func (d *Driver) ResourceExecs(id string) ([]ExecRecord, bool) {
+	store, err := d.loadStore()
+	if err != nil {
+		return nil, false
+	}
+	r, ok := store.Resources[id]
+	if !ok {
+		return nil, false
+	}
+	out := make([]ExecRecord, len(r.Execs))
+	copy(out, r.Execs)
 	return out, true
 }
 

@@ -10,8 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Geogboe/boxy/pkg/artifact"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
+	"github.com/Geogboe/boxy/pkg/resourcepack"
 	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
 	"gopkg.in/yaml.v3"
 )
@@ -21,8 +23,12 @@ import (
 // Keep this intentionally small while the CLI wiring lands. Expand as core
 // managers gain real behavior.
 type Config struct {
-	Providers []providersdk.Instance `json:"providers" yaml:"providers"`
-	Pools     []PoolSpec             `json:"pools,omitempty" yaml:"pools,omitempty"`
+	Providers      []providersdk.Instance           `json:"providers" yaml:"providers"`
+	Pools          []PoolSpec                       `json:"pools,omitempty" yaml:"pools,omitempty"`
+	Templates      map[string]TemplateSpec          `json:"templates,omitempty" yaml:"templates,omitempty"`
+	Sources        map[string]SourceSpec            `json:"sources,omitempty" yaml:"sources,omitempty"`
+	ArtifactStores map[string]ArtifactStoreSpec     `json:"artifact_stores,omitempty" yaml:"artifact_stores,omitempty"`
+	Packages       map[string]resourcepack.Manifest `json:"packages,omitempty" yaml:"packages,omitempty"`
 
 	Server ServerSpec `json:"server,omitzero" yaml:"server,omitempty"`
 }
@@ -346,9 +352,93 @@ func (c Config) Validate() error {
 			return fmt.Errorf("server: grpc_cert_sans[%d] must not be empty", i)
 		}
 	}
+	for name, store := range c.ArtifactStores {
+		switch strings.ToLower(strings.TrimSpace(store.Type)) {
+		case "local", "filesystem", "s3":
+		default:
+			return fmt.Errorf("artifact store %q has unsupported type %q", name, store.Type)
+		}
+	}
+	for name, source := range c.Sources {
+		if strings.TrimSpace(source.Store) == "" {
+			return fmt.Errorf("source %q store is required", name)
+		}
+		if strings.TrimSpace(source.Path) == "" {
+			return fmt.Errorf("source %q path is required", name)
+		}
+		if err := artifact.ValidateDigest(source.Digest); err != nil {
+			return fmt.Errorf("source %q: %w", name, err)
+		}
+		if _, ok := c.ArtifactStores[source.Store]; !ok {
+			return fmt.Errorf("source %q references unknown artifact store %q", name, source.Store)
+		}
+	}
+	for name, manifest := range c.Packages {
+		if manifest.Name != "" && strings.TrimSpace(manifest.Name) != strings.TrimSpace(name) {
+			return fmt.Errorf("package %q manifest name is %q", name, manifest.Name)
+		}
+		if manifest.Name == "" {
+			manifest.Name = name
+		}
+		if err := manifest.Validate(); err != nil {
+			return fmt.Errorf("package %q: %w", name, err)
+		}
+		if !manifest.Method.Supported() {
+			return fmt.Errorf("package %q uses unsupported method %q", name, manifest.Method)
+		}
+	}
+	for name := range c.Templates {
+		resolved, err := c.ResolveTemplate(name)
+		if err != nil {
+			return fmt.Errorf("template %q: %w", name, err)
+		}
+		if resolved.Source != "" {
+			if _, ok := c.Sources[resolved.Source]; !ok {
+				return fmt.Errorf("template %q references unknown source %q", name, resolved.Source)
+			}
+		}
+	}
 	for _, pool := range c.Pools {
+		var resolvedTemplate model.ResourceTemplate
+		if strings.TrimSpace(pool.Template) != "" {
+			resolved, err := c.ResolveTemplate(pool.Template)
+			if err != nil {
+				return fmt.Errorf("pool %q template: %w", pool.Name, err)
+			}
+			resolvedTemplate = resolved
+			if pool.Type != "" {
+				templateType, err := ResolvePoolExpectedType(resolved.Type)
+				if err != nil {
+					return fmt.Errorf("pool %q template type: %w", pool.Name, err)
+				}
+				poolType, err := ResolvePoolExpectedType(pool.Type)
+				if err != nil {
+					return fmt.Errorf("pool %q type invalid: %w", pool.Name, err)
+				}
+				if poolType != templateType {
+					return fmt.Errorf("pool %q type %q conflicts with template %q type %q", pool.Name, pool.Type, pool.Template, resolved.Type)
+				}
+			}
+		}
 		if _, err := ResolvePoolExpectedType(pool.Type); err != nil {
 			return fmt.Errorf("pool %q type invalid: %w", pool.Name, err)
+		}
+		resolvedPool, err := c.ResolvePoolSpec(pool)
+		if err != nil {
+			return fmt.Errorf("pool %q: %w", pool.Name, err)
+		}
+		if resolvedPool.Source != "" {
+			if _, ok := c.Sources[resolvedPool.Source]; !ok {
+				return fmt.Errorf("pool %q references unknown source %q", pool.Name, resolvedPool.Source)
+			}
+		}
+		if err := c.validatePackageRefs(resolvedPool.Packages, resourcepack.ScopeResource, resourcepack.EventProvision); err != nil {
+			return fmt.Errorf("pool %q packages: %w", pool.Name, err)
+		}
+		if strings.TrimSpace(resolvedTemplate.Extends) != "" {
+			if err := c.validatePackageRefs(resolvedPool.Packages, resourcepack.ScopeResource, resourcepack.EventPromotion); err != nil {
+				return fmt.Errorf("pool %q promotion packages: %w", pool.Name, err)
+			}
 		}
 		if pool.PolicySet() && pool.PoliciesSet() {
 			return fmt.Errorf("pool %q sets both policy and policies; use only one", pool.Name)
@@ -359,6 +449,56 @@ func (c Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+func (c Config) validatePackageRefs(refs []string, scope resourcepack.Scope, event resourcepack.Event) error {
+	for _, rawRef := range refs {
+		ref, err := artifact.ParseRef(rawRef)
+		if err != nil {
+			return err
+		}
+		manifest, ok := c.Packages[ref.Name]
+		if !ok {
+			return fmt.Errorf("package %q is not configured", rawRef)
+		}
+		if manifest.Name == "" {
+			manifest.Name = ref.Name
+		}
+		if manifest.Version != ref.Version {
+			return fmt.Errorf("package %q version does not match configured version %q", rawRef, manifest.Version)
+		}
+		if err := manifest.Validate(); err != nil {
+			return err
+		}
+		if !manifest.Method.Supported() {
+			return fmt.Errorf("package %q uses unsupported method %q", rawRef, manifest.Method)
+		}
+		if !containsPackageScope(manifest.Scopes, scope) {
+			return fmt.Errorf("package %q does not declare scope %q", rawRef, scope)
+		}
+		if !containsPackageEvent(manifest.Events, event) {
+			return fmt.Errorf("package %q does not declare event %q", rawRef, event)
+		}
+	}
+	return nil
+}
+
+func containsPackageScope(scopes []resourcepack.Scope, want resourcepack.Scope) bool {
+	for _, scope := range scopes {
+		if scope == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsPackageEvent(events []resourcepack.Event, want resourcepack.Event) bool {
+	for _, event := range events {
+		if event == want {
+			return true
+		}
+	}
+	return false
 }
 
 // ResolvePoolExpectedType maps a config pool type to the runtime resource type.

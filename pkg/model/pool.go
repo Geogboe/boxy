@@ -7,6 +7,14 @@ type PoolName string
 type Pool struct {
 	Name PoolName `json:"name" yaml:"name"`
 
+	// Template is the reusable desired resource shape used by this pool.
+	Template string `json:"template,omitempty" yaml:"template,omitempty"`
+
+	// Source and Packages are the resolved resource configuration carried by
+	// this pool. They are optional for legacy inline pools.
+	Source   string   `json:"source,omitempty" yaml:"source,omitempty"`
+	Packages []string `json:"packages,omitempty" yaml:"packages,omitempty"`
+
 	// Policies are pool-level behavioral controls (preheating, limits, etc).
 	Policies PoolPolicies `json:"policies,omitempty" yaml:"policies,omitempty"`
 

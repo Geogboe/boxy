@@ -6,7 +6,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -118,6 +120,7 @@ func TestDriver_Update_Exec(t *testing.T) {
 	res, _ := d.Create(context.Background(), nil)
 	result, err := d.Update(context.Background(), res.ID, &ExecOp{
 		Command: []string{"echo", "hello"},
+		Env:     map[string]string{"Foo": "bar", "SECRET": "never persist"},
 	})
 	if err != nil {
 		t.Fatalf("Update: %v", err)
@@ -135,6 +138,20 @@ func TestDriver_Update_Exec(t *testing.T) {
 	}
 	if len(updates) != 1 {
 		t.Fatalf("expected 1 update, got %d", len(updates))
+	}
+	execs, ok := d.ResourceExecs(res.ID)
+	if !ok || len(execs) != 1 {
+		t.Fatalf("exec records = %#v, found = %t", execs, ok)
+	}
+	if got, want := execs[0].EnvironmentKeys, []string{"Foo", "SECRET"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("environment keys = %#v, want %#v", got, want)
+	}
+	encoded, err := json.Marshal(execs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "never persist") {
+		t.Fatal("exec record persisted an environment value")
 	}
 }
 
