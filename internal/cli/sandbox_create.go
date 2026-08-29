@@ -12,6 +12,7 @@ import (
 	"time"
 
 	boxyconfig "github.com/Geogboe/boxy/internal/config"
+	"github.com/Geogboe/boxy/pkg/artifact"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/pterm/pterm"
 	"golang.org/x/term"
@@ -129,8 +130,8 @@ func loadSandboxSpec(path string) (boxyconfig.SandboxSpec, error) {
 			return boxyconfig.SandboxSpec{}, fmt.Errorf("resources[%d].count must be > 0", i)
 		}
 		for j, packageRef := range res.Packages {
-			if strings.TrimSpace(packageRef) == "" {
-				return boxyconfig.SandboxSpec{}, fmt.Errorf("resources[%d].packages[%d] must not be empty", i, j)
+			if _, err := artifact.ParseRef(packageRef); err != nil {
+				return boxyconfig.SandboxSpec{}, fmt.Errorf("resources[%d].packages[%d]: %w", i, j, err)
 			}
 		}
 	}

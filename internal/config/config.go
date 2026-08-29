@@ -399,11 +399,13 @@ func (c Config) Validate() error {
 		}
 	}
 	for _, pool := range c.Pools {
+		var resolvedTemplate model.ResourceTemplate
 		if strings.TrimSpace(pool.Template) != "" {
 			resolved, err := c.ResolveTemplate(pool.Template)
 			if err != nil {
 				return fmt.Errorf("pool %q template: %w", pool.Name, err)
 			}
+			resolvedTemplate = resolved
 			if pool.Type != "" {
 				templateType, err := ResolvePoolExpectedType(resolved.Type)
 				if err != nil {
@@ -432,6 +434,11 @@ func (c Config) Validate() error {
 		}
 		if err := c.validatePackageRefs(resolvedPool.Packages, resourcepack.ScopeResource, resourcepack.EventProvision); err != nil {
 			return fmt.Errorf("pool %q packages: %w", pool.Name, err)
+		}
+		if strings.TrimSpace(resolvedTemplate.Extends) != "" {
+			if err := c.validatePackageRefs(resolvedPool.Packages, resourcepack.ScopeResource, resourcepack.EventPromotion); err != nil {
+				return fmt.Errorf("pool %q promotion packages: %w", pool.Name, err)
+			}
 		}
 		if pool.PolicySet() && pool.PoliciesSet() {
 			return fmt.Errorf("pool %q sets both policy and policies; use only one", pool.Name)

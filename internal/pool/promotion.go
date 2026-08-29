@@ -92,6 +92,21 @@ func (p *PromotionService) Promote(ctx context.Context, destinationName model.Po
 		unlock := p.lockPool(source.Name)
 		defer unlock()
 	}
+	// Candidate selection happens before the source-pool lock is acquired.
+	// Reload the source and its resources after locking so a concurrent
+	// reconcile cannot make this snapshot violate min_ready or overwrite newer
+	// inventory changes when the promotion commits.
+	source, err = p.Store.GetPool(ctx, source.Name)
+	if err != nil {
+		return fmt.Errorf("refresh source pool for promotion: %w", err)
+	}
+	resources, err = p.Store.ListResources(ctx)
+	if err != nil {
+		return fmt.Errorf("refresh resources for promotion: %w", err)
+	}
+	if readyOwned(resources, source.Name) <= source.Policies.Preheat.MinReady {
+		return nil
+	}
 	return p.promoteOne(ctx, source, destination, candidate)
 }
 

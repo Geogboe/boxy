@@ -660,6 +660,30 @@ func TestConfigValidate_rejectsInvalidSourceMetadata(t *testing.T) {
 	}
 }
 
+func TestConfigValidate_rejectsPromotionPackageWithoutPromotionEvent(t *testing.T) {
+	cfg := Config{
+		Packages: map[string]resourcepack.Manifest{
+			"base": {
+				Name:    "base",
+				Version: "1.0.0",
+				Method:  resourcepack.MethodShell,
+				Scopes:  []resourcepack.Scope{resourcepack.ScopeResource},
+				Events:  []resourcepack.Event{resourcepack.EventProvision},
+			},
+		},
+		Templates: map[string]TemplateSpec{
+			"base":    {Type: "container", Packages: []string{"base@1.0.0"}},
+			"derived": {Extends: "base"},
+		},
+		Pools: []PoolSpec{{Name: "derived", Template: "derived"}},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "promotion") {
+		t.Fatalf("Validate() error = %v, want promotion event validation error", err)
+	}
+}
+
 func TestConfigValidate_rejectsUnsupportedPackageMethod(t *testing.T) {
 	t.Parallel()
 

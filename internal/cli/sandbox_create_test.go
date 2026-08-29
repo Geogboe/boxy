@@ -433,6 +433,15 @@ func TestSandboxCreate_InvalidSpec(t *testing.T) {
 	}
 }
 
+func TestLoadSandboxSpec_RejectsMalformedPackageReference(t *testing.T) {
+	specPath := writeSandboxSpec(t, "name: test\nresources:\n  - pool: default\n    count: 1\n    packages: [baseline]\n")
+
+	_, err := loadSandboxSpec(specPath)
+	if err == nil || !strings.Contains(err.Error(), "must use name@version") {
+		t.Fatalf("loadSandboxSpec() error = %v, want name@version validation error", err)
+	}
+}
+
 func TestSandboxCreate_FailedStatus(t *testing.T) {
 	srv := newSandboxCreateTestServer(t)
 	srv.sandboxStates = []model.Sandbox{

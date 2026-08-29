@@ -814,6 +814,19 @@ func TestManager_Reconcile_RecycleStale_OrphanSweepRetriesStuckResource(t *testi
 	}
 }
 
+func TestOrphanedTransientResources_ExcludesPromotingResources(t *testing.T) {
+	resources := []model.Resource{{
+		ID:         "promoting-1",
+		OriginPool: "source",
+		State:      model.ResourceStatePromoting,
+	}}
+
+	got := orphanedTransientResources("source", resources, map[model.ResourceID]struct{}{}, map[model.ResourceID]struct{}{})
+	if len(got) != 0 {
+		t.Fatalf("orphanedTransientResources() = %+v, want promoting resource left for promotion recovery", got)
+	}
+}
+
 func TestManager_Reconcile_RecycleStale_SweepsLegacyOrphanWithoutOriginPool(t *testing.T) {
 	st := store.NewMemoryStore()
 	ctx := context.Background()

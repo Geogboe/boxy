@@ -100,6 +100,13 @@ docs/adr/             # Architecture Decision Records
 - A package script reference is executable content only when it is inline or
   backed by a materialized package blob. Never assume a script filename exists
   in the guest just because it appears in package inputs.
+- Promotion state is not a destroy transient: promotion recovery must not send
+  an in-flight resource through the teardown orphan sweep, and source-pool
+  surplus must be re-read after acquiring the source lock before inventory is
+  persisted.
+- Validate immutable package references as `name@version` at CLI boundaries;
+  derived template pools also need promotion-event validation because their
+  packages run during promotion as well as provisioning.
 
 ### Sandboxes
 

@@ -225,7 +225,8 @@ packages:
     scopes: [resource]
     events: [provision, promotion]
     inputs:
-      script: baseline.ps1
+      inline: |
+        Write-Output "baseline"
       parameters:
         Environment: lab
 

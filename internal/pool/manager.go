@@ -483,7 +483,7 @@ func (m *Manager) ForceOrphanAgentResources(ctx context.Context, agentID, reason
 // (e.g. the orphan sweep) doesn't need to re-persist the same transient
 // state before calling the provisioner again.
 func isTransientDestroyState(s model.ResourceState) bool {
-	return s == model.ResourceStateRecycling || s == model.ResourceStateDestroying || s == model.ResourceStatePromoting
+	return s == model.ResourceStateRecycling || s == model.ResourceStateDestroying
 }
 
 // destroyAndMark is the shared "mark transient (if not already), call the
