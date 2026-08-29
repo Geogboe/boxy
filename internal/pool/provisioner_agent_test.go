@@ -794,7 +794,7 @@ func TestAgentProvisioner_CompatibleWithPool(t *testing.T) {
 	p := model.Pool{Name: "apps"}
 
 	for name, resourceProvider := range map[string]string{
-		"matching provider": "hyperv",
+		"matching provider":  "hyperv",
 		"different provider": "docker",
 		"missing provider":   "",
 	} {
