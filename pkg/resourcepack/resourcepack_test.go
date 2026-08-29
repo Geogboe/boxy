@@ -72,6 +72,46 @@ inputs:
 	}
 }
 
+func TestEnginePlanSkipsAppliedPackageBeforeEventValidation(t *testing.T) {
+	reg := artifact.NewMemoryRegistry()
+	if err := reg.Publish(context.Background(), packageArtifact(`
+name: app3
+version: 1.0.0
+method: powershell
+scopes: [resource]
+events: [provision]
+inputs:
+  inline: Write-Output baseline
+`)); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	engine := Engine{Registry: reg}
+	first, err := engine.Plan(context.Background(), Request{
+		Event:      EventProvision,
+		Scope:      ScopeResource,
+		References: []string{"app3@1.0.0"},
+	})
+	if err != nil {
+		t.Fatalf("initial Plan: %v", err)
+	}
+	if len(first.Packages) != 1 {
+		t.Fatalf("initial planned package count = %d, want 1", len(first.Packages))
+	}
+
+	second, err := engine.Plan(context.Background(), Request{
+		Event:      EventPromotion,
+		Scope:      ScopeResource,
+		References: []string{"app3@1.0.0"},
+		Applied:    []AppliedPackage{{Reference: "app3@1.0.0", InputDigest: first.Packages[0].InputDigest}},
+	})
+	if err != nil {
+		t.Fatalf("already-applied Plan: %v", err)
+	}
+	if len(second.Packages) != 0 {
+		t.Fatalf("already-applied planned package count = %d, want 0", len(second.Packages))
+	}
+}
+
 func TestEnginePlanRejectsScopeAndUnsupportedMethod(t *testing.T) {
 	reg := artifact.NewMemoryRegistry()
 	for name, manifest := range map[string]string{

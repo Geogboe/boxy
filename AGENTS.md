@@ -107,6 +107,12 @@ docs/adr/             # Architecture Decision Records
 - Validate immutable package references as `name@version` at CLI boundaries;
   derived template pools also need promotion-event validation because their
   packages run during promotion as well as provisioning.
+- Validate the same immutable references in the domain request model because
+  API callers can bypass CLI validation. In idempotent package planning,
+  resolve inputs and compare the applied identity before enforcing the current
+  event so a legitimate no-op remains a no-op.
+- Check required package capabilities before provider allocation begins; a
+  validation error should not leave an allocated resource behind.
 
 ### Sandboxes
 
