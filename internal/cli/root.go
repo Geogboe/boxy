@@ -58,6 +58,7 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newAdminCommand())
 	root.AddCommand(newDoctorCommand())
 	root.AddCommand(newMigrateCommand())
+	root.AddCommand(newDiagnosticsCommand())
 	root.SetHelpCommand(newHelpCommand(root))
 	return root
 }

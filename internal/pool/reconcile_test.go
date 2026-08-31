@@ -11,6 +11,7 @@ import (
 	"github.com/Geogboe/boxy/pkg/agentsdk"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
+	"github.com/Geogboe/boxy/pkg/providersdk/providers/devfactory"
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
@@ -109,11 +110,13 @@ func TestReconcileEvaluator(t *testing.T) {
 			agentID: "agent-1",
 			tracked: []model.Resource{
 				{ID: "res-a", Provider: model.ProviderRef{Name: "docker", AgentID: "agent-1"}},
+				{ID: "res-b", Provider: model.ProviderRef{Name: "docker", AgentID: "agent-1"}},
 			},
 			remote: map[model.ResourceID]remoteEntry{
 				"res-a": {provider: "docker", status: providersdk.ResourceStatus{ID: "res-a", State: "running"}},
+				"res-b": {provider: "docker", status: providersdk.ResourceStatus{ID: "res-b", State: "running"}},
 			},
-			listedProviders: map[providersdk.Type]int{"docker": 1},
+			listedProviders: map[providersdk.Type]int{"docker": 2},
 		}
 		decision, err := eval.Evaluate(context.Background(), obs)
 		if err != nil {
@@ -301,6 +304,40 @@ func TestReconcileAgent_SkipsAuditForUnlistableProvider(t *testing.T) {
 	}
 	if res.State != model.ResourceStateReady {
 		t.Errorf("expected vm-1 to be untouched when its provider can't be listed, got %v", res.State)
+	}
+}
+
+func TestReconcileAgent_DevfactoryFailListPreservesTrackedResource(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	driver := devfactory.New(&devfactory.Config{DataDir: t.TempDir(), FailList: true})
+	created, err := driver.Create(ctx, nil)
+	if err != nil {
+		t.Fatalf("devfactory Create: %v", err)
+	}
+	if err := st.PutResource(ctx, model.Resource{
+		ID:       model.ResourceID(created.ID),
+		Provider: model.ProviderRef{Name: string(devfactory.ProviderType), AgentID: "agent-1"},
+		State:    model.ResourceStateReady,
+	}); err != nil {
+		t.Fatalf("seed PutResource: %v", err)
+	}
+
+	agent, err := agentsdk.NewEmbeddedAgent("agent-1", "Test Agent", driver)
+	if err != nil {
+		t.Fatalf("NewEmbeddedAgent: %v", err)
+	}
+	registry := registryWith(t, agent)
+	if err := ReconcileAgent(ctx, st, registry, "agent-1", slog.Default()); err != nil {
+		t.Fatalf("ReconcileAgent: %v", err)
+	}
+
+	res, err := st.GetResource(ctx, model.ResourceID(created.ID))
+	if err != nil {
+		t.Fatalf("GetResource: %v", err)
+	}
+	if res.State != model.ResourceStateReady {
+		t.Fatalf("resource state = %q, want unchanged Ready after failed listing", res.State)
 	}
 }
 

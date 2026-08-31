@@ -30,6 +30,7 @@ Core commands you will commonly use:
 - `boxy admin api-key list`
 - `boxy admin api-key revoke`
 - `boxy admin bootstrap-password`
+- `boxy diagnostics logs`
 - `boxy config validate`
 - `boxy config client show`
 - `boxy config client set-server <url>`
@@ -90,6 +91,7 @@ Core commands you will commonly use:
 - `boxy pool set-guest-credential <pool> --value -` reads a Hyper-V pool's bootstrap credential from stdin and stores it server-side; never place that secret in a config file, environment variable, or command-line argument for a remote agent.
 - Guest-personalizable pools require an explicitly configured server secret backend: `file`, `keyring`, or Windows `dpapi`. `boxy doctor` checks readiness and reports legacy plaintext credentials; it does not migrate them.
 - Run `boxy migrate secrets --backend <file|keyring|dpapi>` as a deliberate, verified migration. The command writes the selected backend first, verifies the value, and only then removes the legacy state entry. There is no automatic migration or backend fallback.
+- Use `boxy diagnostics logs` when troubleshooting a remote daemon. It is administrator-only, supports bounded filters and JSON output, and returns server-observed control-plane/agent events with credentials and signed URL query values redacted. It does not fetch raw agent log files or expose secrets.
 - Use `boxy debug pool drain <pool>` and `boxy debug pool fill <pool>` for daemon-backed operator maintenance of unused ready pool inventory.
 - Remote agents register with a single-use token: `boxy agent token create` prints the raw token exactly once (never stored or retrievable again); the agent redeems it on first connect and authenticates with an issued mTLS client certificate afterward. `boxy agent list` shows every registered agent's connection liveness, scheduling eligibility, and last heartbeat (`--format json` for scripting, which also includes per-provider capacity); `boxy agent status <id>` shows that same detail for one agent, plus a per-provider capacity breakdown, in either format. `boxy agent revoke <id>` deny-lists an agent's certificate and tears down its live connection. If the agent is permanently gone, `boxy agent revoke <id> --force-orphan-resources` also detaches every resource still attributed to it (pool inventory + store) without contacting the agent — resources otherwise stay un-`Destroy`able through the normal path since `Destroy` always routes to the exact agent that created them.
 - `boxy agent serve --server <host:port> --providers <list> --token <token> --ca-cert <path>` runs a host as a remote agent. The `--server` address is the daemon's gRPC listener (default `:9091`), not its REST port. Use `--config boxy.yaml` to load configured provider instances (and optionally `--providers` to select a subset); without `--config`, `--providers` remains required. `--ca-cert` (the server's `.boxy/ca.crt`, copied out-of-band) is required for the first connection; after registration the issued credentials in `.boxy-agent/` are used automatically and neither flag is needed again.

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Geogboe/boxy/pkg/diagnostics"
 	"github.com/Geogboe/boxy/pkg/humanize"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/store"
@@ -40,10 +41,13 @@ type pageData struct {
 	Profile              profileData
 	Catalog              catalogPageData
 	CanManageServiceKeys bool
+	CanViewDiagnostics   bool
 	ServiceKeys          []apiKeySummary
 	ServiceKeyError      string
 	MintedServiceKey     string
 	MintedServiceKeyName string
+	Diagnostics          []diagnostics.Event
+	DiagnosticsError     string
 }
 
 // sandboxView is the dashboard's per-sandbox row, joining the sandbox record
@@ -114,6 +118,7 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	profileTmpl := pageTemplate("profile.html")
 	catalogTmpl := pageTemplate("catalog.html")
 	serviceKeysTmpl := pageTemplate("service_keys.html")
+	diagnosticsTmpl := pageTemplate("diagnostics.html")
 
 	// Full-page routes.
 	mux.HandleFunc("GET /{$}", s.uiHandler(homeTmpl, "home", s.homeData))
@@ -125,6 +130,7 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/service-keys", s.handleCreateServiceKey(serviceKeysTmpl))
 	mux.HandleFunc("POST /ui/service-keys/{id}/revoke", s.handleRevokeServiceKey)
 	mux.HandleFunc("GET /ui/catalog", s.uiHandler(catalogTmpl, "catalog", s.catalogData))
+	mux.HandleFunc("GET /ui/diagnostics", s.diagnosticsHandler(diagnosticsTmpl))
 	mux.HandleFunc("POST /ui/profile/personal-key", s.handleMintPersonalKey(profileTmpl))
 
 	// HTMX fragment routes.
@@ -168,11 +174,42 @@ func (s *Server) uiHandler(tmpl *template.Template, nav string, data dataFn) htt
 		if principal, ok := sessionPrincipalFromRequest(r); ok {
 			d.User = principal.Subject
 			d.CanManageServiceKeys = principal.Role == model.APIKeyRoleAdmin
+			d.CanViewDiagnostics = principal.Role == model.APIKeyRoleAdmin
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.ExecuteTemplate(w, "layout.html", d); err != nil {
 			slog.Error("ui render", "err", err)
+		}
+	}
+}
+
+func (s *Server) diagnosticsHandler(tmpl *template.Template) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := sessionPrincipalFromRequest(r)
+		if !ok {
+			redirectToLogin(w, r)
+			return
+		}
+		if principal.Role != model.APIKeyRoleAdmin {
+			http.Error(w, "diagnostics requires an administrator", http.StatusForbidden)
+			return
+		}
+		d := pageData{Nav: "diagnostics", User: principal.Subject, CanViewDiagnostics: true}
+		if s.diagnostics == nil {
+			d.DiagnosticsError = "Diagnostics are temporarily unavailable."
+		} else {
+			page, err := s.diagnostics.Query(r.Context(), diagnostics.Query{})
+			if err != nil {
+				slog.Error("diagnostics query failed")
+				d.DiagnosticsError = "Diagnostics are temporarily unavailable."
+			} else {
+				d.Diagnostics = page.Events
+			}
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := tmpl.ExecuteTemplate(w, "layout.html", d); err != nil {
+			slog.Error("diagnostics render", "err", err)
 		}
 	}
 }

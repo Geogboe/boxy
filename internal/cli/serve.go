@@ -23,6 +23,7 @@ import (
 	"github.com/Geogboe/boxy/internal/svcmgr"
 	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
 	"github.com/Geogboe/boxy/pkg/agentsdk"
+	"github.com/Geogboe/boxy/pkg/diagnostics"
 	"github.com/Geogboe/boxy/pkg/lifecycle"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/pki"
@@ -210,6 +211,20 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	}
 	doneState(statePath)
 
+	diagnosticsPath := filepath.Join(filepath.Dir(statePath), "diagnostics.jsonl")
+	diagnosticStore, err := diagnostics.NewFileStore(diagnosticsPath, diagnostics.DefaultMaxBytes, diagnostics.DefaultMaxAge)
+	if err != nil {
+		return fmt.Errorf("open diagnostics store: %w", err)
+	}
+	auditStore, err := diagnostics.NewFileAuditStore(filepath.Join(filepath.Dir(statePath), "diagnostics-audit.jsonl"))
+	if err != nil {
+		return fmt.Errorf("open diagnostics audit store: %w", err)
+	}
+	// setupLogging has already selected stderr, --log-file, or discard for
+	// this command. Wrap that handler after the state directory is known so
+	// every subsequent daemon log also receives a durable redacted projection.
+	slog.SetDefault(slog.New(diagnostics.NewHandler(slog.Default().Handler(), diagnosticStore)))
+
 	bootstrapped, err := bootstrapLocalAdmin(ctx, st, statePath)
 	if err != nil {
 		return fmt.Errorf("bootstrap local admin account: %w", err)
@@ -364,15 +379,17 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	}
 
 	srv := server.NewWithOptions(st, sandboxMgr, poolMgr, agentSrv, listenAddr, uiEnabled, server.ServerOptions{
-		AuthRequired: true,
-		InsecureHTTP: opts.insecure,
-		TLSCertPEM:   httpCertPEM,
-		TLSKeyPEM:    httpKeyPEM,
-		Executor:     provisioner,
-		GuestSecrets: guestSecrets,
-		Catalog:      catalogSource,
-		OIDC:         oidcOptions,
-		SessionTTL:   sessionTTL,
+		AuthRequired:     true,
+		InsecureHTTP:     opts.insecure,
+		TLSCertPEM:       httpCertPEM,
+		TLSKeyPEM:        httpKeyPEM,
+		Executor:         provisioner,
+		GuestSecrets:     guestSecrets,
+		Catalog:          catalogSource,
+		Diagnostics:      diagnosticStore,
+		DiagnosticsAudit: auditStore,
+		OIDC:             oidcOptions,
+		SessionTTL:       sessionTTL,
 	})
 
 	g, ctx := errgroup.WithContext(ctx)

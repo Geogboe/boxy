@@ -1,0 +1,29 @@
+{{define "title"}}Boxy — Diagnostics{{end}}
+
+{{define "content"}}
+<div class="page-header">
+  <h1 class="page-title">Diagnostics</h1>
+</div>
+<div class="table-card">
+  <div class="table-card-header">
+    <div>
+      <div>Recent diagnostic events</div>
+      <div class="table-card-subtitle">Redacted control-plane and server-observed agent events. Showing the newest bounded page.</div>
+    </div>
+  </div>
+  {{if .DiagnosticsError}}
+  <div class="error-banner">{{.DiagnosticsError}}</div>
+  {{else if .Diagnostics}}
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th scope="col">Time</th><th scope="col">Level</th><th scope="col">Component</th><th scope="col">Message</th><th scope="col">Correlation</th></tr></thead>
+    <tbody>{{range .Diagnostics}}
+    <tr><td class="timestamp">{{.Timestamp}}</td><td><span class="badge badge-unknown">{{.Level}}</span></td><td>{{if .Component}}{{.Component}}{{else}}—{{end}}</td><td>{{.Message}}</td><td>{{if .Pool}}pool={{.Pool}} {{end}}{{if .Agent}}agent={{.Agent}} {{end}}{{if .Resource}}resource={{.Resource}}{{end}}</td></tr>
+    {{end}}</tbody>
+  </table>
+  </div>
+  {{else}}
+  <div class="empty">No diagnostic events are available.</div>
+  {{end}}
+</div>
+{{end}}

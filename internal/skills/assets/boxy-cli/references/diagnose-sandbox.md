@@ -8,7 +8,7 @@ Use this workflow when sandbox fulfillment is slow, stuck in `pending`, or ends 
 2. Inspect the specific sandbox with `boxy sandbox get <id>`.
 3. Check whether the backing pools have ready capacity or are continuously failing to warm.
 4. Inspect daemon state in `.boxy/state.json` when runtime state details matter.
-5. Review daemon logs, including `--log-level debug` or `--log-file` output when available.
+5. Review daemon logs with `boxy diagnostics logs --level error` (or `--format json` for a bug report). Local `--log-level debug` and `--log-file` output remain useful when available, but the diagnostics endpoint avoids requiring control-plane access.
 6. For provider-specific issues, use:
    - `boxy debug provider list`
    - `boxy debug provider get <id>`

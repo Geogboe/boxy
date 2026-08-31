@@ -161,6 +161,29 @@ boxy
 │         This password will not be shown again.
 │
 │
+├── diagnostics                                Inspect safe administrator diagnostics
+│   ├── --server <url>                           Server URL (overrides env/global defaults)
+│   ├── --ca-cert <path>                         Trust a Boxy self-signed CA
+│   ├── --insecure                               Skip HTTPS verification (development only)
+│   │
+│   └── logs                                    Query bounded, redacted diagnostic events
+│       ├── --since <timestamp>                   RFC3339 lower time bound
+│       ├── --level debug|info|warn|error         Exact level filter
+│       ├── --component <name>                    Component filter
+│       ├── --pool <name>                         Pool filter
+│       ├── --agent <id>                          Agent filter
+│       ├── --resource <id>                       Resource filter
+│       ├── --limit <1-1000>                      Events per page (default 100)
+│       ├── --cursor <value>                      Opaque pagination cursor
+│       └── --format table|json                   Output format (default table)
+│
+│       $ boxy diagnostics logs --level error
+│         2026-08-31T14:30:00Z  ERROR  reconciler  provider listing failed
+│
+│       Only administrators can query diagnostics. Raw credentials and signed
+│       URL query values are redacted before events are persisted.
+│
+│
 ├── config                                      (alias: cfg)
 │   ├── validate                               Validate config file and exit
 │   │   └── --config <path>
