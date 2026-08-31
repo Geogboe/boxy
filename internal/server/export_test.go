@@ -82,6 +82,18 @@ func NewTestMux(st store.Store, sm *sandbox.Manager, uiEnabled bool, pm ...PoolM
 	return mux
 }
 
+// NewTestMuxWithCatalog is NewTestMux with a supplied read-only catalog
+// source, for testing catalog rendering and authorization boundaries.
+func NewTestMuxWithCatalog(st store.Store, sm *sandbox.Manager, source CatalogSource, uiEnabled bool) *http.ServeMux {
+	if uiEnabled {
+		seedTestSession(st)
+	}
+	s := &Server{store: st, sandboxMgr: sm, catalog: source, uiEnabled: uiEnabled}
+	mux := http.NewServeMux()
+	s.registerRoutes(mux)
+	return mux
+}
+
 // NewTestMuxWithOIDC is NewTestMux plus OIDC login enabled.
 func NewTestMuxWithOIDC(st store.Store, sm *sandbox.Manager, oidcOpts *OIDCOptions) *http.ServeMux {
 	seedTestSession(st)
