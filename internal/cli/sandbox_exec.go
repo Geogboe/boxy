@@ -112,7 +112,7 @@ func runSandboxExec(ctx context.Context, opts sandboxExecOptions, id string, com
 			_, _ = io.WriteString(errOut, response.Stderr)
 		}
 		if response.ExitCode != 0 {
-			return fmt.Errorf("command exited with code %d", response.ExitCode)
+			return NewExitCodeError(response.ExitCode)
 		}
 		return nil
 	}
@@ -174,7 +174,7 @@ func runSandboxExec(ctx context.Context, opts sandboxExecOptions, id string, com
 				}
 			}
 			if event.ExitCode != nil && *event.ExitCode != 0 {
-				return fmt.Errorf("command exited with code %d", *event.ExitCode)
+				return NewExitCodeError(*event.ExitCode)
 			}
 		default:
 			return fmt.Errorf("unknown exec stream event type %q", event.Type)

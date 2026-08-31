@@ -54,6 +54,7 @@ type Server struct {
 	agentAdmin      AgentAdmin
 	executor        SandboxExecutor
 	guestSecrets    boxysecrets.Store
+	catalog         CatalogSource
 	oidc            *OIDCOptions
 	sessionTTL      time.Duration
 	uiEnabled       bool
@@ -73,6 +74,9 @@ type ServerOptions struct {
 	TLSKeyPEM    []byte
 	Executor     SandboxExecutor
 	GuestSecrets boxysecrets.Store
+	// Catalog is an immutable, startup-time view of configured templates,
+	// packages, sources, stores, and pool relationships for the UI.
+	Catalog CatalogSource
 	// OIDC enables provider login on the web UI's /login page. nil (the
 	// default) means only the bootstrapped local admin account can log
 	// in -- see docs/superpowers/specs/2026-08-28-oidc-ui-and-cli-auth-design.md.
@@ -100,6 +104,7 @@ func NewWithOptions(st store.Store, sm *sandbox.Manager, pm PoolMaintenance, aa 
 		agentAdmin:      aa,
 		executor:        opts.Executor,
 		guestSecrets:    opts.GuestSecrets,
+		catalog:         opts.Catalog,
 		oidc:            opts.OIDC,
 		sessionTTL:      opts.SessionTTL,
 		uiEnabled:       uiEnabled,

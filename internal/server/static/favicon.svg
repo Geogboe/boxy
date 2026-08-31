@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Boxy</title>
+  <rect width="64" height="64" rx="14" fill="#6c8cff"/>
+  <path d="m12 23 20-11 20 11-20 11-20-11Zm0 6 17 9v18l-17-9V29Zm23 9 17-9v18l-17 9V38Z" fill="#0f1117"/>
+</svg>

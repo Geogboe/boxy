@@ -38,6 +38,12 @@
       <code>{{.Profile.MintedKey}}</code>
     </div>
     {{end}}
+    {{if .Profile.PersonalKeys}}
+    <div class="table-scroll"><table class="profile-key-table">
+      <thead><tr><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Created</th><th scope="col">Expires</th><th scope="col">Status</th></tr></thead>
+      <tbody>{{range .Profile.PersonalKeys}}<tr><td>{{if .Name}}{{.Name}}{{else}}—{{end}}</td><td>{{.Role}}</td><td>{{.CreatedAt}}</td><td>{{if .ExpiresAt}}{{.ExpiresAt}}{{else}}Never{{end}}</td><td>{{if .RevokedAt}}Revoked{{else}}Active{{end}}</td></tr>{{end}}</tbody>
+    </table></div>
+    {{else}}<div class="empty">No personal keys have been generated.</div>{{end}}
     <form class="profile-form" method="post" action="/ui/profile/personal-key">
       <label for="key-name">Name (optional)</label>
       <input type="text" id="key-name" name="name" placeholder="e.g. my-laptop">

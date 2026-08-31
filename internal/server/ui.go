@@ -11,6 +11,7 @@ import (
 
 	"github.com/Geogboe/boxy/pkg/humanize"
 	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/store"
 )
 
 //go:embed templates/*.html
@@ -28,15 +29,21 @@ type pageData struct {
 	// by fragmentHandler (HTMX polling routes), whose fragment templates
 	// never reference .User — the sidebar itself is only ever rendered by
 	// a full-page response.
-	User          string
-	PoolCount     int
-	SandboxCount  int
-	ResourceCount int
-	Pools         []model.Pool
-	Sandboxes     []sandboxView
-	Resources     []model.Resource
-	Agents        []agentView
-	Profile       profileData
+	User                 string
+	PoolCount            int
+	SandboxCount         int
+	ResourceCount        int
+	Pools                []model.Pool
+	Sandboxes            []sandboxView
+	Resources            []model.Resource
+	Agents               []agentView
+	Profile              profileData
+	Catalog              catalogPageData
+	CanManageServiceKeys bool
+	ServiceKeys          []apiKeySummary
+	ServiceKeyError      string
+	MintedServiceKey     string
+	MintedServiceKeyName string
 }
 
 // sandboxView is the dashboard's per-sandbox row, joining the sandbox record
@@ -105,6 +112,8 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	sandboxesTmpl := pageTemplate("sandboxes.html")
 	agentsTmpl := pageTemplate("agents.html")
 	profileTmpl := pageTemplate("profile.html")
+	catalogTmpl := pageTemplate("catalog.html")
+	serviceKeysTmpl := pageTemplate("service_keys.html")
 
 	// Full-page routes.
 	mux.HandleFunc("GET /{$}", s.uiHandler(homeTmpl, "home", s.homeData))
@@ -112,6 +121,10 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ui/sandboxes", s.uiHandler(sandboxesTmpl, "sandboxes", s.sandboxesData))
 	mux.HandleFunc("GET /ui/agents", s.uiHandler(agentsTmpl, "agents", s.agentsData))
 	mux.HandleFunc("GET /ui/profile", s.uiHandler(profileTmpl, "profile", s.profileData))
+	mux.HandleFunc("GET /ui/service-keys", s.serviceKeysHandler(serviceKeysTmpl))
+	mux.HandleFunc("POST /ui/service-keys", s.handleCreateServiceKey(serviceKeysTmpl))
+	mux.HandleFunc("POST /ui/service-keys/{id}/revoke", s.handleRevokeServiceKey)
+	mux.HandleFunc("GET /ui/catalog", s.uiHandler(catalogTmpl, "catalog", s.catalogData))
 	mux.HandleFunc("POST /ui/profile/personal-key", s.handleMintPersonalKey(profileTmpl))
 
 	// HTMX fragment routes.
@@ -119,6 +132,20 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ui/fragments/pools-table", s.fragmentHandler(poolsTmpl, "pools_table_fragment", s.poolsData))
 	mux.HandleFunc("GET /ui/fragments/sandboxes-table", s.fragmentHandler(sandboxesTmpl, "sandboxes_table_fragment", s.sandboxesData))
 	mux.HandleFunc("GET /ui/fragments/agents-table", s.fragmentHandler(agentsTmpl, "agents_table_fragment", s.agentsData))
+}
+
+func (s *Server) catalogData(r *http.Request) (pageData, error) {
+	if s.catalog == nil {
+		return pageData{Catalog: catalogPage(CatalogSnapshot{})}, nil
+	}
+	snapshot, err := s.catalog.LoadCatalog(r.Context())
+	if err != nil {
+		// Do not expose the source error: a config-backed source may contain
+		// provider paths or other operator-controlled values.
+		slog.Error("catalog load failed")
+		return pageData{Catalog: catalogPageData{LoadError: "Catalog is temporarily unavailable. Please retry shortly."}}, nil
+	}
+	return pageData{Catalog: catalogPage(snapshot)}, nil
 }
 
 // dataFn loads data from the store into a pageData.
@@ -140,12 +167,109 @@ func (s *Server) uiHandler(tmpl *template.Template, nav string, data dataFn) htt
 		d.Nav = nav
 		if principal, ok := sessionPrincipalFromRequest(r); ok {
 			d.User = principal.Subject
+			d.CanManageServiceKeys = principal.Role == model.APIKeyRoleAdmin
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.ExecuteTemplate(w, "layout.html", d); err != nil {
 			slog.Error("ui render", "err", err)
 		}
+	}
+}
+
+func (s *Server) serviceKeysHandler(tmpl *template.Template) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := sessionPrincipalFromRequest(r)
+		if !ok {
+			redirectToLogin(w, r)
+			return
+		}
+		if principal.Role != model.APIKeyRoleAdmin {
+			http.Error(w, "service-key management requires an administrator", http.StatusForbidden)
+			return
+		}
+		keys, err := s.serviceAPIKeySummaries(r.Context())
+		if err != nil {
+			slog.Error("service key list failed")
+			http.Error(w, "service-key management is temporarily unavailable", http.StatusInternalServerError)
+			return
+		}
+		s.renderServiceKeys(w, tmpl, pageData{
+			Nav:                  "service-keys",
+			User:                 principal.Subject,
+			CanManageServiceKeys: true,
+			ServiceKeys:          keys,
+		})
+	}
+}
+
+func (s *Server) handleCreateServiceKey(tmpl *template.Template) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := sessionPrincipalFromRequest(r)
+		if !ok {
+			redirectToLogin(w, r)
+			return
+		}
+		if principal.Role != model.APIKeyRoleAdmin {
+			http.Error(w, "service-key management requires an administrator", http.StatusForbidden)
+			return
+		}
+		d := pageData{Nav: "service-keys", User: principal.Subject, CanManageServiceKeys: true}
+		if err := r.ParseForm(); err != nil {
+			d.ServiceKeyError = "Invalid service-key request."
+		} else {
+			response, err := s.createAPIKey(r, createAPIKeyRequest{
+				Name: r.FormValue("name"), Role: model.APIKeyRole(r.FormValue("role")), Expires: r.FormValue("expires"),
+			})
+			if err != nil {
+				d.ServiceKeyError = err.Error()
+			} else {
+				d.MintedServiceKey = response.Key
+				d.MintedServiceKeyName = response.Name
+			}
+		}
+		d.ServiceKeys, _ = s.serviceAPIKeySummaries(r.Context())
+		w.Header().Set("Cache-Control", "no-store")
+		s.renderServiceKeys(w, tmpl, d)
+	}
+}
+
+func (s *Server) handleRevokeServiceKey(w http.ResponseWriter, r *http.Request) {
+	principal, ok := sessionPrincipalFromRequest(r)
+	if !ok {
+		redirectToLogin(w, r)
+		return
+	}
+	if principal.Role != model.APIKeyRoleAdmin {
+		http.Error(w, "service-key management requires an administrator", http.StatusForbidden)
+		return
+	}
+	id := model.APIKeyID(r.PathValue("id"))
+	key, err := s.store.GetAPIKey(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, "failed to find service key", http.StatusInternalServerError)
+		return
+	}
+	if key.EffectiveKind() != model.APIKeyKindService {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.revokeAPIKey(r.Context(), id); err != nil {
+		slog.Error("service key revoke failed")
+		http.Error(w, "failed to revoke service key", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) renderServiceKeys(w http.ResponseWriter, tmpl *template.Template, d pageData) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := tmpl.ExecuteTemplate(w, "layout.html", d); err != nil {
+		slog.Error("service key page render")
 	}
 }
 

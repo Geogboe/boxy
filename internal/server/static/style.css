@@ -373,6 +373,13 @@ tbody tr:hover {
   font-size: 0.875rem;
 }
 
+/* Catalog */
+.catalog-grid { display: grid; gap: 1.5rem; }
+.catalog-card-wide { grid-column: 1 / -1; }
+.catalog-muted { color: var(--text-muted); font-size: 0.8rem; margin-top: 0.15rem; }
+.catalog-missing { color: var(--yellow); font-size: 0.8rem; margin-top: 0.2rem; }
+.catalog-ref { white-space: nowrap; }
+
 /* Login page (unauthenticated — no sidebar shell) */
 .login-page {
   min-height: 100vh;
@@ -512,6 +519,17 @@ tbody tr:hover {
   padding: 0.5rem 0.75rem;
   font-size: 0.9rem;
 }
+
+.profile-form select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  color: var(--text);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.9rem;
+}
+
+.profile-key-table { min-width: 680px; }
 
 .profile-form button {
   align-self: flex-start;

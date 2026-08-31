@@ -1,0 +1,64 @@
+{{define "title"}}Boxy — Catalog{{end}}
+
+{{define "content"}}
+<h1 class="page-title">Catalog</h1>
+{{if .Catalog.LoadError}}
+<div class="error-banner">{{.Catalog.LoadError}}</div>
+{{else if .Catalog.Empty}}
+<div class="table-card"><div class="empty">No catalog entries are configured.</div></div>
+{{else}}
+<div class="catalog-grid">
+  <div class="table-card catalog-card">
+    <div class="table-card-header"><div>Templates</div></div>
+    {{if .Catalog.Templates}}
+    <div class="table-scroll"><table>
+      <thead><tr><th scope="col">Template</th><th scope="col">Shape</th><th scope="col">Source</th><th scope="col">Packages</th></tr></thead>
+      <tbody>{{range .Catalog.Templates}}
+      <tr><td><strong>{{.Name}}</strong>{{if .Extends}}<div class="catalog-muted">extends {{.Extends}}</div>{{end}}{{range .MissingReferences}}<div class="catalog-missing">Missing reference: {{.}}</div>{{end}}</td><td>{{.Type}} · {{.Provider}}{{if .Agent}} · {{.Agent}}{{end}}</td><td>{{if .Source}}{{.Source}}{{else}}—{{end}}</td><td>{{if .Packages}}{{range .Packages}}<code class="catalog-ref">{{.}}</code> {{end}}{{else}}—{{end}}</td></tr>
+      {{end}}</tbody>
+    </table></div>
+    {{else}}<div class="empty">No templates are configured.</div>{{end}}
+  </div>
+
+  <div class="table-card catalog-card">
+    <div class="table-card-header"><div>Packages</div></div>
+    {{if .Catalog.Packages}}
+    <div class="table-scroll"><table>
+      <thead><tr><th scope="col">Package</th><th scope="col">Method</th><th scope="col">Scopes</th><th scope="col">Events</th></tr></thead>
+      <tbody>{{range .Catalog.Packages}}<tr><td><code>{{.Name}}@{{.Version}}</code></td><td>{{.Method}}</td><td>{{range .Scopes}}<span class="badge badge-unknown">{{.}}</span> {{end}}</td><td>{{range .Events}}<span class="badge badge-unknown">{{.}}</span> {{end}}</td></tr>{{end}}</tbody>
+    </table></div>
+    {{else}}<div class="empty">No packages are configured.</div>{{end}}
+  </div>
+
+  <div class="table-card catalog-card">
+    <div class="table-card-header"><div>Sources</div></div>
+    {{if .Catalog.Sources}}
+    <div class="table-scroll"><table>
+      <thead><tr><th scope="col">Source</th><th scope="col">Store</th><th scope="col">Path</th><th scope="col">Digest</th><th scope="col">Format / OS</th></tr></thead>
+      <tbody>{{range .Catalog.Sources}}<tr><td><strong>{{.Name}}</strong>{{range .MissingReferences}}<div class="catalog-missing">Missing reference: {{.}}</div>{{end}}</td><td>{{.Store}}</td><td><code>{{.Path}}</code></td><td><code>{{.Digest}}</code></td><td>{{.Format}}{{if .OS}} · {{.OS}}{{end}}{{if .Provider}} · {{.Provider}}{{end}}</td></tr>{{end}}</tbody>
+    </table></div>
+    {{else}}<div class="empty">No sources are configured.</div>{{end}}
+  </div>
+
+  <div class="table-card catalog-card">
+    <div class="table-card-header"><div>Artifact stores</div></div>
+    {{if .Catalog.Stores}}
+    <div class="table-scroll"><table>
+      <thead><tr><th scope="col">Store</th><th scope="col">Type</th><th scope="col">Endpoint</th><th scope="col">Bucket / Path</th></tr></thead>
+      <tbody>{{range .Catalog.Stores}}<tr><td><strong>{{.Name}}</strong></td><td>{{.Type}}</td><td>{{if .Endpoint}}<code>{{.Endpoint}}</code>{{else}}—{{end}}</td><td>{{.Bucket}}{{if .Path}} / {{.Path}}{{end}}</td></tr>{{end}}</tbody>
+    </table></div>
+    {{else}}<div class="empty">No artifact stores are configured.</div>{{end}}
+  </div>
+
+  <div class="table-card catalog-card catalog-card-wide">
+    <div class="table-card-header"><div>Pool relationships</div><div class="table-card-subtitle">Resolved pool references from the daemon startup snapshot.</div></div>
+    {{if .Catalog.Pools}}
+    <div class="table-scroll"><table>
+      <thead><tr><th scope="col">Pool</th><th scope="col">Template</th><th scope="col">Shape</th><th scope="col">Source</th><th scope="col">Packages</th></tr></thead>
+      <tbody>{{range .Catalog.Pools}}<tr><td><strong>{{.Name}}</strong>{{range .MissingReferences}}<div class="catalog-missing">Missing reference: {{.}}</div>{{end}}</td><td>{{if .Template}}{{.Template}}{{else}}—{{end}}</td><td>{{.Type}}{{if .Provider}} · {{.Provider}}{{end}}{{if .Agent}} · {{.Agent}}{{end}}</td><td>{{if .Source}}{{.Source}}{{else}}—{{end}}</td><td>{{if .Packages}}{{range .Packages}}<code class="catalog-ref">{{.}}</code> {{end}}{{else}}—{{end}}</td></tr>{{end}}</tbody>
+    </table></div>
+    {{else}}<div class="empty">No pools are configured.</div>{{end}}
+  </div>
+</div>
+{{end}}
+{{end}}
