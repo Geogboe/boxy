@@ -37,6 +37,7 @@ type pageData struct {
 	Resources     []model.Resource
 	Agents        []agentView
 	Profile       profileData
+	Catalog       catalogPageData
 }
 
 // sandboxView is the dashboard's per-sandbox row, joining the sandbox record
@@ -105,6 +106,7 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	sandboxesTmpl := pageTemplate("sandboxes.html")
 	agentsTmpl := pageTemplate("agents.html")
 	profileTmpl := pageTemplate("profile.html")
+	catalogTmpl := pageTemplate("catalog.html")
 
 	// Full-page routes.
 	mux.HandleFunc("GET /{$}", s.uiHandler(homeTmpl, "home", s.homeData))
@@ -112,6 +114,7 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ui/sandboxes", s.uiHandler(sandboxesTmpl, "sandboxes", s.sandboxesData))
 	mux.HandleFunc("GET /ui/agents", s.uiHandler(agentsTmpl, "agents", s.agentsData))
 	mux.HandleFunc("GET /ui/profile", s.uiHandler(profileTmpl, "profile", s.profileData))
+	mux.HandleFunc("GET /ui/catalog", s.uiHandler(catalogTmpl, "catalog", s.catalogData))
 	mux.HandleFunc("POST /ui/profile/personal-key", s.handleMintPersonalKey(profileTmpl))
 
 	// HTMX fragment routes.
@@ -119,6 +122,20 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ui/fragments/pools-table", s.fragmentHandler(poolsTmpl, "pools_table_fragment", s.poolsData))
 	mux.HandleFunc("GET /ui/fragments/sandboxes-table", s.fragmentHandler(sandboxesTmpl, "sandboxes_table_fragment", s.sandboxesData))
 	mux.HandleFunc("GET /ui/fragments/agents-table", s.fragmentHandler(agentsTmpl, "agents_table_fragment", s.agentsData))
+}
+
+func (s *Server) catalogData(r *http.Request) (pageData, error) {
+	if s.catalog == nil {
+		return pageData{Catalog: catalogPage(CatalogSnapshot{})}, nil
+	}
+	snapshot, err := s.catalog.LoadCatalog(r.Context())
+	if err != nil {
+		// Do not expose the source error: a config-backed source may contain
+		// provider paths or other operator-controlled values.
+		slog.Error("catalog load failed")
+		return pageData{Catalog: catalogPageData{LoadError: "Catalog is temporarily unavailable. Please retry shortly."}}, nil
+	}
+	return pageData{Catalog: catalogPage(snapshot)}, nil
 }
 
 // dataFn loads data from the store into a pageData.

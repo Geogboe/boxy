@@ -373,6 +373,13 @@ tbody tr:hover {
   font-size: 0.875rem;
 }
 
+/* Catalog */
+.catalog-grid { display: grid; gap: 1.5rem; }
+.catalog-card-wide { grid-column: 1 / -1; }
+.catalog-muted { color: var(--text-muted); font-size: 0.8rem; margin-top: 0.15rem; }
+.catalog-missing { color: var(--yellow); font-size: 0.8rem; margin-top: 0.2rem; }
+.catalog-ref { white-space: nowrap; }
+
 /* Login page (unauthenticated — no sidebar shell) */
 .login-page {
   min-height: 100vh;

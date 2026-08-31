@@ -189,6 +189,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		failValidate(err.Error())
 		return fmt.Errorf("build resource package registry: %w", err)
 	}
+	catalogSource := server.NewStaticCatalogSource(catalogSnapshotFromConfig(cfg, poolSpecs))
 	doneValidate(fmt.Sprintf("%d configured", len(cfg.Providers)))
 
 	// Build lookup maps for the DriverProvisioner.
@@ -369,6 +370,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		TLSKeyPEM:    httpKeyPEM,
 		Executor:     provisioner,
 		GuestSecrets: guestSecrets,
+		Catalog:      catalogSource,
 		OIDC:         oidcOptions,
 		SessionTTL:   sessionTTL,
 	})
