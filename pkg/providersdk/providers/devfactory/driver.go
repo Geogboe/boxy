@@ -125,6 +125,9 @@ func (d *Driver) Availability(ctx context.Context) (*providersdk.ResourceAvailab
 // devfactory already persists to. Sorted by ID since map iteration order
 // isn't deterministic.
 func (d *Driver) List(ctx context.Context) ([]providersdk.ResourceStatus, error) {
+	if d.cfg.FailList {
+		return nil, fmt.Errorf("devfactory: simulated incomplete resource listing")
+	}
 	store, err := d.loadStore()
 	if err != nil {
 		return nil, fmt.Errorf("devfactory: load store: %w", err)

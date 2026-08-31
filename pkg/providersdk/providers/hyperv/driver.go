@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -411,34 +412,45 @@ $ErrorActionPreference = 'Stop'
 // Create's failure branch running (see #174). Prefix-filtered inside the
 // PowerShell query itself, not client-side, so a host running unrelated VMs
 // alongside Boxy's never returns them to a caller that doesn't expect it.
+//
+// The result is deliberately one compact JSON value rather than a
+// newline-delimited string. PowerShell Direct/PSRP can remove line endings
+// from a multiline string, which turns a complete multi-VM listing into a
+// partial listing. A malformed payload is an error: callers must not mistake
+// an incomplete snapshot for authoritative absence and reap valid resources.
 func (d *Driver) List(ctx context.Context) ([]providersdk.ResourceStatus, error) {
 	out, err := d.ps(ctx, `
 $ErrorActionPreference = 'Stop'
-Get-VM | Where-Object { $_.Name -like 'boxy-*' } | ForEach-Object { "$($_.Id)|$($_.State)" }
+@(Get-VM | Where-Object { $_.Name -like 'boxy-*' } | ForEach-Object {
+    [pscustomobject]@{ id = $_.Id.ToString(); state = $_.State.ToString() }
+}) | ConvertTo-Json -Compress
 `)
 	if err != nil {
 		return nil, fmt.Errorf("hyperv list: %w", err)
 	}
 	trimmed := strings.TrimSpace(out)
-	if trimmed == "" {
+	if trimmed == "" || trimmed == "null" {
 		return nil, nil
 	}
-	lines := strings.Split(trimmed, "\n")
-	statuses := make([]providersdk.ResourceStatus, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		parts := strings.SplitN(line, "|", 2)
-		if len(parts) != 2 {
-			continue
+
+	var records []struct {
+		ID    string `json:"id"`
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &records); err != nil {
+		return nil, fmt.Errorf("hyperv list: decode JSON: %w", err)
+	}
+	statuses := make([]providersdk.ResourceStatus, 0, len(records))
+	for i, record := range records {
+		if strings.TrimSpace(record.ID) == "" || strings.TrimSpace(record.State) == "" {
+			return nil, fmt.Errorf("hyperv list: record %d has empty id or state", i)
 		}
 		statuses = append(statuses, providersdk.ResourceStatus{
-			ID:    strings.TrimSpace(parts[0]),
-			State: normalizeVMState(strings.TrimSpace(parts[1])),
+			ID:    strings.TrimSpace(record.ID),
+			State: normalizeVMState(strings.TrimSpace(record.State)),
 		})
 	}
+	sort.Slice(statuses, func(i, j int) bool { return statuses[i].ID < statuses[j].ID })
 	return statuses, nil
 }
 

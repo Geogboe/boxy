@@ -485,6 +485,13 @@ func TestDriver_List_ReturnsTrackedResources(t *testing.T) {
 	}
 }
 
+func TestDriver_List_FailListSimulatesUnverifiableInventory(t *testing.T) {
+	d := newTestDriver(t, &Config{FailList: true})
+	if _, err := d.List(context.Background()); err == nil {
+		t.Fatal("List error = nil, want simulated incomplete-listing error")
+	}
+}
+
 // --- FailCreateAs: typed-error simulation ---
 
 func TestDriver_Create_FailCreateAsCapacity_AvailableMemoryZeroConfigured(t *testing.T) {

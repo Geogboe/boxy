@@ -7,6 +7,7 @@ import (
 
 	"github.com/Geogboe/boxy/internal/auth"
 	"github.com/Geogboe/boxy/internal/sandbox"
+	"github.com/Geogboe/boxy/pkg/diagnostics"
 	"github.com/Geogboe/boxy/pkg/model"
 	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
 	"github.com/Geogboe/boxy/pkg/store"
@@ -149,6 +150,26 @@ func NewTestMuxWithAgentAdminUI(st store.Store, sm *sandbox.Manager, aa AgentAdm
 		sandboxMgr: sm,
 		agentAdmin: aa,
 		uiEnabled:  uiEnabled,
+	}
+	mux := http.NewServeMux()
+	s.registerRoutes(mux)
+	return mux
+}
+
+// NewTestMuxWithDiagnostics configures the diagnostics REST and UI surfaces.
+// authRequired controls whether API requests must carry a bearer key; UI
+// requests continue to use the seeded session when uiEnabled is true.
+func NewTestMuxWithDiagnostics(st store.Store, sm *sandbox.Manager, logs diagnostics.Store, audit diagnostics.AuditSink, uiEnabled, authRequired bool) *http.ServeMux {
+	if uiEnabled {
+		seedTestSession(st)
+	}
+	s := &Server{
+		store:        st,
+		sandboxMgr:   sm,
+		diagnostics:  logs,
+		audit:        audit,
+		uiEnabled:    uiEnabled,
+		authRequired: authRequired,
 	}
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)

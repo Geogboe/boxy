@@ -1235,10 +1235,10 @@ func TestDriver_Allocate_Windows(t *testing.T) {
 
 func TestDriver_List_FiltersToBoxyPrefixedVMs(t *testing.T) {
 	d := mockDriver(func(_ context.Context, script string) (string, error) {
-		if !strings.Contains(script, "boxy-*") {
+		if !strings.Contains(script, "boxy-*") || !strings.Contains(script, "ConvertTo-Json -Compress") {
 			t.Errorf("expected script to filter by boxy-* prefix, got: %s", script)
 		}
-		return "guid-1|Running\nguid-2|Off\n", nil
+		return `[{"id":"guid-2","state":"Off"},{"id":"guid-1","state":"Running"}]`, nil
 	})
 
 	statuses, err := d.List(context.Background())
@@ -1253,6 +1253,28 @@ func TestDriver_List_FiltersToBoxyPrefixedVMs(t *testing.T) {
 	}
 	if statuses[1].ID != "guid-2" || statuses[1].State != "stopped" {
 		t.Errorf("statuses[1] = %+v, want {guid-2 stopped}", statuses[1])
+	}
+}
+
+func TestDriver_List_RejectsMalformedPayload(t *testing.T) {
+	d := mockDriver(func(_ context.Context, _ string) (string, error) {
+		// A truncated/concatenated PSRP response must not become a partial
+		// inventory snapshot that reconciliation could use for reaping.
+		return `[{"id":"guid-1","state":"Running"}] [{"id":"guid-2","state":"Running"}]`, nil
+	})
+
+	if _, err := d.List(context.Background()); err == nil {
+		t.Fatal("List error = nil, want malformed JSON error")
+	}
+}
+
+func TestDriver_List_RejectsMalformedRecord(t *testing.T) {
+	d := mockDriver(func(_ context.Context, _ string) (string, error) {
+		return `[{"id":"guid-1","state":"Running"},{"id":"","state":"Off"}]`, nil
+	})
+
+	if _, err := d.List(context.Background()); err == nil {
+		t.Fatal("List error = nil, want malformed record error")
 	}
 }
 

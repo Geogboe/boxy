@@ -34,6 +34,11 @@
       "type": "boolean",
       "default": false
     },
+    "fail_list": {
+      "description": "If true, resource listing returns an error to simulate an unverifiable provider inventory. Useful for exercising fail-closed reconciliation without real Hyper-V infrastructure.",
+      "type": "boolean",
+      "default": false
+    },
     "fail_create_as": {
       "description": "If set, Create fails with a specific typed provider error instead of a plain one, letting a consumer exercise typed-error handling against this reference driver. fail_create (a plain error) takes precedence if both are set. \"capacity\" returns a CapacityError, defaulting to a self-consistent insufficient-capacity scenario unless available_memory_zero or a low available_memory_mb is also configured. \"orphaned_resource\" returns an OrphanedResourceError and leaves the resource's record behind in \"creating\" state, discoverable via the driver's resource listing and removable with a later delete.",
       "type": "string",

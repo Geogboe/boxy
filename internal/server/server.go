@@ -18,6 +18,7 @@ import (
 
 	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/internal/sandbox"
+	"github.com/Geogboe/boxy/pkg/diagnostics"
 	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
@@ -55,6 +56,8 @@ type Server struct {
 	executor        SandboxExecutor
 	guestSecrets    boxysecrets.Store
 	catalog         CatalogSource
+	diagnostics     diagnostics.Store
+	audit           diagnostics.AuditSink
 	oidc            *OIDCOptions
 	sessionTTL      time.Duration
 	uiEnabled       bool
@@ -77,6 +80,11 @@ type ServerOptions struct {
 	// Catalog is an immutable, startup-time view of configured templates,
 	// packages, sources, stores, and pool relationships for the UI.
 	Catalog CatalogSource
+	// Diagnostics is the bounded, redacted operational log store. When nil,
+	// the diagnostics endpoint reports that diagnostics are unavailable.
+	Diagnostics diagnostics.Store
+	// DiagnosticsAudit receives safe metadata for every diagnostics query.
+	DiagnosticsAudit diagnostics.AuditSink
 	// OIDC enables provider login on the web UI's /login page. nil (the
 	// default) means only the bootstrapped local admin account can log
 	// in -- see docs/superpowers/specs/2026-08-28-oidc-ui-and-cli-auth-design.md.
@@ -105,6 +113,8 @@ func NewWithOptions(st store.Store, sm *sandbox.Manager, pm PoolMaintenance, aa 
 		executor:        opts.Executor,
 		guestSecrets:    opts.GuestSecrets,
 		catalog:         opts.Catalog,
+		diagnostics:     opts.Diagnostics,
+		audit:           opts.DiagnosticsAudit,
 		oidc:            opts.OIDC,
 		sessionTTL:      opts.SessionTTL,
 		uiEnabled:       uiEnabled,

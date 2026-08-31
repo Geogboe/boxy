@@ -66,6 +66,12 @@ type Config struct {
 	// FailDelete causes Delete to return an error when true.
 	FailDelete bool `yaml:"fail_delete" json:"fail_delete"`
 
+	// FailList makes ResourceLister return an error, simulating a provider
+	// inventory that cannot be trusted. It is useful for exercising the same
+	// fail-closed reconciliation path as a truncated Hyper-V/PSRP listing,
+	// without requiring a real Hyper-V host.
+	FailList bool `yaml:"fail_list" json:"fail_list"`
+
 	// Labels are passed through to resource metadata.
 	Labels map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
 
