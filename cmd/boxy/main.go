@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -30,12 +31,16 @@ func run() int {
 
 	root := cli.NewRootCommand()
 	if err := root.ExecuteContext(ctx); err != nil {
-		if _, ok := cli.ExitCode(err); !ok && !cli.IsReported(err) {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		}
+		reportCommandError(os.Stderr, err)
 		return exitStatusForError(err)
 	}
 	return 0
+}
+
+func reportCommandError(w io.Writer, err error) {
+	if !cli.IsReported(err) {
+		fmt.Fprintf(w, "Error: %v\n", err)
+	}
 }
 
 func exitStatusForError(err error) int {

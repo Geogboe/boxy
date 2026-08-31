@@ -263,7 +263,7 @@ func (s *Server) handleRevokeServiceKey(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "failed to revoke service key", http.StatusInternalServerError)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	http.Redirect(w, r, "/ui/service-keys", http.StatusSeeOther)
 }
 
 func (s *Server) renderServiceKeys(w http.ResponseWriter, tmpl *template.Template, d pageData) {

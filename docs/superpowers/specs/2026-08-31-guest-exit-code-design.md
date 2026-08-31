@@ -15,10 +15,13 @@ collapses that error to process status 1.
   exit; stream decode errors, HTTP failures, timeouts, and transport failures
   remain ordinary errors and therefore retain process status 1.
 - `cmd/boxy/run()` uses `errors.As` through the CLI helper to return the typed
-  guest code. It still prints ordinary errors once and returns 1 for them.
+  guest code. It prints the typed guest error once as well, preserving the
+  human-readable diagnostic while returning the guest status.
 
 ## Acceptance
 
 - A buffered guest exit of 7 makes the process exit 7.
 - A streaming guest exit of 23 makes the process exit 23.
+- A non-zero guest exit prints `command exited with code N` before returning
+  the guest status.
 - Transport/client failures do not accidentally become guest exit codes.

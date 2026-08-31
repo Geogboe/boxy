@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"net/url"
 	"sort"
 	"strings"
 
@@ -58,7 +59,7 @@ func catalogSnapshotFromConfig(cfg boxyconfig.Config, poolSpecs []boxyconfig.Poo
 	}
 	for name, store := range cfg.ArtifactStores {
 		snapshot.Stores = append(snapshot.Stores, server.CatalogStore{
-			Name: name, Type: store.Type, Endpoint: store.Endpoint,
+			Name: name, Type: store.Type, Endpoint: sanitizeCatalogEndpoint(store.Endpoint),
 			Bucket: store.Bucket, Path: store.Path,
 		})
 	}
@@ -80,4 +81,27 @@ func catalogSnapshotFromConfig(cfg boxyconfig.Config, poolSpecs []boxyconfig.Poo
 	sort.Slice(snapshot.Stores, func(i, j int) bool { return snapshot.Stores[i].Name < snapshot.Stores[j].Name })
 	sort.Slice(snapshot.Pools, func(i, j int) bool { return snapshot.Pools[i].Name < snapshot.Pools[j].Name })
 	return snapshot
+}
+
+const redactedCatalogEndpoint = "[redacted endpoint]"
+
+// sanitizeCatalogEndpoint retains only the non-sensitive location portion of
+// a URL before it crosses into the server's view model. A malformed or
+// non-absolute endpoint is intentionally not guessed at: showing a generic
+// marker is safer than accidentally rendering credentials in an opaque value.
+func sanitizeCatalogEndpoint(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return redactedCatalogEndpoint
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.ForceQuery = false
+	parsed.Fragment = ""
+	parsed.RawFragment = ""
+	return parsed.String()
 }

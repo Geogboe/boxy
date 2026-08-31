@@ -4,6 +4,8 @@ import (
 	"context"
 	"sort"
 	"strings"
+
+	"github.com/Geogboe/boxy/pkg/artifact"
 )
 
 // CatalogSource is the narrow, read-only seam between daemon configuration
@@ -176,12 +178,16 @@ func addMissing(missing *[]string, value string, known map[string]struct{}) {
 }
 
 func addMissingPackages(missing *[]string, refs []string, known map[string]struct{}) {
-	for _, ref := range refs {
-		ref = strings.TrimSpace(ref)
+	for _, raw := range refs {
+		ref := strings.TrimSpace(raw)
 		if ref == "" {
 			continue
 		}
-		if _, ok := known[ref]; !ok {
+		canonical := ref
+		if parsed, err := artifact.ParseRef(ref); err == nil {
+			canonical = parsed.String()
+		}
+		if _, ok := known[canonical]; !ok {
 			*missing = append(*missing, ref)
 		}
 	}

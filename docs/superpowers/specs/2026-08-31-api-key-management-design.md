@@ -19,7 +19,9 @@ credential-disclosure surface.
   the UI uses an equivalent session-protected form.
 - Raw keys are rendered only in the immediate create response and are absent
   from all persisted models, metadata listings, subsequent page loads, and
-  logs. Revoke is idempotent and never returns the raw key.
+  logs. Revoke is idempotent and never returns the raw key. The HTML revoke
+  form redirects back to the service-key page after success so the rendered
+  status reflects the revocation.
 - Personal-key revocation is not added here; short TTLs and owner-scoped
   visibility remain the v1 boundary.
 
@@ -28,4 +30,5 @@ credential-disclosure surface.
 - OIDC/local identities see only their own personal-key metadata.
 - Non-admin sessions cannot open service-key management.
 - Admins can create and revoke service keys, including repeated revocation.
+- HTML revocation returns to the service-key page with updated status.
 - Positive expiry validation is shared by the UI and REST create paths.
