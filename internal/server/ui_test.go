@@ -487,3 +487,26 @@ func TestUI_static_htmx(t *testing.T) {
 		t.Fatalf("htmx.min.js too small: %d bytes", w.Body.Len())
 	}
 }
+
+func TestUI_favicon_isEmbeddedAndLinked(t *testing.T) {
+	t.Parallel()
+	mux := server.NewTestMux(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), true)
+
+	static := httptest.NewRecorder()
+	mux.ServeHTTP(static, httptest.NewRequest(http.MethodGet, "/static/favicon.svg", nil))
+	if static.Code != http.StatusOK {
+		t.Fatalf("favicon status = %d, want %d", static.Code, http.StatusOK)
+	}
+	if got := static.Header().Get("Content-Type"); !strings.HasPrefix(got, "image/svg+xml") {
+		t.Fatalf("favicon Content-Type = %q, want image/svg+xml", got)
+	}
+	if body := static.Body.String(); !strings.Contains(body, "<svg") || !strings.Contains(body, "#6c8cff") {
+		t.Fatalf("favicon body = %q, want an SVG using the Boxy accent", body)
+	}
+
+	page := httptest.NewRecorder()
+	mux.ServeHTTP(page, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/", nil)))
+	if !strings.Contains(page.Body.String(), `<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">`) {
+		t.Fatalf("home page missing favicon link; body = %q", page.Body.String())
+	}
+}
