@@ -39,7 +39,7 @@ func run() int {
 
 func reportCommandError(w io.Writer, err error) {
 	if !cli.IsReported(err) {
-		fmt.Fprintf(w, "Error: %v\n", err)
+		_, _ = fmt.Fprintf(w, "Error: %v\n", err)
 	}
 }
 
