@@ -421,9 +421,10 @@ $ErrorActionPreference = 'Stop'
 func (d *Driver) List(ctx context.Context) ([]providersdk.ResourceStatus, error) {
 	out, err := d.ps(ctx, `
 $ErrorActionPreference = 'Stop'
-@(Get-VM | Where-Object { $_.Name -like 'boxy-*' } | ForEach-Object {
+$items = @(Get-VM | Where-Object { $_.Name -like 'boxy-*' } | ForEach-Object {
     [pscustomobject]@{ id = $_.Id.ToString(); state = $_.State.ToString() }
-}) | ConvertTo-Json -Compress
+})
+ConvertTo-Json -InputObject $items -Compress
 `)
 	if err != nil {
 		return nil, fmt.Errorf("hyperv list: %w", err)

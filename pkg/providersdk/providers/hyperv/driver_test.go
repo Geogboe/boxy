@@ -1235,7 +1235,7 @@ func TestDriver_Allocate_Windows(t *testing.T) {
 
 func TestDriver_List_FiltersToBoxyPrefixedVMs(t *testing.T) {
 	d := mockDriver(func(_ context.Context, script string) (string, error) {
-		if !strings.Contains(script, "boxy-*") || !strings.Contains(script, "ConvertTo-Json -Compress") {
+		if !strings.Contains(script, "boxy-*") || !strings.Contains(script, "ConvertTo-Json") {
 			t.Errorf("expected script to filter by boxy-* prefix, got: %s", script)
 		}
 		return `[{"id":"guid-2","state":"Off"},{"id":"guid-1","state":"Running"}]`, nil
@@ -1253,6 +1253,23 @@ func TestDriver_List_FiltersToBoxyPrefixedVMs(t *testing.T) {
 	}
 	if statuses[1].ID != "guid-2" || statuses[1].State != "stopped" {
 		t.Errorf("statuses[1] = %+v, want {guid-2 stopped}", statuses[1])
+	}
+}
+
+func TestDriver_List_ForcesPowerShellArraySerialization(t *testing.T) {
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		if !strings.Contains(script, "$items = @(") || !strings.Contains(script, "ConvertTo-Json -InputObject $items -Compress") {
+			t.Errorf("expected ConvertTo-Json to receive the complete array, got: %s", script)
+		}
+		return `[{"id":"guid-1","state":"Running"}]`, nil
+	})
+
+	statuses, err := d.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(statuses) != 1 || statuses[0].ID != "guid-1" || statuses[0].State != "running" {
+		t.Fatalf("statuses = %+v, want one running resource", statuses)
 	}
 }
 
