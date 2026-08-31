@@ -30,10 +30,17 @@ func run() int {
 
 	root := cli.NewRootCommand()
 	if err := root.ExecuteContext(ctx); err != nil {
-		if !cli.IsReported(err) {
+		if _, ok := cli.ExitCode(err); !ok && !cli.IsReported(err) {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		}
-		return 1
+		return exitStatusForError(err)
 	}
 	return 0
+}
+
+func exitStatusForError(err error) int {
+	if code, ok := cli.ExitCode(err); ok {
+		return code
+	}
+	return 1
 }
