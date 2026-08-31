@@ -15,9 +15,9 @@ func APIRouteCatalog() []APIRoute {
 	return []APIRoute{
 		{Group: "Health", Method: "GET", Path: "/healthz", Auth: "none", Description: "Return ok when the HTTP server is alive."},
 		{Group: "API keys", Method: "POST", Path: "/api/v1/api-keys/bootstrap", Auth: "loopback", Description: "Create the first administrator key once; raw value is returned once."},
-		{Group: "API keys", Method: "POST", Path: "/api/v1/api-keys", Auth: "admin", Description: "Create a user, auditor, or admin key; raw value is returned once."},
-		{Group: "API keys", Method: "GET", Path: "/api/v1/api-keys", Auth: "admin", Description: "List key metadata without hashes or raw values."},
-		{Group: "API keys", Method: "DELETE", Path: "/api/v1/api-keys/{id}", Auth: "admin", Description: "Revoke an API key."},
+		{Group: "API keys", Method: "POST", Path: "/api/v1/api-keys", Auth: "admin", Description: "Create a service key for a user, auditor, or admin role; raw value is returned once."},
+		{Group: "API keys", Method: "GET", Path: "/api/v1/api-keys", Auth: "admin", Description: "List service-key metadata without hashes, personal keys, or raw values."},
+		{Group: "API keys", Method: "DELETE", Path: "/api/v1/api-keys/{id}", Auth: "admin", Description: "Revoke a service key; repeated revocation is idempotent."},
 		{Group: "API keys", Method: "POST", Path: "/api/v1/api-keys/oidc-exchange", Auth: "id_token", Description: "Exchange a verified OIDC ID token (from `boxy login --oidc`) for a self-service personal API key; raw value is returned once."},
 		{Group: "Pools", Method: "GET", Path: "/api/v1/pools", Auth: "auditor/admin", Description: "List configured pools and ready inventory."},
 		{Group: "Pools", Method: "GET", Path: "/api/v1/pools/{name}", Auth: "auditor/admin", Description: "Inspect one pool."},

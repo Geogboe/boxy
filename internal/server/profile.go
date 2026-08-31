@@ -1,9 +1,11 @@
 package server
 
 import (
+	"context"
 	"html/template"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -26,6 +28,7 @@ type profileData struct {
 	MintedKey    string
 	MintedName   string
 	MintError    string
+	PersonalKeys []apiKeySummary
 }
 
 // signInMethodLabel renders a session Kind for display -- deliberately not
@@ -62,11 +65,40 @@ func (s *Server) profileData(r *http.Request) (pageData, error) {
 	if !ok {
 		return pageData{}, nil
 	}
+	keys, err := s.personalAPIKeySummaries(r.Context(), personalKeySubject(principal.Kind, principal.Subject))
+	if err != nil {
+		return pageData{}, err
+	}
 	return pageData{Profile: profileData{
 		Subject:      principal.Subject,
 		Role:         principal.Role,
 		SignInMethod: signInMethodLabel(principal.Kind),
+		PersonalKeys: keys,
 	}}, nil
+}
+
+func (s *Server) personalAPIKeySummaries(ctx context.Context, subject string) ([]apiKeySummary, error) {
+	keys, err := s.store.ListAPIKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]apiKeySummary, 0, len(keys))
+	for _, key := range keys {
+		if key.EffectiveKind() != model.APIKeyKindPersonal || key.Subject != subject {
+			continue
+		}
+		out = append(out, apiKeySummary{
+			ID: key.ID, Name: key.Name, Role: key.Role, CreatedAt: key.CreatedAt,
+			ExpiresAt: key.ExpiresAt, RevokedAt: key.RevokedAt,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out, nil
 }
 
 // handleMintPersonalKey mints a self-service personal API key for the
@@ -87,14 +119,16 @@ func (s *Server) handleMintPersonalKey(profileTmpl *template.Template) http.Hand
 		}
 
 		d := pageData{
-			Nav:  "profile",
-			User: principal.Subject,
+			Nav:                  "profile",
+			User:                 principal.Subject,
+			CanManageServiceKeys: principal.Role == model.APIKeyRoleAdmin,
 			Profile: profileData{
 				Subject:      principal.Subject,
 				Role:         principal.Role,
 				SignInMethod: signInMethodLabel(principal.Kind),
 			},
 		}
+		d.Profile.PersonalKeys, _ = s.personalAPIKeySummaries(r.Context(), personalKeySubject(principal.Kind, principal.Subject))
 
 		if err := r.ParseForm(); err != nil {
 			d.Profile.MintError = "Invalid request."
@@ -115,6 +149,7 @@ func (s *Server) handleMintPersonalKey(profileTmpl *template.Template) http.Hand
 			} else {
 				d.Profile.MintedKey = resp.Key
 				d.Profile.MintedName = resp.Name
+				d.Profile.PersonalKeys, _ = s.personalAPIKeySummaries(r.Context(), subject)
 			}
 		}
 

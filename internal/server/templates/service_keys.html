@@ -1,0 +1,36 @@
+{{define "title"}}Boxy — Service keys{{end}}
+
+{{define "content"}}
+<h1 class="page-title">Service keys</h1>
+{{if .ServiceKeyError}}<div class="error-banner">{{.ServiceKeyError}}</div>{{end}}
+{{if .MintedServiceKey}}
+<div class="key-reveal profile-card">
+  <div class="detail-label">New service key — copy it now, it will not be shown again{{if .MintedServiceKeyName}} ({{.MintedServiceKeyName}}){{end}}</div>
+  <code>{{.MintedServiceKey}}</code>
+</div>
+{{end}}
+<div class="table-card profile-card">
+  <div class="table-card-header"><div>Managed service accounts</div></div>
+  {{if .ServiceKeys}}
+  <div class="table-scroll"><table>
+    <thead><tr><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Created</th><th scope="col">Expires</th><th scope="col">Status</th><th scope="col">Action</th></tr></thead>
+    <tbody>{{range .ServiceKeys}}<tr><td>{{if .Name}}{{.Name}}{{else}}—{{end}}</td><td>{{.Role}}</td><td>{{.CreatedAt}}</td><td>{{if .ExpiresAt}}{{.ExpiresAt}}{{else}}Never{{end}}</td><td>{{if .RevokedAt}}Revoked{{else}}Active{{end}}</td><td>{{if not .RevokedAt}}<form method="post" action="/ui/service-keys/{{.ID}}/revoke"><button type="submit" class="link-button">Revoke</button></form>{{else}}—{{end}}</td></tr>{{end}}</tbody>
+  </table></div>
+  {{else}}<div class="empty">No service keys are managed yet.</div>{{end}}
+</div>
+<div class="table-card profile-card">
+  <div class="table-card-header"><div>Create service key</div></div>
+  <div class="profile-fields">
+    <p class="profile-help">Service keys are for automation and are visible to administrators only. The raw value is shown once after creation.</p>
+    <form class="profile-form" method="post" action="/ui/service-keys">
+      <label for="service-key-name">Name</label>
+      <input type="text" id="service-key-name" name="name" placeholder="e.g. deploy-service">
+      <label for="service-key-role">Role</label>
+      <select id="service-key-role" name="role"><option value="user">user</option><option value="auditor">auditor</option><option value="admin">admin</option></select>
+      <label for="service-key-expires">Expires (optional)</label>
+      <input type="text" id="service-key-expires" name="expires" placeholder="e.g. 720h">
+      <button type="submit">Create service key</button>
+    </form>
+  </div>
+</div>
+{{end}}

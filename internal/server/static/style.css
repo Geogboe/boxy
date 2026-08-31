@@ -520,6 +520,17 @@ tbody tr:hover {
   font-size: 0.9rem;
 }
 
+.profile-form select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  color: var(--text);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.9rem;
+}
+
+.profile-key-table { min-width: 680px; }
+
 .profile-form button {
   align-self: flex-start;
   background: var(--accent);
