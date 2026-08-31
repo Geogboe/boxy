@@ -1,9 +1,11 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -116,6 +118,7 @@ func (s *Server) createAPIKey(r *http.Request, req createAPIKeyRequest) (createA
 		Name:      strings.TrimSpace(req.Name),
 		CreatedAt: createdAt,
 		ExpiresAt: expiresAt,
+		Kind:      model.APIKeyKindService,
 	}
 	if err := s.store.PutAPIKey(r.Context(), key); err != nil {
 		return createAPIKeyResponse{}, err
@@ -134,23 +137,49 @@ func (s *Server) handleListAPIKeys(w http.ResponseWriter, r *http.Request) {
 	if !s.requireRole(w, r, model.APIKeyRoleAdmin) {
 		return
 	}
-	keys, err := s.store.ListAPIKeys(r.Context())
+	out, err := s.serviceAPIKeySummaries(r.Context())
 	if err != nil {
 		httpjson.Error(w, http.StatusInternalServerError, "failed to list API keys")
 		return
 	}
+	httpjson.Write(w, http.StatusOK, out)
+}
+
+func (s *Server) serviceAPIKeySummaries(ctx context.Context) ([]apiKeySummary, error) {
+	keys, err := s.store.ListAPIKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]apiKeySummary, 0, len(keys))
 	for _, key := range keys {
+		if key.EffectiveKind() != model.APIKeyKindService {
+			continue
+		}
 		out = append(out, apiKeySummary{
-			ID:        key.ID,
-			Name:      key.Name,
-			Role:      key.Role,
-			CreatedAt: key.CreatedAt,
-			ExpiresAt: key.ExpiresAt,
-			RevokedAt: key.RevokedAt,
+			ID: key.ID, Name: key.Name, Role: key.Role, CreatedAt: key.CreatedAt,
+			ExpiresAt: key.ExpiresAt, RevokedAt: key.RevokedAt,
 		})
 	}
-	httpjson.Write(w, http.StatusOK, out)
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
+func (s *Server) revokeAPIKey(ctx context.Context, id model.APIKeyID) error {
+	key, err := s.store.GetAPIKey(ctx, id)
+	if err != nil {
+		return err
+	}
+	if key.Revoked() {
+		return nil
+	}
+	now := time.Now().UTC()
+	key.RevokedAt = &now
+	return s.store.PutAPIKey(ctx, key)
 }
 
 func (s *Server) handleRevokeAPIKey(w http.ResponseWriter, r *http.Request) {
@@ -167,13 +196,11 @@ func (s *Server) handleRevokeAPIKey(w http.ResponseWriter, r *http.Request) {
 		httpjson.Error(w, http.StatusInternalServerError, "failed to get API key")
 		return
 	}
-	if key.Revoked() {
-		w.WriteHeader(http.StatusNoContent)
+	if key.EffectiveKind() != model.APIKeyKindService {
+		httpjson.Error(w, http.StatusNotFound, "API key not found")
 		return
 	}
-	now := time.Now().UTC()
-	key.RevokedAt = &now
-	if err := s.store.PutAPIKey(r.Context(), key); err != nil {
+	if err := s.revokeAPIKey(r.Context(), key.ID); err != nil {
 		httpjson.Error(w, http.StatusInternalServerError, "failed to revoke API key")
 		return
 	}

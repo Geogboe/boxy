@@ -33,9 +33,9 @@ API-key roles:
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | POST | `/api/v1/api-keys/bootstrap` | loopback | Create the first administrator key once; raw value is returned once. |
-| POST | `/api/v1/api-keys` | admin | Create a user, auditor, or admin key; raw value is returned once. |
-| GET | `/api/v1/api-keys` | admin | List key metadata without hashes or raw values. |
-| DELETE | `/api/v1/api-keys/{id}` | admin | Revoke an API key. |
+| POST | `/api/v1/api-keys` | admin | Create a service key for a user, auditor, or admin role; raw value is returned once. |
+| GET | `/api/v1/api-keys` | admin | List service-key metadata without hashes, personal keys, or raw values. |
+| DELETE | `/api/v1/api-keys/{id}` | admin | Revoke a service key; repeated revocation is idempotent. |
 | POST | `/api/v1/api-keys/oidc-exchange` | id_token | Exchange a verified OIDC ID token (from `boxy login --oidc`) for a self-service personal API key; raw value is returned once. |
 
 ### Pools
