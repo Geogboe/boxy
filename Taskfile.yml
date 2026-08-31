@@ -213,4 +213,7 @@ tasks:
   e2e:serve:
     desc: E2E validation of boxy serve (API + UI)
     cmds:
-      - bash scripts/e2e-serve.sh {{.CLI_ARGS}}
+      - cmd: wsl.exe --cd "{{.ROOT_DIR}}" bash -lc "./scripts/e2e-serve.sh {{.CLI_ARGS}}"
+        if: '{{eq OS "windows"}}'
+      - cmd: bash scripts/e2e-serve.sh {{.CLI_ARGS}}
+        if: '{{ne OS "windows"}}'
