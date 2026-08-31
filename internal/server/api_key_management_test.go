@@ -128,8 +128,11 @@ func TestServiceKeyManagement_IsAdminOnlyAndRevokeIsIdempotent(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodPost, "/ui/service-keys/service-1/revoke", nil)))
-		if w.Code != http.StatusNoContent {
-			t.Fatalf("revoke attempt %d status = %d, want 204; body = %q", i+1, w.Code, w.Body.String())
+		if w.Code != http.StatusSeeOther {
+			t.Fatalf("revoke attempt %d status = %d, want 303; body = %q", i+1, w.Code, w.Body.String())
+		}
+		if got, want := w.Header().Get("Location"), "/ui/service-keys"; got != want {
+			t.Fatalf("revoke attempt %d location = %q, want %q", i+1, got, want)
 		}
 	}
 	key, err := st.GetAPIKey(context.Background(), "service-1")

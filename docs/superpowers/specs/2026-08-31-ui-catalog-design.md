@@ -18,17 +18,25 @@ server through a narrow `CatalogSource` seam.
   package identity/method/scope/event, source location/integrity metadata, and
   store type/location metadata. Template config, package inputs/defaults,
   source metadata, and store credentials are not represented in the view model
-  and therefore cannot be rendered accidentally.
+  and therefore cannot be rendered accidentally. Store endpoints are reduced
+  to scheme/host/port/path; userinfo, query strings, and fragments are removed
+  before the snapshot crosses into the server.
 - Missing references are displayed as non-fatal relationship warnings. A
   catalog load failure is rendered as a generic retryable state; the underlying
   error is not sent to the browser.
 - `/ui/catalog` is protected by the existing session middleware and has no
   mutating action or API equivalent in this release.
+- Daemon startup remains strict: configuration validation and pool resolution
+  reject invalid references before serving. Relationship warnings remain a
+  defensive contract for injected, stale, or future `CatalogSource`
+  implementations.
 
 ## Acceptance
 
 - Empty and populated catalogs render stable, name-sorted sections.
-- Pool relationships identify missing templates, packages, and sources.
+- Injected or stale catalog snapshots identify missing templates, packages,
+  sources, and stores without weakening daemon startup validation.
 - A session is required, and load failures do not disclose error details.
 - The daemon's config-to-snapshot conversion cannot expose secret-bearing
-  configuration fields.
+  configuration fields, including credentials or signed URL query parameters
+  embedded in artifact-store endpoints.

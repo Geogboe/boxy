@@ -52,6 +52,22 @@ func TestUICatalog_RendersSortedSectionsAndMissingReferences(t *testing.T) {
 	}
 }
 
+func TestStaticCatalogSource_CanonicalizesPackageReferencesBeforeWarning(t *testing.T) {
+	t.Parallel()
+	source := server.NewStaticCatalogSource(server.CatalogSnapshot{
+		Templates: []server.CatalogTemplate{{Name: "base-template", Packages: []string{"base @ 1.0.0"}}},
+		Packages:  []server.CatalogPackage{{Name: "base", Version: "1.0.0"}},
+	})
+
+	snapshot, err := source.LoadCatalog(context.Background())
+	if err != nil {
+		t.Fatalf("LoadCatalog: %v", err)
+	}
+	if got := snapshot.Templates[0].MissingReferences; len(got) != 0 {
+		t.Fatalf("missing references = %#v, want no warning for equivalent package reference", got)
+	}
+}
+
 func TestUICatalog_RequiresSession(t *testing.T) {
 	t.Parallel()
 	mux := server.NewTestMuxWithCatalog(store.NewMemoryStore(), sandbox.New(store.NewMemoryStore(), nil), server.NewStaticCatalogSource(server.CatalogSnapshot{}), true)
