@@ -47,7 +47,7 @@ func (d *Driver) execScriptInContainer(ctx context.Context, id string, op *ExecO
 	platform := ""
 	image := ""
 	if info.ContainerJSONBase != nil {
-		platform = info.ContainerJSONBase.Platform
+		platform = info.Platform
 	}
 	if info.Config != nil {
 		image = info.Config.Image

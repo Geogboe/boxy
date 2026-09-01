@@ -85,16 +85,16 @@ type AuditSink interface {
 // mutation. It intentionally contains counts and IDs only; callers must not
 // attach resource properties or provider credentials.
 type ResourceCleanupAudit struct {
-	Actor         string `json:"actor"`
-	Mode          string `json:"mode"`
-	Force         bool   `json:"force"`
-	State         string `json:"state"`
-	Unreferenced  bool   `json:"unreferenced"`
-	OlderThan     string `json:"older_than,omitempty"`
-	CandidateCount int   `json:"candidate_count"`
-	CleanedCount   int   `json:"cleaned_count"`
-	SkippedCount   int   `json:"skipped_count"`
-	ErrorCount     int   `json:"error_count"`
+	Actor          string `json:"actor"`
+	Mode           string `json:"mode"`
+	Force          bool   `json:"force"`
+	State          string `json:"state"`
+	Unreferenced   bool   `json:"unreferenced"`
+	OlderThan      string `json:"older_than,omitempty"`
+	CandidateCount int    `json:"candidate_count"`
+	CleanedCount   int    `json:"cleaned_count"`
+	SkippedCount   int    `json:"skipped_count"`
+	ErrorCount     int    `json:"error_count"`
 }
 
 // ResourceCleanupAuditSink is optional so existing embedders with an audit
