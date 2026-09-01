@@ -29,6 +29,7 @@ const (
 
 type execSandboxRequest struct {
 	Command         []string                     `json:"command"`
+	Script          *providersdk.ScriptSpec      `json:"script,omitempty"`
 	ResourceID      string                       `json:"resource_id,omitempty"`
 	Timeout         string                       `json:"timeout,omitempty"`
 	GuestCredential *providersdk.GuestCredential `json:"guest_credential,omitempty"`
@@ -84,7 +85,19 @@ func (s *Server) handleSandboxExec(w http.ResponseWriter, r *http.Request) {
 		httpjson.Error(w, http.StatusBadRequest, "request body must contain one JSON object")
 		return
 	}
-	if len(req.Command) == 0 || strings.TrimSpace(req.Command[0]) == "" {
+	if req.Script != nil {
+		if len(req.Command) != 0 {
+			httpjson.Error(w, http.StatusBadRequest, "command and script are mutually exclusive")
+			return
+		}
+		if req.Script.Interpreter == "" {
+			req.Script.Interpreter = providersdk.ScriptInterpreterAuto
+		}
+		if err := req.Script.VerifyDigest(); err != nil {
+			httpjson.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	} else if len(req.Command) == 0 || strings.TrimSpace(req.Command[0]) == "" {
 		httpjson.Error(w, http.StatusBadRequest, "command must contain at least one non-empty argument")
 		return
 	}
@@ -125,11 +138,12 @@ func (s *Server) handleSandboxExec(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
+	operation := providersdk.ExecOperation{Command: req.Command, Script: req.Script, GuestCredential: req.GuestCredential}
 	if streaming {
-		s.handleStreamingExec(w, ctx, resource, providersdk.ExecOperation{Command: req.Command, GuestCredential: req.GuestCredential})
+		s.handleStreamingExec(w, ctx, resource, operation)
 		return
 	}
-	s.handleBufferedExec(w, ctx, resource, providersdk.ExecOperation{Command: req.Command, GuestCredential: req.GuestCredential})
+	s.handleBufferedExec(w, ctx, resource, operation)
 }
 
 func parseExecStreaming(r *http.Request) (bool, error) {

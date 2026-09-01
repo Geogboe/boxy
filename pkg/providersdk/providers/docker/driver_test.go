@@ -15,6 +15,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	imagetypes "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
+	systemtypes "github.com/docker/docker/api/types/system"
 	"github.com/docker/docker/client"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
@@ -35,6 +36,7 @@ type mockDockerClient struct {
 	containerExecAttach  func(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error)
 	containerExecInspect func(ctx context.Context, execID string) (container.ExecInspect, error)
 	containerRemove      func(ctx context.Context, containerID string, options container.RemoveOptions) error
+	info                 func(ctx context.Context) (systemtypes.Info, error)
 }
 
 func (m *mockDockerClient) ImageInspect(ctx context.Context, imageID string, opts ...client.ImageInspectOption) (imagetypes.InspectResponse, error) {
@@ -81,6 +83,12 @@ func (m *mockDockerClient) ContainerExecInspect(ctx context.Context, id string) 
 }
 func (m *mockDockerClient) ContainerRemove(ctx context.Context, id string, opts container.RemoveOptions) error {
 	return m.containerRemove(ctx, id, opts)
+}
+func (m *mockDockerClient) Info(ctx context.Context) (systemtypes.Info, error) {
+	if m.info != nil {
+		return m.info(ctx)
+	}
+	return systemtypes.Info{}, nil
 }
 
 // runningInspect returns an InspectResponse that looks like a running container.

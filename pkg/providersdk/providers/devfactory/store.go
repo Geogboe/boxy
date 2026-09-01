@@ -26,6 +26,9 @@ type resourceRecord struct {
 // secrets.
 type ExecRecord struct {
 	Command            []string `json:"command"`
+	ScriptDigest       string   `json:"script_digest,omitempty"`
+	ScriptInterpreter  string   `json:"script_interpreter,omitempty"`
+	ScriptArgs         []string `json:"script_args,omitempty"`
 	EnvironmentKeys    []string `json:"environment_keys,omitempty"`
 	CredentialProvided bool     `json:"credential_provided,omitempty"`
 }

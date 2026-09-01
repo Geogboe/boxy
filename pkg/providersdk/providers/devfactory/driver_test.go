@@ -156,6 +156,46 @@ func TestDriver_Update_Exec(t *testing.T) {
 	}
 }
 
+func TestDriver_Update_ScriptUsesDeterministicGuestCache(t *testing.T) {
+	d := newTestDriver(t, &Config{Profile: ProfileContainer})
+	res, err := d.Create(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script, err := providersdk.NewScriptSpec([]byte("echo script\n"), providersdk.ScriptInterpreterAuto, []string{"quoted value", "--mode", "ci"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := d.Update(context.Background(), res.ID, &ExecOp{Script: script})
+	if err != nil {
+		t.Fatalf("first script update: %v", err)
+	}
+	second, err := d.Update(context.Background(), res.ID, &ExecOp{Script: script})
+	if err != nil {
+		t.Fatalf("second script update: %v", err)
+	}
+	if first.Outputs["script_cache"] != "miss" || second.Outputs["script_cache"] != "hit" {
+		t.Fatalf("cache outputs = %q, %q, want miss then hit", first.Outputs["script_cache"], second.Outputs["script_cache"])
+	}
+	if first.Outputs["script_digest"] != script.Digest || first.Outputs["script_interpreter"] != "sh" {
+		t.Fatalf("script metadata = %#v", first.Outputs)
+	}
+	execs, ok := d.ResourceExecs(res.ID)
+	if !ok || len(execs) != 2 {
+		t.Fatalf("exec records = %#v", execs)
+	}
+	encoded, err := json.Marshal(execs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "echo script") {
+		t.Fatal("script content was persisted in the execution record")
+	}
+	if !reflect.DeepEqual(execs[0].ScriptArgs, []string{"quoted value", "--mode", "ci"}) {
+		t.Fatalf("script args = %#v", execs[0].ScriptArgs)
+	}
+}
+
 type devfactoryEventSink struct {
 	events []eventstream.Event
 }

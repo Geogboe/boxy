@@ -4,13 +4,16 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -24,6 +27,8 @@ type sandboxExecOptions struct {
 	timeout            string
 	mode               sandboxExecMode
 	guestPasswordStdin bool
+	scriptFile         string
+	interpreter        providersdk.ScriptInterpreter
 }
 
 type sandboxExecMode uint8
@@ -36,6 +41,7 @@ const (
 
 type sandboxExecRequest struct {
 	Command         []string                     `json:"command"`
+	Script          *providersdk.ScriptSpec      `json:"script,omitempty"`
 	ResourceID      string                       `json:"resource_id,omitempty"`
 	Timeout         string                       `json:"timeout,omitempty"`
 	GuestCredential *providersdk.GuestCredential `json:"guest_credential,omitempty"`
@@ -58,13 +64,16 @@ type sandboxExecStreamEvent struct {
 }
 
 func newSandboxExecCommand(serverAddr func() string) *cobra.Command {
-	var resourceID, timeout string
+	var resourceID, timeout, scriptFile, interpreter string
 	var events, buffered, guestPasswordStdin bool
 	cmd := &cobra.Command{
 		Use:   "exec <id> -- <command> [args...]",
 		Short: "Execute a one-shot command with live output in a ready sandbox",
 		Args: func(cmd *cobra.Command, args []string) error {
-			if len(args) < 2 {
+			if len(args) < 1 {
+				return fmt.Errorf("requires a sandbox id and a command after --")
+			}
+			if scriptFile == "" && len(args) < 2 {
 				return fmt.Errorf("requires a sandbox id and a command after --")
 			}
 			return nil
@@ -89,6 +98,8 @@ func newSandboxExecCommand(serverAddr func() string) *cobra.Command {
 				timeout:            timeout,
 				mode:               mode,
 				guestPasswordStdin: guestPasswordStdin,
+				scriptFile:         scriptFile,
+				interpreter:        providersdk.ScriptInterpreter(interpreter),
 			}, id, args[1:], cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
@@ -97,10 +108,16 @@ func newSandboxExecCommand(serverAddr func() string) *cobra.Command {
 	cmd.Flags().BoolVar(&events, "events", false, "write structured NDJSON events instead of human-readable output")
 	cmd.Flags().BoolVar(&buffered, "buffered", false, "wait for completion and request one buffered JSON response")
 	cmd.Flags().BoolVar(&guestPasswordStdin, "guest-password-stdin", false, "read the guest password from stdin (never pass it as a flag value)")
+	cmd.Flags().StringVar(&scriptFile, "script-file", "", "stage and execute a local script file")
+	cmd.Flags().StringVar(&interpreter, "interpreter", string(providersdk.ScriptInterpreterAuto), "script interpreter: auto, powershell, or sh")
 	return cmd
 }
 
 func runSandboxExec(ctx context.Context, opts sandboxExecOptions, id string, command []string, in io.Reader, out, errOut io.Writer) error {
+	command, script, err := parseSandboxExecPayload(command, opts.scriptFile, opts.interpreter)
+	if err != nil {
+		return err
+	}
 	base := apiBaseURL(opts.server)
 	credential, err := guestCredentialFromCLI(in, opts.guestPasswordStdin)
 	if err != nil {
@@ -112,7 +129,7 @@ func runSandboxExec(ctx context.Context, opts sandboxExecOptions, id string, com
 			return err
 		}
 	}
-	request := sandboxExecRequest{Command: command, ResourceID: opts.resourceID, Timeout: opts.timeout, GuestCredential: credential}
+	request := sandboxExecRequest{Command: command, Script: script, ResourceID: opts.resourceID, Timeout: opts.timeout, GuestCredential: credential}
 	// The default client's 5s http.Client.Timeout bounds the whole request
 	// (including reading a streaming response body), but the server accepts
 	// exec timeouts up to 5 minutes — see execAPIClientForServer's doc
@@ -220,6 +237,59 @@ func runSandboxExec(ctx context.Context, opts sandboxExecOptions, id string, com
 		return fmt.Errorf("exec stream ended before the complete event")
 	}
 	return nil
+}
+
+func parseSandboxExecPayload(command []string, scriptFile string, interpreter providersdk.ScriptInterpreter) ([]string, *providersdk.ScriptSpec, error) {
+	if interpreter == "" {
+		interpreter = providersdk.ScriptInterpreterAuto
+	}
+	if scriptFile != "" && len(command) > 0 && strings.HasPrefix(command[0], "@") {
+		return nil, nil, errors.New("--script-file and @script-file cannot be used together")
+	}
+	if scriptFile == "" && len(command) > 0 && strings.HasPrefix(command[0], "@") {
+		scriptFile = strings.TrimPrefix(command[0], "@")
+		command = command[1:]
+	}
+	if scriptFile != "" {
+		if interpreter != providersdk.ScriptInterpreterAuto && interpreter != providersdk.ScriptInterpreterPowerShell && interpreter != providersdk.ScriptInterpreterSH {
+			return nil, nil, fmt.Errorf("unsupported script interpreter %q", interpreter)
+		}
+		content, err := readScriptFile(scriptFile)
+		if err != nil {
+			return nil, nil, err
+		}
+		digest := sha256.Sum256(content)
+		return nil, &providersdk.ScriptSpec{
+			Content: content, Digest: fmt.Sprintf("%x", digest[:]), Interpreter: interpreter, Args: append([]string(nil), command...),
+		}, nil
+	}
+	if interpreter != providersdk.ScriptInterpreterAuto {
+		return nil, nil, errors.New("--interpreter is only valid with a script file")
+	}
+	if len(command) == 0 {
+		return nil, nil, errors.New("requires a sandbox id and a command after --")
+	}
+	return command, nil, nil
+}
+
+func readScriptFile(name string) ([]byte, error) {
+	path := filepath.Clean(name)
+	if path == "." || path == "" {
+		return nil, errors.New("script file path is required")
+	}
+	f, err := os.Open(path) //nolint:gosec // the operator explicitly selected this local script.
+	if err != nil {
+		return nil, fmt.Errorf("open script file %q: %w", name, err)
+	}
+	defer func() { _ = f.Close() }()
+	content, err := io.ReadAll(io.LimitReader(f, providersdk.MaxScriptBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read script file %q: %w", name, err)
+	}
+	if len(content) > providersdk.MaxScriptBytes {
+		return nil, fmt.Errorf("script file %q exceeds the %d MiB limit", name, providersdk.MaxScriptBytes>>20)
+	}
+	return content, nil
 }
 
 func guestCredentialFromCLI(in io.Reader, readStdin bool) (*providersdk.GuestCredential, error) {

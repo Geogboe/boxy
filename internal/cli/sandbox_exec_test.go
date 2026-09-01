@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -225,6 +226,10 @@ func TestSandboxExecCommandPassesGuestPasswordFromStdin(t *testing.T) {
 
 	var request sandboxExecRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"id":"sb-1","resources":["res-1"]}`)
+			return
+		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
@@ -248,6 +253,90 @@ func TestSandboxExecCommandRequiresCommand(t *testing.T) {
 	cmd.SetArgs([]string{"exec", "sb-1"})
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("exec without command succeeded, want error")
+	}
+}
+
+func TestSandboxExecCommandScriptFileSendsRawBytesAndArgs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "setup.ps1")
+	content := []byte("Write-Output 'raw; script'\n")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var request sandboxExecRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"id":"sb-1","resources":["res-1"]}`)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.WriteString(w, `{"resource_id":"res-1","exit_code":0}`)
+	}))
+	defer server.Close()
+
+	cmd := newSandboxCommand()
+	cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--script-file", path, "--interpreter", "powershell", "--buffered", "--", "--mode", "ci", "quoted value"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if request.Command != nil || request.Script == nil {
+		t.Fatalf("request = %+v, want script-only request", request)
+	}
+	if string(request.Script.Content) != string(content) {
+		t.Fatalf("script content = %q, want raw content", request.Script.Content)
+	}
+	if request.Script.Interpreter != providersdk.ScriptInterpreterPowerShell {
+		t.Fatalf("interpreter = %q, want powershell", request.Script.Interpreter)
+	}
+	if got := strings.Join(request.Script.Args, "\x00"); got != "--mode\x00ci\x00quoted value" {
+		t.Fatalf("script args = %q, want array-preserved args", got)
+	}
+	if err := request.Script.VerifyDigest(); err != nil {
+		t.Fatalf("digest: %v", err)
+	}
+}
+
+func TestSandboxExecCommandAtScriptFileUsesAutoInterpreter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "setup.sh")
+	if err := os.WriteFile(path, []byte("printf '%s\\n' \"$1\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var request sandboxExecRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"id":"sb-1","resources":["res-1"]}`)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.WriteString(w, `{"resource_id":"res-1","exit_code":0}`)
+	}))
+	defer server.Close()
+
+	cmd := newSandboxCommand()
+	cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--buffered", "--", "@" + path, "ci mode"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if request.Script == nil || request.Script.Interpreter != providersdk.ScriptInterpreterAuto {
+		t.Fatalf("request script = %+v, want auto interpreter", request.Script)
+	}
+	if len(request.Script.Args) != 1 || request.Script.Args[0] != "ci mode" {
+		t.Fatalf("script args = %#v, want one array element", request.Script.Args)
+	}
+}
+
+func TestSandboxExecCommandRejectsScriptAndCommandFormsTogether(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "setup.sh")
+	if err := os.WriteFile(path, []byte("true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := newSandboxCommand()
+	cmd.SetArgs([]string{"exec", "sb-1", "--script-file", path, "--", "@other.sh"})
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "cannot be used together") {
+		t.Fatalf("Execute error = %v, want script form conflict", err)
 	}
 }
 

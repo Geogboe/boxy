@@ -81,6 +81,7 @@ type Operation interface{}
 // Providers may alias or translate it into their native operation type.
 type ExecOperation struct {
 	Command         []string
+	Script          *ScriptSpec
 	Env             map[string]string
 	GuestCredential *GuestCredential
 }
