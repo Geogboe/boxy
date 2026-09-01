@@ -26,7 +26,7 @@ func TestSandboxExecBufferedPreservesGuestExitCode(t *testing.T) {
 	defer server.Close()
 
 	cmd := newSandboxCommand()
-	cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--", "false"})
+	cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--buffered", "--", "false"})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("Execute succeeded, want typed guest exit error")
@@ -44,8 +44,8 @@ func TestSandboxExecStreamingPreservesGuestExitCode(t *testing.T) {
 			_, _ = io.WriteString(w, `{"id":"sb-1","resources":["res-1"]}`)
 			return
 		}
-		if r.URL.Query().Get("stream") != "true" {
-			t.Fatalf("query = %q, want stream=true", r.URL.RawQuery)
+		if r.URL.Query().Get("stream") != "" {
+			t.Fatalf("query = %q, want the default streaming mode", r.URL.RawQuery)
 		}
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		data, _ := json.Marshal(map[string]any{
@@ -59,7 +59,7 @@ func TestSandboxExecStreamingPreservesGuestExitCode(t *testing.T) {
 
 	cmd := newSandboxCommand()
 	cmd.SetOut(new(strings.Builder))
-	cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--stream", "--", "false"})
+	cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--", "false"})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("Execute succeeded, want typed guest exit error")

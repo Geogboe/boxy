@@ -282,7 +282,8 @@ boxy
 │   └── exec <id> -- <command> [args...]         Execute a one-shot command
 │       ├── --resource <id>                        Required for multi-resource sandboxes
 │       ├── --timeout <duration>                   Default 30s, maximum 5m
-│       ├── --stream                              Stream NDJSON events to stdout/stderr
+│       ├── --events                              Write structured NDJSON events
+│       ├── --buffered                            Wait for completion and use one final response
 │       └── --guest-password-stdin                  Read a guest password from stdin (never a flag value)
 │
 │       $ boxy sandbox exec sb-a1b2c3 -- hostname

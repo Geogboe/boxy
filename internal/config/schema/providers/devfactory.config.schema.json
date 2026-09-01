@@ -19,6 +19,15 @@
       "description": "Simulated provisioning delay before a resource transitions from creating to running. Zero/omitted uses the profile default. Accepts a human-readable duration string (e.g. \"800ms\", \"1.5s\") or a number of nanoseconds.",
       "type": ["string", "integer"]
     },
+    "exec_output_chunks": {
+      "description": "Deterministic stdout chunks emitted by UpdateStream for an exec operation. Empty/omitted uses one simulated output chunk.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "exec_chunk_delay": {
+      "description": "Delay between configured exec_output_chunks. Accepts a human-readable duration string or nanoseconds.",
+      "type": ["string", "integer"]
+    },
     "fail_create": {
       "description": "If true, Create returns an error. Useful for testing error handling paths.",
       "type": "boolean",

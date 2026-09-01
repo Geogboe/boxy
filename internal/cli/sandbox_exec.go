@@ -22,9 +22,17 @@ type sandboxExecOptions struct {
 	server             string
 	resourceID         string
 	timeout            string
-	stream             bool
+	mode               sandboxExecMode
 	guestPasswordStdin bool
 }
+
+type sandboxExecMode uint8
+
+const (
+	sandboxExecLive sandboxExecMode = iota
+	sandboxExecEvents
+	sandboxExecBuffered
+)
 
 type sandboxExecRequest struct {
 	Command         []string                     `json:"command"`
@@ -51,10 +59,10 @@ type sandboxExecStreamEvent struct {
 
 func newSandboxExecCommand(serverAddr func() string) *cobra.Command {
 	var resourceID, timeout string
-	var stream, guestPasswordStdin bool
+	var events, buffered, guestPasswordStdin bool
 	cmd := &cobra.Command{
 		Use:   "exec <id> -- <command> [args...]",
-		Short: "Execute a one-shot command in a ready sandbox",
+		Short: "Execute a one-shot command with live output in a ready sandbox",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) < 2 {
 				return fmt.Errorf("requires a sandbox id and a command after --")
@@ -62,22 +70,32 @@ func newSandboxExecCommand(serverAddr func() string) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if events && buffered {
+				return fmt.Errorf("--events and --buffered cannot be used together")
+			}
 			id, err := validatePathID("sandbox id", args[0])
 			if err != nil {
 				return err
+			}
+			mode := sandboxExecLive
+			if events {
+				mode = sandboxExecEvents
+			} else if buffered {
+				mode = sandboxExecBuffered
 			}
 			return runSandboxExec(cmd.Context(), sandboxExecOptions{
 				server:             serverAddr(),
 				resourceID:         resourceID,
 				timeout:            timeout,
-				stream:             stream,
+				mode:               mode,
 				guestPasswordStdin: guestPasswordStdin,
 			}, id, args[1:], cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	cmd.Flags().StringVar(&resourceID, "resource", "", "resource ID (required for multi-resource sandboxes)")
 	cmd.Flags().StringVar(&timeout, "timeout", "", "execution timeout (default 30s, maximum 5m)")
-	cmd.Flags().BoolVar(&stream, "stream", false, "stream output as NDJSON-backed live events")
+	cmd.Flags().BoolVar(&events, "events", false, "write structured NDJSON events instead of human-readable output")
+	cmd.Flags().BoolVar(&buffered, "buffered", false, "wait for completion and request one buffered JSON response")
 	cmd.Flags().BoolVar(&guestPasswordStdin, "guest-password-stdin", false, "read the guest password from stdin (never pass it as a flag value)")
 	return cmd
 }
@@ -96,12 +114,19 @@ func runSandboxExec(ctx context.Context, opts sandboxExecOptions, id string, com
 	}
 	request := sandboxExecRequest{Command: command, ResourceID: opts.resourceID, Timeout: opts.timeout, GuestCredential: credential}
 	// The default client's 5s http.Client.Timeout bounds the whole request
-	// (including reading a --stream response body), but the server accepts
+	// (including reading a streaming response body), but the server accepts
 	// exec timeouts up to 5 minutes — see execAPIClientForServer's doc
 	// comment.
 	client := execAPIClientForServer(opts.server)
-	if !opts.stream {
-		response, err := postJSON[sandboxExecRequest, sandboxExecResponse](ctx, client, base+"/api/v1/sandboxes/"+id+"/exec", request)
+	if opts.mode == sandboxExecBuffered {
+		endpoint, err := url.Parse(base + "/api/v1/sandboxes/" + id + "/exec")
+		if err != nil {
+			return err
+		}
+		query := endpoint.Query()
+		query.Set("stream", "false")
+		endpoint.RawQuery = query.Encode()
+		response, err := postJSON[sandboxExecRequest, sandboxExecResponse](ctx, client, endpoint.String(), request)
 		if err != nil {
 			return err
 		}
@@ -125,9 +150,6 @@ func runSandboxExec(ctx context.Context, opts sandboxExecOptions, id string, com
 	if err != nil {
 		return err
 	}
-	query := endpoint.Query()
-	query.Set("stream", "true")
-	endpoint.RawQuery = query.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), body)
 	if err != nil {
 		return err
@@ -145,13 +167,23 @@ func runSandboxExec(ctx context.Context, opts sandboxExecOptions, id string, com
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 64*1024), 2*1024*1024)
+	completed := false
 	for scanner.Scan() {
+		line := scanner.Bytes()
+		if opts.mode == sandboxExecEvents {
+			if _, err := fmt.Fprintln(out, string(line)); err != nil {
+				return fmt.Errorf("write exec stream event: %w", err)
+			}
+		}
 		var event sandboxExecStreamEvent
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+		if err := json.Unmarshal(line, &event); err != nil {
 			return fmt.Errorf("decode exec stream event: %w", err)
 		}
 		switch event.Type {
 		case "data":
+			if opts.mode == sandboxExecEvents {
+				continue
+			}
 			data, err := base64.StdEncoding.DecodeString(event.Data)
 			if err != nil {
 				return fmt.Errorf("decode exec stream data: %w", err)
@@ -162,6 +194,7 @@ func runSandboxExec(ctx context.Context, opts sandboxExecOptions, id string, com
 				_, _ = out.Write(data)
 			}
 		case "complete":
+			completed = true
 			if event.Error != "" {
 				return fmt.Errorf("command stream failed: %s", event.Error)
 			}
@@ -182,6 +215,9 @@ func runSandboxExec(ctx context.Context, opts sandboxExecOptions, id string, com
 	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("read exec stream: %w", err)
+	}
+	if !completed {
+		return fmt.Errorf("exec stream ended before the complete event")
 	}
 	return nil
 }

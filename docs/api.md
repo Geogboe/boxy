@@ -65,7 +65,7 @@ API-key roles:
 | DELETE | `/api/v1/sandboxes/{id}` | user/admin | Request asynchronous deletion. |
 | POST | `/api/v1/sandboxes/{id}/extend` | user/admin | Extend an owned sandbox expiry. |
 | GET | `/api/v1/sandboxes/{id}/guest-credential` | user/admin | Fetch process-local guest credentials once; subsequent fetches return 410 Gone. |
-| POST | `/api/v1/sandboxes/{id}/exec` | user/admin | Execute a one-shot command; use stream=true for NDJSON events. |
+| POST | `/api/v1/sandboxes/{id}/exec` | user/admin | Execute a one-shot command; defaults to NDJSON events, use stream=false for buffered JSON. |
 
 ### Agents
 
@@ -104,9 +104,9 @@ Sandbox creation returns `202 Accepted` and is fulfilled asynchronously by the d
 
 ## Sandbox execution
 
-`POST /api/v1/sandboxes/{id}/exec` accepts a JSON object with a non-empty `command` array and optional `resource_id` and `timeout` fields. The sandbox must be ready; multi-resource sandboxes require `resource_id`. The default response is bounded JSON. Add `?stream=true` for `application/x-ndjson`: each data event has `type`, `stream`, and base64 `data`; the terminal event has `type=complete`, `exit_code` in `attributes`, and any error.
+`POST /api/v1/sandboxes/{id}/exec` accepts a JSON object with a non-empty `command` array and optional `resource_id` and `timeout` fields. The sandbox must be ready; multi-resource sandboxes require `resource_id`. The default response is `application/x-ndjson`: each data event has `type`, `stream`, and base64 `data`; the terminal event has `type=complete`, `exit_code` in `attributes`, and any error. `?stream=true` is an explicit spelling of the default. Use `?stream=false` for the bounded buffered JSON response.
 
-Output is bounded (1 MiB total, 64 KiB per chunk) in both modes. In the buffered (default) mode, a command that exceeds the limit returns `413 Payload Too Large` — any output already collected is discarded, since the buffered response has nothing to send until the whole thing is ready. Retry with `stream=true` for output that may be large: it delivers each chunk to the client as soon as it's produced, so exceeding the limit mid-command only truncates the tail — every chunk already sent stays delivered — and surfaces as an `error` field on the terminal `complete` event rather than an HTTP status change (headers are already flushed by the time streaming starts). A context-deadline timeout returns `504 Gateway Timeout`; any other provider/agent failure (including an unsupported-streaming capability error) returns `500 Internal Server Error` in buffered mode, or the same terminal `complete`-event `error` in streaming mode.
+Output is bounded (1 MiB total, 64 KiB per chunk) in both modes. In streaming mode, each chunk is delivered as soon as it is produced, so exceeding the limit mid-command only truncates the tail — every chunk already sent stays delivered — and surfaces as an `error` field on the terminal `complete` event rather than an HTTP status change (headers are already flushed by the time streaming starts). In buffered mode, a command that exceeds the limit returns `413 Payload Too Large` and discards any output already collected. A context-deadline timeout returns `504 Gateway Timeout`; any other provider/agent failure returns `500 Internal Server Error` in buffered mode, or the same terminal `complete`-event `error` in streaming mode.
 
 ## Diagnostics logs
 

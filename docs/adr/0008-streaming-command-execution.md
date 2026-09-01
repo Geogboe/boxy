@@ -70,6 +70,16 @@ bounded JSON convenience for scripts.
 
 ## Change notes
 
+- **2026-09-01**: Made streaming the default execution experience. The REST
+  endpoint now returns its existing NDJSON event stream unless callers set
+  `stream=false` for the bounded JSON response; `stream=true` remains an
+  explicit spelling of the default. The CLI now renders decoded stdout and
+  stderr live by default, exposes `--events` for structured NDJSON automation,
+  and exposes `--buffered` for the final-response mode. A terminal `complete`
+  event remains authoritative for failures after streaming headers are sent.
+  Same-resource concurrency and queueing are deliberately not addressed by
+  this change and remain a follow-up to #260.
+
 - **2026-08-11**: Fixed a TOCTOU race in `agentsdk.RemoteAgent`: `Close()`
   used to close each pending/streaming command's response channel while
   `deliver()` (running on the `Serve()` goroutine) could concurrently read

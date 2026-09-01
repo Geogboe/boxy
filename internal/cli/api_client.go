@@ -285,7 +285,7 @@ func execAPIClientForServer(server string) *http.Client {
 // set. It's threaded via context.Context rather than a package-level
 // variable or an opts struct because the request-building helpers in this
 // file (doJSON, doNoContent, and the two commands with hand-rolled
-// *http.Request call sites: sandbox_exec.go's --stream path and
+// *http.Request call sites: sandbox_exec.go's streaming path and
 // status.go's checkHealth) are shared across every REST-backed command and
 // don't otherwise carry per-command opts; every one of them already accepts
 // or derives a context.Context, so this reuses a vehicle already present at
@@ -408,7 +408,7 @@ func shellQuote(s string) string {
 
 func execAPIClient() *http.Client {
 	// http.Client.Timeout bounds the entire request, including reading the
-	// response body — for `sandbox exec --stream` that means it bounds the
+	// response body — for `sandbox exec` streaming modes that means it bounds the
 	// whole live NDJSON stream, not just establishing the connection. The
 	// server accepts a per-request `timeout` up to maxExecTimeout (5m, see
 	// internal/server/api_exec.go) and defaults to 30s, both comfortably

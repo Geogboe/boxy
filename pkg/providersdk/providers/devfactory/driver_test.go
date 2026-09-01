@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
@@ -152,6 +153,44 @@ func TestDriver_Update_Exec(t *testing.T) {
 	}
 	if strings.Contains(string(encoded), "never persist") {
 		t.Fatal("exec record persisted an environment value")
+	}
+}
+
+type devfactoryEventSink struct {
+	events []eventstream.Event
+}
+
+func (s *devfactoryEventSink) Send(_ context.Context, event eventstream.Event) error {
+	s.events = append(s.events, event)
+	return nil
+}
+
+func TestDriver_UpdateStream_EmitsConfiguredChunks(t *testing.T) {
+	d := newTestDriver(t, &Config{
+		ExecOutputChunks: []string{"first\n", "second\n"},
+		ExecChunkDelay:   Duration(time.Millisecond),
+	})
+	res, err := d.Create(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	sink := new(devfactoryEventSink)
+	result, err := d.UpdateStream(context.Background(), res.ID, &ExecOp{Command: []string{"long-running"}}, sink)
+	if err != nil {
+		t.Fatalf("UpdateStream: %v", err)
+	}
+	if result.Outputs["stdout"] != "first\nsecond\n" {
+		t.Fatalf("joined stdout = %q, want configured chunks joined", result.Outputs["stdout"])
+	}
+	if len(sink.events) != 2 {
+		t.Fatalf("events = %#v, want two output events", sink.events)
+	}
+	if got := string(sink.events[0].Payload); got != "first\n" {
+		t.Fatalf("first chunk = %q, want first newline", got)
+	}
+	if got := string(sink.events[1].Payload); got != "second\n" {
+		t.Fatalf("second chunk = %q, want second newline", got)
 	}
 }
 

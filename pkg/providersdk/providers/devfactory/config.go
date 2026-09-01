@@ -56,6 +56,17 @@ type Config struct {
 	// Accepts human-readable strings: "800ms", "1.5s", "2s".
 	Latency Duration `yaml:"latency" json:"latency"`
 
+	// ExecOutputChunks controls the output chunks emitted by UpdateStream for
+	// an ExecOp. When empty, the normal single simulated output is emitted.
+	// This is a deterministic test/development seam for exercising consumers'
+	// live-output behavior without real infrastructure.
+	ExecOutputChunks []string `yaml:"exec_output_chunks,omitempty" json:"exec_output_chunks,omitempty"`
+
+	// ExecChunkDelay is the delay between configured ExecOutputChunks. It is
+	// useful for proving that a caller observes an early chunk before the
+	// simulated command completes.
+	ExecChunkDelay Duration `yaml:"exec_chunk_delay" json:"exec_chunk_delay"`
+
 	// FailCreate causes Create to return an error when true.
 	// Useful for testing error handling paths.
 	FailCreate bool `yaml:"fail_create" json:"fail_create"`
