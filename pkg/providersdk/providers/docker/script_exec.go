@@ -18,19 +18,43 @@ func dockerScriptInterpreter(requested providersdk.ScriptInterpreter, platform, 
 	if requested == "" {
 		requested = providersdk.ScriptInterpreterAuto
 	}
+	platform = dockerPlatformHint(platform, image)
 	if requested == providersdk.ScriptInterpreterAuto {
-		switch strings.ToLower(strings.TrimSpace(platform)) {
+		switch platform {
 		case "linux":
 			return providersdk.ScriptInterpreterSH, nil
 		case "windows":
 			return providersdk.ScriptInterpreterPowerShell, nil
 		}
-		if strings.Contains(strings.ToLower(image), "windows") {
-			return providersdk.ScriptInterpreterPowerShell, nil
-		}
 		return "", errors.New("cannot determine the Docker container script interpreter; specify --interpreter powershell or --interpreter sh")
 	}
+	switch requested {
+	case providersdk.ScriptInterpreterSH:
+		if platform == "windows" {
+			return "", errors.New("sh scripts require a Linux Docker container; specify --interpreter powershell for a Windows container")
+		}
+	case providersdk.ScriptInterpreterPowerShell:
+		if platform == "linux" {
+			return "", errors.New("PowerShell scripts require a Windows Docker container; specify --interpreter sh for a Linux container")
+		}
+	default:
+		return "", fmt.Errorf("unsupported script interpreter %q", requested)
+	}
 	return requested, nil
+}
+
+func dockerPlatformHint(platform, image string) string {
+	platform = strings.ToLower(strings.TrimSpace(platform))
+	if slash := strings.IndexByte(platform, '/'); slash >= 0 {
+		platform = platform[:slash]
+	}
+	if platform == "linux" || platform == "windows" {
+		return platform
+	}
+	if strings.Contains(strings.ToLower(image), "windows") {
+		return "windows"
+	}
+	return ""
 }
 
 func (d *Driver) execScriptInContainer(ctx context.Context, id string, op *ExecOp, sink eventstream.Sink) (*providersdk.Result, error) {

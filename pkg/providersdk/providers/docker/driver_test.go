@@ -81,6 +81,44 @@ func TestDockerScriptCacheUsesGuestSpecificPathsAndLimits(t *testing.T) {
 	}
 }
 
+func TestDockerScriptInterpreterRejectsPlatformMismatches(t *testing.T) {
+	tests := []struct {
+		name      string
+		requested providersdk.ScriptInterpreter
+		platform  string
+		image     string
+		want      providersdk.ScriptInterpreter
+		wantErr   string
+	}{
+		{name: "auto linux", requested: providersdk.ScriptInterpreterAuto, platform: "linux", want: providersdk.ScriptInterpreterSH},
+		{name: "auto windows", requested: providersdk.ScriptInterpreterAuto, platform: "windows", want: providersdk.ScriptInterpreterPowerShell},
+		{name: "explicit sh linux", requested: providersdk.ScriptInterpreterSH, platform: "linux", want: providersdk.ScriptInterpreterSH},
+		{name: "explicit powershell windows", requested: providersdk.ScriptInterpreterPowerShell, platform: "windows", want: providersdk.ScriptInterpreterPowerShell},
+		{name: "powershell on linux", requested: providersdk.ScriptInterpreterPowerShell, platform: "linux", wantErr: "require a Windows Docker container"},
+		{name: "sh on windows", requested: providersdk.ScriptInterpreterSH, platform: "windows", wantErr: "require a Linux Docker container"},
+		{name: "image windows hint", requested: providersdk.ScriptInterpreterSH, image: "mcr.microsoft.com/windows/servercore:ltsc2022", wantErr: "require a Linux Docker container"},
+		{name: "ambiguous auto", requested: providersdk.ScriptInterpreterAuto, image: "custom-image", wantErr: "specify --interpreter"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := dockerScriptInterpreter(test.requested, test.platform, test.image)
+			if test.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("error = %v, want substring %q", err, test.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("dockerScriptInterpreter: %v", err)
+			}
+			if got != test.want {
+				t.Fatalf("interpreter = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 // mockDockerClient is a test double for dockerClient.
 type mockDockerClient struct {
 	imageInspect         func(ctx context.Context, imageID string, inspectOpts ...client.ImageInspectOption) (imagetypes.InspectResponse, error)
