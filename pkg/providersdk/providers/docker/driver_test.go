@@ -23,6 +23,38 @@ import (
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
+var _ providersdk.AvailabilityReporter = (*Driver)(nil)
+
+func TestDriver_AvailabilityReportsDockerHostMemoryEstimate(t *testing.T) {
+	called := false
+	d := &Driver{cli: &mockDockerClient{info: func(context.Context) (systemtypes.Info, error) {
+		called = true
+		return systemtypes.Info{MemTotal: 8 * 1024 * 1024 * 1024}, nil
+	}}}
+
+	sample, err := d.Availability(context.Background())
+	if err != nil {
+		t.Fatalf("Availability: %v", err)
+	}
+	if !called {
+		t.Fatal("Docker Info was not called")
+	}
+	if sample == nil || sample.MemoryMB != 8192 {
+		t.Fatalf("sample = %+v, want 8192 MiB", sample)
+	}
+}
+
+func TestDriver_AvailabilityPropagatesDockerInfoError(t *testing.T) {
+	want := fmt.Errorf("engine unavailable")
+	d := &Driver{cli: &mockDockerClient{info: func(context.Context) (systemtypes.Info, error) {
+		return systemtypes.Info{}, want
+	}}}
+
+	if _, err := d.Availability(context.Background()); err == nil || !strings.Contains(err.Error(), want.Error()) {
+		t.Fatalf("Availability error = %v, want wrapped Docker Info error", err)
+	}
+}
+
 // mockDockerClient is a test double for dockerClient.
 type mockDockerClient struct {
 	imageInspect         func(ctx context.Context, imageID string, inspectOpts ...client.ImageInspectOption) (imagetypes.InspectResponse, error)
