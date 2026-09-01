@@ -347,6 +347,12 @@ boxy
 │   │       $ boxy debug pool fill win-vm
 │   │         filled pool win-vm
 │   │
+│   ├── resource                               Run resource maintenance
+│   │   ├── --server <addr>                      Server address (overrides env/global defaults)
+│   │   └── purge [--dry-run|--force]             Preview or force stale-resource cleanup
+│   │       $ boxy debug resource purge --dry-run
+│   │         resource purge: candidates=2 cleaned=0 skipped=4 errors=0 dry-run=true force=false
+│   │
 │   └── provider                               Exercise devfactory provider (devtools build tag only —
 │       │                                        absent from release binaries; build with
 │       │                                        `-tags devtools` to get this subcommand)
