@@ -68,6 +68,46 @@ func TestUI_poolsShowsCapacityDrainStateAndResourceRows(t *testing.T) {
 	if csrfCookieFromResponse(t, response).Value == "" {
 		t.Fatal("empty CSRF cookie")
 	}
+
+	fragment := httptest.NewRecorder()
+	mux.ServeHTTP(fragment, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/fragments/pools-table", nil)))
+	if !strings.Contains(fragment.Body.String(), "ready-1") {
+		t.Fatalf("admin pools fragment missing resource inventory: %q", fragment.Body.String())
+	}
+}
+
+func TestUI_poolsHidesResourceInventoryFromNonAdmin(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	_ = st.PutPool(ctx, model.Pool{Name: "pool-a"})
+	_ = st.PutResource(ctx, model.Resource{
+		ID: "secret-resource-id", OriginPool: "pool-a", Type: model.ResourceTypeContainer,
+		Profile: model.ResourceProfileDefault, State: model.ResourceStateReady,
+		Provider: model.ProviderRef{Name: "docker"},
+	})
+	mux := server.NewTestMuxWithPoolAdmin(st, sandbox.New(st, nil), &fakePoolMaintenance{}, nil)
+	request := server.OIDCAuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/pools", nil), st, "viewer", model.APIKeyRoleUser)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d", response.Code)
+	}
+	body := response.Body.String()
+	for _, forbidden := range []string{"secret-resource-id", "docker", "Operator controls", "Force cleanup"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("non-admin pools page leaked %q: %q", forbidden, body)
+		}
+	}
+	if !strings.Contains(body, "Pool inventory is restricted to administrators.") {
+		t.Fatalf("non-admin pools page missing restriction notice: %q", body)
+	}
+
+	fragment := httptest.NewRecorder()
+	fragmentRequest := server.OIDCAuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/fragments/pools-table", nil), st, "viewer", model.APIKeyRoleUser)
+	mux.ServeHTTP(fragment, fragmentRequest)
+	if strings.Contains(fragment.Body.String(), "secret-resource-id") {
+		t.Fatalf("non-admin pools fragment leaked resource inventory: %q", fragment.Body.String())
+	}
 }
 
 func TestUI_poolMutationsRequireCSRFAndRedirectWithBanner(t *testing.T) {

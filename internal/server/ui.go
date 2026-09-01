@@ -356,6 +356,9 @@ func (s *Server) fragmentHandler(tmpl *template.Template, fragment string, data 
 			}
 			return
 		}
+		if principal, ok := sessionPrincipalFromRequest(r); ok {
+			d.CanManagePools = principal.Role == model.APIKeyRoleAdmin
+		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.ExecuteTemplate(w, fragment, d); err != nil {

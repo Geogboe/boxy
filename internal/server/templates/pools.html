@@ -54,7 +54,9 @@
 {{end}}
 
 {{define "pools_table_fragment"}}
-{{if .PoolViews}}
+{{if not .CanManagePools}}
+<div class="empty">Pool inventory is restricted to administrators.</div>
+{{else if .PoolViews}}
 {{range .PoolViews}}
 <div class="pool-group">
   <div class="pool-group-header">
