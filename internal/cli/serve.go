@@ -271,6 +271,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		PackageEngine: &resourcepack.Engine{Registry: packageRegistry},
 	}
 	poolMgr := pool.New(st, provisioner)
+	cleanupService := &pool.ResourceCleanupService{Store: st, Manager: poolMgr, Audit: auditStore}
 	poolMgr.SetPromoter(&pool.PromotionService{
 		Store:           st,
 		Provisioner:     provisioner,
@@ -384,6 +385,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		TLSCertPEM:       httpCertPEM,
 		TLSKeyPEM:        httpKeyPEM,
 		Executor:         provisioner,
+		ResourceCleanup:  cleanupService,
 		GuestSecrets:     guestSecrets,
 		Catalog:          catalogSource,
 		Diagnostics:      diagnosticStore,

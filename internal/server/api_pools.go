@@ -27,6 +27,7 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/pools/{name}/guest-credential", s.handleSetPoolGuestCredential)
 	mux.HandleFunc("GET /api/v1/resources", s.handleListResources)
 	mux.HandleFunc("GET /api/v1/resources/{id}", s.handleGetResource)
+	mux.HandleFunc("POST /api/v1/resources/purge", s.handlePurgeResources)
 	mux.HandleFunc("GET /api/v1/sandboxes", s.handleListSandboxes)
 	mux.HandleFunc("GET /api/v1/sandboxes/{id}", s.handleGetSandbox)
 	mux.HandleFunc("POST /api/v1/sandboxes", s.handleCreateSandbox)

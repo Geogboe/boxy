@@ -17,5 +17,6 @@ func newDebugCommand() *cobra.Command {
 	// excluded from release binaries. See #68.
 	registerDevtoolsDebugCommands(cmd)
 	cmd.AddCommand(newDebugPoolCommand())
+	cmd.AddCommand(newDebugResourceCommand())
 	return cmd
 }
