@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Geogboe/boxy/pkg/diskjson"
@@ -320,7 +321,7 @@ func (d *Driver) Update(ctx context.Context, id string, op providersdk.Operation
 			}
 			desc = fmt.Sprintf("exec: %v", o.Command)
 			outputs["operation"] = desc
-			outputs["stdout"] = fmt.Sprintf("[simulated output of: %v]", o.Command)
+			outputs["stdout"] = strings.Join(d.execOutputChunks(o), "")
 			outputs["exit_code"] = "0"
 			envKeys := make([]string, 0, len(o.Env))
 			for key := range o.Env {
@@ -359,12 +360,41 @@ func (d *Driver) UpdateStream(ctx context.Context, id string, op providersdk.Ope
 	if err != nil {
 		return nil, err
 	}
-	if output := result.Outputs["stdout"]; output != "" {
-		if err := sink.Send(ctx, eventstream.Event{Kind: eventstream.Data, Channel: eventstream.Channel("stdout"), Payload: []byte(output)}); err != nil {
+	chunks := []string{result.Outputs["stdout"]}
+	if exec, ok := op.(*ExecOp); ok {
+		chunks = d.execOutputChunks(exec)
+	}
+	for i, chunk := range chunks {
+		if i > 0 && d.execChunkDelay() > 0 {
+			timer := time.NewTimer(d.execChunkDelay())
+			select {
+			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
+		}
+		if chunk == "" {
+			continue
+		}
+		if err := sink.Send(ctx, eventstream.Event{Kind: eventstream.Data, Channel: eventstream.Channel("stdout"), Payload: []byte(chunk)}); err != nil {
 			return nil, err
 		}
 	}
 	return result, nil
+}
+
+func (d *Driver) execOutputChunks(op *ExecOp) []string {
+	if len(d.cfg.ExecOutputChunks) > 0 {
+		return append([]string(nil), d.cfg.ExecOutputChunks...)
+	}
+	return []string{fmt.Sprintf("[simulated output of: %v]", op.Command)}
+}
+
+func (d *Driver) execChunkDelay() time.Duration {
+	return time.Duration(d.cfg.ExecChunkDelay)
 }
 
 // Delete removes a simulated resource.

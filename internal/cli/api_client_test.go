@@ -212,7 +212,7 @@ func TestMaintenanceAPIClientHasABoundedTimeout(t *testing.T) {
 // TestExecAPIClientHasABoundedTimeout guards against the default client's 5s
 // http.Client.Timeout being used for `sandbox exec`: that timeout bounds the
 // entire request, including reading the response body, so it would bound a
-// `--stream` NDJSON response too — not just connection setup. The server
+// the default NDJSON response too — not just connection setup. The server
 // accepts a per-request timeout up to 5 minutes (internal/server/api_exec.go's
 // maxExecTimeout) and defaults to 30s, both well past the default client's
 // 5s, so exec needs its own longer-timeout client the same way drain/fill

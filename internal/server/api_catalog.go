@@ -32,7 +32,7 @@ func APIRouteCatalog() []APIRoute {
 		{Group: "Sandboxes", Method: "DELETE", Path: "/api/v1/sandboxes/{id}", Auth: "user/admin", Description: "Request asynchronous deletion."},
 		{Group: "Sandboxes", Method: "POST", Path: "/api/v1/sandboxes/{id}/extend", Auth: "user/admin", Description: "Extend an owned sandbox expiry."},
 		{Group: "Sandboxes", Method: "GET", Path: "/api/v1/sandboxes/{id}/guest-credential", Auth: "user/admin", Description: "Fetch process-local guest credentials once; subsequent fetches return 410 Gone."},
-		{Group: "Sandboxes", Method: "POST", Path: "/api/v1/sandboxes/{id}/exec", Auth: "user/admin", Description: "Execute a one-shot command; use stream=true for NDJSON events."},
+		{Group: "Sandboxes", Method: "POST", Path: "/api/v1/sandboxes/{id}/exec", Auth: "user/admin", Description: "Execute a one-shot command; defaults to NDJSON events, use stream=false for buffered JSON."},
 		{Group: "Agents", Method: "POST", Path: "/api/v1/agent-tokens", Auth: "admin", Description: "Mint a single-use remote-agent registration token."},
 		{Group: "Agents", Method: "GET", Path: "/api/v1/agent-tokens", Auth: "admin", Description: "List registration-token metadata."},
 		{Group: "Agents", Method: "DELETE", Path: "/api/v1/agent-tokens/{id}", Auth: "admin", Description: "Revoke an unused registration token."},

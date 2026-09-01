@@ -135,7 +135,7 @@ func (s *Server) handleSandboxExec(w http.ResponseWriter, r *http.Request) {
 func parseExecStreaming(r *http.Request) (bool, error) {
 	value := r.URL.Query().Get("stream")
 	if value == "" {
-		return false, nil
+		return true, nil
 	}
 	streaming, err := strconv.ParseBool(value)
 	if err != nil {
@@ -309,7 +309,7 @@ func writeExecError(w http.ResponseWriter, err error) {
 		// choice-of-mode problem, not a server error — 413 says so, and
 		// points at the streaming mode that delivers output incrementally
 		// instead of buffering it all before responding.
-		httpjson.Error(w, http.StatusRequestEntityTooLarge, "sandbox command output exceeded the buffered response limit; retry with stream=true to receive output incrementally instead of buffered")
+		httpjson.Error(w, http.StatusRequestEntityTooLarge, "sandbox command output exceeded the buffered response limit; omit stream=false to receive output incrementally instead of buffering")
 	default:
 		httpjson.Error(w, http.StatusInternalServerError, "sandbox command execution failed: "+err.Error())
 	}

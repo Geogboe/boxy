@@ -346,7 +346,7 @@ boxy sandbox list                       — list sandboxes
 boxy sandbox get <id>                   — get sandbox details
 boxy sandbox delete <id>                — delete a sandbox (waits by default; use --no-wait to return after acceptance)
 boxy sandbox extend <id> <duration>     — push a sandbox's auto-destroy expiry further out
-boxy sandbox exec <id> -- <command>      — execute a one-shot command (`--stream` for live output)
+boxy sandbox exec <id> -- <command>      — execute a one-shot command with live output (`--events` for NDJSON, `--buffered` for one final response)
 boxy login --server <addr>               — store an API key in the OS keyring
 boxy logout --server <addr>              — remove the stored API key
 boxy admin api-key create                — create an API key (admin)

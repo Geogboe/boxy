@@ -203,7 +203,7 @@ func newStreamEmitter(sink eventstream.Sink) *streamEmitter {
 // and any value formatStreamValue drops. A separate newlineTracker is kept
 // per output channel, since stdout and stderr are consumed as independent
 // concatenated streams by both public exec paths (internal/server/
-// api_exec.go's bufferedExecSink and the CLI's --stream renderer), and each
+// api_exec.go's bufferedExecSink and the CLI's live renderer), and each
 // merges several underlying PSRP streams (Errors, Warnings, Verbose, Debug,
 // Progress, Information all land on "stderr") that must still be separated
 // from one another. Returns the first send error, if any.

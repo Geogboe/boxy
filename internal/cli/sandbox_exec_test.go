@@ -8,21 +8,23 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/Geogboe/boxy/internal/credentials"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
-func TestSandboxExecCommandStreamsNDJSONOutput(t *testing.T) {
+func TestSandboxExecCommandDefaultsToLiveText(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1" {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"id":"sb-1","resources":["res-1"]}`)
 			return
 		}
-		if r.URL.Path != "/api/v1/sandboxes/sb-1/exec" || r.URL.Query().Get("stream") != "true" {
-			t.Fatalf("request = %s?%s, want streaming exec path", r.URL.Path, r.URL.RawQuery)
+		if r.URL.Path != "/api/v1/sandboxes/sb-1/exec" || r.URL.Query().Get("stream") != "" {
+			t.Fatalf("request = %s?%s, want default streaming exec path", r.URL.Path, r.URL.RawQuery)
 		}
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		data, _ := json.Marshal(map[string]any{
@@ -40,12 +42,173 @@ func TestSandboxExecCommandStreamsNDJSONOutput(t *testing.T) {
 	out := new(strings.Builder)
 	cmd.SetOut(out)
 	cmd.SetErr(new(strings.Builder))
-	cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--stream", "--", "echo", "hello"})
+	cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--", "echo", "hello"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if got := out.String(); got != "hello\n" {
 		t.Fatalf("stdout = %q, want hello newline", got)
+	}
+}
+
+type synchronizedOutput struct {
+	mu        sync.Mutex
+	value     strings.Builder
+	firstSeen chan struct{}
+	once      sync.Once
+}
+
+func (w *synchronizedOutput) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	_, _ = w.value.Write(p)
+	if strings.Contains(w.value.String(), "first chunk\n") {
+		w.once.Do(func() { close(w.firstSeen) })
+	}
+	return len(p), nil
+}
+
+func (w *synchronizedOutput) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.value.String()
+}
+
+func TestSandboxExecCommandLiveTextArrivesBeforeCompletion(t *testing.T) {
+	firstSeen := make(chan struct{})
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1" {
+			_, _ = io.WriteString(w, `{"id":"sb-1","resources":["res-1"]}`)
+			return
+		}
+		if r.URL.Path != "/api/v1/sandboxes/sb-1/exec" || r.URL.Query().Get("stream") != "" {
+			t.Fatalf("request = %s?%s, want default streaming exec path", r.URL.Path, r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("test response does not support flushing")
+		}
+		data, _ := json.Marshal(map[string]any{"type": "data", "stream": "stdout", "data": base64.StdEncoding.EncodeToString([]byte("first chunk\n"))})
+		_, _ = w.Write(append(data, '\n'))
+		flusher.Flush()
+		select {
+		case <-release:
+		case <-time.After(2 * time.Second):
+			t.Error("client did not consume the first chunk before completion")
+		}
+		complete, _ := json.Marshal(map[string]any{"type": "complete", "exit_code": 0})
+		_, _ = w.Write(append(complete, '\n'))
+	}))
+	defer server.Close()
+
+	out := &synchronizedOutput{firstSeen: firstSeen}
+	cmd := newSandboxCommand()
+	cmd.SetOut(out)
+	cmd.SetErr(new(strings.Builder))
+	cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--", "long-running"})
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Execute() }()
+	select {
+	case <-firstSeen:
+		close(release)
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("live CLI output did not arrive before completion")
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("Execute: %v; output=%q", err, out.String())
+	}
+	if got := out.String(); got != "first chunk\n" {
+		t.Fatalf("stdout = %q, want first chunk newline", got)
+	}
+}
+
+func TestSandboxExecCommandEventsEmitsNDJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1" {
+			_, _ = io.WriteString(w, `{"id":"sb-1","resources":["res-1"]}`)
+			return
+		}
+		if r.URL.Path != "/api/v1/sandboxes/sb-1/exec" || r.URL.Query().Get("stream") != "" {
+			t.Fatalf("request = %s?%s, want default streaming exec path", r.URL.Path, r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		data, _ := json.Marshal(map[string]any{"type": "data", "stream": "stdout", "data": base64.StdEncoding.EncodeToString([]byte("hello\n"))})
+		_, _ = w.Write(append(data, '\n'))
+		complete, _ := json.Marshal(map[string]any{"type": "complete", "exit_code": 0})
+		_, _ = w.Write(append(complete, '\n'))
+	}))
+	defer server.Close()
+
+	cmd := newSandboxCommand()
+	out := new(strings.Builder)
+	cmd.SetOut(out)
+	cmd.SetErr(new(strings.Builder))
+	cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--events", "--", "echo", "hello"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, `"type":"data"`) || !strings.Contains(got, `"type":"complete"`) {
+		t.Fatalf("events output = %q, want data and complete records", got)
+	}
+}
+
+func TestSandboxExecCommandBufferedModeRequestsJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1" {
+			_, _ = io.WriteString(w, `{"id":"sb-1","resources":["res-1"]}`)
+			return
+		}
+		if r.URL.Path != "/api/v1/sandboxes/sb-1/exec" || r.URL.Query().Get("stream") != "false" {
+			t.Fatalf("request = %s?%s, want stream=false", r.URL.Path, r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"resource_id":"res-1","stdout":"hello\n","exit_code":0}`)
+	}))
+	defer server.Close()
+
+	cmd := newSandboxCommand()
+	out := new(strings.Builder)
+	cmd.SetOut(out)
+	cmd.SetErr(new(strings.Builder))
+	cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--buffered", "--", "echo", "hello"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if got := out.String(); got != "hello\n" {
+		t.Fatalf("buffered stdout = %q, want hello newline", got)
+	}
+}
+
+func TestSandboxExecCommandRejectsConflictingOutputModes(t *testing.T) {
+	cmd := newSandboxCommand()
+	cmd.SetArgs([]string{"exec", "sb-1", "--events", "--buffered", "--", "echo", "hello"})
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "cannot be used together") {
+		t.Fatalf("Execute error = %v, want conflicting mode error", err)
+	}
+}
+
+func TestSandboxExecCommandRejectsStreamWithoutCompletion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1" {
+			_, _ = io.WriteString(w, `{"id":"sb-1","resources":["res-1"]}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		data, _ := json.Marshal(map[string]any{"type": "data", "stream": "stdout", "data": base64.StdEncoding.EncodeToString([]byte("partial\n"))})
+		_, _ = w.Write(append(data, '\n'))
+	}))
+	defer server.Close()
+
+	cmd := newSandboxCommand()
+	cmd.SetOut(new(strings.Builder))
+	cmd.SetErr(new(strings.Builder))
+	cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--", "interrupted"})
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "complete event") {
+		t.Fatalf("Execute error = %v, want missing-completion error", err)
 	}
 }
 
@@ -71,7 +234,7 @@ func TestSandboxExecCommandPassesGuestPasswordFromStdin(t *testing.T) {
 
 	cmd := newSandboxCommand()
 	cmd.SetIn(strings.NewReader("rotated-password\n"))
-	cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--guest-password-stdin", "--", "whoami"})
+	cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--guest-password-stdin", "--buffered", "--", "whoami"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -116,7 +279,7 @@ func TestSandboxExecCommandLoadsSavedGuestCredential(t *testing.T) {
 	t.Cleanup(func() { guestCredentialStore = previousStore })
 
 	cmd := newSandboxCommand()
-	cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--", "whoami"})
+	cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--buffered", "--", "whoami"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}

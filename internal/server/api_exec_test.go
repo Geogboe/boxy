@@ -65,6 +65,54 @@ func TestSandboxExecStreamingUsesSingleResourceAndEmitsNDJSON(t *testing.T) {
 	}
 }
 
+func TestSandboxExecDefaultsToStreaming(t *testing.T) {
+	st := store.NewMemoryStore()
+	_ = st.CreateSandbox(context.Background(), model.Sandbox{ID: "sb-1", Status: model.SandboxStatusReady, Resources: []model.ResourceID{"res-1"}})
+	_ = st.PutResource(context.Background(), model.Resource{ID: "res-1", State: model.ResourceStateAllocated})
+	s := &Server{store: st, executor: new(fakeSandboxExecutor)}
+	mux := http.NewServeMux()
+	s.registerRoutes(mux)
+
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec", strings.NewReader(`{"command":["echo","hello"]}`))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Content-Type"); got != "application/x-ndjson" {
+		t.Fatalf("Content-Type = %q, want application/x-ndjson", got)
+	}
+	if !strings.Contains(w.Body.String(), `"type":"data"`) || !strings.Contains(w.Body.String(), `"type":"complete"`) {
+		t.Fatalf("default exec body = %q, want data and complete events", w.Body.String())
+	}
+}
+
+func TestSandboxExecStreamFalseKeepsBufferedJSONResponse(t *testing.T) {
+	st := store.NewMemoryStore()
+	_ = st.CreateSandbox(context.Background(), model.Sandbox{ID: "sb-1", Status: model.SandboxStatusReady, Resources: []model.ResourceID{"res-1"}})
+	_ = st.PutResource(context.Background(), model.Resource{ID: "res-1", State: model.ResourceStateAllocated})
+	s := &Server{store: st, executor: new(fakeSandboxExecutor)}
+	mux := http.NewServeMux()
+	s.registerRoutes(mux)
+
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec?stream=false", strings.NewReader(`{"command":["echo","hello"]}`))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
+		t.Fatalf("Content-Type = %q, want application/json", got)
+	}
+	var response execSandboxResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode buffered response: %v; body=%q", err, w.Body.String())
+	}
+	if response.Stdout != "hello\n" {
+		t.Fatalf("stdout = %q, want hello newline", response.Stdout)
+	}
+}
+
 func TestSandboxExecPassesOpaqueGuestCredentialToExecutor(t *testing.T) {
 	st := store.NewMemoryStore()
 	_ = st.CreateSandbox(context.Background(), model.Sandbox{ID: "sb-1", Status: model.SandboxStatusReady, Resources: []model.ResourceID{"res-1"}})
@@ -247,7 +295,7 @@ func TestSandboxExecTimeoutReturnsGatewayTimeout(t *testing.T) {
 			mux := http.NewServeMux()
 			s.registerRoutes(mux)
 
-			r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec", strings.NewReader(`{"command":["sleep","1"],"timeout":"1ms"}`))
+			r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec?stream=false", strings.NewReader(`{"command":["sleep","1"],"timeout":"1ms"}`))
 			w := httptest.NewRecorder()
 			mux.ServeHTTP(w, r)
 			if w.Code != http.StatusGatewayTimeout {
@@ -274,7 +322,7 @@ func TestSandboxExecProviderErrorReturnsInternalServerError(t *testing.T) {
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
 
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec", strings.NewReader(`{"command":["hostname"]}`))
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec?stream=false", strings.NewReader(`{"command":["hostname"]}`))
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
 	if w.Code != http.StatusInternalServerError {
@@ -302,7 +350,7 @@ func TestSandboxExecNonzeroExitCodeIsNotAnError(t *testing.T) {
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
 
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec", strings.NewReader(`{"command":["missing-binary"]}`))
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec?stream=false", strings.NewReader(`{"command":["missing-binary"]}`))
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
 	if w.Code != http.StatusOK {
@@ -341,7 +389,7 @@ func (limitExceedingExecutor) ExecuteSandbox(ctx context.Context, res model.Reso
 // streaming) response's behavior when a command's output exceeds the
 // bounded-response limit: a distinct 413 status (not the generic 500 a
 // provider failure gets, and not the 504 a timeout gets) with guidance to
-// retry with stream=true, since the streaming mode delivers output
+// retry without stream=false, since the streaming mode delivers output
 // incrementally instead of discarding it once the limit is hit.
 func TestSandboxExecBufferedOutputLimitReturns413(t *testing.T) {
 	st := store.NewMemoryStore()
@@ -351,14 +399,14 @@ func TestSandboxExecBufferedOutputLimitReturns413(t *testing.T) {
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
 
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec", strings.NewReader(`{"command":["yes"]}`))
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec?stream=false", strings.NewReader(`{"command":["yes"]}`))
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
 	if w.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want 413; body=%s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "stream=true") {
-		t.Fatalf("body = %q, want guidance to retry with stream=true", w.Body.String())
+	if !strings.Contains(w.Body.String(), "stream=false") {
+		t.Fatalf("body = %q, want guidance to omit stream=false", w.Body.String())
 	}
 }
 
@@ -419,5 +467,34 @@ func TestSandboxExecStreamingCapabilityErrorEmitsCompleteEvent(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "does not support streaming") {
 		t.Fatalf("stream body = %q, want the capability error surfaced", w.Body.String())
+	}
+}
+
+type streamingFailureExecutor struct{}
+
+func (streamingFailureExecutor) ExecuteSandbox(ctx context.Context, res model.Resource, operation providersdk.ExecOperation, sink eventstream.Sink) (*providersdk.Result, error) {
+	if err := sink.Send(ctx, eventstream.Event{Kind: eventstream.Data, Channel: eventstream.Channel("stdout"), Payload: []byte("before failure\n")}); err != nil {
+		return nil, err
+	}
+	return nil, errors.New("guest transport disconnected")
+}
+
+func TestSandboxExecDefaultStreamingReportsFailureInCompleteEvent(t *testing.T) {
+	st := store.NewMemoryStore()
+	_ = st.CreateSandbox(context.Background(), model.Sandbox{ID: "sb-1", Status: model.SandboxStatusReady, Resources: []model.ResourceID{"res-1"}})
+	_ = st.PutResource(context.Background(), model.Resource{ID: "res-1", State: model.ResourceStateAllocated})
+	s := &Server{store: st, executor: streamingFailureExecutor{}}
+	mux := http.NewServeMux()
+	s.registerRoutes(mux)
+
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec", strings.NewReader(`{"command":["hostname"]}`))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 after stream starts; body=%s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "YmVmb3JlIGZhaWx1cmUK") || !strings.Contains(body, "guest transport disconnected") || !strings.Contains(body, `"type":"complete"`) {
+		t.Fatalf("stream body = %q, want data and terminal error event", body)
 	}
 }
