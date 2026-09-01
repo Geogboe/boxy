@@ -36,4 +36,3 @@ Docker stages through an attached stdin stream so the script is not placed in
 a command-line argument. SSH and PowerShell Direct use the same cache
 protocol through their guest command channels. The existing streaming and
 buffered execution paths then invoke the cached file and preserve exit codes.
-
