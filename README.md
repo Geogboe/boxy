@@ -2,6 +2,12 @@
 
 Boxy is a resource pooling and sandbox orchestration tool. It pre-provisions pools of VMs, containers, and other resources, then assembles them into on-demand sandboxes for labs, training, pentesting, and development environments.
 
+![Boxy administrator dashboard](docs/assets/boxy-dashboard.png)
+
+The dashboard shows live pool capacity, resource state, and administrator
+maintenance controls. The checked-in capture uses the repeatable Devfactory
+example environment, so it requires no Docker daemon or cloud account.
+
 ## Install
 
 Release installers are available for Windows PowerShell, Linux, and macOS. They download the newest published GitHub release, verify it against the published `checksums.txt`, and install it into a user-local bin directory.
