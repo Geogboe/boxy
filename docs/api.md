@@ -54,6 +54,7 @@ API-key roles:
 |---|---|---|---|
 | GET | `/api/v1/resources` | auditor/admin | List resources. |
 | GET | `/api/v1/resources/{id}` | auditor/admin | Inspect one resource. |
+| POST | `/api/v1/resources/purge` | admin | Preview or explicitly force cleanup of unreferenced destroyed and stale destroying/error resources. |
 
 ### Sandboxes
 
