@@ -63,7 +63,7 @@ func stageHyperVScript(ctx context.Context, ge vmsdk.GuestExec, script *provider
 			return "", err
 		}
 		encoded := base64.StdEncoding.EncodeToString(script.Content)
-		stage := fmt.Sprintf("$d='%s'; $dir=Join-Path $env:TEMP 'boxy-script-cache'; New-Item -ItemType Directory -Path $dir -Force | Out-Null; $tmp=Join-Path $dir ('%s.'+'%s.tmp'); [IO.File]::WriteAllBytes($tmp,[Convert]::FromBase64String('%s')); Move-Item -LiteralPath $tmp -Destination (Join-Path $dir ($d+'.ps1')) -Force; $files=@(Get-ChildItem -LiteralPath $dir -File | Sort-Object LastWriteTimeUtc -Descending); if ($files.Count -gt 64) { $files | Select-Object -Skip 64 | Remove-Item -Force }", psq(digest), digest, tmp, encoded)
+		stage := fmt.Sprintf("$d='%s'; $dir=Join-Path $env:TEMP 'boxy-script-cache'; New-Item -ItemType Directory -Path $dir -Force | Out-Null; $tmp=Join-Path $dir ('%s.'+'%s.tmp'); [IO.File]::WriteAllBytes($tmp,[Convert]::FromBase64String('%s')); Move-Item -LiteralPath $tmp -Destination (Join-Path $dir ($d+'.ps1')) -Force; $files=@(Get-ChildItem -LiteralPath $dir -File | Sort-Object LastWriteTimeUtc -Descending); $size=0; $count=0; foreach ($file in $files) { if (($count -ge %d) -or (($size + $file.Length) -gt %d)) { Remove-Item -LiteralPath $file.FullName -Force } else { $size += $file.Length; $count++ } }", psq(digest), digest, tmp, encoded, providersdk.MaxScriptCacheFiles, providersdk.MaxScriptCacheBytes)
 		if result, err := ge.Exec(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", stage); err != nil || result == nil || result.ExitCode != 0 {
 			if err != nil {
 				return "", fmt.Errorf("stage PowerShell script: %w", err)
@@ -87,7 +87,7 @@ func stageHyperVScript(ctx context.Context, ge vmsdk.GuestExec, script *provider
 		return "", err
 	}
 	encoded := base64.StdEncoding.EncodeToString(script.Content)
-	stage := fmt.Sprintf("set -eu; dir=/tmp/boxy-script-cache; mkdir -p \"$dir\"; chmod 700 \"$dir\"; tmp=\"$dir/%s.%s.tmp\"; printf %%s %s | base64 -d > \"$tmp\"; chmod 700 \"$tmp\"; mv -f \"$tmp\" %s; find \"$dir\" -type f -name '*.sh' -printf '%%T@ %%p\\n' | sort -nr | awk 'NR>64 {print $2}' | xargs -r rm -f", digest, tmp, shellQuote(encoded), shellQuote(path))
+	stage := fmt.Sprintf("set -eu; dir=/tmp/boxy-script-cache; mkdir -p \"$dir\"; chmod 700 \"$dir\"; tmp=\"$dir/%s.%s.tmp\"; printf %%s %s | base64 -d > \"$tmp\"; chmod 700 \"$tmp\"; mv -f \"$tmp\" %s; find \"$dir\" -type f -name '*.sh' -printf '%%T@ %%s %%p\\n' | sort -nr | awk -v max_files=%d -v max_bytes=%d 'NR <= max_files && (total + $2) <= max_bytes { total += $2; next } { print $3 }' | xargs -r rm -f", digest, tmp, shellQuote(encoded), shellQuote(path), providersdk.MaxScriptCacheFiles, providersdk.MaxScriptCacheBytes)
 	if result, err := ge.Exec(ctx, "sh", "-c", stage); err != nil || result == nil || result.ExitCode != 0 {
 		if err != nil {
 			return "", fmt.Errorf("stage shell script: %w", err)

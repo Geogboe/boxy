@@ -55,6 +55,32 @@ func TestDriver_AvailabilityPropagatesDockerInfoError(t *testing.T) {
 	}
 }
 
+func TestDockerScriptCacheUsesGuestSpecificPathsAndLimits(t *testing.T) {
+	linuxPath := dockerScriptPath("ABCDEF", providersdk.ScriptInterpreterSH)
+	if linuxPath != "/tmp/boxy-script-cache/abcdef.sh" {
+		t.Fatalf("Linux script path = %q", linuxPath)
+	}
+
+	powerShellPath := dockerScriptPath("ABCDEF", providersdk.ScriptInterpreterPowerShell)
+	if powerShellPath != `C:\Windows\Temp\boxy-script-cache\abcdef.ps1` {
+		t.Fatalf("Windows script path = %q", powerShellPath)
+	}
+
+	powershellStage := dockerPowerShellStageCommand(powerShellPath)
+	for _, expected := range []string{`C:\Windows\Temp\boxy-script-cache\`, "Move-Item", "64", "33554432"} {
+		if !strings.Contains(powershellStage, expected) {
+			t.Errorf("PowerShell staging command missing %q: %s", expected, powershellStage)
+		}
+	}
+
+	shellStage := dockerShellStageCommand(linuxPath)
+	for _, expected := range []string{"/tmp/boxy-script-cache", "max_files=64", "max_bytes=33554432"} {
+		if !strings.Contains(shellStage, expected) {
+			t.Errorf("shell staging command missing %q: %s", expected, shellStage)
+		}
+	}
+}
+
 // mockDockerClient is a test double for dockerClient.
 type mockDockerClient struct {
 	imageInspect         func(ctx context.Context, imageID string, inspectOpts ...client.ImageInspectOption) (imagetypes.InspectResponse, error)

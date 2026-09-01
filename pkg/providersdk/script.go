@@ -8,7 +8,11 @@ import (
 	"strings"
 )
 
-const MaxScriptBytes = 4 << 20
+const (
+	MaxScriptBytes      = 4 << 20
+	MaxScriptCacheFiles = 64
+	MaxScriptCacheBytes = 32 << 20
+)
 
 // ScriptInterpreter identifies the guest-side runner for a staged script.
 type ScriptInterpreter string

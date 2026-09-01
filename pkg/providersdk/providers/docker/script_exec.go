@@ -76,16 +76,15 @@ func (d *Driver) execScriptInContainer(ctx context.Context, id string, op *ExecO
 }
 
 func dockerScriptPath(digest string, interpreter providersdk.ScriptInterpreter) string {
-	ext := "sh"
 	if interpreter == providersdk.ScriptInterpreterPowerShell {
-		ext = "ps1"
+		return `C:\Windows\Temp\boxy-script-cache\` + strings.ToLower(digest) + ".ps1"
 	}
-	return "/tmp/boxy-script-cache/" + strings.ToLower(digest) + "." + ext
+	return "/tmp/boxy-script-cache/" + strings.ToLower(digest) + ".sh"
 }
 
 func dockerScriptProbe(path string, interpreter providersdk.ScriptInterpreter, digest string) (string, []string) {
 	if interpreter == providersdk.ScriptInterpreterPowerShell {
-		return "powershell", []string{"-NoProfile", "-NonInteractive", "-Command", fmt.Sprintf("if ((Test-Path -LiteralPath '%s') -and ((Get-FileHash -LiteralPath '%s' -Algorithm SHA256).Hash -eq '%s')) { 'hit' } else { 'miss' }", path, path, strings.ToUpper(digest))}
+		return "powershell", []string{"-NoProfile", "-NonInteractive", "-Command", fmt.Sprintf("if ((Test-Path -LiteralPath '%s') -and ((Get-FileHash -LiteralPath '%s' -Algorithm SHA256).Hash -eq '%s')) { 'hit' } else { 'miss' }", psQuote(path), psQuote(path), strings.ToUpper(digest))}
 	}
 	return "sh", []string{"-c", fmt.Sprintf("if [ -f %s ] && [ \"$(sha256sum %s | awk '{print $1}')\" = %s ]; then printf hit; else printf miss; fi", shellQuote(path), shellQuote(path), shellQuote(strings.ToLower(digest)))}
 }
@@ -98,13 +97,11 @@ func dockerScriptCommand(path string, interpreter providersdk.ScriptInterpreter,
 }
 
 func (d *Driver) stageDockerScript(ctx context.Context, id, path string, interpreter providersdk.ScriptInterpreter, content []byte) error {
-	dir := "/tmp/boxy-script-cache"
-	tmpPath := path + ".tmp"
 	var command []string
 	if interpreter == providersdk.ScriptInterpreterPowerShell {
-		command = []string{"powershell", "-NoProfile", "-NonInteractive", "-Command", fmt.Sprintf("$dir='%s'; New-Item -ItemType Directory -Path $dir -Force | Out-Null; $tmp='%s.'+[guid]::NewGuid().ToString()+'.tmp'; $input=[Console]::OpenStandardInput(); $output=[IO.File]::OpenWrite($tmp); try { $input.CopyTo($output) } finally { $output.Dispose() }; Move-Item -LiteralPath $tmp -Destination '%s' -Force; $files=@(Get-ChildItem -LiteralPath $dir -File | Sort-Object LastWriteTimeUtc -Descending); if ($files.Count -gt 64) { $files | Select-Object -Skip 64 | Remove-Item -Force }", dir, path, path)}
+		command = []string{"powershell", "-NoProfile", "-NonInteractive", "-Command", dockerPowerShellStageCommand(path)}
 	} else {
-		command = []string{"sh", "-c", fmt.Sprintf("set -eu; dir=%s; mkdir -p \"$dir\"; chmod 700 \"$dir\"; tmp=%s.$$; cat > \"$tmp\"; chmod 700 \"$tmp\"; mv -f \"$tmp\" %s; find \"$dir\" -type f -printf '%%T@ %%p\\n' | sort -nr | awk 'NR>64 {print $2}' | xargs -r rm -f", shellQuote(dir), shellQuote(tmpPath), shellQuote(path))}
+		command = []string{"sh", "-c", dockerShellStageCommand(path)}
 	}
 	result, err := d.runDockerExecWithStdin(ctx, id, command, bytes.NewReader(content))
 	if err != nil {
@@ -114,6 +111,17 @@ func (d *Driver) stageDockerScript(ctx context.Context, id, path string, interpr
 		return fmt.Errorf("stage Docker script exited with code %d", result.exitCode)
 	}
 	return nil
+}
+
+func dockerPowerShellStageCommand(path string) string {
+	dir := `C:\Windows\Temp\boxy-script-cache\`
+	return fmt.Sprintf("$dir='%s'; New-Item -ItemType Directory -Path $dir -Force | Out-Null; $tmp=Join-Path $dir ('%s.'+[guid]::NewGuid().ToString()+'.tmp'); $input=[Console]::OpenStandardInput(); $output=[IO.File]::OpenWrite($tmp); try { $input.CopyTo($output) } finally { $output.Dispose() }; Move-Item -LiteralPath $tmp -Destination '%s' -Force; $files=@(Get-ChildItem -LiteralPath $dir -File | Sort-Object LastWriteTimeUtc -Descending); $size=0; $count=0; foreach ($file in $files) { if (($count -ge %d) -or (($size + $file.Length) -gt %d)) { Remove-Item -LiteralPath $file.FullName -Force } else { $size += $file.Length; $count++ } }", psQuote(dir), strings.TrimSuffix(strings.TrimPrefix(path, dir), ".ps1"), psQuote(path), providersdk.MaxScriptCacheFiles, providersdk.MaxScriptCacheBytes)
+}
+
+func dockerShellStageCommand(path string) string {
+	dir := "/tmp/boxy-script-cache"
+	tmpPath := path + ".tmp"
+	return fmt.Sprintf("set -eu; dir=%s; mkdir -p \"$dir\"; chmod 700 \"$dir\"; tmp=%s.$$; cat > \"$tmp\"; chmod 700 \"$tmp\"; mv -f \"$tmp\" %s; find \"$dir\" -type f -printf '%%T@ %%s %%p\\n' | sort -nr | awk -v max_files=%d -v max_bytes=%d 'NR <= max_files && (total + $2) <= max_bytes { total += $2; next } { print $3 }' | xargs -r rm -f", shellQuote(dir), shellQuote(tmpPath), shellQuote(path), providersdk.MaxScriptCacheFiles, providersdk.MaxScriptCacheBytes)
 }
 
 type dockerExecResult struct {
@@ -194,4 +202,8 @@ func (d *Driver) execStreamCommand(ctx context.Context, id string, command []str
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func psQuote(value string) string {
+	return strings.ReplaceAll(value, "'", "''")
 }
