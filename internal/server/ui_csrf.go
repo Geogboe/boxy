@@ -23,7 +23,7 @@ func ensureCSRFCookie(w http.ResponseWriter, r *http.Request, insecureHTTP bool)
 		return ""
 	}
 	token := base64.RawURLEncoding.EncodeToString(raw[:])
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // Secure is disabled only for explicit insecure local HTTP; SameSite=Lax limits cross-site form submission.
 		Name: csrfCookieName, Value: token, Path: "/", Secure: !insecureHTTP,
 		SameSite: http.SameSiteLaxMode,
 	})
