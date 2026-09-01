@@ -218,6 +218,7 @@ tbody tr:hover {
 .badge-destroying { background: rgba(251, 146, 60, 0.15); color: var(--orange); }
 .badge-released { background: rgba(139, 143, 163, 0.15); color: var(--text-muted); }
 .badge-destroyed { background: rgba(139, 143, 163, 0.1); color: var(--text-muted); }
+.badge-drained { background: rgba(251, 146, 60, 0.15); color: var(--orange); }
 .badge-unknown { background: rgba(139, 143, 163, 0.15); color: var(--text-muted); }
 /* Sandbox-status-specific badges (SandboxStatus, distinct from ResourceState above). */
 .badge-pending { background: rgba(139, 143, 163, 0.15); color: var(--text-muted); }
@@ -364,6 +365,37 @@ tbody tr:hover {
   border-radius: 0.5rem;
   font-size: 0.9rem;
 }
+
+.result-banner {
+  background: rgba(74, 222, 128, 0.12);
+  border: 1px solid rgba(74, 222, 128, 0.35);
+  color: var(--green);
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  font-size: 0.9rem;
+  margin-bottom: 1rem;
+}
+
+.pool-controls { overflow: visible; }
+.pool-control-actions { display: grid; gap: 0.75rem; padding: 1rem 1.25rem; }
+.pool-control-row { align-items: center; display: flex; flex-wrap: wrap; gap: 0.6rem; }
+.pool-control-row strong { min-width: 12rem; }
+.pool-cleanup-row { border-top: 1px solid var(--border); padding-top: 0.75rem; }
+.pool-group { border-bottom: 1px solid var(--border); padding: 1rem 1.25rem; }
+.pool-group:last-child { border-bottom: none; }
+.pool-group-header { align-items: center; display: flex; flex-wrap: wrap; gap: 1rem; justify-content: space-between; }
+.pool-counts { align-items: center; color: var(--text-muted); display: flex; flex-wrap: wrap; gap: 0.5rem; font-size: 0.8rem; }
+.pool-type, .pool-policy { color: var(--text-muted); font-size: 0.8rem; }
+.pool-policy { margin: 0.25rem 0 0.75rem; }
+.pool-group table { min-width: 680px; }
+.secondary-btn, .danger-btn {
+  border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+  font-size: 0.8rem; padding: 0.35rem 0.7rem;
+}
+.secondary-btn { background: transparent; color: var(--text-muted); }
+.secondary-btn:hover { border-color: var(--accent); color: var(--text); }
+.danger-btn { background: rgba(248, 113, 113, 0.12); border-color: rgba(248, 113, 113, 0.4); color: var(--red); }
+.danger-btn:hover { background: rgba(248, 113, 113, 0.2); }
 
 /* Empty state */
 .empty {
