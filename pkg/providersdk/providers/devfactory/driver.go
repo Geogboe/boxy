@@ -7,11 +7,13 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Geogboe/boxy/pkg/diskjson"
@@ -49,6 +51,8 @@ type Driver struct {
 	latency time.Duration
 	dataDir string
 	store   *diskjson.Store[storeData]
+	cacheMu sync.Mutex
+	cache   map[string]map[string]struct{}
 }
 
 // New creates a devfactory driver from a parsed Config. If DataDir is
@@ -77,6 +81,7 @@ func New(cfg *Config) *Driver {
 		latency: latency,
 		dataDir: dataDir,
 		store:   newDevfactoryStore(dataDir),
+		cache:   make(map[string]map[string]struct{}),
 	}
 }
 
@@ -316,23 +321,46 @@ func (d *Driver) Update(ctx context.Context, id string, op providersdk.Operation
 
 		switch o := op.(type) {
 		case *ExecOp:
-			if len(o.Command) == 0 {
+			if o.Script == nil && len(o.Command) == 0 {
 				return s, fmt.Errorf("devfactory: exec command is empty")
 			}
-			desc = fmt.Sprintf("exec: %v", o.Command)
+			if o.Script != nil {
+				if err := o.Script.VerifyDigest(); err != nil {
+					return s, fmt.Errorf("devfactory: %w", err)
+				}
+				interpreter, err := devfactoryScriptInterpreter(o.Script.Interpreter, d.profile)
+				if err != nil {
+					return s, err
+				}
+				hit := d.scriptCacheHit(id, o.Script.Digest)
+				desc = fmt.Sprintf("script: %s (%s)", o.Script.Digest, interpreter)
+				outputs["script_digest"] = o.Script.Digest
+				outputs["script_interpreter"] = string(interpreter)
+				if hit {
+					outputs["script_cache"] = "hit"
+				} else {
+					outputs["script_cache"] = "miss"
+				}
+				outputs["stdout"] = strings.Join(d.execOutputChunks(o), "")
+			} else {
+				desc = fmt.Sprintf("exec: %v", o.Command)
+				outputs["stdout"] = strings.Join(d.execOutputChunks(o), "")
+			}
 			outputs["operation"] = desc
-			outputs["stdout"] = strings.Join(d.execOutputChunks(o), "")
 			outputs["exit_code"] = "0"
 			envKeys := make([]string, 0, len(o.Env))
 			for key := range o.Env {
 				envKeys = append(envKeys, key)
 			}
 			sort.Strings(envKeys)
-			r.Execs = append(r.Execs, ExecRecord{
-				Command:            append([]string(nil), o.Command...),
-				EnvironmentKeys:    envKeys,
-				CredentialProvided: o.GuestCredential != nil,
-			})
+			record := ExecRecord{Command: append([]string(nil), o.Command...), EnvironmentKeys: envKeys, CredentialProvided: o.GuestCredential != nil}
+			if o.Script != nil {
+				record.Command = nil
+				record.ScriptDigest = o.Script.Digest
+				record.ScriptInterpreter = outputs["script_interpreter"]
+				record.ScriptArgs = append([]string(nil), o.Script.Args...)
+			}
+			r.Execs = append(r.Execs, record)
 		case *SetStateOp:
 			prev := r.State
 			desc = fmt.Sprintf("set_state: %s → %s", prev, o.State)
@@ -390,11 +418,47 @@ func (d *Driver) execOutputChunks(op *ExecOp) []string {
 	if len(d.cfg.ExecOutputChunks) > 0 {
 		return append([]string(nil), d.cfg.ExecOutputChunks...)
 	}
+	if op.Script != nil {
+		return []string{fmt.Sprintf("[simulated output of script %s]", op.Script.Digest)}
+	}
 	return []string{fmt.Sprintf("[simulated output of: %v]", op.Command)}
 }
 
 func (d *Driver) execChunkDelay() time.Duration {
 	return time.Duration(d.cfg.ExecChunkDelay)
+}
+
+func devfactoryScriptInterpreter(requested providersdk.ScriptInterpreter, profile profileSpec) (providersdk.ScriptInterpreter, error) {
+	if requested == "" || requested == providersdk.ScriptInterpreterAuto {
+		switch profile.ConnInfo(0)["type"] {
+		case "container", "vm":
+			return providersdk.ScriptInterpreterSH, nil
+		default:
+			return "", errors.New("cannot determine the Devfactory script interpreter; specify --interpreter")
+		}
+	}
+	if requested != providersdk.ScriptInterpreterPowerShell && requested != providersdk.ScriptInterpreterSH {
+		return "", fmt.Errorf("unsupported script interpreter %q", requested)
+	}
+	if requested == providersdk.ScriptInterpreterPowerShell && profile.ConnInfo(0)["type"] != "container" {
+		return "", errors.New("PowerShell scripts are only supported by the simulated Windows container profile")
+	}
+	return requested, nil
+}
+
+func (d *Driver) scriptCacheHit(resourceID, digest string) bool {
+	d.cacheMu.Lock()
+	defer d.cacheMu.Unlock()
+	entries := d.cache[resourceID]
+	if entries == nil {
+		entries = make(map[string]struct{})
+		d.cache[resourceID] = entries
+	}
+	if _, ok := entries[digest]; ok {
+		return true
+	}
+	entries[digest] = struct{}{}
+	return false
 }
 
 // Delete removes a simulated resource.
@@ -407,6 +471,9 @@ func (d *Driver) Delete(ctx context.Context, id string) error {
 		delete(s.Resources, id)
 		return s, nil
 	})
+	d.cacheMu.Lock()
+	delete(d.cache, id)
+	d.cacheMu.Unlock()
 	return err
 }
 

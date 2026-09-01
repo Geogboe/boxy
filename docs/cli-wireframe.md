@@ -284,9 +284,13 @@ boxy
 │       ├── --timeout <duration>                   Default 30s, maximum 5m
 │       ├── --events                              Write structured NDJSON events
 │       ├── --buffered                            Wait for completion and use one final response
-│       └── --guest-password-stdin                  Read a guest password from stdin (never a flag value)
+│       ├── --guest-password-stdin                  Read a guest password from stdin (never a flag value)
+│       ├── --script-file <path>                    Stage a local script; use `-- [args...]`
+│       └── --interpreter auto|powershell|sh        Select script interpreter (`auto` by default)
 │
 │       $ boxy sandbox exec sb-a1b2c3 -- hostname
+│         sandbox output...
+│       $ boxy sandbox exec sb-a1b2c3 -- @setup.ps1 --mode ci
 │         sandbox output...
 │
 │

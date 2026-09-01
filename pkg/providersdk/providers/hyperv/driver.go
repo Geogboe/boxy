@@ -498,7 +498,7 @@ func (d *Driver) Update(ctx context.Context, id string, op providersdk.Operation
 }
 
 func (d *Driver) execOnGuest(ctx context.Context, id string, op *ExecOp) (*providersdk.Result, error) {
-	if len(op.Command) == 0 {
+	if op.Script == nil && len(op.Command) == 0 {
 		return nil, fmt.Errorf("ExecOp.Command is empty")
 	}
 
@@ -520,6 +520,24 @@ func (d *Driver) execOnGuest(ctx context.Context, id string, op *ExecOp) (*provi
 	ge, err := d.newGuestExec(ctx, id, guestOS, guestUser, guestPassword, "")
 	if err != nil {
 		return nil, err
+	}
+	if op.Script != nil {
+		interpreter, err := scriptInterpreterForGuest(op.Script.Interpreter, guestOS)
+		if err != nil {
+			return nil, err
+		}
+		path, err := stageHyperVScript(ctx, ge, op.Script, guestOS)
+		if err != nil {
+			return nil, fmt.Errorf("stage script on %s guest (VM %s): %w", guestOS, id, err)
+		}
+		cmd, args := hyperVScriptCommand(interpreter, path, op.Script.Args)
+		result, err := ge.Exec(ctx, cmd, args...)
+		if err != nil {
+			return nil, fmt.Errorf("execute script on %s guest (VM %s): %w", guestOS, id, err)
+		}
+		return &providersdk.Result{Outputs: map[string]string{
+			"stdout": result.Stdout, "stderr": result.Stderr, "exit_code": strconv.Itoa(result.ExitCode),
+		}}, nil
 	}
 
 	cmd := op.Command[0]
@@ -546,7 +564,7 @@ func (d *Driver) UpdateStream(ctx context.Context, id string, op providersdk.Ope
 	if !ok {
 		return nil, fmt.Errorf("unsupported streaming operation type %T", op)
 	}
-	if len(execOp.Command) == 0 {
+	if execOp.Script == nil && len(execOp.Command) == 0 {
 		return nil, fmt.Errorf("ExecOp.Command is empty")
 	}
 	if sink == nil {
@@ -575,6 +593,22 @@ func (d *Driver) UpdateStream(ctx context.Context, id string, op providersdk.Ope
 	streamer, ok := ge.(vmsdk.GuestExecStreamer)
 	if !ok {
 		return nil, fmt.Errorf("hyperv %s guest does not support streaming execution", guestOS)
+	}
+	if execOp.Script != nil {
+		interpreter, err := scriptInterpreterForGuest(execOp.Script.Interpreter, guestOS)
+		if err != nil {
+			return nil, err
+		}
+		path, err := stageHyperVScript(ctx, ge, execOp.Script, guestOS)
+		if err != nil {
+			return nil, fmt.Errorf("stage script on %s guest (VM %s): %w", guestOS, id, err)
+		}
+		cmd, args := hyperVScriptCommand(interpreter, path, execOp.Script.Args)
+		result, err := streamer.ExecStream(ctx, cmd, args, sink)
+		if err != nil {
+			return nil, fmt.Errorf("stream script on %s guest (VM %s): %w", guestOS, id, err)
+		}
+		return &providersdk.Result{Outputs: map[string]string{"exit_code": strconv.Itoa(result.ExitCode)}}, nil
 	}
 	result, err := streamer.ExecStream(ctx, execOp.Command[0], execOp.Command[1:], sink)
 	if err != nil {

@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -130,6 +132,65 @@ func TestSandboxExecPassesOpaqueGuestCredentialToExecutor(t *testing.T) {
 	}
 	if executor.calledOperation.GuestCredential == nil || executor.calledOperation.GuestCredential.Kind != "password" || string(executor.calledOperation.GuestCredential.Data) != `{"username":"Administrator","password":"rotated"}` {
 		t.Fatalf("executor operation = %+v, want opaque guest credential", executor.calledOperation)
+	}
+}
+
+func TestSandboxExecScriptVerifiesDigestAndPreservesArgs(t *testing.T) {
+	st := store.NewMemoryStore()
+	_ = st.CreateSandbox(context.Background(), model.Sandbox{ID: "sb-1", Status: model.SandboxStatusReady, Resources: []model.ResourceID{"res-1"}})
+	_ = st.PutResource(context.Background(), model.Resource{ID: "res-1", State: model.ResourceStateAllocated})
+	executor := new(fakeSandboxExecutor)
+	s := &Server{store: st, executor: executor}
+	mux := http.NewServeMux()
+	s.registerRoutes(mux)
+	content := []byte("echo raw script\n")
+	digest := sha256.Sum256(content)
+	body := fmt.Sprintf(`{"script":{"content":"%s","digest":"%x","interpreter":"sh","args":["quoted value","--mode","ci"]}}`, base64.StdEncoding.EncodeToString(content), digest)
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec?stream=false", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
+	}
+	if executor.calledOperation.Script == nil || string(executor.calledOperation.Script.Content) != string(content) {
+		t.Fatalf("script operation = %+v, want raw content", executor.calledOperation.Script)
+	}
+	if got := strings.Join(executor.calledOperation.Script.Args, "\x00"); got != "quoted value\x00--mode\x00ci" {
+		t.Fatalf("script args = %q, want array-preserved args", got)
+	}
+}
+
+func TestSandboxExecRejectsScriptDigestMismatch(t *testing.T) {
+	st := store.NewMemoryStore()
+	_ = st.CreateSandbox(context.Background(), model.Sandbox{ID: "sb-1", Status: model.SandboxStatusReady, Resources: []model.ResourceID{"res-1"}})
+	_ = st.PutResource(context.Background(), model.Resource{ID: "res-1", State: model.ResourceStateAllocated})
+	executor := new(fakeSandboxExecutor)
+	s := &Server{store: st, executor: executor}
+	mux := http.NewServeMux()
+	s.registerRoutes(mux)
+	body := `{"script":{"content":"cmF3","digest":"0000000000000000000000000000000000000000000000000000000000000000","interpreter":"sh"}}`
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec", strings.NewReader(body)))
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "digest") {
+		t.Fatalf("status = %d, body=%s, want digest rejection", w.Code, w.Body.String())
+	}
+	if executor.calledOperation.Script != nil || executor.calledOperation.Command != nil {
+		t.Fatal("executor was called for a mismatched script digest")
+	}
+}
+
+func TestSandboxExecRejectsCommandAndScriptTogether(t *testing.T) {
+	st := store.NewMemoryStore()
+	_ = st.CreateSandbox(context.Background(), model.Sandbox{ID: "sb-1", Status: model.SandboxStatusReady, Resources: []model.ResourceID{"res-1"}})
+	_ = st.PutResource(context.Background(), model.Resource{ID: "res-1", State: model.ResourceStateAllocated})
+	s := &Server{store: st, executor: new(fakeSandboxExecutor)}
+	mux := http.NewServeMux()
+	s.registerRoutes(mux)
+	body := `{"command":["echo"],"script":{"content":"cmF3","digest":"c6c2e5b3a4c3a8a5b39e6d3f7f5c66e8d5e5b7d2b6f89f0a2e0e4c7f2d3c7a2b","interpreter":"sh"}}`
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec", strings.NewReader(body)))
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "mutually exclusive") {
+		t.Fatalf("status = %d, body=%s, want mutually-exclusive rejection", w.Code, w.Body.String())
 	}
 }
 

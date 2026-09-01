@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	imagetypes "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
+	systemtypes "github.com/docker/docker/api/types/system"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -52,6 +53,7 @@ type dockerClient interface {
 	ContainerExecAttach(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error)
 	ContainerExecInspect(ctx context.Context, execID string) (container.ExecInspect, error)
 	ContainerRemove(ctx context.Context, containerID string, options container.RemoveOptions) error
+	Info(ctx context.Context) (systemtypes.Info, error)
 }
 
 // Driver implements providersdk.Driver using the Docker Engine API.
@@ -76,6 +78,17 @@ func New(cfg *Config) (*Driver, error) {
 }
 
 func (d *Driver) Type() providersdk.Type { return ProviderType }
+
+// Availability reports Docker Engine host memory as a capacity estimate.
+// Docker's Info endpoint exposes total host memory, not reliably free memory,
+// so callers must not use this sample as an allocation rejection signal.
+func (d *Driver) Availability(ctx context.Context) (*providersdk.ResourceAvailability, error) {
+	info, err := d.cli.Info(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("docker Info: %w", err)
+	}
+	return &providersdk.ResourceAvailability{MemoryMB: info.MemTotal / (1024 * 1024)}, nil
+}
 
 func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, error) {
 	cc, err := decodeCreateConfig(cfg)
@@ -243,6 +256,9 @@ func (d *Driver) Update(ctx context.Context, id string, op providersdk.Operation
 }
 
 func (d *Driver) execInContainer(ctx context.Context, id string, op *ExecOp) (*providersdk.Result, error) {
+	if op.Script != nil {
+		return d.execScriptInContainer(ctx, id, op, nil)
+	}
 	execResp, err := d.cli.ContainerExecCreate(ctx, id, container.ExecOptions{
 		Cmd:          op.Command,
 		AttachStdout: true,
@@ -284,6 +300,9 @@ func (d *Driver) UpdateStream(ctx context.Context, id string, op providersdk.Ope
 	}
 	if sink == nil {
 		return nil, fmt.Errorf("stream sink is required")
+	}
+	if execOp.Script != nil {
+		return d.execScriptInContainer(ctx, id, execOp, sink)
 	}
 	execResp, err := d.cli.ContainerExecCreate(ctx, id, container.ExecOptions{
 		Cmd:          execOp.Command,
