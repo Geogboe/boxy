@@ -26,6 +26,7 @@ func APIRouteCatalog() []APIRoute {
 		{Group: "Pools", Method: "POST", Path: "/api/v1/pools/{name}/guest-credential", Auth: "admin", Description: "Set a pool's guest bootstrap credential from a request body; the raw value is never returned."},
 		{Group: "Resources", Method: "GET", Path: "/api/v1/resources", Auth: "auditor/admin", Description: "List resources."},
 		{Group: "Resources", Method: "GET", Path: "/api/v1/resources/{id}", Auth: "auditor/admin", Description: "Inspect one resource."},
+		{Group: "Resources", Method: "POST", Path: "/api/v1/resources/purge", Auth: "admin", Description: "Preview or explicitly force cleanup of unreferenced destroyed and stale destroying/error resources."},
 		{Group: "Sandboxes", Method: "GET", Path: "/api/v1/sandboxes", Auth: "user/auditor/admin", Description: "List owned sandboxes for users; all for auditors/admins."},
 		{Group: "Sandboxes", Method: "GET", Path: "/api/v1/sandboxes/{id}", Auth: "user/auditor/admin", Description: "Inspect a sandbox, subject to user ownership."},
 		{Group: "Sandboxes", Method: "POST", Path: "/api/v1/sandboxes", Auth: "user/admin", Description: "Create an owned asynchronous sandbox request."},

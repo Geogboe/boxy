@@ -284,9 +284,13 @@ boxy
 │       ├── --timeout <duration>                   Default 30s, maximum 5m
 │       ├── --events                              Write structured NDJSON events
 │       ├── --buffered                            Wait for completion and use one final response
-│       └── --guest-password-stdin                  Read a guest password from stdin (never a flag value)
+│       ├── --guest-password-stdin                  Read a guest password from stdin (never a flag value)
+│       ├── --script-file <path>                    Stage a local script; use `-- [args...]`
+│       └── --interpreter auto|powershell|sh        Select script interpreter (`auto` by default)
 │
 │       $ boxy sandbox exec sb-a1b2c3 -- hostname
+│         sandbox output...
+│       $ boxy sandbox exec sb-a1b2c3 -- @setup.ps1 --mode ci
 │         sandbox output...
 │
 │
@@ -342,6 +346,12 @@ boxy
 │   │   └── fill <pool>                          Reconcile to configured min_ready
 │   │       $ boxy debug pool fill win-vm
 │   │         filled pool win-vm
+│   │
+│   ├── resource                               Run resource maintenance
+│   │   ├── --server <addr>                      Server address (overrides env/global defaults)
+│   │   └── purge [--dry-run|--force]             Preview or force stale-resource cleanup
+│   │       $ boxy debug resource purge --dry-run
+│   │         resource purge: candidates=2 cleaned=0 skipped=4 errors=0 dry-run=true force=false
 │   │
 │   └── provider                               Exercise devfactory provider (devtools build tag only —
 │       │                                        absent from release binaries; build with

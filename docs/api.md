@@ -54,6 +54,7 @@ API-key roles:
 |---|---|---|---|
 | GET | `/api/v1/resources` | auditor/admin | List resources. |
 | GET | `/api/v1/resources/{id}` | auditor/admin | Inspect one resource. |
+| POST | `/api/v1/resources/purge` | admin | Preview or explicitly force cleanup of unreferenced destroyed and stale destroying/error resources. |
 
 ### Sandboxes
 
@@ -104,7 +105,7 @@ Sandbox creation returns `202 Accepted` and is fulfilled asynchronously by the d
 
 ## Sandbox execution
 
-`POST /api/v1/sandboxes/{id}/exec` accepts a JSON object with a non-empty `command` array and optional `resource_id` and `timeout` fields. The sandbox must be ready; multi-resource sandboxes require `resource_id`. The default response is `application/x-ndjson`: each data event has `type`, `stream`, and base64 `data`; the terminal event has `type=complete`, `exit_code` in `attributes`, and any error. `?stream=true` is an explicit spelling of the default. Use `?stream=false` for the bounded buffered JSON response.
+`POST /api/v1/sandboxes/{id}/exec` accepts either a non-empty `command` array or a `script` object, never both. A script has base64-encoded `content`, a lowercase SHA-256 `digest`, `interpreter` (`auto`, `powershell`, or `sh`), and optional `args` array. Script content is limited to 4 MiB and the server recomputes the digest before dispatch. The sandbox must be ready; multi-resource sandboxes require `resource_id`. The default response is `application/x-ndjson`: each data event has `type`, `stream`, and base64 `data`; the terminal event has `type=complete`, `exit_code` in `attributes`, and any error. `?stream=true` is an explicit spelling of the default. Use `?stream=false` for the bounded buffered JSON response.
 
 Output is bounded (1 MiB total, 64 KiB per chunk) in both modes. In streaming mode, each chunk is delivered as soon as it is produced, so exceeding the limit mid-command only truncates the tail — every chunk already sent stays delivered — and surfaces as an `error` field on the terminal `complete` event rather than an HTTP status change (headers are already flushed by the time streaming starts). In buffered mode, a command that exceeds the limit returns `413 Payload Too Large` and discards any output already collected. A context-deadline timeout returns `504 Gateway Timeout`; any other provider/agent failure returns `500 Internal Server Error` in buffered mode, or the same terminal `complete`-event `error` in streaming mode.
 

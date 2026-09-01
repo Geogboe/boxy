@@ -32,6 +32,12 @@ type PoolMaintenance interface {
 	Fill(ctx context.Context, poolName model.PoolName) (model.Pool, error)
 }
 
+// ResourceCleanup performs the shared, confirmation-protected resource purge
+// workflow used by the REST API and web dashboard.
+type ResourceCleanup interface {
+	Purge(ctx context.Context, request pool.CleanupRequest) (pool.CleanupReport, error)
+}
+
 // AgentAdmin exposes operator actions against the agent transport for API
 // handlers — a narrow seam (same pattern as PoolMaintenance) implemented by
 // internal/agentserver.Server.
@@ -52,6 +58,7 @@ type Server struct {
 	store           store.Store
 	sandboxMgr      *sandbox.Manager
 	poolMaintenance PoolMaintenance
+	resourceCleanup ResourceCleanup
 	agentAdmin      AgentAdmin
 	executor        SandboxExecutor
 	guestSecrets    boxysecrets.Store
@@ -71,12 +78,13 @@ type Server struct {
 
 // ServerOptions controls transport security and API authentication.
 type ServerOptions struct {
-	AuthRequired bool
-	InsecureHTTP bool
-	TLSCertPEM   []byte
-	TLSKeyPEM    []byte
-	Executor     SandboxExecutor
-	GuestSecrets boxysecrets.Store
+	AuthRequired    bool
+	InsecureHTTP    bool
+	TLSCertPEM      []byte
+	TLSKeyPEM       []byte
+	Executor        SandboxExecutor
+	ResourceCleanup ResourceCleanup
+	GuestSecrets    boxysecrets.Store
 	// Catalog is an immutable, startup-time view of configured templates,
 	// packages, sources, stores, and pool relationships for the UI.
 	Catalog CatalogSource
@@ -109,6 +117,7 @@ func NewWithOptions(st store.Store, sm *sandbox.Manager, pm PoolMaintenance, aa 
 		store:           st,
 		sandboxMgr:      sm,
 		poolMaintenance: pm,
+		resourceCleanup: opts.ResourceCleanup,
 		agentAdmin:      aa,
 		executor:        opts.Executor,
 		guestSecrets:    opts.GuestSecrets,

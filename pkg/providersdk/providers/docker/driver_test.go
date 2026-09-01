@@ -15,12 +15,109 @@ import (
 	"github.com/docker/docker/api/types/container"
 	imagetypes "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
+	systemtypes "github.com/docker/docker/api/types/system"
 	"github.com/docker/docker/client"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
+
+var _ providersdk.AvailabilityReporter = (*Driver)(nil)
+
+func TestDriver_AvailabilityReportsDockerHostMemoryEstimate(t *testing.T) {
+	called := false
+	d := &Driver{cli: &mockDockerClient{info: func(context.Context) (systemtypes.Info, error) {
+		called = true
+		return systemtypes.Info{MemTotal: 8 * 1024 * 1024 * 1024}, nil
+	}}}
+
+	sample, err := d.Availability(context.Background())
+	if err != nil {
+		t.Fatalf("Availability: %v", err)
+	}
+	if !called {
+		t.Fatal("Docker Info was not called")
+	}
+	if sample == nil || sample.MemoryMB != 8192 {
+		t.Fatalf("sample = %+v, want 8192 MiB", sample)
+	}
+}
+
+func TestDriver_AvailabilityPropagatesDockerInfoError(t *testing.T) {
+	want := fmt.Errorf("engine unavailable")
+	d := &Driver{cli: &mockDockerClient{info: func(context.Context) (systemtypes.Info, error) {
+		return systemtypes.Info{}, want
+	}}}
+
+	if _, err := d.Availability(context.Background()); err == nil || !strings.Contains(err.Error(), want.Error()) {
+		t.Fatalf("Availability error = %v, want wrapped Docker Info error", err)
+	}
+}
+
+func TestDockerScriptCacheUsesGuestSpecificPathsAndLimits(t *testing.T) {
+	linuxPath := dockerScriptPath("ABCDEF", providersdk.ScriptInterpreterSH)
+	if linuxPath != "/tmp/boxy-script-cache/abcdef.sh" {
+		t.Fatalf("Linux script path = %q", linuxPath)
+	}
+
+	powerShellPath := dockerScriptPath("ABCDEF", providersdk.ScriptInterpreterPowerShell)
+	if powerShellPath != `C:\Windows\Temp\boxy-script-cache\abcdef.ps1` {
+		t.Fatalf("Windows script path = %q", powerShellPath)
+	}
+
+	powershellStage := dockerPowerShellStageCommand(powerShellPath)
+	for _, expected := range []string{`C:\Windows\Temp\boxy-script-cache\`, "Move-Item", "64", "33554432"} {
+		if !strings.Contains(powershellStage, expected) {
+			t.Errorf("PowerShell staging command missing %q: %s", expected, powershellStage)
+		}
+	}
+
+	shellStage := dockerShellStageCommand(linuxPath)
+	for _, expected := range []string{"/tmp/boxy-script-cache", "max_files=64", "max_bytes=33554432"} {
+		if !strings.Contains(shellStage, expected) {
+			t.Errorf("shell staging command missing %q: %s", expected, shellStage)
+		}
+	}
+}
+
+func TestDockerScriptInterpreterRejectsPlatformMismatches(t *testing.T) {
+	tests := []struct {
+		name      string
+		requested providersdk.ScriptInterpreter
+		platform  string
+		image     string
+		want      providersdk.ScriptInterpreter
+		wantErr   string
+	}{
+		{name: "auto linux", requested: providersdk.ScriptInterpreterAuto, platform: "linux", want: providersdk.ScriptInterpreterSH},
+		{name: "auto windows", requested: providersdk.ScriptInterpreterAuto, platform: "windows", want: providersdk.ScriptInterpreterPowerShell},
+		{name: "explicit sh linux", requested: providersdk.ScriptInterpreterSH, platform: "linux", want: providersdk.ScriptInterpreterSH},
+		{name: "explicit powershell windows", requested: providersdk.ScriptInterpreterPowerShell, platform: "windows", want: providersdk.ScriptInterpreterPowerShell},
+		{name: "powershell on linux", requested: providersdk.ScriptInterpreterPowerShell, platform: "linux", wantErr: "require a Windows Docker container"},
+		{name: "sh on windows", requested: providersdk.ScriptInterpreterSH, platform: "windows", wantErr: "require a Linux Docker container"},
+		{name: "image windows hint", requested: providersdk.ScriptInterpreterSH, image: "mcr.microsoft.com/windows/servercore:ltsc2022", wantErr: "require a Linux Docker container"},
+		{name: "ambiguous auto", requested: providersdk.ScriptInterpreterAuto, image: "custom-image", wantErr: "specify --interpreter"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := dockerScriptInterpreter(test.requested, test.platform, test.image)
+			if test.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("error = %v, want substring %q", err, test.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("dockerScriptInterpreter: %v", err)
+			}
+			if got != test.want {
+				t.Fatalf("interpreter = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
 
 // mockDockerClient is a test double for dockerClient.
 type mockDockerClient struct {
@@ -35,6 +132,7 @@ type mockDockerClient struct {
 	containerExecAttach  func(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error)
 	containerExecInspect func(ctx context.Context, execID string) (container.ExecInspect, error)
 	containerRemove      func(ctx context.Context, containerID string, options container.RemoveOptions) error
+	info                 func(ctx context.Context) (systemtypes.Info, error)
 }
 
 func (m *mockDockerClient) ImageInspect(ctx context.Context, imageID string, opts ...client.ImageInspectOption) (imagetypes.InspectResponse, error) {
@@ -81,6 +179,12 @@ func (m *mockDockerClient) ContainerExecInspect(ctx context.Context, id string) 
 }
 func (m *mockDockerClient) ContainerRemove(ctx context.Context, id string, opts container.RemoveOptions) error {
 	return m.containerRemove(ctx, id, opts)
+}
+func (m *mockDockerClient) Info(ctx context.Context) (systemtypes.Info, error) {
+	if m.info != nil {
+		return m.info(ctx)
+	}
+	return systemtypes.Info{}, nil
 }
 
 // runningInspect returns an InspectResponse that looks like a running container.

@@ -2,6 +2,41 @@
 
 {{define "content"}}
 <h1 class="page-title">Pools</h1>
+{{if .PoolResult}}<div class="result-banner">{{.PoolResult}}</div>{{end}}
+{{if .PoolError}}<div class="error-banner">{{.PoolError}}</div>{{end}}
+{{if .CanManagePools}}
+<div class="table-card pool-controls">
+  <div class="table-card-header"><div>Operator controls</div><a href="/ui/diagnostics">View diagnostics</a></div>
+  <div class="pool-control-actions">
+    {{range .Pools}}
+    <div class="pool-control-row">
+      <strong>{{.Name}}</strong>
+      <form method="post" action="/ui/pools/{{.Name}}/drain">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <button type="submit" class="secondary-btn" onclick="return confirm('Drain unused ready resources from {{.Name}}?')">Drain</button>
+      </form>
+      <form method="post" action="/ui/pools/{{.Name}}/fill">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <button type="submit" class="secondary-btn">Fill</button>
+      </form>
+    </div>
+    {{end}}
+    <div class="pool-control-row pool-cleanup-row">
+      <strong>Resource cleanup</strong>
+      <form method="post" action="/ui/resources/purge">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="action" value="preview">
+        <button type="submit" class="secondary-btn">Preview cleanup</button>
+      </form>
+      <form method="post" action="/ui/resources/purge">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="action" value="force">
+        <button type="submit" class="danger-btn" onclick="return confirm('Force cleanup only resources explicitly eligible under the 30-minute safety rule?')">Force cleanup</button>
+      </form>
+    </div>
+  </div>
+</div>
+{{end}}
 <div class="table-card">
   <div class="table-card-header">
     <div>All Pools</div>
@@ -19,29 +54,24 @@
 {{end}}
 
 {{define "pools_table_fragment"}}
-{{if .Pools}}
-<table>
-  <thead>
-    <tr>
-      <th scope="col">Name</th>
-      <th scope="col">Type</th>
-      <th scope="col">Min Ready</th>
-      <th scope="col">Max Total</th>
-      <th scope="col">Resources</th>
-    </tr>
-  </thead>
-  <tbody>
-    {{range .Pools}}
-    <tr>
-      <td>{{.Name}}</td>
-      <td>{{.Inventory.ExpectedType}}</td>
-      <td>{{.Policies.Preheat.MinReady}}</td>
-      <td>{{.Policies.Preheat.MaxTotal}}</td>
-      <td>{{len .Inventory.Resources}}</td>
-    </tr>
-    {{end}}
-  </tbody>
-</table>
+{{if not .CanManagePools}}
+<div class="empty">Pool inventory is restricted to administrators.</div>
+{{else if .PoolViews}}
+{{range .PoolViews}}
+<div class="pool-group">
+  <div class="pool-group-header">
+    <div><strong>{{.Name}}</strong>{{if .Type}} <span class="pool-type">{{.Type}}</span>{{end}}</div>
+    <div class="pool-counts"><span>{{.ReadyCount}} ready / {{.TotalCount}} total</span>{{if .EffectivelyDrained}}<span class="badge badge-drained">Drained</span>{{else}}<span class="badge badge-ready">Active</span>{{end}}</div>
+  </div>
+  <div class="pool-policy">min_ready={{.MinReady}} · max_total={{.MaxTotal}}</div>
+  {{if .Resources}}
+  <div class="table-scroll"><table>
+    <thead><tr><th scope="col">Resource</th><th scope="col">Type</th><th scope="col">Profile</th><th scope="col">State</th><th scope="col">Provider</th></tr></thead>
+    <tbody>{{range .Resources}}<tr><td><code>{{.ID}}</code></td><td>{{.Type}}</td><td>{{.Profile}}</td><td><span class="badge badge-{{.State}}">{{.State}}</span></td><td>{{if .Provider}}{{.Provider}}{{else}}—{{end}}</td></tr>{{end}}</tbody>
+  </table></div>
+  {{else}}<div class="empty">No resources in this pool</div>{{end}}
+</div>
+{{end}}
 {{else}}
 <div class="empty">No pools configured</div>
 {{end}}

@@ -35,6 +35,11 @@ type pageData struct {
 	SandboxCount         int
 	ResourceCount        int
 	Pools                []model.Pool
+	PoolViews            []poolView
+	CSRFToken            string
+	CanManagePools       bool
+	PoolResult           string
+	PoolError            string
 	Sandboxes            []sandboxView
 	Resources            []model.Resource
 	Agents               []agentView
@@ -74,6 +79,25 @@ type resourceView struct {
 	State      model.ResourceState
 	OriginPool string
 	Provider   string
+}
+
+type poolView struct {
+	Name               string
+	Type               model.ResourceType
+	MinReady           int
+	MaxTotal           int
+	ReadyCount         int
+	TotalCount         int
+	EffectivelyDrained bool
+	Resources          []poolResourceView
+}
+
+type poolResourceView struct {
+	ID       string
+	Type     model.ResourceType
+	Profile  model.ResourceProfile
+	State    model.ResourceState
+	Provider string
 }
 
 type agentView struct {
@@ -129,6 +153,9 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ui/service-keys", s.serviceKeysHandler(serviceKeysTmpl))
 	mux.HandleFunc("POST /ui/service-keys", s.handleCreateServiceKey(serviceKeysTmpl))
 	mux.HandleFunc("POST /ui/service-keys/{id}/revoke", s.handleRevokeServiceKey)
+	mux.HandleFunc("POST /ui/pools/{name}/drain", s.handleDrainPoolUI)
+	mux.HandleFunc("POST /ui/pools/{name}/fill", s.handleFillPoolUI)
+	mux.HandleFunc("POST /ui/resources/purge", s.handlePurgeResourcesUI)
 	mux.HandleFunc("GET /ui/catalog", s.uiHandler(catalogTmpl, "catalog", s.catalogData))
 	mux.HandleFunc("GET /ui/diagnostics", s.diagnosticsHandler(diagnosticsTmpl))
 	mux.HandleFunc("POST /ui/profile/personal-key", s.handleMintPersonalKey(profileTmpl))
@@ -175,6 +202,8 @@ func (s *Server) uiHandler(tmpl *template.Template, nav string, data dataFn) htt
 			d.User = principal.Subject
 			d.CanManageServiceKeys = principal.Role == model.APIKeyRoleAdmin
 			d.CanViewDiagnostics = principal.Role == model.APIKeyRoleAdmin
+			d.CanManagePools = principal.Role == model.APIKeyRoleAdmin
+			d.CSRFToken = ensureCSRFCookie(w, r, s.insecureHTTP)
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -327,6 +356,9 @@ func (s *Server) fragmentHandler(tmpl *template.Template, fragment string, data 
 			}
 			return
 		}
+		if principal, ok := sessionPrincipalFromRequest(r); ok {
+			d.CanManagePools = principal.Role == model.APIKeyRoleAdmin
+		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.ExecuteTemplate(w, fragment, d); err != nil {
@@ -363,7 +395,15 @@ func (s *Server) poolsData(r *http.Request) (pageData, error) {
 	if err != nil {
 		return pageData{}, err
 	}
-	return pageData{Pools: pools}, nil
+	resources, err := s.store.ListResources(r.Context())
+	if err != nil {
+		return pageData{}, err
+	}
+	return pageData{
+		Pools:      pools,
+		PoolViews:  buildPoolViews(pools, resources),
+		PoolResult: poolResultFromQuery(r),
+	}, nil
 }
 
 func (s *Server) sandboxesData(r *http.Request) (pageData, error) {

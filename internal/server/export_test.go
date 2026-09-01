@@ -175,3 +175,33 @@ func NewTestMuxWithDiagnostics(st store.Store, sm *sandbox.Manager, logs diagnos
 	s.registerRoutes(mux)
 	return mux
 }
+
+// NewTestMuxWithResourceCleanup configures the administrator resource purge
+// endpoint for API tests.
+func NewTestMuxWithResourceCleanup(st store.Store, sm *sandbox.Manager, cleanup ResourceCleanup) *http.ServeMux {
+	return newTestMuxWithResourceCleanup(st, sm, cleanup, false)
+}
+
+// NewTestMuxWithResourceCleanupAuth is the authenticated variant used to
+// exercise API-key role checks around resource cleanup.
+func NewTestMuxWithResourceCleanupAuth(st store.Store, sm *sandbox.Manager, cleanup ResourceCleanup) *http.ServeMux {
+	return newTestMuxWithResourceCleanup(st, sm, cleanup, true)
+}
+
+// NewTestMuxWithPoolAdmin configures the authenticated Pools dashboard and its
+// operator action seams.
+func NewTestMuxWithPoolAdmin(st store.Store, sm *sandbox.Manager, maintenance PoolMaintenance, cleanup ResourceCleanup) *http.ServeMux {
+	seedTestSession(st)
+	s := &Server{store: st, sandboxMgr: sm, poolMaintenance: maintenance, resourceCleanup: cleanup, uiEnabled: true}
+	mux := http.NewServeMux()
+	s.registerRoutes(mux)
+	return mux
+}
+
+func newTestMuxWithResourceCleanup(st store.Store, sm *sandbox.Manager, cleanup ResourceCleanup, authRequired bool) *http.ServeMux {
+	s := &Server{store: st, sandboxMgr: sm, resourceCleanup: cleanup}
+	s.authRequired = authRequired
+	mux := http.NewServeMux()
+	s.registerRoutes(mux)
+	return mux
+}

@@ -81,6 +81,28 @@ type AuditSink interface {
 	RecordDiagnosticsQuery(context.Context, QueryAudit) error
 }
 
+// ResourceCleanupAudit describes safe metadata for an administrator cleanup
+// mutation. It intentionally contains counts and IDs only; callers must not
+// attach resource properties or provider credentials.
+type ResourceCleanupAudit struct {
+	Actor          string `json:"actor"`
+	Mode           string `json:"mode"`
+	Force          bool   `json:"force"`
+	State          string `json:"state"`
+	Unreferenced   bool   `json:"unreferenced"`
+	OlderThan      string `json:"older_than,omitempty"`
+	CandidateCount int    `json:"candidate_count"`
+	CleanedCount   int    `json:"cleaned_count"`
+	SkippedCount   int    `json:"skipped_count"`
+	ErrorCount     int    `json:"error_count"`
+}
+
+// ResourceCleanupAuditSink is optional so existing embedders with an audit
+// sink that predates cleanup remain source-compatible.
+type ResourceCleanupAuditSink interface {
+	RecordResourceCleanup(context.Context, ResourceCleanupAudit) error
+}
+
 // FileStore is a bounded JSONL store. It reads the file for each query so a
 // second daemon process or a restart sees the same durable snapshot.
 type FileStore struct {
@@ -283,6 +305,14 @@ func (s *FileAuditStore) RecordDiagnosticsQuery(ctx context.Context, audit Query
 		return err
 	}
 	return s.store.Append(ctx, Event{Component: "audit", Message: string(filters)})
+}
+
+func (s *FileAuditStore) RecordResourceCleanup(ctx context.Context, audit ResourceCleanupAudit) error {
+	data, err := json.Marshal(audit)
+	if err != nil {
+		return err
+	}
+	return s.store.Append(ctx, Event{Component: "audit", Message: string(data)})
 }
 
 func normalizeEvent(event Event, now time.Time) Event {
