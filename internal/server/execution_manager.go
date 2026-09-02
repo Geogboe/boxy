@@ -187,6 +187,9 @@ func (m *executionManager) finish(id model.ExecutionID, result *providersdk.Resu
 	case errors.Is(runErr, context.DeadlineExceeded):
 		execution.Status = model.ExecutionStatusFailed
 		execution.Error = "execution timed out"
+	case errors.Is(runErr, eventstream.ErrLimitExceeded):
+		execution.Status = model.ExecutionStatusFailed
+		execution.Error = "execution output limit exceeded"
 	case runErr != nil:
 		execution.Status = model.ExecutionStatusFailed
 		execution.Error = safeExecutionError(runErr)
@@ -195,10 +198,13 @@ func (m *executionManager) finish(id model.ExecutionID, result *providersdk.Resu
 	default:
 		execution.Status = model.ExecutionStatusSucceeded
 	}
-	// A failed store write cannot be reported to the provider caller anymore;
-	// retaining the active guard until this point is safer than allowing a
-	// second provider operation to race the old one.
-	_ = m.store.PutExecution(context.Background(), execution)
+	// A failed store write cannot be reported to the provider caller anymore.
+	// Retain the active guard and in-memory state until the record is durable;
+	// allowing a second provider operation to race an execution whose terminal
+	// state was not persisted would violate the per-resource execution contract.
+	if err := m.store.PutExecution(context.Background(), execution); err != nil {
+		return
+	}
 	delete(m.cancel, id)
 	delete(m.operations, id)
 	if m.active[execution.ResourceID] == id {

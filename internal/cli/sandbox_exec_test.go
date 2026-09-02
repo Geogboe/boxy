@@ -313,6 +313,37 @@ func TestSandboxExecCommandAttachUsesExistingExecution(t *testing.T) {
 	}
 }
 
+func TestSandboxExecCommandAttachSupportsOutputModes(t *testing.T) {
+	for _, mode := range []string{"--events", "--buffered"} {
+		t.Run(mode[2:], func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1/exec/exec-existing" {
+					_, _ = io.WriteString(w, `{"exec_id":"exec-existing","status":"succeeded","chunks":[{"cursor":"cursor-1","stream":"stdout","data":"YXR0YWNoZWQK"}],"exit_code":0}`)
+					return
+				}
+				t.Fatalf("attach must only read the existing execution: %s %s", r.Method, r.URL.Path)
+			}))
+			defer server.Close()
+
+			out := new(strings.Builder)
+			cmd := newSandboxCommand()
+			cmd.SetOut(out)
+			cmd.SetErr(new(strings.Builder))
+			cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--attach", "exec-existing", mode})
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			if mode == "--events" {
+				if !strings.Contains(out.String(), `"type":"data"`) || !strings.Contains(out.String(), `"type":"complete"`) {
+					t.Fatalf("events attach output = %q, want data and complete events", out.String())
+				}
+			} else if out.String() != "attached\n" {
+				t.Fatalf("buffered attach output = %q, want attached newline", out.String())
+			}
+		})
+	}
+}
+
 func TestSandboxExecCommandRejectsConflictingOutputModes(t *testing.T) {
 	cmd := newSandboxCommand()
 	cmd.SetArgs([]string{"exec", "sb-1", "--events", "--buffered", "--", "echo", "hello"})
@@ -345,6 +376,34 @@ func TestSandboxExecCommandRejectsStreamWithoutCompletion(t *testing.T) {
 	cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--", "interrupted"})
 	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "decode execution status") {
 		t.Fatalf("Execute error = %v, want malformed status error", err)
+	}
+}
+
+func TestSandboxExecCommandReportsTailAPIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1" {
+			_, _ = io.WriteString(w, `{"id":"sb-1","resources":["res-1"]}`)
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/sandboxes/sb-1/exec" {
+			_, _ = io.WriteString(w, `{"exec_id":"exec-1","status":"running"}`)
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1/exec/exec-1" {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"error":"execution not found"}`)
+			return
+		}
+		t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+
+	cmd := newSandboxCommand()
+	cmd.SetOut(new(strings.Builder))
+	cmd.SetErr(new(strings.Builder))
+	cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--", "interrupted"})
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "execution not found") {
+		t.Fatalf("Execute error = %v, want API error body", err)
 	}
 }
 

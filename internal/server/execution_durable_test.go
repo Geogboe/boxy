@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,6 +20,17 @@ type durableExecExecutor struct {
 	firstSent   chan struct{}
 	continueRun chan struct{}
 	started     chan struct{}
+}
+
+type terminalWriteFailStore struct {
+	store.Store
+}
+
+func (s *terminalWriteFailStore) PutExecution(ctx context.Context, execution model.Execution) error {
+	if execution.FinishedAt != nil {
+		return errors.New("terminal execution write failed")
+	}
+	return s.Store.PutExecution(ctx, execution)
 }
 
 func (e *durableExecExecutor) ExecuteSandbox(ctx context.Context, _ model.Resource, _ providersdk.ExecOperation, sink eventstream.Sink) (*providersdk.Result, error) {
@@ -248,6 +260,45 @@ func TestDurableExecTruncationStoresExplicitMarker(t *testing.T) {
 	}
 	if used > maxExecOutput {
 		t.Fatalf("stored output = %d bytes, want at most %d", used, maxExecOutput)
+	}
+	manager.finish(id, nil, eventstream.ErrLimitExceeded)
+	finished, err := st.GetExecution(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished.Status != model.ExecutionStatusFailed || finished.Error != "execution output limit exceeded" {
+		t.Fatalf("limit execution terminal state = %+v, want explicit output-limit failure", finished)
+	}
+}
+
+func TestDurableExecTerminalWriteFailureRetainsResourceGuard(t *testing.T) {
+	base := store.NewMemoryStore()
+	st := &terminalWriteFailStore{Store: base}
+	id := model.ExecutionID("exec-terminal-write-failure")
+	if err := st.PutExecution(context.Background(), model.Execution{
+		ID: id, SandboxID: "sb-1", ResourceID: "res-1", Status: model.ExecutionStatusRunning,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	manager := &executionManager{
+		store:      st,
+		active:     map[model.ResourceID]model.ExecutionID{"res-1": id},
+		cancel:     map[model.ExecutionID]context.CancelFunc{id: func() {}},
+		operations: map[model.ExecutionID]providersdk.ExecOperation{id: {}},
+	}
+
+	manager.finish(id, nil, nil)
+	if manager.active["res-1"] != id {
+		t.Fatalf("active guard = %q, want failed terminal write to retain %q", manager.active["res-1"], id)
+	}
+	if _, ok := manager.cancel[id]; !ok {
+		t.Fatal("cancel function was discarded after failed terminal write")
+	}
+	if _, ok := manager.operations[id]; !ok {
+		t.Fatal("operation was discarded after failed terminal write")
+	}
+	if _, err := manager.submit(context.Background(), model.Sandbox{ID: "sb-1"}, model.Resource{ID: "res-1"}, providersdk.ExecOperation{}, model.ExecutionInputCommandText, "actor-1", time.Second); !errors.Is(err, ErrResourceBusy) {
+		t.Fatalf("new execution error = %v, want resource busy", err)
 	}
 }
 

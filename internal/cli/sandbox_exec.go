@@ -89,8 +89,8 @@ func newSandboxExecCommand(serverAddr func() string) *cobra.Command {
 				return fmt.Errorf("requires a sandbox id and a command after --")
 			}
 			if attachID != "" {
-				if len(args) != 1 || commandText != "" || stdinCommand || scriptFile != "" || detach || events || buffered {
-					return errors.New("--attach cannot be combined with command input or output mode flags")
+				if len(args) != 1 || commandText != "" || stdinCommand || scriptFile != "" || detach {
+					return errors.New("--attach cannot be combined with command input or --detach")
 				}
 				return nil
 			}
@@ -244,15 +244,14 @@ func tailSandboxExecution(ctx context.Context, client *http.Client, base, sandbo
 			}
 			return wrapConnError(err, request.URL.Host)
 		}
+		if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+			apiErr := decodeAPIError(response, request.URL.String())
+			_ = response.Body.Close()
+			return apiErr
+		}
 		var page sandboxExecutionResponse
 		decodeErr := json.NewDecoder(response.Body).Decode(&page)
 		_ = response.Body.Close()
-		if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-			if decodeErr != nil {
-				return fmt.Errorf("read execution response: %w", decodeErr)
-			}
-			return fmt.Errorf("execution request returned HTTP %d", response.StatusCode)
-		}
 		if decodeErr != nil {
 			return fmt.Errorf("decode execution status: %w", decodeErr)
 		}
@@ -289,11 +288,15 @@ func tailSandboxExecution(ctx context.Context, client *http.Client, base, sandbo
 			cursor = page.Next
 		}
 		if page.Status == "running" || page.Status == "pending" {
+			pollDelay := 250 * time.Millisecond
+			if len(page.Chunks) != 0 {
+				pollDelay = 50 * time.Millisecond
+			}
 			select {
 			case <-ctx.Done():
 				_ = cancelSandboxExecution(context.Background(), client, base, sandboxID, executionID)
 				return ctx.Err()
-			case <-time.After(50 * time.Millisecond):
+			case <-time.After(pollDelay):
 			}
 			continue
 		}

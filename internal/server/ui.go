@@ -195,11 +195,17 @@ func (s *Server) catalogData(r *http.Request) (pageData, error) {
 // dataFn loads data from the store into a pageData.
 type dataFn func(r *http.Request) (pageData, error)
 
+var errPoolNotFound = errors.New("pool not found")
+
 // uiHandler returns a handler that renders a full page (layout + content).
 func (s *Server) uiHandler(tmpl *template.Template, nav string, data dataFn) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		d, err := data(r)
 		if err != nil {
+			if errors.Is(err, errPoolNotFound) {
+				http.NotFound(w, r)
+				return
+			}
 			slog.Error("ui data", "err", err)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusInternalServerError)
@@ -423,7 +429,7 @@ func (s *Server) poolsData(r *http.Request) (pageData, error) {
 				return data, nil
 			}
 		}
-		return pageData{}, fmt.Errorf("pool %q not found", name)
+		return pageData{}, fmt.Errorf("%w: %q", errPoolNotFound, name)
 	}
 	return data, nil
 }

@@ -117,6 +117,12 @@ func TestUI_poolDetailShowsPolicyDrainResourcesProviderAndCapacity(t *testing.T)
 			t.Fatalf("pool detail missing %q: %q", want, detail.Body.String())
 		}
 	}
+
+	missing := httptest.NewRecorder()
+	mux.ServeHTTP(missing, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/pools/does-not-exist", nil)))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing pool status = %d, want 404", missing.Code)
+	}
 }
 
 func TestUI_poolsHidesResourceInventoryFromNonAdmin(t *testing.T) {
