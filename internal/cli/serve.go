@@ -689,6 +689,9 @@ func buildOIDCOptions(ctx context.Context, spec boxyconfig.OIDCSpec) (*server.OI
 		CLIClientID:       spec.CLIClientID,
 		CLIVerifier:       cliVerifier,
 		PersonalKeyMaxTTL: personalKeyMaxTTL,
+		LoginLabel:        spec.LoginLabel,
+		LoginIcon:         spec.LoginIcon,
+		HideLocalLogin:    spec.HideLocalLogin,
 	}, nil
 }
 

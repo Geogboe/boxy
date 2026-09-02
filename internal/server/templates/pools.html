@@ -1,6 +1,38 @@
 {{define "title"}}Boxy — Pools{{end}}
 
 {{define "content"}}
+{{if .PoolDetail}}
+<div class="page-back"><a href="/ui/pools">← Back to pools</a></div>
+<h1 class="page-title">Pool: {{.PoolDetail.Name}}</h1>
+{{if .CanManagePools}}
+<div class="table-card pool-detail-card">
+  <div class="table-card-header"><div>Pool details</div><span class="badge {{if .PoolDetail.EffectivelyDrained}}badge-drained{{else}}badge-ready{{end}}">{{if .PoolDetail.EffectivelyDrained}}Drained{{else}}Active{{end}}</span></div>
+  <dl class="pool-detail-grid">
+    <div><dt>Resource type</dt><dd>{{if .PoolDetail.Type}}{{.PoolDetail.Type}}{{else}}—{{end}}</dd></div>
+    <div><dt>Expected profile</dt><dd>{{if .PoolDetail.ExpectedProfile}}{{.PoolDetail.ExpectedProfile}}{{else}}—{{end}}</dd></div>
+    <div><dt>Capacity</dt><dd>{{.PoolDetail.ReadyCount}} ready / {{.PoolDetail.TotalCount}} total</dd></div>
+    <div><dt>Policy</dt><dd><code>min_ready={{.PoolDetail.MinReady}} · max_total={{.PoolDetail.MaxTotal}}</code></dd></div>
+    <div><dt>Config drain</dt><dd>{{if .PoolDetail.ConfigDrain}}enabled{{else}}disabled{{end}}</dd></div>
+    <div><dt>Operator drain</dt><dd>{{if .PoolDetail.OperatorDrain}}enabled{{else}}disabled{{end}}</dd></div>
+    <div><dt>Template</dt><dd>{{if .PoolDetail.Template}}{{.PoolDetail.Template}}{{else}}—{{end}}</dd></div>
+    <div><dt>Source</dt><dd>{{if .PoolDetail.Source}}{{.PoolDetail.Source}}{{else}}—{{end}}</dd></div>
+    <div><dt>Providers</dt><dd>{{if .PoolDetail.ProviderNames}}{{range .PoolDetail.ProviderNames}}<code>{{.}}</code> {{end}}{{else}}—{{end}}</dd></div>
+    <div><dt>Packages</dt><dd>{{if .PoolDetail.Packages}}{{range .PoolDetail.Packages}}<code>{{.}}</code> {{end}}{{else}}—{{end}}</dd></div>
+  </dl>
+</div>
+<div class="table-card">
+  <div class="table-card-header"><div>Resources</div></div>
+  {{if .PoolDetail.Resources}}
+  <div class="table-scroll"><table>
+    <thead><tr><th scope="col">Resource</th><th scope="col">Type</th><th scope="col">Profile</th><th scope="col">State</th><th scope="col">Provider</th></tr></thead>
+    <tbody>{{range .PoolDetail.Resources}}<tr><td><code>{{.ID}}</code></td><td>{{.Type}}</td><td>{{.Profile}}</td><td><span class="badge badge-{{.State}}">{{.State}}</span></td><td>{{if .Provider}}{{.Provider}}{{else}}—{{end}}</td></tr>{{end}}</tbody>
+  </table></div>
+  {{else}}<div class="empty">No resources in this pool</div>{{end}}
+</div>
+{{else}}
+<div class="empty">Pool inventory is restricted to administrators.</div>
+{{end}}
+{{else}}
 <h1 class="page-title">Pools</h1>
 {{if .PoolResult}}<div class="result-banner">{{.PoolResult}}</div>{{end}}
 {{if .PoolError}}<div class="error-banner">{{.PoolError}}</div>{{end}}
@@ -37,6 +69,7 @@
   </div>
 </div>
 {{end}}
+{{end}}
 <div class="table-card">
   <div class="table-card-header">
     <div>All Pools</div>
@@ -60,7 +93,7 @@
 {{range .PoolViews}}
 <div class="pool-group">
   <div class="pool-group-header">
-    <div><strong>{{.Name}}</strong>{{if .Type}} <span class="pool-type">{{.Type}}</span>{{end}}</div>
+    <div><a class="pool-detail-link" href="{{.DetailPath}}"><strong>{{.Name}}</strong></a>{{if .Type}} <span class="pool-type">{{.Type}}</span>{{end}}</div>
     <div class="pool-counts"><span>{{.ReadyCount}} ready / {{.TotalCount}} total</span>{{if .EffectivelyDrained}}<span class="badge badge-drained">Drained</span>{{else}}<span class="badge badge-ready">Active</span>{{end}}</div>
   </div>
   <div class="pool-policy">min_ready={{.MinReady}} · max_total={{.MaxTotal}}</div>
