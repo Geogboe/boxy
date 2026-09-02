@@ -239,6 +239,16 @@ tasks:
       - task: agent:act
         vars: {JOB: pii}
 
+  agent:scan:secrets:
+    desc: Run the Betterleaks secret scan with captured diagnostics
+    cmds:
+      - pwsh -NoProfile -File scripts/agent-check.ps1 -Name secrets-scan -Executable task --silent secrets:scan
+
+  agent:scan:pii:
+    desc: Run the Betterleaks PII scan with captured diagnostics
+    cmds:
+      - pwsh -NoProfile -File scripts/agent-check.ps1 -Name pii-scan -Executable task --silent pii:scan
+
   default: task --list
 
   go:run:
