@@ -214,7 +214,7 @@ tasks:
     internal: true
     silent: true
     cmds:
-      - pwsh -NoProfile -File scripts/agent-check.ps1 -Name "act-{{.JOB}}" -Executable wsl.exe --cd "{{.ROOT_DIR}}" bash -lc "act -j '{{.JOB}}' -P ubuntu-latest=catthehacker/ubuntu:act-latest --concurrent-jobs 1"
+      - pwsh -NoProfile -File scripts/agent-check.ps1 -Name "act-{{.JOB}}" -Executable wsl.exe --cd "{{.ROOT_DIR}}" bash -lc "act -j '{{.JOB}}' --platform 'ubuntu-latest=catthehacker/ubuntu:act-latest' --matrix os:ubuntu-latest --concurrent-jobs 1"
 
   agent:act:unix:
     platforms: [linux, darwin]
