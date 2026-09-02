@@ -321,10 +321,11 @@ func (d *Driver) Update(ctx context.Context, id string, op providersdk.Operation
 
 		switch o := op.(type) {
 		case *ExecOp:
-			if o.Script == nil && len(o.Command) == 0 {
+			if o.Script == nil && len(o.Command) == 0 && o.CommandText == "" {
 				return s, fmt.Errorf("devfactory: exec command is empty")
 			}
-			if o.Script != nil {
+			switch {
+			case o.Script != nil:
 				if err := o.Script.VerifyDigest(); err != nil {
 					return s, fmt.Errorf("devfactory: %w", err)
 				}
@@ -342,7 +343,10 @@ func (d *Driver) Update(ctx context.Context, id string, op providersdk.Operation
 					outputs["script_cache"] = "miss"
 				}
 				outputs["stdout"] = strings.Join(d.execOutputChunks(o), "")
-			} else {
+			case o.CommandText != "":
+				desc = "exec: command_text"
+				outputs["stdout"] = strings.Join(d.execOutputChunks(o), "")
+			default:
 				desc = fmt.Sprintf("exec: %v", o.Command)
 				outputs["stdout"] = strings.Join(d.execOutputChunks(o), "")
 			}
@@ -420,6 +424,9 @@ func (d *Driver) execOutputChunks(op *ExecOp) []string {
 	}
 	if op.Script != nil {
 		return []string{fmt.Sprintf("[simulated output of script %s]", op.Script.Digest)}
+	}
+	if op.CommandText != "" {
+		return []string{fmt.Sprintf("[simulated output of command text (%d bytes)]", len(op.CommandText))}
 	}
 	return []string{fmt.Sprintf("[simulated output of: %v]", op.Command)}
 }

@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -18,10 +16,15 @@ func TestSandboxExecBufferedPreservesGuestExitCode(t *testing.T) {
 			_, _ = io.WriteString(w, `{"id":"sb-1","resources":["res-1"]}`)
 			return
 		}
-		if r.URL.Path != "/api/v1/sandboxes/sb-1/exec" {
-			t.Fatalf("path = %q, want buffered exec path", r.URL.Path)
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/sandboxes/sb-1/exec" {
+			_, _ = io.WriteString(w, `{"exec_id":"exec-1","status":"running"}`)
+			return
 		}
-		_, _ = io.WriteString(w, `{"resource_id":"res-1","stdout":"output\n","exit_code":7}`)
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1/exec/exec-1" {
+			_, _ = io.WriteString(w, `{"exec_id":"exec-1","status":"failed","chunks":[{"cursor":"cursor-1","stream":"stdout","data":"b3V0cHV0Cg=="}],"exit_code":7}`)
+			return
+		}
+		t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 	}))
 	defer server.Close()
 
@@ -44,16 +47,15 @@ func TestSandboxExecStreamingPreservesGuestExitCode(t *testing.T) {
 			_, _ = io.WriteString(w, `{"id":"sb-1","resources":["res-1"]}`)
 			return
 		}
-		if r.URL.Query().Get("stream") != "" {
-			t.Fatalf("query = %q, want the default streaming mode", r.URL.RawQuery)
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/sandboxes/sb-1/exec" {
+			_, _ = io.WriteString(w, `{"exec_id":"exec-1","status":"running"}`)
+			return
 		}
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		data, _ := json.Marshal(map[string]any{
-			"type": "data", "stream": "stdout", "data": base64.StdEncoding.EncodeToString([]byte("output\n")),
-		})
-		_, _ = w.Write(append(data, '\n'))
-		complete, _ := json.Marshal(map[string]any{"type": "complete", "exit_code": 23})
-		_, _ = w.Write(append(complete, '\n'))
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1/exec/exec-1" {
+			_, _ = io.WriteString(w, `{"exec_id":"exec-1","status":"failed","chunks":[{"cursor":"cursor-1","stream":"stdout","data":"b3V0cHV0Cg=="}],"exit_code":23}`)
+			return
+		}
+		t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 	}))
 	defer server.Close()
 

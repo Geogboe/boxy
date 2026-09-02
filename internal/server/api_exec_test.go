@@ -49,21 +49,16 @@ func TestSandboxExecStreamingUsesSingleResourceAndEmitsNDJSON(t *testing.T) {
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
 
-	body := strings.NewReader(`{"command":["echo","hello"]}`)
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec?stream=true", body)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	status, accepted := postDurableExec(t, mux, `{"command":["echo","hello"]}`)
+	if status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", status)
 	}
-	if got := w.Header().Get("Content-Type"); got != "application/x-ndjson" {
-		t.Fatalf("Content-Type = %q, want application/x-ndjson", got)
-	}
-	if !strings.Contains(w.Body.String(), `"type":"data"`) || !strings.Contains(w.Body.String(), `"type":"complete"`) {
-		t.Fatalf("stream body = %q, want data and complete events", w.Body.String())
-	}
-	if executor.calledResource != "res-1" || strings.Join(executor.calledCommand, " ") != "echo hello" {
+	execution := waitForExecution(t, st, model.ExecutionID(accepted["exec_id"].(string)), model.ExecutionStatusSucceeded)
+	if execution.ResourceID != "res-1" || executor.calledResource != "res-1" || strings.Join(executor.calledCommand, " ") != "echo hello" {
 		t.Fatalf("executor call = resource %q command %v", executor.calledResource, executor.calledCommand)
+	}
+	if len(execution.Chunks) == 0 {
+		t.Fatal("execution has no durable output chunks")
 	}
 }
 
@@ -75,18 +70,11 @@ func TestSandboxExecDefaultsToStreaming(t *testing.T) {
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
 
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec", strings.NewReader(`{"command":["echo","hello"]}`))
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	status, accepted := postDurableExec(t, mux, `{"command":["echo","hello"]}`)
+	if status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", status)
 	}
-	if got := w.Header().Get("Content-Type"); got != "application/x-ndjson" {
-		t.Fatalf("Content-Type = %q, want application/x-ndjson", got)
-	}
-	if !strings.Contains(w.Body.String(), `"type":"data"`) || !strings.Contains(w.Body.String(), `"type":"complete"`) {
-		t.Fatalf("default exec body = %q, want data and complete events", w.Body.String())
-	}
+	waitForExecution(t, st, model.ExecutionID(accepted["exec_id"].(string)), model.ExecutionStatusSucceeded)
 }
 
 func TestSandboxExecStreamFalseKeepsBufferedJSONResponse(t *testing.T) {
@@ -97,22 +85,11 @@ func TestSandboxExecStreamFalseKeepsBufferedJSONResponse(t *testing.T) {
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
 
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec?stream=false", strings.NewReader(`{"command":["echo","hello"]}`))
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	status, accepted := postDurableExec(t, mux, `{"command":["echo","hello"]}`)
+	if status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", status)
 	}
-	if got := w.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
-		t.Fatalf("Content-Type = %q, want application/json", got)
-	}
-	var response execSandboxResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode buffered response: %v; body=%q", err, w.Body.String())
-	}
-	if response.Stdout != "hello\n" {
-		t.Fatalf("stdout = %q, want hello newline", response.Stdout)
-	}
+	waitForExecution(t, st, model.ExecutionID(accepted["exec_id"].(string)), model.ExecutionStatusSucceeded)
 }
 
 func TestSandboxExecPassesOpaqueGuestCredentialToExecutor(t *testing.T) {
@@ -125,11 +102,11 @@ func TestSandboxExecPassesOpaqueGuestCredentialToExecutor(t *testing.T) {
 	s.registerRoutes(mux)
 
 	body := `{"command":["whoami"],"guest_credential":{"kind":"password","data":{"username":"Administrator","password":"rotated"}}}`
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec", strings.NewReader(body)))
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
+	status, accepted := postDurableExec(t, mux, body)
+	if status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", status)
 	}
+	waitForExecution(t, st, model.ExecutionID(accepted["exec_id"].(string)), model.ExecutionStatusSucceeded)
 	if executor.calledOperation.GuestCredential == nil || executor.calledOperation.GuestCredential.Kind != "password" || string(executor.calledOperation.GuestCredential.Data) != `{"username":"Administrator","password":"rotated"}` {
 		t.Fatalf("executor operation = %+v, want opaque guest credential", executor.calledOperation)
 	}
@@ -146,17 +123,42 @@ func TestSandboxExecScriptVerifiesDigestAndPreservesArgs(t *testing.T) {
 	content := []byte("echo raw script\n")
 	digest := sha256.Sum256(content)
 	body := fmt.Sprintf(`{"script":{"content":"%s","digest":"%x","interpreter":"sh","args":["quoted value","--mode","ci"]}}`, base64.StdEncoding.EncodeToString(content), digest)
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec?stream=false", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
+	status, accepted := postDurableExec(t, mux, body)
+	if status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", status)
 	}
+	waitForExecution(t, st, model.ExecutionID(accepted["exec_id"].(string)), model.ExecutionStatusSucceeded)
 	if executor.calledOperation.Script == nil || string(executor.calledOperation.Script.Content) != string(content) {
 		t.Fatalf("script operation = %+v, want raw content", executor.calledOperation.Script)
 	}
 	if got := strings.Join(executor.calledOperation.Script.Args, "\x00"); got != "quoted value\x00--mode\x00ci" {
 		t.Fatalf("script args = %q, want array-preserved args", got)
+	}
+}
+
+func TestSandboxExecCommandTextRemainsOpaque(t *testing.T) {
+	st := store.NewMemoryStore()
+	_ = st.CreateSandbox(context.Background(), model.Sandbox{ID: "sb-1", Status: model.SandboxStatusReady, Resources: []model.ResourceID{"res-1"}})
+	_ = st.PutResource(context.Background(), model.Resource{ID: "res-1", State: model.ResourceStateAllocated})
+	executor := new(fakeSandboxExecutor)
+	s := &Server{store: st, executor: executor}
+	mux := http.NewServeMux()
+	s.registerRoutes(mux)
+	const opaque = "Write-Output \"two words\"\r\nWrite-Error 'keep this as one script'"
+	body, err := json.Marshal(map[string]string{"command_text": opaque})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, accepted := postDurableExec(t, mux, string(body))
+	if status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", status)
+	}
+	waitForExecution(t, st, model.ExecutionID(accepted["exec_id"].(string)), model.ExecutionStatusSucceeded)
+	if executor.calledOperation.CommandText != opaque {
+		t.Fatalf("command_text = %q, want %q", executor.calledOperation.CommandText, opaque)
+	}
+	if len(executor.calledOperation.Command) != 0 || executor.calledOperation.Script != nil {
+		t.Fatalf("command_text reconstructed into another input form: %+v", executor.calledOperation)
 	}
 }
 
@@ -305,6 +307,27 @@ func TestSandboxExecForbidsAuditorRole(t *testing.T) {
 	}
 }
 
+func TestSandboxExecStatusAndCancelRequireExecutionAuthorization(t *testing.T) {
+	mux, _, _, auditorToken, _ := newAuthedExecServer(t, new(fakeSandboxExecutor))
+	paths := []string{
+		"/api/v1/sandboxes/sb-1/exec/exec-1",
+		"/api/v1/sandboxes/sb-1/exec/exec-1/cancel",
+	}
+	for _, path := range paths {
+		method := http.MethodGet
+		if strings.HasSuffix(path, "/cancel") {
+			method = http.MethodPost
+		}
+		r := httptest.NewRequest(method, path, nil)
+		r.Header.Set("Authorization", "Bearer "+auditorToken)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("%s %s status = %d, want 403", method, path, w.Code)
+		}
+	}
+}
+
 func TestSandboxExecForbidsNonOwningUser(t *testing.T) {
 	mux, _, otherUserToken, _, _ := newAuthedExecServer(t, new(fakeSandboxExecutor))
 
@@ -318,8 +341,8 @@ func TestSandboxExecAllowsOwningUser(t *testing.T) {
 	mux, ownerToken, _, _, _ := newAuthedExecServer(t, new(fakeSandboxExecutor))
 
 	w := execRequest(mux, ownerToken)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", w.Code, w.Body.String())
 	}
 }
 
@@ -327,8 +350,8 @@ func TestSandboxExecAllowsAdminRegardlessOfOwnership(t *testing.T) {
 	mux, _, _, _, adminToken := newAuthedExecServer(t, new(fakeSandboxExecutor))
 
 	w := execRequest(mux, adminToken)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", w.Code, w.Body.String())
 	}
 }
 
@@ -356,11 +379,13 @@ func TestSandboxExecTimeoutReturnsGatewayTimeout(t *testing.T) {
 			mux := http.NewServeMux()
 			s.registerRoutes(mux)
 
-			r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec?stream=false", strings.NewReader(`{"command":["sleep","1"],"timeout":"1ms"}`))
-			w := httptest.NewRecorder()
-			mux.ServeHTTP(w, r)
-			if w.Code != http.StatusGatewayTimeout {
-				t.Fatalf("status = %d, want 504; body=%s", w.Code, w.Body.String())
+			status, accepted := postDurableExec(t, mux, `{"command":["sleep","1"],"timeout":"1ms"}`)
+			if status != http.StatusAccepted {
+				t.Fatalf("status = %d, want 202", status)
+			}
+			execution := waitForExecution(t, st, model.ExecutionID(accepted["exec_id"].(string)), model.ExecutionStatusFailed)
+			if execution.Error != "execution timed out" {
+				t.Fatalf("execution error = %q, want timeout", execution.Error)
 			}
 		})
 	}
@@ -383,11 +408,13 @@ func TestSandboxExecProviderErrorReturnsInternalServerError(t *testing.T) {
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
 
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec?stream=false", strings.NewReader(`{"command":["hostname"]}`))
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, r)
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())
+	status, accepted := postDurableExec(t, mux, `{"command":["hostname"]}`)
+	if status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", status)
+	}
+	execution := waitForExecution(t, st, model.ExecutionID(accepted["exec_id"].(string)), model.ExecutionStatusFailed)
+	if execution.Error != "provider execution failed" {
+		t.Fatalf("execution error = %q, want the safe provider error", execution.Error)
 	}
 }
 
@@ -411,21 +438,16 @@ func TestSandboxExecNonzeroExitCodeIsNotAnError(t *testing.T) {
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
 
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec?stream=false", strings.NewReader(`{"command":["missing-binary"]}`))
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	status, accepted := postDurableExec(t, mux, `{"command":["missing-binary"]}`)
+	if status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", status)
 	}
-	var resp execSandboxResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode response: %v", err)
+	execution := waitForExecution(t, st, model.ExecutionID(accepted["exec_id"].(string)), model.ExecutionStatusFailed)
+	if execution.ExitCode == nil || *execution.ExitCode != 127 {
+		t.Fatalf("exit_code = %v, want 127", execution.ExitCode)
 	}
-	if resp.ExitCode != 127 {
-		t.Fatalf("exit_code = %d, want 127", resp.ExitCode)
-	}
-	if resp.Stderr != "not found\n" {
-		t.Fatalf("stderr = %q, want %q", resp.Stderr, "not found\n")
+	if len(execution.Chunks) != 1 || string(execution.Chunks[0].Data) != "not found\n" {
+		t.Fatalf("chunks = %+v, want stderr output", execution.Chunks)
 	}
 }
 
@@ -460,14 +482,16 @@ func TestSandboxExecBufferedOutputLimitReturns413(t *testing.T) {
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
 
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec?stream=false", strings.NewReader(`{"command":["yes"]}`))
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, r)
-	if w.Code != http.StatusRequestEntityTooLarge {
-		t.Fatalf("status = %d, want 413; body=%s", w.Code, w.Body.String())
+	status, accepted := postDurableExec(t, mux, `{"command":["yes"]}`)
+	if status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", status)
 	}
-	if !strings.Contains(w.Body.String(), "stream=false") {
-		t.Fatalf("body = %q, want guidance to omit stream=false", w.Body.String())
+	execution := waitForExecution(t, st, model.ExecutionID(accepted["exec_id"].(string)), model.ExecutionStatusFailed)
+	if !execution.Truncated {
+		t.Fatal("execution is not marked truncated after exceeding output cap")
+	}
+	if len(execution.Chunks) == 0 || !execution.Chunks[len(execution.Chunks)-1].Dropped {
+		t.Fatalf("chunks = %+v, want explicit dropped-output marker", execution.Chunks)
 	}
 }
 
@@ -485,18 +509,13 @@ func TestSandboxExecStreamingOutputLimitEmitsCompleteEventWithError(t *testing.T
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
 
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec?stream=true", strings.NewReader(`{"command":["yes"]}`))
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	status, accepted := postDurableExec(t, mux, `{"command":["yes"]}`)
+	if status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", status)
 	}
-	body := w.Body.String()
-	if !strings.Contains(body, `"type":"data"`) {
-		t.Fatalf("stream body = %q, want the chunk sent before the limit hit to still be present", body)
-	}
-	if !strings.Contains(body, `"type":"complete"`) || !strings.Contains(body, `"error"`) {
-		t.Fatalf("stream body = %q, want a complete event carrying the limit error", body)
+	execution := waitForExecution(t, st, model.ExecutionID(accepted["exec_id"].(string)), model.ExecutionStatusFailed)
+	if !execution.Truncated || execution.Error == "" {
+		t.Fatalf("execution = %+v, want truncation marker and terminal error", execution)
 	}
 }
 
@@ -509,7 +528,7 @@ func (capabilityErrorExecutor) ExecuteSandbox(ctx context.Context, res model.Res
 	return nil, errors.New(`agent "agent-1" does not support streaming operations`)
 }
 
-func TestSandboxExecStreamingCapabilityErrorEmitsCompleteEvent(t *testing.T) {
+func TestSandboxExecCapabilityErrorPersistsFailure(t *testing.T) {
 	st := store.NewMemoryStore()
 	_ = st.CreateSandbox(context.Background(), model.Sandbox{ID: "sb-1", Status: model.SandboxStatusReady, Resources: []model.ResourceID{"res-1"}})
 	_ = st.PutResource(context.Background(), model.Resource{ID: "res-1", State: model.ResourceStateAllocated})
@@ -517,17 +536,14 @@ func TestSandboxExecStreamingCapabilityErrorEmitsCompleteEvent(t *testing.T) {
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
 
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec?stream=true", strings.NewReader(`{"command":["hostname"]}`))
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, r)
-	// Headers are written before the executor runs, so a capability error
-	// discovered mid-stream cannot change the status code — it can only
-	// surface in the terminal event, which the CLI/clients must inspect.
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	status, response := postDurableExec(t, mux, `{"command":["hostname"]}`)
+	if status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; response=%v", status, response)
 	}
-	if !strings.Contains(w.Body.String(), "does not support streaming") {
-		t.Fatalf("stream body = %q, want the capability error surfaced", w.Body.String())
+	executionID := model.ExecutionID(response["exec_id"].(string))
+	execution := waitForExecution(t, st, executionID, model.ExecutionStatusFailed)
+	if execution.Error != "provider execution failed" {
+		t.Fatalf("execution error = %q, want the safe provider error", execution.Error)
 	}
 }
 
@@ -540,7 +556,7 @@ func (streamingFailureExecutor) ExecuteSandbox(ctx context.Context, res model.Re
 	return nil, errors.New("guest transport disconnected")
 }
 
-func TestSandboxExecDefaultStreamingReportsFailureInCompleteEvent(t *testing.T) {
+func TestSandboxExecFailurePersistsOutputAndError(t *testing.T) {
 	st := store.NewMemoryStore()
 	_ = st.CreateSandbox(context.Background(), model.Sandbox{ID: "sb-1", Status: model.SandboxStatusReady, Resources: []model.ResourceID{"res-1"}})
 	_ = st.PutResource(context.Background(), model.Resource{ID: "res-1", State: model.ResourceStateAllocated})
@@ -548,14 +564,16 @@ func TestSandboxExecDefaultStreamingReportsFailureInCompleteEvent(t *testing.T) 
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
 
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/sandboxes/sb-1/exec", strings.NewReader(`{"command":["hostname"]}`))
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 after stream starts; body=%s", w.Code, w.Body.String())
+	status, response := postDurableExec(t, mux, `{"command":["hostname"]}`)
+	if status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; response=%v", status, response)
 	}
-	body := w.Body.String()
-	if !strings.Contains(body, "YmVmb3JlIGZhaWx1cmUK") || !strings.Contains(body, "guest transport disconnected") || !strings.Contains(body, `"type":"complete"`) {
-		t.Fatalf("stream body = %q, want data and terminal error event", body)
+	executionID := model.ExecutionID(response["exec_id"].(string))
+	execution := waitForExecution(t, st, executionID, model.ExecutionStatusFailed)
+	if execution.Error != "provider execution failed" {
+		t.Fatalf("execution error = %q, want the safe provider error", execution.Error)
+	}
+	if len(execution.Chunks) != 1 || string(execution.Chunks[0].Data) != "before failure\n" {
+		t.Fatalf("execution chunks = %#v, want the output chunk", execution.Chunks)
 	}
 }

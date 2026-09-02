@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/Geogboe/boxy/internal/pool"
@@ -61,6 +62,8 @@ type Server struct {
 	resourceCleanup ResourceCleanup
 	agentAdmin      AgentAdmin
 	executor        SandboxExecutor
+	executions      *executionManager
+	executionMu     sync.Mutex
 	guestSecrets    boxysecrets.Store
 	catalog         CatalogSource
 	diagnostics     diagnostics.Store
@@ -133,6 +136,7 @@ func NewWithOptions(st store.Store, sm *sandbox.Manager, pm PoolMaintenance, aa 
 		tlsKeyPEM:       append([]byte(nil), opts.TLSKeyPEM...),
 		addr:            addr,
 	}
+	s.executions = newExecutionManager(st, opts.Executor)
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
 	s.srv = &http.Server{
@@ -231,5 +235,8 @@ func (s *Server) Start(ctx context.Context) error {
 
 // Shutdown gracefully shuts down the server.
 func (s *Server) Shutdown(ctx context.Context) error {
+	if s.executions != nil {
+		s.executions.shutdown()
+	}
 	return s.srv.Shutdown(ctx)
 }

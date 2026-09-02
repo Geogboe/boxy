@@ -156,6 +156,30 @@ func TestDriver_Update_Exec(t *testing.T) {
 	}
 }
 
+func TestDriver_Update_CommandTextRemainsOpaque(t *testing.T) {
+	d := newTestDriver(t, &Config{})
+	res, _ := d.Create(context.Background(), nil)
+	commandText := "Write-Output 'hello; still one command' | Out-String"
+	result, err := d.Update(context.Background(), res.ID, &ExecOp{CommandText: commandText})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if !strings.Contains(result.Outputs["stdout"], "command text") {
+		t.Fatalf("stdout = %q, want command-text execution", result.Outputs["stdout"])
+	}
+	execs, ok := d.ResourceExecs(res.ID)
+	if !ok || len(execs) != 1 {
+		t.Fatalf("exec records = %#v, found = %t", execs, ok)
+	}
+	encoded, err := json.Marshal(execs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), commandText) {
+		t.Fatal("exec record persisted opaque command text")
+	}
+}
+
 func TestDriver_Update_ScriptUsesDeterministicGuestCache(t *testing.T) {
 	d := newTestDriver(t, &Config{Profile: ProfileContainer})
 	res, err := d.Create(context.Background(), nil)

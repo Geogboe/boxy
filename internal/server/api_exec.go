@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -9,11 +8,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/httpjson"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
@@ -29,26 +26,11 @@ const (
 
 type execSandboxRequest struct {
 	Command         []string                     `json:"command"`
+	CommandText     string                       `json:"command_text,omitempty"`
 	Script          *providersdk.ScriptSpec      `json:"script,omitempty"`
 	ResourceID      string                       `json:"resource_id,omitempty"`
 	Timeout         string                       `json:"timeout,omitempty"`
 	GuestCredential *providersdk.GuestCredential `json:"guest_credential,omitempty"`
-}
-
-type execSandboxResponse struct {
-	ResourceID string `json:"resource_id"`
-	Stdout     string `json:"stdout,omitempty"`
-	Stderr     string `json:"stderr,omitempty"`
-	ExitCode   int    `json:"exit_code"`
-}
-
-type execStreamEvent struct {
-	Type       string            `json:"type"`
-	Stream     string            `json:"stream,omitempty"`
-	Data       string            `json:"data,omitempty"`
-	ExitCode   *int              `json:"exit_code,omitempty"`
-	Attributes map[string]string `json:"attributes,omitempty"`
-	Error      string            `json:"error,omitempty"`
 }
 
 func (s *Server) handleSandboxExec(w http.ResponseWriter, r *http.Request) {
@@ -85,11 +67,25 @@ func (s *Server) handleSandboxExec(w http.ResponseWriter, r *http.Request) {
 		httpjson.Error(w, http.StatusBadRequest, "request body must contain one JSON object")
 		return
 	}
+	inputCount := 0
+	if len(req.Command) != 0 {
+		inputCount++
+	}
+	if strings.TrimSpace(req.CommandText) != "" {
+		inputCount++
+	}
 	if req.Script != nil {
-		if len(req.Command) != 0 {
-			httpjson.Error(w, http.StatusBadRequest, "command and script are mutually exclusive")
-			return
-		}
+		inputCount++
+	}
+	if inputCount > 1 {
+		httpjson.Error(w, http.StatusBadRequest, "command, command_text, and script are mutually exclusive")
+		return
+	}
+	if inputCount != 1 {
+		httpjson.Error(w, http.StatusBadRequest, "exactly one of command, command_text, or script is required")
+		return
+	}
+	if req.Script != nil {
 		if req.Script.Interpreter == "" {
 			req.Script.Interpreter = providersdk.ScriptInterpreterAuto
 		}
@@ -97,14 +93,8 @@ func (s *Server) handleSandboxExec(w http.ResponseWriter, r *http.Request) {
 			httpjson.Error(w, http.StatusBadRequest, err.Error())
 			return
 		}
-	} else if len(req.Command) == 0 || strings.TrimSpace(req.Command[0]) == "" {
+	} else if len(req.Command) != 0 && strings.TrimSpace(req.Command[0]) == "" {
 		httpjson.Error(w, http.StatusBadRequest, "command must contain at least one non-empty argument")
-		return
-	}
-
-	streaming, err := parseExecStreaming(r)
-	if err != nil {
-		httpjson.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	resourceID, err := selectExecResource(req.ResourceID, sb.Resources)
@@ -125,37 +115,133 @@ func (s *Server) handleSandboxExec(w http.ResponseWriter, r *http.Request) {
 		httpjson.Error(w, http.StatusConflict, "sandbox resource is not allocated")
 		return
 	}
-	if s.executor == nil {
-		httpjson.Error(w, http.StatusNotImplemented, "sandbox command execution is not available")
-		return
-	}
-
 	timeout, err := parseExecTimeout(req.Timeout)
 	if err != nil {
 		httpjson.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), timeout)
-	defer cancel()
-
-	operation := providersdk.ExecOperation{Command: req.Command, Script: req.Script, GuestCredential: req.GuestCredential}
-	if streaming {
-		s.handleStreamingExec(w, ctx, resource, operation)
+	operation := providersdk.ExecOperation{Command: req.Command, CommandText: req.CommandText, Script: req.Script, GuestCredential: req.GuestCredential}
+	inputKind := model.ExecutionInputCommand
+	if req.Script != nil {
+		inputKind = model.ExecutionInputScript
+	} else if strings.TrimSpace(req.CommandText) != "" {
+		inputKind = model.ExecutionInputCommandText
+	}
+	execution, err := s.executionService().submit(context.Background(), sb, resource, operation, inputKind, principalFromRequest(r).OwnerIdentity(), timeout)
+	if err != nil {
+		var busy *resourceBusyError
+		if errors.As(err, &busy) {
+			writeResourceBusy(w, busy.ExecutionID)
+			return
+		}
+		httpjson.Error(w, http.StatusInternalServerError, "failed to start sandbox command execution")
 		return
 	}
-	s.handleBufferedExec(w, ctx, resource, operation)
+	httpjson.Write(w, http.StatusAccepted, map[string]any{"exec_id": execution.ID, "status": execution.Status})
 }
 
-func parseExecStreaming(r *http.Request) (bool, error) {
-	value := r.URL.Query().Get("stream")
-	if value == "" {
-		return true, nil
+type executionChunkResponse struct {
+	Cursor    string `json:"cursor"`
+	Stream    string `json:"stream,omitempty"`
+	Data      string `json:"data,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
+}
+
+type executionStatusResponse struct {
+	ExecID    model.ExecutionID        `json:"exec_id"`
+	Status    model.ExecutionStatus    `json:"status"`
+	Chunks    []executionChunkResponse `json:"chunks,omitempty"`
+	Next      string                   `json:"next"`
+	ExitCode  *int                     `json:"exit_code,omitempty"`
+	Error     string                   `json:"error,omitempty"`
+	Truncated bool                     `json:"truncated,omitempty"`
+}
+
+func (s *Server) handleGetSandboxExecution(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRole(w, r, model.APIKeyRoleUser, model.APIKeyRoleAdmin) {
+		return
 	}
-	streaming, err := strconv.ParseBool(value)
+	execution, ok := s.executionForRequest(w, r, false)
+	if !ok {
+		return
+	}
+	from, err := decodeExecutionCursor(r.URL.Query().Get("from"))
 	if err != nil {
-		return false, errors.New("stream must be true or false")
+		httpjson.Error(w, http.StatusBadRequest, err.Error())
+		return
 	}
-	return streaming, nil
+	response := executionStatusResponse{ExecID: execution.ID, Status: execution.Status, Next: encodeExecutionCursor(from), ExitCode: execution.ExitCode, Error: execution.Error, Truncated: execution.Truncated}
+	var pageBytes int
+	for _, chunk := range execution.Chunks {
+		if chunk.Cursor <= from {
+			continue
+		}
+		if len(response.Chunks) > 0 && pageBytes+len(chunk.Data) > maxExecChunk {
+			break
+		}
+		response.Chunks = append(response.Chunks, executionChunkResponse{
+			Cursor: encodeExecutionCursor(chunk.Cursor), Stream: chunk.Stream,
+			Data: base64.StdEncoding.EncodeToString(chunk.Data), Truncated: chunk.Dropped,
+		})
+		pageBytes += len(chunk.Data)
+		response.Next = encodeExecutionCursor(chunk.Cursor)
+	}
+	httpjson.Write(w, http.StatusOK, response)
+}
+
+func (s *Server) handleCancelSandboxExecution(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRole(w, r, model.APIKeyRoleUser, model.APIKeyRoleAdmin) {
+		return
+	}
+	execution, ok := s.executionForRequest(w, r, true)
+	if !ok {
+		return
+	}
+	if err := s.executionService().cancelExecution(execution.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+		httpjson.Error(w, http.StatusConflict, "execution cannot be cancelled: "+err.Error())
+		return
+	}
+	httpjson.Write(w, http.StatusAccepted, map[string]any{"exec_id": execution.ID, "status": execution.Status})
+}
+
+func (s *Server) executionForRequest(w http.ResponseWriter, r *http.Request, mutate bool) (model.Execution, bool) {
+	sandboxID := model.SandboxID(r.PathValue("id"))
+	sb, err := s.store.GetSandbox(r.Context(), sandboxID)
+	if errors.Is(err, store.ErrNotFound) {
+		httpjson.Error(w, http.StatusNotFound, "sandbox not found")
+		return model.Execution{}, false
+	}
+	if err != nil {
+		httpjson.Error(w, http.StatusInternalServerError, "failed to get sandbox")
+		return model.Execution{}, false
+	}
+	if !s.authorizeSandbox(w, r, sb, mutate) {
+		return model.Execution{}, false
+	}
+	execID := model.ExecutionID(r.PathValue("exec_id"))
+	execution, err := s.executionService().get(r.Context(), execID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			httpjson.Error(w, http.StatusNotFound, "execution not found")
+			return model.Execution{}, false
+		}
+		httpjson.Error(w, http.StatusInternalServerError, "failed to get execution")
+		return model.Execution{}, false
+	}
+	if execution.SandboxID != sandboxID {
+		httpjson.Error(w, http.StatusNotFound, "execution not found")
+		return model.Execution{}, false
+	}
+	return execution, true
+}
+
+func writeResourceBusy(w http.ResponseWriter, id model.ExecutionID) {
+	httpjson.Write(w, http.StatusConflict, map[string]any{
+		"error":               "resource_busy",
+		"exec_id":             id,
+		"active_id":           id,
+		"active_execution_id": id,
+	})
 }
 
 func selectExecResource(requested string, resources []model.ResourceID) (model.ResourceID, error) {
@@ -185,146 +271,4 @@ func parseExecTimeout(raw string) (time.Duration, error) {
 		return 0, fmt.Errorf("timeout must not exceed %s", maxExecTimeout)
 	}
 	return d, nil
-}
-
-type boundedEventSink struct {
-	publisher *eventstream.Publisher
-}
-
-func (s boundedEventSink) Send(ctx context.Context, event eventstream.Event) error {
-	switch event.Kind {
-	case eventstream.Data:
-		return s.publisher.Write(ctx, event.Channel, event.Payload)
-	case eventstream.Complete:
-		if event.Completion == nil {
-			return s.publisher.Complete(ctx, eventstream.Completion{})
-		}
-		return s.publisher.Complete(ctx, *event.Completion)
-	default:
-		return fmt.Errorf("unsupported event kind %d", event.Kind)
-	}
-}
-
-type bufferedExecSink struct {
-	stdout bytes.Buffer
-	stderr bytes.Buffer
-}
-
-func (s *bufferedExecSink) Send(_ context.Context, event eventstream.Event) error {
-	if event.Kind != eventstream.Data {
-		return nil
-	}
-	switch event.Channel {
-	case eventstream.Channel("stdout"):
-		_, _ = s.stdout.Write(event.Payload)
-	case eventstream.Channel("stderr"):
-		_, _ = s.stderr.Write(event.Payload)
-	}
-	return nil
-}
-
-func (s *Server) handleBufferedExec(w http.ResponseWriter, ctx context.Context, resource model.Resource, operation providersdk.ExecOperation) {
-	collector := new(bufferedExecSink)
-	publisher := eventstream.NewPublisher(collector, eventstream.Limits{MaxChunkBytes: maxExecChunk, MaxTotalBytes: maxExecOutput})
-	result, err := s.executor.ExecuteSandbox(ctx, resource, operation, boundedEventSink{publisher: publisher})
-	if err != nil {
-		writeExecError(w, err)
-		return
-	}
-	if err := completePublisher(ctx, publisher, result); err != nil {
-		writeExecError(w, err)
-		return
-	}
-	response := execSandboxResponse{ResourceID: string(resource.ID), Stdout: collector.stdout.String(), Stderr: collector.stderr.String()}
-	response.ExitCode = resultExitCode(result)
-	httpjson.Write(w, http.StatusOK, response)
-}
-
-func (s *Server) handleStreamingExec(w http.ResponseWriter, ctx context.Context, resource model.Resource, operation providersdk.ExecOperation) {
-	stream := &ndjsonExecSink{encoder: json.NewEncoder(w), flusher: http.NewResponseController(w)}
-	w.Header().Set("Content-Type", "application/x-ndjson")
-	w.WriteHeader(http.StatusOK)
-	publisher := eventstream.NewPublisher(stream, eventstream.Limits{MaxChunkBytes: maxExecChunk, MaxTotalBytes: maxExecOutput})
-	result, err := s.executor.ExecuteSandbox(ctx, resource, operation, boundedEventSink{publisher: publisher})
-	if err != nil {
-		_ = stream.Send(ctx, eventstream.Event{Kind: eventstream.Complete, Completion: &eventstream.Completion{Err: err}})
-		return
-	}
-	_ = completePublisher(ctx, publisher, result)
-}
-
-type ndjsonExecSink struct {
-	encoder *json.Encoder
-	flusher *http.ResponseController
-}
-
-func (s *ndjsonExecSink) Send(_ context.Context, event eventstream.Event) error {
-	out := execStreamEvent{}
-	switch event.Kind {
-	case eventstream.Data:
-		out.Type = "data"
-		out.Stream = string(event.Channel)
-		out.Data = base64.StdEncoding.EncodeToString(event.Payload)
-	case eventstream.Complete:
-		out.Type = "complete"
-		if event.Completion != nil {
-			out.Attributes = event.Completion.Attributes
-			if event.Completion.Err != nil {
-				out.Error = event.Completion.Err.Error()
-			}
-			if raw := out.Attributes["exit_code"]; raw != "" {
-				if code, err := strconv.Atoi(raw); err == nil {
-					out.ExitCode = &code
-				}
-			}
-		}
-	default:
-		return fmt.Errorf("unsupported event kind %d", event.Kind)
-	}
-	if err := s.encoder.Encode(out); err != nil {
-		return err
-	}
-	return s.flusher.Flush()
-}
-
-func completePublisher(ctx context.Context, publisher *eventstream.Publisher, result *providersdk.Result) error {
-	attributes := map[string]string(nil)
-	if result != nil {
-		attributes = result.Outputs
-	}
-	err := publisher.Complete(ctx, eventstream.Completion{Attributes: attributes})
-	if errors.Is(err, eventstream.ErrCompleted) {
-		return nil
-	}
-	return err
-}
-
-func resultExitCode(result *providersdk.Result) int {
-	if result == nil {
-		return 0
-	}
-	code, err := strconv.Atoi(result.Outputs["exit_code"])
-	if err != nil {
-		return 0
-	}
-	return code
-}
-
-func writeExecError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, context.DeadlineExceeded):
-		httpjson.Error(w, http.StatusGatewayTimeout, "sandbox command execution failed: "+err.Error())
-	case errors.Is(err, eventstream.ErrLimitExceeded):
-		// The buffered response mode has already discarded whatever partial
-		// output it collected by the time this error surfaces (the
-		// eventstream.Publisher only reports the limit, it doesn't hand
-		// back what it already forwarded), so there's nothing partial to
-		// return here. Unlike a generic provider failure this is a client
-		// choice-of-mode problem, not a server error — 413 says so, and
-		// points at the streaming mode that delivers output incrementally
-		// instead of buffering it all before responding.
-		httpjson.Error(w, http.StatusRequestEntityTooLarge, "sandbox command output exceeded the buffered response limit; omit stream=false to receive output incrementally instead of buffering")
-	default:
-		httpjson.Error(w, http.StatusInternalServerError, "sandbox command execution failed: "+err.Error())
-	}
 }

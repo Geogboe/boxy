@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -16,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/spf13/cobra"
@@ -29,6 +29,9 @@ type sandboxExecOptions struct {
 	guestPasswordStdin bool
 	scriptFile         string
 	interpreter        providersdk.ScriptInterpreter
+	commandText        string
+	attachID           string
+	detach             bool
 }
 
 type sandboxExecMode uint8
@@ -41,17 +44,11 @@ const (
 
 type sandboxExecRequest struct {
 	Command         []string                     `json:"command"`
+	CommandText     string                       `json:"command_text,omitempty"`
 	Script          *providersdk.ScriptSpec      `json:"script,omitempty"`
 	ResourceID      string                       `json:"resource_id,omitempty"`
 	Timeout         string                       `json:"timeout,omitempty"`
 	GuestCredential *providersdk.GuestCredential `json:"guest_credential,omitempty"`
-}
-
-type sandboxExecResponse struct {
-	ResourceID string `json:"resource_id"`
-	Stdout     string `json:"stdout,omitempty"`
-	Stderr     string `json:"stderr,omitempty"`
-	ExitCode   int    `json:"exit_code"`
 }
 
 type sandboxExecStreamEvent struct {
@@ -63,9 +60,27 @@ type sandboxExecStreamEvent struct {
 	Attrs    map[string]string `json:"attributes,omitempty"`
 }
 
+type sandboxExecutionResponse struct {
+	ExecID    string                  `json:"exec_id"`
+	Status    string                  `json:"status"`
+	Chunks    []sandboxExecutionChunk `json:"chunks,omitempty"`
+	Next      string                  `json:"next"`
+	ExitCode  *int                    `json:"exit_code,omitempty"`
+	Error     string                  `json:"error,omitempty"`
+	Truncated bool                    `json:"truncated,omitempty"`
+}
+
+type sandboxExecutionChunk struct {
+	Cursor    string `json:"cursor"`
+	Stream    string `json:"stream,omitempty"`
+	Data      string `json:"data,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
+}
+
 func newSandboxExecCommand(serverAddr func() string) *cobra.Command {
 	var resourceID, timeout, scriptFile, interpreter string
-	var events, buffered, guestPasswordStdin bool
+	var commandText, attachID string
+	var events, buffered, guestPasswordStdin, stdinCommand, detach bool
 	cmd := &cobra.Command{
 		Use:   "exec <id> -- <command> [args...]",
 		Short: "Execute a one-shot command with live output in a ready sandbox",
@@ -73,7 +88,34 @@ func newSandboxExecCommand(serverAddr func() string) *cobra.Command {
 			if len(args) < 1 {
 				return fmt.Errorf("requires a sandbox id and a command after --")
 			}
-			if scriptFile == "" && len(args) < 2 {
+			if attachID != "" {
+				if len(args) != 1 || commandText != "" || stdinCommand || scriptFile != "" || detach || events || buffered {
+					return errors.New("--attach cannot be combined with command input or output mode flags")
+				}
+				return nil
+			}
+			inputs := 0
+			if scriptFile != "" {
+				inputs++
+			}
+			if commandText != "" {
+				inputs++
+			}
+			if stdinCommand {
+				inputs++
+			}
+			if scriptFile == "" && len(args) > 1 && strings.HasPrefix(args[1], "@") {
+				inputs++
+			} else if scriptFile == "" && len(args) > 1 {
+				inputs++
+			}
+			if inputs > 1 {
+				return errors.New("command input forms cannot be used together")
+			}
+			if inputs != 1 {
+				return errors.New("exactly one of positional command, --command, --stdin, or --script-file is required")
+			}
+			if scriptFile == "" && len(args) < 2 && commandText == "" && !stdinCommand {
 				return fmt.Errorf("requires a sandbox id and a command after --")
 			}
 			return nil
@@ -81,6 +123,19 @@ func newSandboxExecCommand(serverAddr func() string) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if events && buffered {
 				return fmt.Errorf("--events and --buffered cannot be used together")
+			}
+			if stdinCommand && guestPasswordStdin {
+				return errors.New("--stdin and --guest-password-stdin cannot both consume stdin")
+			}
+			if stdinCommand {
+				data, err := io.ReadAll(cmd.InOrStdin())
+				if err != nil {
+					return fmt.Errorf("read command from stdin: %w", err)
+				}
+				if strings.TrimSpace(string(data)) == "" {
+					return errors.New("--stdin command must not be blank")
+				}
+				commandText = string(data)
 			}
 			id, err := validatePathID("sandbox id", args[0])
 			if err != nil {
@@ -100,6 +155,9 @@ func newSandboxExecCommand(serverAddr func() string) *cobra.Command {
 				guestPasswordStdin: guestPasswordStdin,
 				scriptFile:         scriptFile,
 				interpreter:        providersdk.ScriptInterpreter(interpreter),
+				commandText:        commandText,
+				attachID:           attachID,
+				detach:             detach,
 			}, id, args[1:], cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
@@ -107,6 +165,10 @@ func newSandboxExecCommand(serverAddr func() string) *cobra.Command {
 	cmd.Flags().StringVar(&timeout, "timeout", "", "execution timeout (default 30s, maximum 5m)")
 	cmd.Flags().BoolVar(&events, "events", false, "write structured NDJSON events instead of human-readable output")
 	cmd.Flags().BoolVar(&buffered, "buffered", false, "wait for completion and request one buffered JSON response")
+	cmd.Flags().StringVar(&commandText, "command", "", "execute one opaque command string")
+	cmd.Flags().BoolVar(&stdinCommand, "stdin", false, "read one opaque command string from stdin")
+	cmd.Flags().BoolVar(&detach, "detach", false, "submit the execution, print its ID, and return")
+	cmd.Flags().StringVar(&attachID, "attach", "", "attach to an existing execution ID")
 	cmd.Flags().BoolVar(&guestPasswordStdin, "guest-password-stdin", false, "read the guest password from stdin (never pass it as a flag value)")
 	cmd.Flags().StringVar(&scriptFile, "script-file", "", "stage and execute a local script file")
 	cmd.Flags().StringVar(&interpreter, "interpreter", string(providersdk.ScriptInterpreterAuto), "script interpreter: auto, powershell, or sh")
@@ -114,128 +176,169 @@ func newSandboxExecCommand(serverAddr func() string) *cobra.Command {
 }
 
 func runSandboxExec(ctx context.Context, opts sandboxExecOptions, id string, command []string, in io.Reader, out, errOut io.Writer) error {
-	command, script, err := parseSandboxExecPayload(command, opts.scriptFile, opts.interpreter)
-	if err != nil {
-		return err
+	return runDurableSandboxExec(ctx, opts, id, command, in, out, errOut)
+
+}
+
+func runDurableSandboxExec(ctx context.Context, opts sandboxExecOptions, id string, command []string, in io.Reader, out, errOut io.Writer) error {
+	var script *providersdk.ScriptSpec
+	var err error
+	if opts.attachID == "" {
+		if opts.commandText == "" {
+			command, script, err = parseSandboxExecPayload(command, opts.scriptFile, opts.interpreter)
+			if err != nil {
+				return err
+			}
+		} else {
+			command = nil
+		}
 	}
 	base := apiBaseURL(opts.server)
-	credential, err := guestCredentialFromCLI(in, opts.guestPasswordStdin)
-	if err != nil {
-		return err
-	}
-	if credential == nil {
-		credential, err = guestCredentialFromKeyring(ctx, opts.server, id, opts.resourceID)
-		if err != nil {
-			return err
-		}
-	}
-	request := sandboxExecRequest{Command: command, Script: script, ResourceID: opts.resourceID, Timeout: opts.timeout, GuestCredential: credential}
-	// The default client's 5s http.Client.Timeout bounds the whole request
-	// (including reading a streaming response body), but the server accepts
-	// exec timeouts up to 5 minutes — see execAPIClientForServer's doc
-	// comment.
 	client := execAPIClientForServer(opts.server)
-	if opts.mode == sandboxExecBuffered {
-		endpoint, err := url.Parse(base + "/api/v1/sandboxes/" + id + "/exec")
+	if opts.attachID == "" {
+		credential, credentialErr := guestCredentialFromCLI(in, opts.guestPasswordStdin)
+		if credentialErr != nil {
+			return credentialErr
+		}
+		if credential == nil {
+			credential, credentialErr = guestCredentialFromKeyring(ctx, opts.server, id, opts.resourceID)
+			if credentialErr != nil {
+				return credentialErr
+			}
+		}
+		request := sandboxExecRequest{Command: command, CommandText: opts.commandText, Script: script, ResourceID: opts.resourceID, Timeout: opts.timeout, GuestCredential: credential}
+		endpoint := base + "/api/v1/sandboxes/" + id + "/exec"
+		accepted, postErr := postJSON[sandboxExecRequest, struct {
+			ExecID string `json:"exec_id"`
+			Status string `json:"status"`
+		}](ctx, client, endpoint, request)
+		if postErr != nil {
+			return postErr
+		}
+		if opts.detach {
+			_, _ = fmt.Fprintln(out, accepted.ExecID)
+			return nil
+		}
+		return tailSandboxExecution(ctx, client, base, id, accepted.ExecID, opts.mode, out, errOut)
+	}
+	return tailSandboxExecution(ctx, client, base, id, opts.attachID, opts.mode, out, errOut)
+}
+
+func tailSandboxExecution(ctx context.Context, client *http.Client, base, sandboxID, executionID string, mode sandboxExecMode, out, errOut io.Writer) error {
+	cursor := ""
+	var bufferedStdout, bufferedStderr bytes.Buffer
+	for {
+		endpoint := base + "/api/v1/sandboxes/" + sandboxID + "/exec/" + executionID
+		if cursor != "" {
+			endpoint += "?from=" + url.QueryEscape(cursor)
+		}
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 		if err != nil {
 			return err
 		}
-		query := endpoint.Query()
-		query.Set("stream", "false")
-		endpoint.RawQuery = query.Encode()
-		response, err := postJSON[sandboxExecRequest, sandboxExecResponse](ctx, client, endpoint.String(), request)
+		printCurlIfEnabled(ctx, client, request)
+		response, err := client.Do(request) //nolint:gosec // endpoint comes from the user-selected Boxy server.
 		if err != nil {
-			return err
+			if ctx.Err() != nil {
+				_ = cancelSandboxExecution(context.Background(), client, base, sandboxID, executionID)
+			}
+			return wrapConnError(err, request.URL.Host)
 		}
-		if response.Stdout != "" {
-			_, _ = io.WriteString(out, response.Stdout)
+		var page sandboxExecutionResponse
+		decodeErr := json.NewDecoder(response.Body).Decode(&page)
+		_ = response.Body.Close()
+		if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+			if decodeErr != nil {
+				return fmt.Errorf("read execution response: %w", decodeErr)
+			}
+			return fmt.Errorf("execution request returned HTTP %d", response.StatusCode)
 		}
-		if response.Stderr != "" {
-			_, _ = io.WriteString(errOut, response.Stderr)
+		if decodeErr != nil {
+			return fmt.Errorf("decode execution status: %w", decodeErr)
 		}
-		if response.ExitCode != 0 {
-			return NewExitCodeError(response.ExitCode)
+		for _, chunk := range page.Chunks {
+			if chunk.Truncated {
+				if mode == sandboxExecEvents {
+					_, _ = fmt.Fprintf(out, "{\"type\":\"truncated\",\"cursor\":%q}\n", chunk.Cursor)
+				}
+				continue
+			}
+			data, decodeErr := base64.StdEncoding.DecodeString(chunk.Data)
+			if decodeErr != nil {
+				return fmt.Errorf("decode execution chunk: %w", decodeErr)
+			}
+			switch {
+			case mode == sandboxExecEvents:
+				event := sandboxExecStreamEvent{Type: "data", Stream: chunk.Stream, Data: chunk.Data}
+				if err := json.NewEncoder(out).Encode(event); err != nil {
+					return fmt.Errorf("write execution event: %w", err)
+				}
+			case mode == sandboxExecBuffered:
+				if chunk.Stream == "stderr" {
+					_, _ = bufferedStderr.Write(data)
+				} else {
+					_, _ = bufferedStdout.Write(data)
+				}
+			case chunk.Stream == "stderr":
+				_, _ = errOut.Write(data)
+			default:
+				_, _ = out.Write(data)
+			}
+		}
+		if page.Next != "" {
+			cursor = page.Next
+		}
+		if page.Status == "running" || page.Status == "pending" {
+			select {
+			case <-ctx.Done():
+				_ = cancelSandboxExecution(context.Background(), client, base, sandboxID, executionID)
+				return ctx.Err()
+			case <-time.After(50 * time.Millisecond):
+			}
+			continue
+		}
+		if mode == sandboxExecEvents {
+			terminal := sandboxExecStreamEvent{Type: "complete", Error: page.Error, Attrs: map[string]string{"status": page.Status}}
+			if page.ExitCode != nil {
+				terminal.ExitCode = page.ExitCode
+				terminal.Attrs["exit_code"] = strconv.Itoa(*page.ExitCode)
+			}
+			if err := json.NewEncoder(out).Encode(terminal); err != nil {
+				return fmt.Errorf("write execution completion: %w", err)
+			}
+		}
+		if mode == sandboxExecBuffered {
+			if _, err := out.Write(bufferedStdout.Bytes()); err != nil {
+				return fmt.Errorf("write buffered stdout: %w", err)
+			}
+			if _, err := errOut.Write(bufferedStderr.Bytes()); err != nil {
+				return fmt.Errorf("write buffered stderr: %w", err)
+			}
+		}
+		if page.ExitCode != nil && *page.ExitCode != 0 {
+			return NewExitCodeError(*page.ExitCode)
+		}
+		if page.Error != "" {
+			return errors.New(page.Error)
+		}
+		if page.Status == "cancelled" || page.Status == "interrupted" {
+			return fmt.Errorf("execution %s", page.Status)
 		}
 		return nil
 	}
+}
 
-	body := new(bytes.Buffer)
-	if err := json.NewEncoder(body).Encode(request); err != nil {
-		return err
-	}
-	endpoint, err := url.Parse(base + "/api/v1/sandboxes/" + id + "/exec")
+func cancelSandboxExecution(ctx context.Context, client *http.Client, base, sandboxID, executionID string) error {
+	endpoint := base + "/api/v1/sandboxes/" + sandboxID + "/exec/" + executionID + "/cancel"
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), body)
+	response, err := client.Do(request) //nolint:gosec // endpoint comes from the user-selected Boxy server.
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	printCurlIfEnabled(ctx, client, req)
-	resp, err := client.Do(req) //nolint:gosec // endpoint comes from the user-selected Boxy server.
-	if err != nil {
-		return wrapConnError(err, req.URL.Host)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return decodeAPIError(resp, req.URL.String())
-	}
-
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 64*1024), 2*1024*1024)
-	completed := false
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if opts.mode == sandboxExecEvents {
-			if _, err := fmt.Fprintln(out, string(line)); err != nil {
-				return fmt.Errorf("write exec stream event: %w", err)
-			}
-		}
-		var event sandboxExecStreamEvent
-		if err := json.Unmarshal(line, &event); err != nil {
-			return fmt.Errorf("decode exec stream event: %w", err)
-		}
-		switch event.Type {
-		case "data":
-			if opts.mode == sandboxExecEvents {
-				continue
-			}
-			data, err := base64.StdEncoding.DecodeString(event.Data)
-			if err != nil {
-				return fmt.Errorf("decode exec stream data: %w", err)
-			}
-			if event.Stream == "stderr" {
-				_, _ = errOut.Write(data)
-			} else {
-				_, _ = out.Write(data)
-			}
-		case "complete":
-			completed = true
-			if event.Error != "" {
-				return fmt.Errorf("command stream failed: %s", event.Error)
-			}
-			if event.ExitCode == nil && event.Attrs != nil {
-				if raw := event.Attrs["exit_code"]; raw != "" {
-					code, parseErr := strconv.Atoi(raw)
-					if parseErr == nil {
-						event.ExitCode = &code
-					}
-				}
-			}
-			if event.ExitCode != nil && *event.ExitCode != 0 {
-				return NewExitCodeError(*event.ExitCode)
-			}
-		default:
-			return fmt.Errorf("unknown exec stream event type %q", event.Type)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("read exec stream: %w", err)
-	}
-	if !completed {
-		return fmt.Errorf("exec stream ended before the complete event")
-	}
+	_ = response.Body.Close()
 	return nil
 }
 

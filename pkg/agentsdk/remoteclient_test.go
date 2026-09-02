@@ -213,6 +213,20 @@ func (d *fakeListingDriver) List(ctx context.Context) ([]providersdk.ResourceSta
 	return d.listRes, d.listErr
 }
 
+func TestDecodeUpdateOperationRecognizesOpaqueCommand(t *testing.T) {
+	op := decodeUpdateOperation(map[string]any{"command_text": "Get-Process | Sort-Object CPU"})
+	execOp, ok := op.(*providersdk.ExecOperation)
+	if !ok {
+		t.Fatalf("operation type = %T, want *providersdk.ExecOperation", op)
+	}
+	if execOp.CommandText != "Get-Process | Sort-Object CPU" {
+		t.Fatalf("command text = %q, want opaque command text", execOp.CommandText)
+	}
+	if len(execOp.Command) != 0 {
+		t.Fatalf("command argv = %#v, want no reconstructed argv", execOp.Command)
+	}
+}
+
 func TestExecuteCommand(t *testing.T) {
 	drivers := DriverSet{
 		"docker": &fakeDriver{
