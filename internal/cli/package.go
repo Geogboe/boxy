@@ -58,13 +58,18 @@ func runPackageBuild(ctx context.Context, manifestPath, outputPath string) error
 	if err := decoder.Decode(&manifest); err != nil {
 		return fmt.Errorf("decode package manifest: %w", err)
 	}
-	if err := manifest.Validate(); err != nil {
+	manifest, err = resourcepack.Compile(manifest)
+	if err != nil {
 		return err
+	}
+	compiledData, err := yaml.Marshal(manifest)
+	if err != nil {
+		return fmt.Errorf("encode compiled package manifest: %w", err)
 	}
 	value := artifact.Artifact{
 		Type:     artifact.ArtifactTypePackage,
 		Ref:      artifact.Ref{Type: artifact.ArtifactTypePackage, Name: manifest.Name, Version: manifest.Version},
-		Manifest: data,
+		Manifest: compiledData,
 	}
 	if script, _ := manifest.Inputs["script"].(string); script != "" {
 		content, err := os.ReadFile(filepath.Join(filepath.Dir(manifestPath), script))

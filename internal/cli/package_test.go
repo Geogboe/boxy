@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Geogboe/boxy/pkg/artifact"
@@ -49,5 +50,40 @@ func TestPackageBuildAndPublish(t *testing.T) {
 	}
 	if len(encoded) == 0 {
 		t.Fatal("published artifact encoded as empty JSON")
+	}
+}
+
+func TestPackageBuildCompilesBuiltinPackageManager(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "package.yaml")
+	artifactPath := filepath.Join(dir, "package.json")
+	manifest := `name: developer-tools
+version: 1.0.0
+builtin: package-manager
+scopes: [resource]
+events: [provision]
+inputs:
+  parameters:
+    manager: winget
+    packages: [Microsoft.VisualStudioCode, Git.Git]
+`
+	if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runPackageBuild(context.Background(), manifestPath, artifactPath); err != nil {
+		t.Fatalf("runPackageBuild: %v", err)
+	}
+	value, err := readPackageArtifact(artifactPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled := string(value.Manifest)
+	if !strings.Contains(compiled, "method: powershell") || !strings.Contains(compiled, "winget install") {
+		t.Fatalf("package artifact was not compiled:\n%s", compiled)
+	}
+	if strings.Contains(compiled, "builtin:") || strings.Contains(compiled, "manager:") {
+		t.Fatalf("package artifact retained recipe fields:\n%s", compiled)
 	}
 }

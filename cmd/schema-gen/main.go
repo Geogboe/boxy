@@ -9,6 +9,7 @@ import (
 
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/providersdk/builtins"
+	"github.com/Geogboe/boxy/pkg/resourcepack"
 )
 
 func main() {
@@ -299,10 +300,24 @@ func packageSchema() map[string]any {
 	return map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
-		"required":             []string{"version", "method", "scopes", "events"},
+		"required":             []string{"version", "scopes", "events"},
+		"oneOf": []map[string]any{
+			{
+				"required": []string{"method"},
+				"not":      map[string]any{"required": []string{"builtin"}},
+			},
+			{
+				"required": []string{"builtin"},
+				"properties": map[string]any{
+					"builtin": map[string]any{"const": resourcepack.BuiltinPackageManager},
+				},
+				"not": map[string]any{"required": []string{"method"}},
+			},
+		},
 		"properties": map[string]any{
 			"name":     map[string]any{"type": "string"},
 			"version":  map[string]any{"type": "string", "minLength": 1},
+			"builtin":  map[string]any{"type": "string", "enum": []string{resourcepack.BuiltinPackageManager}},
 			"method":   map[string]any{"type": "string", "enum": []string{"shell", "powershell", "dsc", "ansible"}},
 			"scopes":   map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "enum": []string{"resource", "allocation"}}},
 			"events":   map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "enum": []string{"provision", "promotion", "allocation"}}},

@@ -42,7 +42,40 @@
     "packages": {
       "additionalProperties": {
         "additionalProperties": false,
+        "oneOf": [
+          {
+            "not": {
+              "required": [
+                "builtin"
+              ]
+            },
+            "required": [
+              "method"
+            ]
+          },
+          {
+            "not": {
+              "required": [
+                "method"
+              ]
+            },
+            "properties": {
+              "builtin": {
+                "const": "package-manager"
+              }
+            },
+            "required": [
+              "builtin"
+            ]
+          }
+        ],
         "properties": {
+          "builtin": {
+            "enum": [
+              "package-manager"
+            ],
+            "type": "string"
+          },
           "defaults": {
             "type": "object"
           },
@@ -91,7 +124,6 @@
         },
         "required": [
           "version",
-          "method",
           "scopes",
           "events"
         ],

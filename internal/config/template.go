@@ -7,6 +7,7 @@ import (
 
 	"github.com/Geogboe/boxy/pkg/artifact"
 	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/resourcepack"
 	"gopkg.in/yaml.v3"
 )
 
@@ -180,10 +181,11 @@ func (c Config) PackageRegistry(ctx context.Context) (*artifact.MemoryRegistry, 
 		if manifest.Name == "" {
 			manifest.Name = key
 		}
-		if err := manifest.Validate(); err != nil {
+		compiled, err := resourcepack.Compile(manifest)
+		if err != nil {
 			return nil, fmt.Errorf("package %q: %w", key, err)
 		}
-		payload, err := yaml.Marshal(manifest)
+		payload, err := yaml.Marshal(compiled)
 		if err != nil {
 			return nil, fmt.Errorf("encode package %q: %w", key, err)
 		}

@@ -301,6 +301,42 @@ pools:
 - `templates` are reusable desired resource shapes; `pools` own inventory policy and may override template fields for a particular pool.
 - Config is stateless and declarative and is read once on startup. Runtime state (resources, sandboxes) lives in the state store — see [State Store](#state-store) below.
 
+### Built-in package-manager recipes
+
+Packages can declare common guest setup without carrying a script file. Boxy
+compiles the declaration into the same immutable inline `shell` or
+`powershell` package used by regular manifests:
+
+```yaml
+packages:
+  developer-tools:
+    builtin: package-manager
+    version: 1.0.0
+    scopes: [resource]
+    events: [provision]
+    inputs:
+      parameters:
+        manager: apk       # apt, apk, winget, or chocolatey
+        packages: [curl, git]
+```
+
+Package IDs are validated and sorted before the script is generated; duplicate
+IDs and shell/PowerShell metacharacters are rejected. Only safe portable
+identifier characters are accepted;
+shell and PowerShell metacharacters are rejected. The selected manager must
+already be installed in the guest and runs with the configured guest
+credential. Boxy does not detect alternatives, elevate, bootstrap, upgrade,
+or silently install managers. The manager's repositories must be reachable,
+and package versions follow those repositories because this first slice does
+not pin versions. Missing managers and nonzero manager exits fail the package
+operation; a successful applied-package digest preserves normal idempotency.
+
+Build a package artifact explicitly with `boxy package build`; recipe
+compilation also runs during config validation, registry construction, and
+package planning. See [Resource package artifacts](docs/package-artifacts.md)
+for command details and [Deployment examples](docs/package-artifacts.md#deployment-examples)
+for the Compose, K3s/OKD, and Keycloak examples.
+
 ### Pool Policy Structure
 
 ```yaml

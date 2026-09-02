@@ -38,6 +38,14 @@ toward a desired state. A package has a method, allowed scopes, lifecycle
 events, inputs, and a content identity. In this release methods are `shell`
 and `powershell`.
 
+The `package-manager` built-in is a declarative package recipe. Its only
+parameters are a supported manager (`apt`, `apk`, `winget`, or `chocolatey`)
+and a non-empty list of safe package IDs. Compilation derives the method and
+inline script; the stored artifact no longer needs the built-in marker. The
+manager must already exist in the guest and uses the configured guest
+credential. Network access, repository-provided versions, and sufficient
+guest privilege remain the operator's responsibility.
+
 Do not call a package a script. A script may be one input inside a package, but
 the package also carries identity, parameters, scope, event, and artifact
 metadata.
@@ -135,6 +143,9 @@ it is not guest drift detection.
 The execution mechanism named by a package, such as `shell` or `powershell`.
 Use `method`, not `provisioner`, for this field. `Provisioner` already means
 resource creation in `internal/pool`.
+
+For a `package-manager` built-in, Boxy derives `shell` for `apt`/`apk` and
+`powershell` for `winget`/`chocolatey`.
 
 ### Scope
 

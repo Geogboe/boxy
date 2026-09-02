@@ -392,11 +392,12 @@ func (c Config) Validate() error {
 		if manifest.Name == "" {
 			manifest.Name = name
 		}
-		if err := manifest.Validate(); err != nil {
+		compiled, err := resourcepack.Compile(manifest)
+		if err != nil {
 			return fmt.Errorf("package %q: %w", name, err)
 		}
-		if !manifest.Method.Supported() {
-			return fmt.Errorf("package %q uses unsupported method %q", name, manifest.Method)
+		if !compiled.Method.Supported() {
+			return fmt.Errorf("package %q uses unsupported method %q", name, compiled.Method)
 		}
 	}
 	for name := range c.Templates {
