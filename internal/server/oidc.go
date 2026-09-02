@@ -52,6 +52,11 @@ type OIDCOptions struct {
 	// PersonalKeyMaxTTL bounds how long a self-service personal API key
 	// minted via POST /api/v1/api-keys/oidc-exchange may live.
 	PersonalKeyMaxTTL time.Duration
+	// LoginLabel and LoginIcon customize the browser SSO login button.
+	LoginLabel string
+	LoginIcon  string
+	// HideLocalLogin hides the local username/password form when true.
+	HideLocalLogin bool
 }
 
 // oauthStateCookieName carries the CSRF state, replay-protection nonce, and

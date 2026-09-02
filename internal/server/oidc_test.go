@@ -454,3 +454,27 @@ func TestOIDC_LoginPageShowsSSOLinkOnlyWhenConfigured(t *testing.T) {
 		t.Fatalf("login page shows SSO link when OIDC is not configured, body = %q", w2.Body.String())
 	}
 }
+
+func TestOIDC_LoginPageUsesBrandingAndCanHideLocalLogin(t *testing.T) {
+	t.Parallel()
+	provider := newFakeOIDCProvider(t)
+	oidcOpts := newTestOIDCOptions(t, provider, "groups", map[string]string{"boxy-admins": "admin"}, "")
+	oidcOpts.LoginLabel = "Continue with Example SSO"
+	oidcOpts.LoginIcon = "/static/example-sso.svg"
+	oidcOpts.HideLocalLogin = true
+
+	st := store.NewMemoryStore()
+	mux := server.NewTestMuxWithOIDC(st, sandbox.New(st, nil), oidcOpts)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/login", nil))
+	body := w.Body.String()
+	if strings.Contains(body, `id="username"`) || strings.Contains(body, `id="password"`) {
+		t.Fatalf("login page should hide local credentials, body = %q", body)
+	}
+	if !strings.Contains(body, "Continue with Example SSO") {
+		t.Fatalf("login page missing configured SSO label, body = %q", body)
+	}
+	if !strings.Contains(body, `src="/static/example-sso.svg"`) {
+		t.Fatalf("login page missing configured SSO icon, body = %q", body)
+	}
+}

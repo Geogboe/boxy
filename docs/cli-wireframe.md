@@ -279,18 +279,26 @@ boxy
 │   │   $ boxy sandbox extend sb-a1b2c3 15m
 │   │     extended sandbox sb-a1b2c3, expires at 2026-07-08T14:00:00Z
 │   │
-│   └── exec <id> -- <command> [args...]         Execute a one-shot command
+│   └── exec <id> [-- <command> [args...]]       Execute a durable one-shot command
 │       ├── --resource <id>                        Required for multi-resource sandboxes
 │       ├── --timeout <duration>                   Default 30s, maximum 5m
-│       ├── --events                              Write structured NDJSON events
-│       ├── --buffered                            Wait for completion and use one final response
-│       ├── --guest-password-stdin                  Read a guest password from stdin (never a flag value)
-│       ├── --script-file <path>                    Stage a local script; use `-- [args...]`
-│       └── --interpreter auto|powershell|sh        Select script interpreter (`auto` by default)
+│       ├── --command <text>                       Send opaque command text
+│       ├── --stdin                                Read opaque command text from stdin
+│       ├── --script-file <path>                   Stage a local script; use `-- [args...]`
+│       ├── --interpreter auto|powershell|sh       Select script interpreter (`auto` by default)
+│       ├── --detach                               Submit and print the execution ID
+│       ├── --attach <exec-id>                     Reconnect to an existing execution
+│       ├── --events                               Write structured lifecycle/chunk NDJSON
+│       ├── --buffered                             Wait for completion before writing output
+│       └── --guest-password-stdin                 Read a guest password from stdin (never a flag value)
 │
 │       $ boxy sandbox exec sb-a1b2c3 -- hostname
 │         sandbox output...
 │       $ boxy sandbox exec sb-a1b2c3 -- @setup.ps1 --mode ci
+│         sandbox output...
+│       $ boxy sandbox exec sb-a1b2c3 --command "Get-Date" --detach
+│         01J...
+│       $ boxy sandbox exec sb-a1b2c3 --attach 01J...
 │         sandbox output...
 │
 │

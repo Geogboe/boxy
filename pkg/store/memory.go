@@ -18,6 +18,7 @@ type MemoryStore struct {
 	poolGuestCredentials   map[model.PoolName]string
 	resources              map[model.ResourceID]model.Resource
 	sandboxes              map[model.SandboxID]model.Sandbox
+	executions             map[model.ExecutionID]model.Execution
 	agentTokens            map[model.AgentTokenID]model.AgentRegistrationToken
 	apiKeys                map[model.APIKeyID]model.APIKey
 	sessions               map[model.SessionID]model.Session
@@ -33,6 +34,7 @@ func NewMemoryStore() *MemoryStore {
 		poolGuestCredentials:   make(map[model.PoolName]string),
 		resources:              make(map[model.ResourceID]model.Resource),
 		sandboxes:              make(map[model.SandboxID]model.Sandbox),
+		executions:             make(map[model.ExecutionID]model.Execution),
 		agentTokens:            make(map[model.AgentTokenID]model.AgentRegistrationToken),
 		apiKeys:                make(map[model.APIKeyID]model.APIKey),
 		sessions:               make(map[model.SessionID]model.Session),
@@ -190,6 +192,59 @@ func (s *MemoryStore) DeleteSandbox(_ context.Context, id model.SandboxID) error
 	}
 	delete(s.sandboxes, id)
 	return nil
+}
+
+func (s *MemoryStore) GetExecution(_ context.Context, id model.ExecutionID) (model.Execution, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	execution, ok := s.executions[id]
+	if !ok {
+		return model.Execution{}, ErrNotFound
+	}
+	return cloneExecution(execution), nil
+}
+
+func (s *MemoryStore) PutExecution(_ context.Context, execution model.Execution) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if execution.ID == "" {
+		return fmt.Errorf("execution id is required")
+	}
+	if execution.SandboxID == "" || execution.ResourceID == "" {
+		return fmt.Errorf("execution sandbox and resource are required")
+	}
+	s.executions[execution.ID] = cloneExecution(execution)
+	return nil
+}
+
+func (s *MemoryStore) DeleteExecution(_ context.Context, id model.ExecutionID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.executions[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.executions, id)
+	return nil
+}
+
+func (s *MemoryStore) ListExecutions(_ context.Context) ([]model.Execution, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]model.Execution, 0, len(s.executions))
+	for _, execution := range s.executions {
+		out = append(out, cloneExecution(execution))
+	}
+	return out, nil
+}
+
+func cloneExecution(in model.Execution) model.Execution {
+	out := in
+	out.Chunks = make([]model.ExecutionChunk, len(in.Chunks))
+	for i, chunk := range in.Chunks {
+		out.Chunks[i] = chunk
+		out.Chunks[i].Data = append([]byte(nil), chunk.Data...)
+	}
+	return out
 }
 
 func (s *MemoryStore) ListPools(_ context.Context) ([]model.Pool, error) {

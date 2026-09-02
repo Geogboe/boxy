@@ -60,11 +60,21 @@ func buildPoolViews(pools []model.Pool, resources []model.Resource) []poolView {
 
 func makePoolView(configured model.Pool, resources []model.Resource) poolView {
 	view := poolView{
-		Name: string(configured.Name), Type: configured.Inventory.ExpectedType,
-		MinReady: configured.Policies.Preheat.MinReady, MaxTotal: configured.Policies.Preheat.MaxTotal,
+		Name:               string(configured.Name),
+		DetailPath:         "/ui/pools/" + url.PathEscape(string(configured.Name)),
+		Type:               configured.Inventory.ExpectedType,
+		ExpectedProfile:    configured.Inventory.ExpectedProfile,
+		Template:           configured.Template,
+		Source:             configured.Source,
+		Packages:           append([]string(nil), configured.Packages...),
+		MinReady:           configured.Policies.Preheat.MinReady,
+		MaxTotal:           configured.Policies.Preheat.MaxTotal,
 		EffectivelyDrained: configured.EffectivelyDrained(),
+		ConfigDrain:        configured.Drain.ConfigDeclared,
+		OperatorDrain:      configured.Drain.Operator,
 		Resources:          make([]poolResourceView, 0, len(resources)),
 	}
+	providerNames := make(map[string]struct{})
 	for _, resource := range resources {
 		view.TotalCount++
 		if resource.State == model.ResourceStateReady {
@@ -74,7 +84,14 @@ func makePoolView(configured model.Pool, resources []model.Resource) poolView {
 			ID: string(resource.ID), Type: resource.Type, Profile: resource.Profile,
 			State: resource.State, Provider: resource.Provider.Name,
 		})
+		if resource.Provider.Name != "" {
+			providerNames[resource.Provider.Name] = struct{}{}
+		}
 	}
+	for provider := range providerNames {
+		view.ProviderNames = append(view.ProviderNames, provider)
+	}
+	sort.Strings(view.ProviderNames)
 	return view
 }
 

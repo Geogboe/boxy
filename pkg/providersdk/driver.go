@@ -80,10 +80,14 @@ type Operation interface{}
 // ExecOperation is the provider-neutral command shape used by Boxy workflows.
 // Providers may alias or translate it into their native operation type.
 type ExecOperation struct {
-	Command         []string
-	Script          *ScriptSpec
-	Env             map[string]string
-	GuestCredential *GuestCredential
+	Command []string `json:"command,omitempty"`
+	// CommandText is an opaque command supplied as one string. Providers that
+	// support it must pass it through their native command-text mechanism; it
+	// must never be split and reconstructed as argv by the control plane.
+	CommandText     string            `json:"command_text,omitempty"`
+	Script          *ScriptSpec       `json:"script,omitempty"`
+	Env             map[string]string `json:"env,omitempty"`
+	GuestCredential *GuestCredential  `json:"guest_credential,omitempty"`
 }
 
 // Result is returned by Driver.Update.

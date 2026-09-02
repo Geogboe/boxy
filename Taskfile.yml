@@ -8,6 +8,247 @@ vars:
   GOLANGCI_LINT_VERSION: v2.12.2
 
 tasks:
+  agent:go-test:
+    desc: Run a Go test command with a repo-local report and focused failure diagnostics
+    requires:
+      vars: [NAME, PACKAGES]
+    cmds:
+      - task: agent:go-test:windows
+        vars:
+          NAME: '{{.NAME}}'
+          PACKAGES: '{{.PACKAGES}}'
+      - task: agent:go-test:unix
+        vars:
+          NAME: '{{.NAME}}'
+          PACKAGES: '{{.PACKAGES}}'
+
+  agent:go-test:windows:
+    platforms: [windows]
+    internal: true
+    silent: true
+    cmds:
+      - pwsh -NoProfile -File scripts/agent-check.ps1 -Name '{{.NAME}}' -Executable go test {{.PACKAGES}}
+
+  agent:go-test:unix:
+    platforms: [linux, darwin]
+    internal: true
+    silent: true
+    cmds:
+      - bash scripts/agent-check.sh '{{.NAME}}' go test {{.PACKAGES}}
+
+  agent:gopls:
+    desc: Run gopls diagnostics with a repo-local report and focused failure diagnostics
+    requires:
+      vars: [NAME, FILES]
+    cmds:
+      - task: agent:gopls:windows
+        vars:
+          NAME: '{{.NAME}}'
+          FILES: '{{.FILES}}'
+      - task: agent:gopls:unix
+        vars:
+          NAME: '{{.NAME}}'
+          FILES: '{{.FILES}}'
+
+  agent:gopls:windows:
+    platforms: [windows]
+    internal: true
+    silent: true
+    cmds:
+      - pwsh -NoProfile -File scripts/agent-check.ps1 -Name '{{.NAME}}' -Executable gopls check {{.FILES}}
+
+  agent:gopls:unix:
+    platforms: [linux, darwin]
+    internal: true
+    silent: true
+    cmds:
+      - bash scripts/agent-check.sh '{{.NAME}}' gopls check {{.FILES}}
+
+  agent:check:go:
+    desc: Check release Go changes with gopls
+    cmds:
+      - task: agent:gopls
+        vars:
+          NAME: gopls-release
+          FILES: internal/server/execution_manager.go internal/server/api_exec.go internal/server/api_catalog.go internal/server/api_pools.go internal/server/server.go internal/server/session.go internal/server/oidc.go internal/server/ui.go internal/server/ui_pools.go internal/cli/sandbox_exec.go internal/cli/sandbox_exec_test.go internal/cli/exit_code_test.go internal/config/config.go internal/config/config_test.go pkg/model/execution.go pkg/store/store.go pkg/store/memory.go pkg/store/disk.go pkg/providersdk/driver.go pkg/providersdk/guest_personalization.go pkg/providersdk/providers/docker/driver.go pkg/providersdk/providers/hyperv/driver.go pkg/providersdk/providers/devfactory/driver.go pkg/psdirect/psdirect.go pkg/psdirect/psdirect_test.go pkg/agentsdk/remoteclient.go pkg/agentsdk/remoteclient_test.go pkg/vmsdk/guest.go internal/pool/reconcile.go internal/pool/reconcile_test.go
+
+  agent:test:execution:
+    desc: Run execution tests with captured diagnostics
+    cmds:
+      - task: agent:go-test
+        vars:
+          NAME: test-execution
+          PACKAGES: ./pkg/store ./internal/server
+
+  agent:test:cli:
+    desc: Run CLI tests with captured diagnostics
+    cmds:
+      - task: agent:go-test
+        vars:
+          NAME: test-cli
+          PACKAGES: ./internal/cli
+
+  agent:test:pool:
+    desc: Run pool reconciliation tests with captured diagnostics
+    cmds:
+      - task: agent:go-test
+        vars:
+          NAME: test-pool
+          PACKAGES: ./internal/pool
+
+  agent:test:server:
+    desc: Run server and UI tests with captured diagnostics
+    cmds:
+      - task: agent:go-test
+        vars:
+          NAME: test-server
+          PACKAGES: ./internal/server
+
+  agent:test:psdirect:
+    desc: Run PowerShell Direct and multiline regression tests with captured diagnostics
+    cmds:
+      - task: agent:go-test
+        vars:
+          NAME: test-psdirect
+          PACKAGES: ./pkg/psdirect
+
+  agent:test:providers:
+    desc: Run provider and agent SDK tests with captured diagnostics
+    cmds:
+      - task: agent:go-test
+        vars:
+          NAME: test-providers
+          PACKAGES: ./pkg/providersdk/... ./pkg/agentsdk/... ./pkg/vmsdk/...
+
+  agent:generate:
+    desc: Regenerate checked-in artifacts with captured diagnostics
+    cmds:
+      - task: agent:generate:windows
+      - task: agent:generate:unix
+
+  agent:generate:windows:
+    platforms: [windows]
+    internal: true
+    silent: true
+    cmds:
+      - pwsh -NoProfile -File scripts/agent-check.ps1 -Name generate -Executable task generate
+
+  agent:generate:unix:
+    platforms: [linux, darwin]
+    internal: true
+    silent: true
+    cmds:
+      - bash scripts/agent-check.sh generate task generate
+
+  agent:test:oidc:
+    desc: Run configuration and OIDC server tests with captured diagnostics
+    cmds:
+      - task: agent:go-test
+        vars:
+          NAME: test-oidc
+          PACKAGES: ./internal/config ./internal/server
+
+  agent:test:all:
+    desc: Run the complete Go test suite with captured diagnostics
+    cmds:
+      - task: agent:go-test
+        vars:
+          NAME: test-all
+          PACKAGES: ./...
+
+  agent:test:race:
+    desc: Run the platform-appropriate race suite with captured diagnostics
+    cmds:
+      - task: agent:test:race:windows
+      - task: agent:test:race:unix
+
+  agent:test:race:windows:
+    platforms: [windows]
+    internal: true
+    silent: true
+    cmds:
+      - pwsh -NoProfile -File scripts/agent-check.ps1 -Name test-race -Executable wsl.exe --cd "{{.ROOT_DIR}}" bash -lc "./scripts/ci-race.sh"
+
+  agent:test:race:unix:
+    platforms: [linux, darwin]
+    internal: true
+    silent: true
+    cmds:
+      - bash scripts/agent-check.sh test-race go test -race -short ./...
+      - bash scripts/agent-check.sh test-race-cli go test -race -short -tags devtools ./internal/cli/...
+
+  agent:e2e:serve:
+    desc: Run serve API/UI E2E validation with captured diagnostics
+    cmds:
+      - task: agent:e2e:serve:windows
+      - task: agent:e2e:serve:unix
+
+  agent:e2e:serve:windows:
+    platforms: [windows]
+    internal: true
+    silent: true
+    cmds:
+      - pwsh -NoProfile -File scripts/agent-check.ps1 -Name e2e-serve -Executable wsl.exe --cd "{{.ROOT_DIR}}" bash -lc "./scripts/e2e-serve.sh {{.CLI_ARGS}}"
+
+  agent:e2e:serve:unix:
+    platforms: [linux, darwin]
+    internal: true
+    silent: true
+    cmds:
+      - bash scripts/agent-check.sh e2e-serve bash scripts/e2e-serve.sh {{.CLI_ARGS}}
+
+  agent:act:
+    desc: Run one reproducible GitHub Actions job locally with captured diagnostics
+    requires:
+      vars: [JOB]
+    cmds:
+      - task: agent:act:windows
+        vars:
+          JOB: "{{.JOB}}"
+      - task: agent:act:unix
+        vars:
+          JOB: "{{.JOB}}"
+
+  agent:act:windows:
+    platforms: [windows]
+    internal: true
+    silent: true
+    cmds:
+      - pwsh -NoProfile -File scripts/agent-check.ps1 -Name "act-{{.JOB}}" -Executable wsl.exe --cd "{{.ROOT_DIR}}" bash -lc "act -j '{{.JOB}}' --platform 'ubuntu-latest=catthehacker/ubuntu:act-latest' --matrix os:ubuntu-latest --concurrent-jobs 1"
+
+  agent:act:unix:
+    platforms: [linux, darwin]
+    internal: true
+    silent: true
+    cmds:
+      - bash scripts/agent-check.sh "act-{{.JOB}}" act -j "{{.JOB}}" --concurrent-jobs 1
+
+  agent:act:ci:
+    desc: Run all Linux-reproducible CI jobs locally with act
+    cmds:
+      - task: agent:act
+        vars: {JOB: lint}
+      - task: agent:act
+        vars: {JOB: test}
+      - task: agent:act
+        vars: {JOB: installer-smoke}
+      - task: agent:act
+        vars: {JOB: build}
+      - task: agent:act
+        vars: {JOB: betterleaks}
+      - task: agent:act
+        vars: {JOB: pii}
+
+  agent:scan:secrets:
+    desc: Run the Betterleaks secret scan with captured diagnostics
+    cmds:
+      - pwsh -NoProfile -File scripts/agent-check.ps1 -Name secrets-scan -Executable task --silent secrets:scan
+
+  agent:scan:pii:
+    desc: Run the Betterleaks PII scan with captured diagnostics
+    cmds:
+      - pwsh -NoProfile -File scripts/agent-check.ps1 -Name pii-scan -Executable task --silent pii:scan
+
   default: task --list
 
   go:run:
@@ -61,6 +302,16 @@ tasks:
     desc: Run CLI package tests
     cmds:
       - go test ./internal/cli
+
+  test:execution:
+    desc: Run focused durable-execution and persistence tests
+    cmds:
+      - go test ./pkg/store ./internal/server
+
+  test:durable:
+    desc: Run the durable execution acceptance tests
+    cmds:
+      - go test ./internal/server -run '^TestDurableExec'
 
   skills:check:
     desc: Run bundled skill drift and installer checks

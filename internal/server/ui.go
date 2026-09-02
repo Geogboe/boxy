@@ -3,6 +3,7 @@ package server
 import (
 	"embed"
 	"errors"
+	"fmt"
 	"html/template"
 	"io/fs"
 	"log/slog"
@@ -36,6 +37,7 @@ type pageData struct {
 	ResourceCount        int
 	Pools                []model.Pool
 	PoolViews            []poolView
+	PoolDetail           *poolView
 	CSRFToken            string
 	CanManagePools       bool
 	PoolResult           string
@@ -83,12 +85,20 @@ type resourceView struct {
 
 type poolView struct {
 	Name               string
+	DetailPath         string
 	Type               model.ResourceType
+	ExpectedProfile    model.ResourceProfile
+	Template           string
+	Source             string
+	Packages           []string
 	MinReady           int
 	MaxTotal           int
 	ReadyCount         int
 	TotalCount         int
 	EffectivelyDrained bool
+	ConfigDrain        bool
+	OperatorDrain      bool
+	ProviderNames      []string
 	Resources          []poolResourceView
 }
 
@@ -147,6 +157,7 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	// Full-page routes.
 	mux.HandleFunc("GET /{$}", s.uiHandler(homeTmpl, "home", s.homeData))
 	mux.HandleFunc("GET /ui/pools", s.uiHandler(poolsTmpl, "pools", s.poolsData))
+	mux.HandleFunc("GET /ui/pools/{name}", s.uiHandler(poolsTmpl, "pools", s.poolsData))
 	mux.HandleFunc("GET /ui/sandboxes", s.uiHandler(sandboxesTmpl, "sandboxes", s.sandboxesData))
 	mux.HandleFunc("GET /ui/agents", s.uiHandler(agentsTmpl, "agents", s.agentsData))
 	mux.HandleFunc("GET /ui/profile", s.uiHandler(profileTmpl, "profile", s.profileData))
@@ -184,11 +195,17 @@ func (s *Server) catalogData(r *http.Request) (pageData, error) {
 // dataFn loads data from the store into a pageData.
 type dataFn func(r *http.Request) (pageData, error)
 
+var errPoolNotFound = errors.New("pool not found")
+
 // uiHandler returns a handler that renders a full page (layout + content).
 func (s *Server) uiHandler(tmpl *template.Template, nav string, data dataFn) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		d, err := data(r)
 		if err != nil {
+			if errors.Is(err, errPoolNotFound) {
+				http.NotFound(w, r)
+				return
+			}
 			slog.Error("ui data", "err", err)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusInternalServerError)
@@ -399,11 +416,22 @@ func (s *Server) poolsData(r *http.Request) (pageData, error) {
 	if err != nil {
 		return pageData{}, err
 	}
-	return pageData{
+	views := buildPoolViews(pools, resources)
+	data := pageData{
 		Pools:      pools,
-		PoolViews:  buildPoolViews(pools, resources),
+		PoolViews:  views,
 		PoolResult: poolResultFromQuery(r),
-	}, nil
+	}
+	if name := r.PathValue("name"); name != "" {
+		for i := range views {
+			if views[i].Name == name {
+				data.PoolDetail = &views[i]
+				return data, nil
+			}
+		}
+		return pageData{}, fmt.Errorf("%w: %q", errPoolNotFound, name)
+	}
+	return data, nil
 }
 
 func (s *Server) sandboxesData(r *http.Request) (pageData, error) {

@@ -260,7 +260,7 @@ func (d *Driver) execInContainer(ctx context.Context, id string, op *ExecOp) (*p
 		return d.execScriptInContainer(ctx, id, op, nil)
 	}
 	execResp, err := d.cli.ContainerExecCreate(ctx, id, container.ExecOptions{
-		Cmd:          op.Command,
+		Cmd:          dockerExecCommand(op),
 		AttachStdout: true,
 		AttachStderr: true,
 	})
@@ -305,7 +305,7 @@ func (d *Driver) UpdateStream(ctx context.Context, id string, op providersdk.Ope
 		return d.execScriptInContainer(ctx, id, execOp, sink)
 	}
 	execResp, err := d.cli.ContainerExecCreate(ctx, id, container.ExecOptions{
-		Cmd:          execOp.Command,
+		Cmd:          dockerExecCommand(execOp),
 		AttachStdout: true,
 		AttachStderr: true,
 	})
@@ -375,6 +375,15 @@ func (d *Driver) Delete(ctx context.Context, id string) error {
 // ExecOp is retained as a provider-specific spelling of the shared command
 // operation for compatibility with existing callers.
 type ExecOp = providersdk.ExecOperation
+
+func dockerExecCommand(op *ExecOp) []string {
+	if op.CommandText != "" {
+		// Keep command text opaque to the control plane. The container's shell
+		// is the provider-owned interpreter for a command string.
+		return []string{"sh", "-lc", op.CommandText}
+	}
+	return append([]string(nil), op.Command...)
+}
 
 func (d *Driver) deleteBestEffort(ctx context.Context, id string) error {
 	return d.cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true})

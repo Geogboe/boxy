@@ -29,6 +29,7 @@ type diskState struct {
 	PoolGuestCredentials   map[model.PoolName]string                            `json:"pool_guest_credentials"`
 	Resources              map[model.ResourceID]model.Resource                  `json:"resources"`
 	Sandboxes              map[model.SandboxID]model.Sandbox                    `json:"sandboxes"`
+	Executions             map[model.ExecutionID]model.Execution                `json:"executions"`
 	AgentTokens            map[model.AgentTokenID]model.AgentRegistrationToken  `json:"agent_tokens"`
 	APIKeys                map[model.APIKeyID]model.APIKey                      `json:"api_keys"`
 	Sessions               map[model.SessionID]model.Session                    `json:"sessions"`
@@ -49,6 +50,7 @@ func NewDiskStore(path string) (*DiskStore, error) {
 			PoolGuestCredentials:   make(map[model.PoolName]string),
 			Resources:              make(map[model.ResourceID]model.Resource),
 			Sandboxes:              make(map[model.SandboxID]model.Sandbox),
+			Executions:             make(map[model.ExecutionID]model.Execution),
 			AgentTokens:            make(map[model.AgentTokenID]model.AgentRegistrationToken),
 			APIKeys:                make(map[model.APIKeyID]model.APIKey),
 			Sessions:               make(map[model.SessionID]model.Session),
@@ -92,6 +94,9 @@ func (s *DiskStore) load() error {
 	}
 	if st.Sandboxes == nil {
 		st.Sandboxes = make(map[model.SandboxID]model.Sandbox)
+	}
+	if st.Executions == nil {
+		st.Executions = make(map[model.ExecutionID]model.Execution)
 	}
 	if st.AgentTokens == nil {
 		st.AgentTokens = make(map[model.AgentTokenID]model.AgentRegistrationToken)
@@ -284,6 +289,49 @@ func (s *DiskStore) DeleteSandbox(_ context.Context, id model.SandboxID) error {
 	}
 	delete(s.data.Sandboxes, id)
 	return s.persistLocked()
+}
+
+func (s *DiskStore) GetExecution(_ context.Context, id model.ExecutionID) (model.Execution, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	execution, ok := s.data.Executions[id]
+	if !ok {
+		return model.Execution{}, ErrNotFound
+	}
+	return cloneExecution(execution), nil
+}
+
+func (s *DiskStore) PutExecution(_ context.Context, execution model.Execution) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if execution.ID == "" {
+		return fmt.Errorf("execution id is required")
+	}
+	if execution.SandboxID == "" || execution.ResourceID == "" {
+		return fmt.Errorf("execution sandbox and resource are required")
+	}
+	s.data.Executions[execution.ID] = cloneExecution(execution)
+	return s.persistLocked()
+}
+
+func (s *DiskStore) DeleteExecution(_ context.Context, id model.ExecutionID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.data.Executions[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.data.Executions, id)
+	return s.persistLocked()
+}
+
+func (s *DiskStore) ListExecutions(_ context.Context) ([]model.Execution, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]model.Execution, 0, len(s.data.Executions))
+	for _, execution := range s.data.Executions {
+		out = append(out, cloneExecution(execution))
+	}
+	return out, nil
 }
 
 func (s *DiskStore) ListPools(_ context.Context) ([]model.Pool, error) {

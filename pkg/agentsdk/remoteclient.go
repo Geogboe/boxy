@@ -627,7 +627,7 @@ func decodeUpdateOperation(raw map[string]any) providersdk.Operation {
 		return raw
 	}
 	var execOp providersdk.ExecOperation
-	if err := json.Unmarshal(encoded, &execOp); err == nil && (len(execOp.Command) > 0 || execOp.Script != nil) {
+	if err := json.Unmarshal(encoded, &execOp); err == nil && (len(execOp.Command) > 0 || execOp.CommandText != "" || execOp.Script != nil) {
 		return &execOp
 	}
 	return raw

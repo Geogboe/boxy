@@ -175,7 +175,7 @@ func reconcileObserver(st store.Store, registry *AgentRegistry, agentID string, 
 		}
 		tracked := make([]model.Resource, 0, len(all))
 		for _, res := range all {
-			if res.Provider.AgentID == agentID {
+			if res.Provider.AgentID == agentID && res.State != model.ResourceStateDestroyed {
 				tracked = append(tracked, res)
 			}
 		}
@@ -195,12 +195,18 @@ func reconcileEvaluator() policycontroller.EvaluatorFunc[reconcileObserved, reco
 		trackedIDs := make(map[model.ResourceID]struct{}, len(obs.tracked))
 		trackedCountByProvider := make(map[providersdk.Type]int)
 		for _, res := range obs.tracked {
+			if res.State == model.ResourceStateDestroyed {
+				continue
+			}
 			trackedIDs[res.ID] = struct{}{}
 			trackedCountByProvider[providersdk.Type(res.Provider.Name)]++
 		}
 
 		var reap []model.ResourceID
 		for _, res := range obs.tracked {
+			if res.State == model.ResourceStateDestroyed {
+				continue
+			}
 			provider := providersdk.Type(res.Provider.Name)
 			remoteCount, listedThisPass := obs.listedProviders[provider]
 			if !listedThisPass {

@@ -34,6 +34,8 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/sandboxes/{id}", s.handleDeleteSandbox)
 	mux.HandleFunc("POST /api/v1/sandboxes/{id}/extend", s.handleExtendSandbox)
 	mux.HandleFunc("POST /api/v1/sandboxes/{id}/exec", s.handleSandboxExec)
+	mux.HandleFunc("GET /api/v1/sandboxes/{id}/exec/{exec_id}", s.handleGetSandboxExecution)
+	mux.HandleFunc("POST /api/v1/sandboxes/{id}/exec/{exec_id}/cancel", s.handleCancelSandboxExecution)
 	mux.HandleFunc("GET /api/v1/sandboxes/{id}/guest-credential", s.handleGuestCredential)
 	mux.HandleFunc("POST /api/v1/agent-tokens", s.handleCreateAgentToken)
 	mux.HandleFunc("GET /api/v1/agent-tokens", s.handleListAgentTokens)

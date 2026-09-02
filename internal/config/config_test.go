@@ -176,6 +176,7 @@ func TestOIDCSpec_Validate(t *testing.T) {
 		{name: "invalid session ttl", mutate: func(o OIDCSpec) OIDCSpec { o.SessionTTL = "not-a-duration"; return o }, wantErr: true},
 		{name: "non-positive session ttl", mutate: func(o OIDCSpec) OIDCSpec { o.SessionTTL = "0h"; return o }, wantErr: true},
 		{name: "valid session ttl", mutate: func(o OIDCSpec) OIDCSpec { o.SessionTTL = "6h"; return o }},
+		{name: "local login hidden without oidc", mutate: func(o OIDCSpec) OIDCSpec { o.Issuer = ""; o.HideLocalLogin = true; return o }, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

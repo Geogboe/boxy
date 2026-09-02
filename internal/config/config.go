@@ -133,6 +133,15 @@ type OIDCSpec struct {
 	// is only one session mechanism (see ADR-0016), even though this knob
 	// lives under server.oidc for parity with PersonalKeyMaxTTL.
 	SessionTTL string `json:"session_ttl,omitempty" yaml:"session_ttl,omitempty"`
+	// LoginLabel customizes the browser login button for the configured SSO
+	// provider. Empty uses "Log in with single sign-on".
+	LoginLabel string `json:"login_label,omitempty" yaml:"login_label,omitempty"`
+	// LoginIcon is an optional URL or same-origin path to an image shown in
+	// the browser login button.
+	LoginIcon string `json:"login_icon,omitempty" yaml:"login_icon,omitempty"`
+	// HideLocalLogin removes the local username/password form from the browser
+	// login page. It is valid only when OIDC is configured.
+	HideLocalLogin bool `json:"hide_local_login,omitempty" yaml:"hide_local_login,omitempty"`
 }
 
 // Configured reports whether OIDC login is enabled.
@@ -179,6 +188,9 @@ func (o OIDCSpec) Validate() error {
 		return err
 	}
 	if !o.Configured() {
+		if o.HideLocalLogin {
+			return fmt.Errorf("server.oidc.hide_local_login requires server.oidc.issuer")
+		}
 		return nil
 	}
 	if strings.TrimSpace(o.ClientID) == "" {

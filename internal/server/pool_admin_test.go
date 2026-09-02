@@ -76,6 +76,55 @@ func TestUI_poolsShowsCapacityDrainStateAndResourceRows(t *testing.T) {
 	}
 }
 
+func TestUI_poolDetailShowsPolicyDrainResourcesProviderAndCapacity(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	if err := st.PutPool(ctx, model.Pool{
+		Name: "pool-detail", Template: "windows-2025", Source: "golden-image",
+		Packages:  []string{"go", "git"},
+		Policies:  model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 2, MaxTotal: 5}},
+		Drain:     model.PoolDrainState{ConfigDeclared: true, Operator: true},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeVM, ExpectedProfile: model.ResourceProfileDefault},
+	}); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	if err := st.PutResource(ctx, model.Resource{
+		ID: "detail-resource", OriginPool: "pool-detail", Type: model.ResourceTypeVM,
+		Profile: model.ResourceProfileDefault, State: model.ResourceStateReady,
+		Provider: model.ProviderRef{Name: "hyperv"},
+	}); err != nil {
+		t.Fatalf("PutResource: %v", err)
+	}
+
+	mux := server.NewTestMuxWithPoolAdmin(st, sandbox.New(st, nil), &fakePoolMaintenance{}, nil)
+	index := httptest.NewRecorder()
+	mux.ServeHTTP(index, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/pools", nil)))
+	if !strings.Contains(index.Body.String(), `href="/ui/pools/pool-detail"`) {
+		t.Fatal("pool index missing detail link")
+	}
+
+	detail := httptest.NewRecorder()
+	mux.ServeHTTP(detail, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/pools/pool-detail", nil)))
+	if detail.Code != http.StatusOK {
+		t.Fatalf("detail status = %d", detail.Code)
+	}
+	for _, want := range []string{
+		"pool-detail", "windows-2025", "golden-image", "go", "git",
+		"min_ready=2", "max_total=5", "Config drain", "Operator drain",
+		"1 ready / 1 total", "detail-resource", "hyperv", "Back to pools",
+	} {
+		if !strings.Contains(detail.Body.String(), want) {
+			t.Fatalf("pool detail missing %q: %q", want, detail.Body.String())
+		}
+	}
+
+	missing := httptest.NewRecorder()
+	mux.ServeHTTP(missing, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/pools/does-not-exist", nil)))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing pool status = %d, want 404", missing.Code)
+	}
+}
+
 func TestUI_poolsHidesResourceInventoryFromNonAdmin(t *testing.T) {
 	ctx := context.Background()
 	st := store.NewMemoryStore()

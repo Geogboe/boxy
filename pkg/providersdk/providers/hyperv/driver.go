@@ -498,7 +498,7 @@ func (d *Driver) Update(ctx context.Context, id string, op providersdk.Operation
 }
 
 func (d *Driver) execOnGuest(ctx context.Context, id string, op *ExecOp) (*providersdk.Result, error) {
-	if op.Script == nil && len(op.Command) == 0 {
+	if op.Script == nil && len(op.Command) == 0 && op.CommandText == "" {
 		return nil, fmt.Errorf("ExecOp.Command is empty")
 	}
 
@@ -540,6 +540,20 @@ func (d *Driver) execOnGuest(ctx context.Context, id string, op *ExecOp) (*provi
 		}}, nil
 	}
 
+	if op.CommandText != "" {
+		textExec, ok := ge.(vmsdk.GuestExecText)
+		if !ok {
+			return nil, fmt.Errorf("%s guest does not support opaque command text", guestOS)
+		}
+		result, err := textExec.ExecText(ctx, op.CommandText)
+		if err != nil {
+			return nil, fmt.Errorf("exec text on %s guest (VM %s): %w", guestOS, id, err)
+		}
+		return &providersdk.Result{Outputs: map[string]string{
+			"stdout": result.Stdout, "stderr": result.Stderr, "exit_code": strconv.Itoa(result.ExitCode),
+		}}, nil
+	}
+
 	cmd := op.Command[0]
 	args := op.Command[1:]
 	result, err := ge.Exec(ctx, cmd, args...)
@@ -564,7 +578,7 @@ func (d *Driver) UpdateStream(ctx context.Context, id string, op providersdk.Ope
 	if !ok {
 		return nil, fmt.Errorf("unsupported streaming operation type %T", op)
 	}
-	if execOp.Script == nil && len(execOp.Command) == 0 {
+	if execOp.Script == nil && len(execOp.Command) == 0 && execOp.CommandText == "" {
 		return nil, fmt.Errorf("ExecOp.Command is empty")
 	}
 	if sink == nil {
@@ -609,6 +623,19 @@ func (d *Driver) UpdateStream(ctx context.Context, id string, op providersdk.Ope
 			return nil, fmt.Errorf("stream script on %s guest (VM %s): %w", guestOS, id, err)
 		}
 		return &providersdk.Result{Outputs: map[string]string{"exit_code": strconv.Itoa(result.ExitCode)}}, nil
+	}
+	if execOp.CommandText != "" {
+		textStreamer, ok := ge.(vmsdk.GuestExecStreamText)
+		if !ok {
+			return nil, fmt.Errorf("%s guest does not support opaque command text streaming", guestOS)
+		}
+		result, err := textStreamer.ExecStreamText(ctx, execOp.CommandText, sink)
+		if err != nil {
+			return nil, fmt.Errorf("stream exec text on %s guest (VM %s): %w", guestOS, id, err)
+		}
+		return &providersdk.Result{Outputs: map[string]string{
+			"exit_code": strconv.Itoa(result.ExitCode),
+		}}, nil
 	}
 	result, err := streamer.ExecStream(ctx, execOp.Command[0], execOp.Command[1:], sink)
 	if err != nil {

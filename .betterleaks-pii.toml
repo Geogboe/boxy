@@ -73,6 +73,7 @@ filter.matchesAny(finding["secret"], [
   `(?i)(?:username|user[_-]+name|login|account[_-]+name|guest[_-]+user|ssh[_-]+user)\b[ \t'"\x60]{0,3}(?:=>|:=|=|:)[ \t'"\x60]*value$`,
   `(?i)(?:\$\{BOXY_TEST_[A-Z0-9_]+\}|boxy-test-[a-z0-9-]+)$`,
   `(?i)(?:admin|administrator|root|ubuntu|vscode|user|username|testuser)$`,
+  `(?i)(?:true|false)$`,
 ])
 '''
 

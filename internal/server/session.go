@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/Geogboe/boxy/internal/auth"
@@ -89,10 +90,15 @@ func sessionPrincipalFromRequest(r *http.Request) (auth.SessionPrincipal, bool) 
 var loginPageTmpl = template.Must(template.ParseFS(templateFS, "templates/layout.html", "templates/login.html"))
 
 type loginPageData struct {
-	Next        string
-	Error       string
-	OIDCEnabled bool
+	Next           string
+	Error          string
+	OIDCEnabled    bool
+	OIDCLabel      string
+	OIDCIcon       string
+	HideLocalLogin bool
 }
+
+const defaultOIDCLoginLabel = "Log in with single sign-on"
 
 func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie(sessionCookieName); err == nil && cookie.Value != "" {
@@ -101,7 +107,18 @@ func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	data := loginPageData{Next: safeNextPath(r.URL.Query().Get("next")), OIDCEnabled: s.oidc != nil}
+	data := loginPageData{
+		Next:        safeNextPath(r.URL.Query().Get("next")),
+		OIDCEnabled: s.oidc != nil,
+		OIDCLabel:   defaultOIDCLoginLabel,
+	}
+	if s.oidc != nil {
+		if label := strings.TrimSpace(s.oidc.LoginLabel); label != "" {
+			data.OIDCLabel = label
+		}
+		data.OIDCIcon = s.oidc.LoginIcon
+		data.HideLocalLogin = s.oidc.HideLocalLogin
+	}
 	if r.URL.Query().Get("error") == "1" {
 		data.Error = "Invalid username or password, or single sign-on login failed."
 	}

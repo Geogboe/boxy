@@ -95,7 +95,36 @@ func (e *Exec) Exec(ctx context.Context, cmd string, args ...string) (*vmsdk.Exe
 // merged onto stderr — none of those are exclusively "errors", so a caller
 // deciding whether a command failed should rely on the exit code, not on
 // whether anything arrived on the stderr channel.
+// ExecText executes opaque PowerShell text without converting it to argv.
+func (e *Exec) ExecText(ctx context.Context, text string) (*vmsdk.ExecResult, error) {
+	executor, err := e.newExecutor(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("psdirect: create client for VM %s: %w", e.VMID, err)
+	}
+	if err := executor.Connect(ctx); err != nil {
+		return nil, fmt.Errorf("psdirect: connect to VM %s: %w", e.VMID, err)
+	}
+	defer executor.Close(ctx) //nolint:errcheck
+
+	script := text + "\n$LASTEXITCODE"
+	result, err := executor.Execute(ctx, script)
+	if err != nil {
+		return nil, fmt.Errorf("psdirect: exec text on VM %s: %w", e.VMID, wrapKnownTransportError(err))
+	}
+	stdout, exitCode := extractOutput(result.Output)
+	return &vmsdk.ExecResult{Stdout: stdout, ExitCode: exitCode}, nil
+}
+
 func (e *Exec) ExecStream(ctx context.Context, cmd string, args []string, sink eventstream.Sink) (*vmsdk.ExecResult, error) {
+	return e.execStreamScript(ctx, buildStreamScript(cmd, args), sink)
+}
+
+// ExecStreamText streams opaque PowerShell text without converting it to argv.
+func (e *Exec) ExecStreamText(ctx context.Context, text string, sink eventstream.Sink) (*vmsdk.ExecResult, error) {
+	return e.execStreamScript(ctx, buildStreamTextScript(text), sink)
+}
+
+func (e *Exec) execStreamScript(ctx context.Context, script string, sink eventstream.Sink) (*vmsdk.ExecResult, error) {
 	if sink == nil {
 		return nil, fmt.Errorf("psdirect: stream sink is required")
 	}
@@ -112,7 +141,7 @@ func (e *Exec) ExecStream(ctx context.Context, cmd string, args []string, sink e
 	}
 	defer streamer.Close(ctx) //nolint:errcheck
 
-	stream, err := streamer.ExecuteStream(ctx, buildStreamScript(cmd, args))
+	stream, err := streamer.ExecuteStream(ctx, script)
 	if err != nil {
 		return nil, fmt.Errorf("psdirect: start stream on VM %s: %w", e.VMID, err)
 	}
@@ -336,6 +365,10 @@ func buildStreamScript(cmd string, args []string) string {
 // The output stream will be [string, int32]:
 //   - string: combined stdout+stderr (2>&1)
 //   - int32:  process exit code via $LASTEXITCODE
+func buildStreamTextScript(text string) string {
+	return text + "\nWrite-Output ('__BOXY_EXIT_CODE:' + [string]$LASTEXITCODE)"
+}
+
 func buildScript(cmd string, args []string) string {
 	parts := make([]string, 0, 1+len(args))
 	parts = append(parts, psQuote(cmd))

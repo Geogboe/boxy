@@ -126,6 +126,29 @@ func TestReconcileEvaluator(t *testing.T) {
 			t.Fatalf("expected noop, got %+v", decision.Plan)
 		}
 	})
+
+	t.Run("ignores destroyed tombstones and adopts a provider-reported replacement", func(t *testing.T) {
+		obs := reconcileObserved{
+			agentID: "agent-1",
+			tracked: []model.Resource{
+				{ID: "reused-id", Provider: model.ProviderRef{Name: "docker", AgentID: "agent-1"}, State: model.ResourceStateDestroyed},
+			},
+			remote: map[model.ResourceID]remoteEntry{
+				"reused-id": {provider: "docker", status: providersdk.ResourceStatus{ID: "reused-id", State: "running"}},
+			},
+			listedProviders: map[providersdk.Type]int{"docker": 1},
+		}
+		decision, err := eval.Evaluate(context.Background(), obs)
+		if err != nil {
+			t.Fatalf("Evaluate: %v", err)
+		}
+		if len(decision.Plan.adopt) != 1 || decision.Plan.adopt[0].ID != "reused-id" {
+			t.Fatalf("unexpected adopt plan: %+v", decision.Plan.adopt)
+		}
+		if len(decision.Plan.reap) != 0 {
+			t.Fatalf("destroyed tombstone must not be reaped, got %+v", decision.Plan.reap)
+		}
+	})
 }
 
 // --- ReconcileAgent: end-to-end against a real MemoryStore/AgentRegistry ---

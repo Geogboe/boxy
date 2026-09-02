@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -20,22 +19,20 @@ import (
 func TestSandboxExecCommandDefaultsToLiveText(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1" {
-			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"id":"sb-1","resources":["res-1"]}`)
 			return
 		}
-		if r.URL.Path != "/api/v1/sandboxes/sb-1/exec" || r.URL.Query().Get("stream") != "" {
-			t.Fatalf("request = %s?%s, want default streaming exec path", r.URL.Path, r.URL.RawQuery)
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/sandboxes/sb-1/exec" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"exec_id":"exec-1","status":"running"}`)
+			return
 		}
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		data, _ := json.Marshal(map[string]any{
-			"type":   "data",
-			"stream": "stdout",
-			"data":   base64.StdEncoding.EncodeToString([]byte("hello\n")),
-		})
-		_, _ = w.Write(append(data, '\n'))
-		complete, _ := json.Marshal(map[string]any{"type": "complete", "exit_code": 0})
-		_, _ = w.Write(append(complete, '\n'))
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1/exec/exec-1" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"exec_id":"exec-1","status":"succeeded","chunks":[{"cursor":"cursor-1","stream":"stdout","data":"aGVsbG8K"}],"exit_code":0}`)
+			return
+		}
+		t.Fatalf("unexpected request: %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
 	}))
 	defer server.Close()
 
@@ -83,24 +80,25 @@ func TestSandboxExecCommandLiveTextArrivesBeforeCompletion(t *testing.T) {
 			_, _ = io.WriteString(w, `{"id":"sb-1","resources":["res-1"]}`)
 			return
 		}
-		if r.URL.Path != "/api/v1/sandboxes/sb-1/exec" || r.URL.Query().Get("stream") != "" {
-			t.Fatalf("request = %s?%s, want default streaming exec path", r.URL.Path, r.URL.RawQuery)
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/sandboxes/sb-1/exec" {
+			_, _ = io.WriteString(w, `{"exec_id":"exec-1","status":"running"}`)
+			return
 		}
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			t.Fatal("test response does not support flushing")
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1/exec/exec-1" {
+			w.Header().Set("Content-Type", "application/json")
+			if r.URL.Query().Get("from") == "" {
+				_, _ = io.WriteString(w, `{"exec_id":"exec-1","status":"running","chunks":[{"cursor":"cursor-1","stream":"stdout","data":"Zmlyc3QgY2h1bmsK"}],"next":"cursor-1"}`)
+				return
+			}
+			select {
+			case <-release:
+			case <-time.After(2 * time.Second):
+				t.Error("client did not consume the first chunk before completion")
+			}
+			_, _ = io.WriteString(w, `{"exec_id":"exec-1","status":"succeeded","exit_code":0}`)
+			return
 		}
-		data, _ := json.Marshal(map[string]any{"type": "data", "stream": "stdout", "data": base64.StdEncoding.EncodeToString([]byte("first chunk\n"))})
-		_, _ = w.Write(append(data, '\n'))
-		flusher.Flush()
-		select {
-		case <-release:
-		case <-time.After(2 * time.Second):
-			t.Error("client did not consume the first chunk before completion")
-		}
-		complete, _ := json.Marshal(map[string]any{"type": "complete", "exit_code": 0})
-		_, _ = w.Write(append(complete, '\n'))
+		t.Fatalf("unexpected request: %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
 	}))
 	defer server.Close()
 
@@ -133,14 +131,16 @@ func TestSandboxExecCommandEventsEmitsNDJSON(t *testing.T) {
 			_, _ = io.WriteString(w, `{"id":"sb-1","resources":["res-1"]}`)
 			return
 		}
-		if r.URL.Path != "/api/v1/sandboxes/sb-1/exec" || r.URL.Query().Get("stream") != "" {
-			t.Fatalf("request = %s?%s, want default streaming exec path", r.URL.Path, r.URL.RawQuery)
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/sandboxes/sb-1/exec" {
+			_, _ = io.WriteString(w, `{"exec_id":"exec-1","status":"running"}`)
+			return
 		}
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		data, _ := json.Marshal(map[string]any{"type": "data", "stream": "stdout", "data": base64.StdEncoding.EncodeToString([]byte("hello\n"))})
-		_, _ = w.Write(append(data, '\n'))
-		complete, _ := json.Marshal(map[string]any{"type": "complete", "exit_code": 0})
-		_, _ = w.Write(append(complete, '\n'))
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1/exec/exec-1" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"exec_id":"exec-1","status":"succeeded","chunks":[{"cursor":"cursor-1","stream":"stdout","data":"aGVsbG8K"}],"exit_code":0}`)
+			return
+		}
+		t.Fatalf("unexpected request: %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
 	}))
 	defer server.Close()
 
@@ -163,11 +163,16 @@ func TestSandboxExecCommandBufferedModeRequestsJSON(t *testing.T) {
 			_, _ = io.WriteString(w, `{"id":"sb-1","resources":["res-1"]}`)
 			return
 		}
-		if r.URL.Path != "/api/v1/sandboxes/sb-1/exec" || r.URL.Query().Get("stream") != "false" {
-			t.Fatalf("request = %s?%s, want stream=false", r.URL.Path, r.URL.RawQuery)
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/sandboxes/sb-1/exec" {
+			_, _ = io.WriteString(w, `{"exec_id":"exec-1","status":"running"}`)
+			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"resource_id":"res-1","stdout":"hello\n","exit_code":0}`)
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1/exec/exec-1" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"exec_id":"exec-1","status":"succeeded","chunks":[{"cursor":"cursor-1","stream":"stdout","data":"aGVsbG8K"}],"exit_code":0}`)
+			return
+		}
+		t.Fatalf("unexpected request: %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
 	}))
 	defer server.Close()
 
@@ -181,6 +186,161 @@ func TestSandboxExecCommandBufferedModeRequestsJSON(t *testing.T) {
 	}
 	if got := out.String(); got != "hello\n" {
 		t.Fatalf("buffered stdout = %q, want hello newline", got)
+	}
+}
+
+func TestSandboxExecCommandTextPreservesOpaquePayload(t *testing.T) {
+	var received sandboxExecRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1" {
+			_, _ = io.WriteString(w, `{"id":"sb-1","resources":["res-1"]}`)
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/sandboxes/sb-1/exec" {
+			if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+				t.Fatalf("decode execution request: %v", err)
+			}
+			_, _ = io.WriteString(w, `{"exec_id":"exec-opaque","status":"running"}`)
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1/exec/exec-opaque" {
+			_, _ = io.WriteString(w, `{"exec_id":"exec-opaque","status":"succeeded","exit_code":0}`)
+			return
+		}
+		t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+
+	const opaque = "Write-Output \"a b\"\r\nWrite-Error 'diagnostic'"
+	cmd := newSandboxCommand()
+	cmd.SetOut(new(strings.Builder))
+	cmd.SetErr(new(strings.Builder))
+	cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--command", opaque})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if received.CommandText != opaque {
+		t.Fatalf("command_text = %q, want opaque payload %q", received.CommandText, opaque)
+	}
+	if len(received.Command) != 0 || received.Script != nil {
+		t.Fatalf("opaque command reconstructed into another input form: %+v", received)
+	}
+}
+
+func TestSandboxExecCommandStdinPreservesMultilinePayload(t *testing.T) {
+	var received sandboxExecRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1" {
+			_, _ = io.WriteString(w, `{"id":"sb-1","resources":["res-1"]}`)
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/sandboxes/sb-1/exec" {
+			if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+				t.Fatalf("decode execution request: %v", err)
+			}
+			_, _ = io.WriteString(w, `{"exec_id":"exec-stdin","status":"succeeded"}`)
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1/exec/exec-stdin" {
+			_, _ = io.WriteString(w, `{"exec_id":"exec-stdin","status":"succeeded","exit_code":0}`)
+			return
+		}
+		t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+
+	const opaque = "line one\r\nline two\nline three"
+	cmd := newSandboxCommand()
+	cmd.SetIn(strings.NewReader(opaque))
+	cmd.SetOut(new(strings.Builder))
+	cmd.SetErr(new(strings.Builder))
+	cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--stdin"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if received.CommandText != opaque {
+		t.Fatalf("stdin command_text = %q, want %q", received.CommandText, opaque)
+	}
+}
+
+func TestSandboxExecCommandDetachPrintsExecutionIDWithoutTailing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1" {
+			_, _ = io.WriteString(w, `{"id":"sb-1","resources":["res-1"]}`)
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/sandboxes/sb-1/exec" {
+			_, _ = io.WriteString(w, `{"exec_id":"exec-detached","status":"running"}`)
+			return
+		}
+		t.Fatalf("detach must not tail execution: %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+
+	out := new(strings.Builder)
+	cmd := newSandboxCommand()
+	cmd.SetOut(out)
+	cmd.SetErr(new(strings.Builder))
+	cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--detach", "--command", "echo detached"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if out.String() != "exec-detached\n" {
+		t.Fatalf("detach output = %q, want execution ID", out.String())
+	}
+}
+
+func TestSandboxExecCommandAttachUsesExistingExecution(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1/exec/exec-existing" {
+			_, _ = io.WriteString(w, `{"exec_id":"exec-existing","status":"succeeded","chunks":[{"cursor":"cursor-1","stream":"stdout","data":"YXR0YWNoZWQK"}],"exit_code":0}`)
+			return
+		}
+		t.Fatalf("attach must only read the existing execution: %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+
+	out := new(strings.Builder)
+	cmd := newSandboxCommand()
+	cmd.SetOut(out)
+	cmd.SetErr(new(strings.Builder))
+	cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--attach", "exec-existing"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if out.String() != "attached\n" {
+		t.Fatalf("attach output = %q, want attached newline", out.String())
+	}
+}
+
+func TestSandboxExecCommandAttachSupportsOutputModes(t *testing.T) {
+	for _, mode := range []string{"--events", "--buffered"} {
+		t.Run(mode[2:], func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1/exec/exec-existing" {
+					_, _ = io.WriteString(w, `{"exec_id":"exec-existing","status":"succeeded","chunks":[{"cursor":"cursor-1","stream":"stdout","data":"YXR0YWNoZWQK"}],"exit_code":0}`)
+					return
+				}
+				t.Fatalf("attach must only read the existing execution: %s %s", r.Method, r.URL.Path)
+			}))
+			defer server.Close()
+
+			out := new(strings.Builder)
+			cmd := newSandboxCommand()
+			cmd.SetOut(out)
+			cmd.SetErr(new(strings.Builder))
+			cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--attach", "exec-existing", mode})
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			if mode == "--events" {
+				if !strings.Contains(out.String(), `"type":"data"`) || !strings.Contains(out.String(), `"type":"complete"`) {
+					t.Fatalf("events attach output = %q, want data and complete events", out.String())
+				}
+			} else if out.String() != "attached\n" {
+				t.Fatalf("buffered attach output = %q, want attached newline", out.String())
+			}
+		})
 	}
 }
 
@@ -198,9 +358,15 @@ func TestSandboxExecCommandRejectsStreamWithoutCompletion(t *testing.T) {
 			_, _ = io.WriteString(w, `{"id":"sb-1","resources":["res-1"]}`)
 			return
 		}
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		data, _ := json.Marshal(map[string]any{"type": "data", "stream": "stdout", "data": base64.StdEncoding.EncodeToString([]byte("partial\n"))})
-		_, _ = w.Write(append(data, '\n'))
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/sandboxes/sb-1/exec" {
+			_, _ = io.WriteString(w, `{"exec_id":"exec-1","status":"running"}`)
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1/exec/exec-1" {
+			_, _ = io.WriteString(w, "not json")
+			return
+		}
+		t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 	}))
 	defer server.Close()
 
@@ -208,8 +374,36 @@ func TestSandboxExecCommandRejectsStreamWithoutCompletion(t *testing.T) {
 	cmd.SetOut(new(strings.Builder))
 	cmd.SetErr(new(strings.Builder))
 	cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--", "interrupted"})
-	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "complete event") {
-		t.Fatalf("Execute error = %v, want missing-completion error", err)
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "decode execution status") {
+		t.Fatalf("Execute error = %v, want malformed status error", err)
+	}
+}
+
+func TestSandboxExecCommandReportsTailAPIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1" {
+			_, _ = io.WriteString(w, `{"id":"sb-1","resources":["res-1"]}`)
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/sandboxes/sb-1/exec" {
+			_, _ = io.WriteString(w, `{"exec_id":"exec-1","status":"running"}`)
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1/exec/exec-1" {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"error":"execution not found"}`)
+			return
+		}
+		t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+
+	cmd := newSandboxCommand()
+	cmd.SetOut(new(strings.Builder))
+	cmd.SetErr(new(strings.Builder))
+	cmd.SetArgs([]string{"--server", server.URL, "exec", "sb-1", "--", "interrupted"})
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "execution not found") {
+		t.Fatalf("Execute error = %v, want API error body", err)
 	}
 }
 
@@ -226,14 +420,18 @@ func TestSandboxExecCommandPassesGuestPasswordFromStdin(t *testing.T) {
 
 	var request sandboxExecRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1/exec/exec-1" {
+			_, _ = io.WriteString(w, `{"exec_id":"exec-1","status":"succeeded","exit_code":0}`)
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1" {
 			_, _ = io.WriteString(w, `{"id":"sb-1","resources":["res-1"]}`)
 			return
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		_, _ = io.WriteString(w, `{"resource_id":"res-1","exit_code":0}`)
+		_, _ = io.WriteString(w, `{"exec_id":"exec-1","status":"running"}`)
 	}))
 	defer server.Close()
 
@@ -264,14 +462,18 @@ func TestSandboxExecCommandScriptFileSendsRawBytesAndArgs(t *testing.T) {
 	}
 	var request sandboxExecRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1/exec/exec-1" {
+			_, _ = io.WriteString(w, `{"exec_id":"exec-1","status":"succeeded","exit_code":0}`)
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1" {
 			_, _ = io.WriteString(w, `{"id":"sb-1","resources":["res-1"]}`)
 			return
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
-		_, _ = io.WriteString(w, `{"resource_id":"res-1","exit_code":0}`)
+		_, _ = io.WriteString(w, `{"exec_id":"exec-1","status":"running"}`)
 	}))
 	defer server.Close()
 
@@ -345,6 +547,10 @@ func TestSandboxExecCommandLoadsSavedGuestCredential(t *testing.T) {
 	store := credentials.NewWithBackend("test", backend)
 	credential := providersdk.GuestCredential{Kind: "password", Data: json.RawMessage(`{"password":"saved"}`)}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1/exec/exec-1" {
+			_, _ = io.WriteString(w, `{"exec_id":"exec-1","status":"succeeded","exit_code":0}`)
+			return
+		}
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/sandboxes/sb-1" {
 			_, _ = io.WriteString(w, `{"id":"sb-1","resources":["res-1"]}`)
 			return
@@ -356,7 +562,7 @@ func TestSandboxExecCommandLoadsSavedGuestCredential(t *testing.T) {
 		if request.GuestCredential == nil || string(request.GuestCredential.Data) != `{"password":"saved"}` {
 			t.Fatalf("guest credential = %+v, want saved credential", request.GuestCredential)
 		}
-		_, _ = io.WriteString(w, `{"resource_id":"res-1","exit_code":0}`)
+		_, _ = io.WriteString(w, `{"exec_id":"exec-1","status":"running"}`)
 	}))
 	defer server.Close()
 	if err := store.SetGuestCredential(server.URL, "sb-1", "res-1", credential); err != nil {

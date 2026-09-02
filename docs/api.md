@@ -66,7 +66,9 @@ API-key roles:
 | DELETE | `/api/v1/sandboxes/{id}` | user/admin | Request asynchronous deletion. |
 | POST | `/api/v1/sandboxes/{id}/extend` | user/admin | Extend an owned sandbox expiry. |
 | GET | `/api/v1/sandboxes/{id}/guest-credential` | user/admin | Fetch process-local guest credentials once; subsequent fetches return 410 Gone. |
-| POST | `/api/v1/sandboxes/{id}/exec` | user/admin | Execute a one-shot command; defaults to NDJSON events, use stream=false for buffered JSON. |
+| POST | `/api/v1/sandboxes/{id}/exec` | user/admin | Queue one durable command execution and return its execution ID; command, command_text, and script are mutually exclusive. |
+| GET | `/api/v1/sandboxes/{id}/exec/{exec_id}` | user/admin | Read bounded output chunks and lifecycle status after an opaque cursor. |
+| POST | `/api/v1/sandboxes/{id}/exec/{exec_id}/cancel` | user/admin | Cancel a pending or running execution. |
 
 ### Agents
 
@@ -105,9 +107,13 @@ Sandbox creation returns `202 Accepted` and is fulfilled asynchronously by the d
 
 ## Sandbox execution
 
-`POST /api/v1/sandboxes/{id}/exec` accepts either a non-empty `command` array or a `script` object, never both. A script has base64-encoded `content`, a lowercase SHA-256 `digest`, `interpreter` (`auto`, `powershell`, or `sh`), and optional `args` array. Script content is limited to 4 MiB and the server recomputes the digest before dispatch. The sandbox must be ready; multi-resource sandboxes require `resource_id`. The default response is `application/x-ndjson`: each data event has `type`, `stream`, and base64 `data`; the terminal event has `type=complete`, `exit_code` in `attributes`, and any error. `?stream=true` is an explicit spelling of the default. Use `?stream=false` for the bounded buffered JSON response.
+`POST /api/v1/sandboxes/{id}/exec` accepts exactly one opaque input: a non-empty `command` array, a non-empty `command_text` string, or a `script` object. Positional command arguments and script-file arguments remain separate fields; the server never reconstructs command text by quoting or splitting argv. A script has base64-encoded `content`, a lowercase SHA-256 `digest`, `interpreter` (`auto`, `powershell`, or `sh`), and optional `args` array. Script content is limited to 4 MiB and the server recomputes the digest before dispatch. The sandbox must be ready; multi-resource sandboxes require `resource_id`. The request returns `202 Accepted` with an `exec_id` and does not wait for the guest command.
 
-Output is bounded (1 MiB total, 64 KiB per chunk) in both modes. In streaming mode, each chunk is delivered as soon as it is produced, so exceeding the limit mid-command only truncates the tail — every chunk already sent stays delivered — and surfaces as an `error` field on the terminal `complete` event rather than an HTTP status change (headers are already flushed by the time streaming starts). In buffered mode, a command that exceeds the limit returns `413 Payload Too Large` and discards any output already collected. A context-deadline timeout returns `504 Gateway Timeout`; any other provider/agent failure returns `500 Internal Server Error` in buffered mode, or the same terminal `complete`-event `error` in streaming mode.
+`GET /api/v1/sandboxes/{id}/exec/{exec_id}` returns execution status plus bounded output chunks after the opaque `from` cursor. Each response includes a `next` cursor; resume with that cursor after a disconnect to avoid duplicate chunks. Cursors identify chunk boundaries and are not offsets into output bytes. Output is capped at 1 MiB per execution and chunked at 64 KiB. When the cap is reached, the response includes an explicit truncation marker and the terminal status remains inspectable. Terminal records are retained for 24 hours.
+
+`POST /api/v1/sandboxes/{id}/exec/{exec_id}/cancel` requests cancellation. Only one execution may be active for a resource: a concurrent request receives `409 Conflict` with `error=resource_busy` and the active execution ID. Different resources may execute concurrently. Active executions use a server-owned context, so a client disconnect does not cancel them; a restart marks pending/running records `interrupted` and never replays them.
+
+CLI execution follows the same durable API. Normal `boxy sandbox exec` attaches live output; `--detach` prints the execution ID and returns; `--attach <exec-id>` reconnects to an existing execution. `--events` emits lifecycle/chunk events, while `--buffered` waits for terminal status before writing captured output. Use exactly one of positional arguments, `--command`, `--stdin`, or `--script-file`; `--command` and `--stdin` are opaque input and are never split through argv quoting.
 
 ## Diagnostics logs
 

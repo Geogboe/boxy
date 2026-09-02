@@ -30,6 +30,14 @@ type Store interface {
 	PutSandbox(ctx context.Context, sb model.Sandbox) error
 	DeleteSandbox(ctx context.Context, id model.SandboxID) error
 
+	// Durable sandbox executions. Implementations must make each Put atomic
+	// with respect to concurrent readers; callers update one execution at a
+	// time, so no separate transaction API is needed for the JSON backend.
+	GetExecution(ctx context.Context, id model.ExecutionID) (model.Execution, error)
+	PutExecution(ctx context.Context, execution model.Execution) error
+	DeleteExecution(ctx context.Context, id model.ExecutionID) error
+	ListExecutions(ctx context.Context) ([]model.Execution, error)
+
 	// Agent registration tokens (single-use bootstrap credentials, see
 	// docs/adr/0005-remote-agent-transport-and-registration.md). PutAgentToken
 	// doubles as both create and mark-used: callers read, mutate UsedAt, and

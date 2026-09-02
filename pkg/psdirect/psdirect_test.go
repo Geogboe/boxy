@@ -231,6 +231,17 @@ func TestBuildScript_QuotesAndJoins(t *testing.T) {
 	}
 }
 
+func TestBuildStreamTextScriptPreservesMultilineCRLFInput(t *testing.T) {
+	const input = "Write-Output 'first'\r\nWrite-Output 'second'\r\n"
+	script := buildStreamTextScript(input)
+	if !strings.HasPrefix(script, input) {
+		t.Fatalf("stream script changed opaque input: got prefix %q, want %q", script, input)
+	}
+	if !strings.Contains(script, "__BOXY_EXIT_CODE:") {
+		t.Fatalf("stream script missing exit marker: %q", script)
+	}
+}
+
 func TestBuildScript_QuotesEmbeddedDoubleQuotes(t *testing.T) {
 	script := buildScript("powershell", []string{"-Command", `Write-Output "MARK[a b]"`})
 	if !strings.Contains(script, `Write-Output \"MARK[a b]\"`) {
