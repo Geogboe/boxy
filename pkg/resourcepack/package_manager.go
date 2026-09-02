@@ -127,8 +127,11 @@ func packageManagerPackageIDs(raw any) ([]string, error) {
 }
 
 func isSafePackageID(value string) bool {
+	if value == "" || !isASCIILetterOrDigit(rune(value[0])) {
+		return false
+	}
 	for _, r := range value {
-		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+		if isASCIILetterOrDigit(r) {
 			continue
 		}
 		switch r {
@@ -137,7 +140,11 @@ func isSafePackageID(value string) bool {
 			return false
 		}
 	}
-	return value != ""
+	return true
+}
+
+func isASCIILetterOrDigit(value rune) bool {
+	return (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z') || (value >= '0' && value <= '9')
 }
 
 func stringAnyMap(value any) (map[string]any, bool) {

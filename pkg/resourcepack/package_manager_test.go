@@ -147,7 +147,7 @@ func TestCompilePackageManagerRejectsInvalidDeclarations(t *testing.T) {
 func TestCompilePackageManagerRejectsUnsafeIdentifiers(t *testing.T) {
 	t.Parallel()
 
-	unsafe := []string{"git\nwhoami", "git && whoami", "git|whoami", "$(whoami)", "$(Get-Process)", "git'", "git`whoami`", "git*"}
+	unsafe := []string{"git\nwhoami", "git && whoami", "git|whoami", "$(whoami)", "$(Get-Process)", "git'", "git`whoami`", "git*", "-o"}
 	for _, packageID := range unsafe {
 		t.Run(packageID, func(t *testing.T) {
 			if _, err := Compile(packageManagerManifest("apt", packageID)); err == nil {
