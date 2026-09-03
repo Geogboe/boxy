@@ -9,9 +9,9 @@ boxy package build --manifest package.yaml --output package.json
 boxy package publish --artifact package.json --registry .boxy/registry
 ```
 
-## Built-in package-manager recipe
+## Built-in package-manager package
 
-For common guest setup, use the built-in recipe instead of maintaining a
+For common guest setup, use the built-in package instead of maintaining a
 script file:
 
 ```yaml
@@ -26,6 +26,45 @@ inputs:
     packages: [curl, git]
 ```
 
+To install Chocolatey explicitly through Winget, copy this package declaration
+and retain the package-reference order shown below. The official Winget ID is
+[`Chocolatey.Chocolatey`](https://github.com/microsoft/winget-pkgs/tree/master/manifests/c/Chocolatey/Chocolatey).
+
+```yaml
+packages:
+  chocolatey:
+    builtin: package-manager
+    version: 1.0.0
+    scopes: [resource]
+    events: [provision]
+    inputs:
+      parameters:
+        manager: winget
+        packages: [Chocolatey.Chocolatey]
+
+  windows-tools:
+    builtin: package-manager
+    version: 1.0.0
+    scopes: [resource]
+    events: [provision]
+    inputs:
+      parameters:
+        manager: chocolatey
+        packages: [git]
+
+templates:
+  windows-base:
+    type: vm
+    provider: hyperv-local
+    packages: [chocolatey@1.0.0, windows-tools@1.0.0]
+```
+
+The first package installs Chocolatey through Winget; the second uses
+Chocolatey. Boxy retains the order of package references and skips later
+packages when an earlier package fails. A future dependency graph should
+define missing-dependency, cycle, deterministic-order, inheritance, and
+failure semantics explicitly; see [issue #310](https://github.com/Geogboe/boxy/issues/310).
+
 Boxy compiles this declaration into the normal immutable inline-script
 package. Linux managers use `shell`; Windows managers use `powershell`.
 Package IDs are sorted before compilation; duplicates and shell/PowerShell
@@ -37,7 +76,7 @@ configured guest credential. Boxy does not auto-detect another manager,
 elevate, bootstrap, upgrade, or silently install one. The selected manager's
 normal repositories or sources must be reachable, so package application may
 require network access. Versions are resolved by those repositories; this
-first recipe does not pin versions.
+first package does not pin versions.
 
 The generated operation fails if the manager is absent or returns a nonzero
 exit code. The resource is not recorded as having applied the package after a
@@ -45,7 +84,7 @@ failure. Successful applications use the existing applied-package reference
 and input digest for idempotency; a changed package list produces a new digest
 and is applied as a new package input.
 
-The recipe is compiled during configuration validation, in-config registry
+The package is compiled during configuration validation, in-config registry
 construction, `boxy package build`, and package planning. Agents receive only
 the resulting provider-neutral execution operation and credential; they do not
 receive package policy or resolve package references.

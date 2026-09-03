@@ -153,6 +153,7 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	catalogTmpl := pageTemplate("catalog.html")
 	serviceKeysTmpl := pageTemplate("service_keys.html")
 	diagnosticsTmpl := pageTemplate("diagnostics.html")
+	helpTmpl := pageTemplate("help.html")
 
 	// Full-page routes.
 	mux.HandleFunc("GET /{$}", s.uiHandler(homeTmpl, "home", s.homeData))
@@ -168,6 +169,7 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/pools/{name}/fill", s.handleFillPoolUI)
 	mux.HandleFunc("POST /ui/resources/purge", s.handlePurgeResourcesUI)
 	mux.HandleFunc("GET /ui/catalog", s.uiHandler(catalogTmpl, "catalog", s.catalogData))
+	mux.HandleFunc("GET /ui/help", s.uiHandler(helpTmpl, "help", func(*http.Request) (pageData, error) { return pageData{}, nil }))
 	mux.HandleFunc("GET /ui/diagnostics", s.diagnosticsHandler(diagnosticsTmpl))
 	mux.HandleFunc("POST /ui/profile/personal-key", s.handleMintPersonalKey(profileTmpl))
 

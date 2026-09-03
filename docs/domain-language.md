@@ -38,7 +38,7 @@ toward a desired state. A package has a method, allowed scopes, lifecycle
 events, inputs, and a content identity. In this release methods are `shell`
 and `powershell`.
 
-The `package-manager` built-in is a declarative package recipe. Its only
+The `package-manager` built-in is a declarative package. Its only
 parameters are a supported manager (`apt`, `apk`, `winget`, or `chocolatey`)
 and a non-empty list of safe package IDs. Compilation derives the method and
 inline script; the stored artifact no longer needs the built-in marker. The

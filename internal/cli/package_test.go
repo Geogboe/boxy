@@ -88,6 +88,6 @@ inputs:
 		t.Fatalf("package artifact was not compiled:\n%s", compiled)
 	}
 	if strings.Contains(compiled, "builtin:") || strings.Contains(compiled, "manager:") {
-		t.Fatalf("package artifact retained recipe fields:\n%s", compiled)
+		t.Fatalf("package artifact retained package declaration fields:\n%s", compiled)
 	}
 }

@@ -1,7 +1,7 @@
 // Package resourcepack plans and applies immutable, parameterized resource
 // configuration packages. It deliberately has no provider or guest-transport
 // dependency: those are supplied by the executor at the application boundary.
-// Compile turns the supported package-manager recipe into the same inline
+// Compile turns the supported package-manager package into the same inline
 // shell or PowerShell package format used by ordinary manifests.
 package resourcepack
 

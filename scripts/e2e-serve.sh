@@ -161,6 +161,7 @@ assert_html_contains "GET /ui/sandboxes"  "$BASE/ui/sandboxes"       "All Sandbo
 assert_html_contains "GET /ui/agents"     "$BASE/ui/agents"           "Agents"
 assert_html_contains "GET /ui/diagnostics" "$BASE/ui/diagnostics"     "Diagnostics"
 assert_html_contains "GET /ui/catalog"   "$BASE/ui/catalog"           "Catalog"
+assert_html_contains "GET /ui/help"      "$BASE/ui/help"              "Boxy package help"
 
 assert_html_contains "fragment: stats"          "$BASE/ui/fragments/stats"           "stat-card"
 assert_status "fragment: pools-table"    "$BASE/ui/fragments/pools-table"     200

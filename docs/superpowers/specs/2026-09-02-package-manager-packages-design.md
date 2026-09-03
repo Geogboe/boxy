@@ -1,4 +1,4 @@
-# Built-in package-manager recipes
+# Built-in package-manager packages
 
 ## Status
 
@@ -6,7 +6,7 @@ Implemented for the v0.1.61 prerelease slice.
 
 ## Goal
 
-Allow a package manifest to declare a small, portable package-manager recipe
+Allow a package manifest to declare a small, portable package-manager package
 without embedding a shell script:
 
 ```yaml
@@ -22,7 +22,7 @@ packages:
         packages: [curl, git]
 ```
 
-The recipe compiler turns this declaration into the existing immutable inline
+The package compiler turns this declaration into the existing immutable inline
 script package shape. It selects `shell` for `apt` and `apk`, and `powershell`
 for `winget` and `chocolatey`. The compiled manifest has no `builtin` marker
 and contains its generated script in `inputs.inline`.
@@ -47,7 +47,7 @@ boundary.
 
 ## Validation and determinism
 
-`manager` and `packages` are the only accepted recipe parameters. The manager
+`manager` and `packages` are the only accepted package parameters. The manager
 name is case-insensitive and is normalized to the canonical lower-case name.
 At least one package is required. Package IDs must be non-empty, contain no
 whitespace or shell/PowerShell metacharacters, and use only the portable
@@ -76,3 +76,6 @@ is a defensive normalization step; compiled manifests are already unchanged.
 Manager bootstrapping is deferred. A follow-up design must cover installer
 provenance, checksums or signatures, privilege transitions, network failures,
 and rollback before any bootstrap behavior is added.
+
+Package dependency graphs are also out of scope for this increment. The
+ordered package-reference behavior is tracked in issue #310.

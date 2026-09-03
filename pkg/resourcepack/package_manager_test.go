@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -28,7 +29,7 @@ func packageManagerManifest(manager string, packages ...any) Manifest {
 	}
 }
 
-func TestCompilePackageManagerRecipes(t *testing.T) {
+func TestCompilePackageManagerPackages(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -39,8 +40,8 @@ func TestCompilePackageManagerRecipes(t *testing.T) {
 	}{
 		{manager: "apt", packages: []any{"git", "curl"}, method: MethodShell, want: []string{"apt-get", "curl", "git"}},
 		{manager: "apk", packages: []any{"git", "curl"}, method: MethodShell, want: []string{"apk", "curl", "git"}},
-		{manager: "winget", packages: []any{"Microsoft.VisualStudioCode", "Git.Git"}, method: MethodPowerShell, want: []string{"winget", "Git.Git", "Microsoft.VisualStudioCode"}},
-		{manager: "CHOCOLATEY", packages: []any{"git", "curl"}, method: MethodPowerShell, want: []string{"choco", "curl", "git"}},
+		{manager: "winget", packages: []any{"Microsoft.VisualStudioCode", "Git.Git"}, method: MethodPowerShell, want: []string{"winget install --id $package --exact --silent --accept-source-agreements --accept-package-agreements", "Git.Git", "Microsoft.VisualStudioCode"}},
+		{manager: "CHOCOLATEY", packages: []any{"git", "curl"}, method: MethodPowerShell, want: []string{"choco install $package --yes --no-progress", "curl", "git"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.manager, func(t *testing.T) {
@@ -70,7 +71,7 @@ func TestCompilePackageManagerRecipes(t *testing.T) {
 	}
 }
 
-func TestCompilePackageManagerRecipesAreDeterministic(t *testing.T) {
+func TestCompilePackageManagerPackagesAreDeterministic(t *testing.T) {
 	t.Parallel()
 
 	first, err := Compile(packageManagerManifest("apk", "git", "curl"))
@@ -109,6 +110,28 @@ inputs:
 	}
 	if compiled.Method != MethodShell {
 		t.Fatalf("compiled method = %q, want shell", compiled.Method)
+	}
+}
+
+func TestCompileChocolateyRefreshesPowerShellPathBeforeLookup(t *testing.T) {
+	t.Parallel()
+
+	compiled, err := Compile(packageManagerManifest("chocolatey", "git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inline := compiled.Inputs["inline"].(string)
+	for _, want := range []string{
+		"[Environment]::GetEnvironmentVariable('Path', 'Machine')",
+		"[Environment]::GetEnvironmentVariable('Path', 'User')",
+		"$env:Path =",
+	} {
+		if !strings.Contains(inline, want) {
+			t.Errorf("Chocolatey script missing PATH refresh %q:\n%s", want, inline)
+		}
+	}
+	if pathRefresh, lookup := strings.Index(inline, "$env:Path ="), strings.Index(inline, "Get-Command -Name 'choco'"); pathRefresh < 0 || lookup < 0 || pathRefresh > lookup {
+		t.Fatalf("Chocolatey PATH refresh must precede choco lookup:\n%s", inline)
 	}
 }
 
@@ -203,4 +226,68 @@ func TestPackageManagerShellScriptPropagatesManagerFailure(t *testing.T) {
 	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 23 {
 		t.Fatalf("generated script error = %v, want exit code 23", err)
 	}
+}
+
+func TestPackageManagerPowerShellScriptFailsWhenManagerIsMissing(t *testing.T) {
+	t.Parallel()
+
+	compiled, err := Compile(packageManagerManifest("winget", "Git.Git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	powershell, err := exec.LookPath("pwsh")
+	if err != nil {
+		powershell, err = exec.LookPath("powershell")
+	}
+	if err != nil {
+		t.Skipf("PowerShell unavailable: %v", err)
+	}
+	cmd := exec.Command(powershell, "-NoProfile", "-NonInteractive", "-Command", compiled.Inputs["inline"].(string))
+	cmd.Env = testEnvironmentWithPath(t.TempDir())
+	if err := cmd.Run(); err == nil {
+		t.Fatal("generated PowerShell script succeeded without its package manager")
+	}
+}
+
+func TestPackageManagerPowerShellScriptPropagatesManagerFailure(t *testing.T) {
+	t.Parallel()
+
+	compiled, err := Compile(packageManagerManifest("winget", "Git.Git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	powershell, err := exec.LookPath("pwsh")
+	if err != nil {
+		powershell, err = exec.LookPath("powershell")
+	}
+	if err != nil {
+		t.Skipf("PowerShell unavailable: %v", err)
+	}
+	pathDir := t.TempDir()
+	managerPath := filepath.Join(pathDir, "winget")
+	contents := []byte("#!/bin/sh\nexit 23\n")
+	if runtime.GOOS == "windows" {
+		managerPath += ".cmd"
+		contents = []byte("@echo off\r\nexit /b 23\r\n")
+	}
+	if err := os.WriteFile(managerPath, contents, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(powershell, "-NoProfile", "-NonInteractive", "-Command", compiled.Inputs["inline"].(string))
+	cmd.Env = testEnvironmentWithPath(pathDir)
+	if err := cmd.Run(); err == nil {
+		t.Fatal("generated PowerShell script succeeded after package manager failure")
+	}
+}
+
+func testEnvironmentWithPath(path string) []string {
+	current := os.Environ()
+	env := make([]string, 0, len(current)+1)
+	for _, value := range current {
+		if strings.HasPrefix(strings.ToUpper(value), "PATH=") {
+			continue
+		}
+		env = append(env, value)
+	}
+	return append(env, "PATH="+path)
 }

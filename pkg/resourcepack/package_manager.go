@@ -6,10 +6,10 @@ import (
 	"strings"
 )
 
-// BuiltinPackageManager identifies the declarative package-manager recipe.
+// BuiltinPackageManager identifies the declarative package-manager package.
 const BuiltinPackageManager = "package-manager"
 
-// Compile validates and normalizes a package manifest. Built-in recipes are
+// Compile validates and normalizes a package manifest. Built-in packages are
 // compiled into the existing immutable inline-script package format. Regular
 // manifests are validated and returned unchanged.
 func Compile(manifest Manifest) (Manifest, error) {
@@ -162,16 +162,16 @@ func stringAnyMap(value any) (map[string]any, bool) {
 	return converted, true
 }
 
-type packageManagerRecipe struct {
+type packageManagerSpec struct {
 	executable string
 	method     Method
 }
 
-func (r packageManagerRecipe) supported() bool {
-	return r.executable != ""
+func (s packageManagerSpec) supported() bool {
+	return s.executable != ""
 }
 
-var supportedPackageManagers = map[string]packageManagerRecipe{
+var supportedPackageManagers = map[string]packageManagerSpec{
 	"apt":        {executable: "apt-get", method: MethodShell},
 	"apk":        {executable: "apk", method: MethodShell},
 	"winget":     {executable: "winget", method: MethodPowerShell},
@@ -179,14 +179,14 @@ var supportedPackageManagers = map[string]packageManagerRecipe{
 }
 
 func packageManagerScript(manager string, packages []string) (Method, string, error) {
-	recipe, ok := supportedPackageManagers[manager]
+	spec, ok := supportedPackageManagers[manager]
 	if !ok {
 		return "", "", fmt.Errorf("%w: unsupported package manager %q", ErrInvalidManifest, manager)
 	}
-	if recipe.method == MethodShell {
-		return recipe.method, shellPackageManagerScript(manager, recipe.executable, packages), nil
+	if spec.method == MethodShell {
+		return spec.method, shellPackageManagerScript(manager, spec.executable, packages), nil
 	}
-	return recipe.method, powershellPackageManagerScript(manager, recipe.executable, packages), nil
+	return spec.method, powershellPackageManagerScript(manager, spec.executable, packages), nil
 }
 
 func shellPackageManagerScript(manager, executable string, packages []string) string {
@@ -208,6 +208,11 @@ func shellPackageManagerScript(manager, executable string, packages []string) st
 func powershellPackageManagerScript(manager, executable string, packages []string) string {
 	var b strings.Builder
 	b.WriteString("$ErrorActionPreference = 'Stop'\n")
+	if manager == "chocolatey" {
+		b.WriteString("$machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')\n")
+		b.WriteString("$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')\n")
+		b.WriteString("$env:Path = (($machinePath, $userPath) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join [IO.Path]::PathSeparator\n")
+	}
 	fmt.Fprintf(&b, "if (-not (Get-Command -Name '%s' -ErrorAction SilentlyContinue)) { throw 'required package manager %s (%s) is not installed' }\n", executable, manager, executable)
 	b.WriteString("$packages = @(\n")
 	for _, packageID := range packages {

@@ -231,7 +231,7 @@ graph TB
 | `pkg/store` | `pkg/model` | Persistence interface |
 | `pkg/policycontroller` | stdlib only | Generic control loop |
 | `pkg/resourcepool` | stdlib only | Generic pool data structure |
-| `pkg/resourcepack` | `pkg/artifact` | Package validation, recipe compilation, planning, and application |
+| `pkg/resourcepack` | `pkg/artifact` | Package validation, compilation, planning, and application |
 | `pkg/providersdk` | stdlib only | Driver interface + registry |
 | `pkg/agentsdk` | `pkg/providersdk` | Agent abstraction |
 

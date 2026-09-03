@@ -14,6 +14,7 @@ require (
 	github.com/smnsjas/go-psrp v0.2.0
 	github.com/smnsjas/go-psrpcore v0.0.0-20260211164949-dace42c5b6a8
 	github.com/spf13/cobra v1.10.1
+	github.com/yuin/goldmark v1.7.8
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/crypto v0.50.0
 	golang.org/x/oauth2 v0.36.0
