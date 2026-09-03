@@ -279,7 +279,11 @@ func (s *Server) diagnosticsHandler(tmpl *template.Template) http.HandlerFunc {
 			d.DiagnosticsQuery = query
 			d.DiagnosticsSince = r.URL.Query().Get("since")
 			d.DiagnosticsExportURL = "/ui/diagnostics/export?" + diagnosticsQueryValues(query).Encode()
-			d.DiagnosticsAgentURL = "/ui/diagnostics?" + diagnosticsQueryValues(query).Encode()
+			agentQuery := query
+			if agentQuery.Agent == "" {
+				agentQuery.Component = "agent"
+			}
+			d.DiagnosticsAgentURL = "/ui/diagnostics?" + diagnosticsQueryValues(agentQuery).Encode()
 		}
 		if err == nil {
 			if s.diagnostics == nil {

@@ -482,7 +482,9 @@ tasks:
     cmds:
       - cmd: pwsh -NoProfile -File scripts/betterleaks-git.ps1 {{.BETTERLEAKS_PII_CONFIG}}
         if: '{{eq OS "windows"}}'
-      - cmd: betterleaks git . --config {{.BETTERLEAKS_PII_CONFIG}} --no-banner --redact --log-opts HEAD
+      - cmd: mkdir -p .tmp
+        if: '{{ne OS "windows"}}'
+      - cmd: betterleaks --gitleaks-ignore-path .betterleaksignore --report-format json --report-path .tmp/pii-findings.json git . --config {{.BETTERLEAKS_PII_CONFIG}} --no-banner --redact --log-opts HEAD
         if: '{{ne OS "windows"}}'
 
   pii:scan:stdin:

@@ -150,7 +150,7 @@ func TestUI_DiagnosticsRendersRedactedEvents(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
-	if body := w.Body.String(); !containsAll(body, "Diagnostics", "safe warning", "pool-a", "Export current query", "View agent logs", "/ui/diagnostics/export?limit=100") {
+	if body := w.Body.String(); !containsAll(body, "Diagnostics", "safe warning", "pool-a", "Export current query", "View agent logs", "/ui/diagnostics/export?limit=100", "component=agent") {
 		t.Fatalf("diagnostics page missing expected content: %s", body)
 	}
 }

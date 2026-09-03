@@ -63,6 +63,20 @@ e570819d3744b15a62854ebf6f925d33131a4c02:docs/guides/getting-started.md:generic-
 860f82beafdd5a6888bfc65eb045d726a5175862:pkg/providersdk/providers/hyperv/driver_test.go:generic-password:1132
 860f82beafdd5a6888bfc65eb045d726a5175862:pkg/providersdk/providers/hyperv/driver_test.go:generic-password:1161
 860f82beafdd5a6888bfc65eb045d726a5175862:pkg/providersdk/providers/hyperv/driver_test.go:generic-password:1221
+# Historical synthetic username fixtures reviewed on 2026-09-03. Keep these
+# exact fingerprints narrow so new values in either file remain detectable.
+4b501706c95bccc8351db549543713f156fd80c7:README.md:boxy-pii-username:233
+4b501706c95bccc8351db549543713f156fd80c7:internal/server/execution_durable_test.go:boxy-pii-username:261
+# Diagnostics export tests use documentation-only hosts and TEST-NET fixture
+# addresses. Review these historical matches individually; keep new values
+# in the same files visible.
+a917ebdda2fca76bd5a7bdaec004f3d11779711f:pkg/diagnostics/export_test.go:boxy-pii-username:17
+f824d518a6a593b0f2468901aeb0adc1cc8e331e:internal/server/api_diagnostics_test.go:boxy-pii-private-ipv4:110
+f824d518a6a593b0f2468901aeb0adc1cc8e331e:internal/server/api_diagnostics_test.go:boxy-pii-private-ipv4:131
+f824d518a6a593b0f2468901aeb0adc1cc8e331e:pkg/diagnostics/export_test.go:boxy-pii-private-ipv4:17
+f824d518a6a593b0f2468901aeb0adc1cc8e331e:pkg/diagnostics/export_test.go:boxy-pii-private-ipv4:38
+f824d518a6a593b0f2468901aeb0adc1cc8e331e:pkg/diagnostics/export_test.go:boxy-pii-username:17
+f824d518a6a593b0f2468901aeb0adc1cc8e331e:pkg/diagnostics/export.go:boxy-pii-home-path:210
 14f381322980696bdbf355a9a7ee6b587913d1f5:internal/sandbox/guest_credential_test.go:generic-password:20
 14f381322980696bdbf355a9a7ee6b587913d1f5:internal/sandbox/guest_credential_test.go:generic-password:66
 14f381322980696bdbf355a9a7ee6b587913d1f5:pkg/providersdk/guest_personalization_test.go:generic-password:14
