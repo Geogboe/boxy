@@ -10,15 +10,38 @@
       <div>Recent diagnostic events</div>
       <div class="table-card-subtitle">Redacted control-plane and server-observed agent events. Showing the newest bounded page.</div>
     </div>
+    <div class="table-card-actions">
+      {{if .DiagnosticsExportURL}}<a class="button-link" href="{{.DiagnosticsExportURL}}">Export current query</a>{{end}}
+      {{if .DiagnosticsAgentURL}}<a class="button-link secondary" href="{{.DiagnosticsAgentURL}}">View agent logs</a>{{end}}
+    </div>
   </div>
+  <form class="diagnostics-filters" method="get" action="/ui/diagnostics">
+    <label>Level
+      <select name="level">
+        <option value="">All levels</option>
+        <option value="debug"{{if eq .DiagnosticsQuery.Level "DEBUG"}} selected{{end}}>Debug</option>
+        <option value="info"{{if eq .DiagnosticsQuery.Level "INFO"}} selected{{end}}>Info</option>
+        <option value="warn"{{if eq .DiagnosticsQuery.Level "WARN"}} selected{{end}}>Warn</option>
+        <option value="error"{{if eq .DiagnosticsQuery.Level "ERROR"}} selected{{end}}>Error</option>
+      </select>
+    </label>
+    <label>Component <input name="component" value="{{.DiagnosticsQuery.Component}}" placeholder="agent or control-plane"></label>
+    <label>Pool <input name="pool" value="{{.DiagnosticsQuery.Pool}}"></label>
+    <label>Agent <input name="agent" value="{{.DiagnosticsQuery.Agent}}" placeholder="agent ID"></label>
+    <label>Resource <input name="resource" value="{{.DiagnosticsQuery.Resource}}"></label>
+    <label>Since <input name="since" value="{{.DiagnosticsSince}}" placeholder="RFC3339"></label>
+    <label>Limit <input name="limit" type="number" min="1" max="1000" value="{{.DiagnosticsQuery.Limit}}"></label>
+    <button type="submit">Apply filters</button>
+    <a href="/ui/diagnostics">Clear</a>
+  </form>
   {{if .DiagnosticsError}}
   <div class="error-banner">{{.DiagnosticsError}}</div>
   {{else if .Diagnostics}}
   <div class="table-scroll">
   <table>
-    <thead><tr><th scope="col">Time</th><th scope="col">Level</th><th scope="col">Component</th><th scope="col">Message</th><th scope="col">Correlation</th></tr></thead>
+    <thead><tr><th scope="col">Time</th><th scope="col">Level</th><th scope="col">Component</th><th scope="col">Operation</th><th scope="col">Message</th><th scope="col">Error</th><th scope="col">Correlation</th></tr></thead>
     <tbody>{{range .Diagnostics}}
-    <tr><td class="timestamp">{{.Timestamp}}</td><td><span class="badge badge-unknown">{{.Level}}</span></td><td>{{if .Component}}{{.Component}}{{else}}—{{end}}</td><td>{{.Message}}</td><td>{{if .Pool}}pool={{.Pool}} {{end}}{{if .Agent}}agent={{.Agent}} {{end}}{{if .Resource}}resource={{.Resource}}{{end}}</td></tr>
+    <tr><td class="timestamp">{{.Timestamp}}</td><td><span class="badge badge-unknown">{{.Level}}</span></td><td>{{if .Component}}{{.Component}}{{else}}—{{end}}</td><td>{{if .Operation}}{{.Operation}}{{else}}—{{end}}</td><td>{{.Message}}</td><td>{{if .ErrorCode}}<code>{{.ErrorCode}}</code>: {{.ErrorSummary}}{{else}}—{{end}}</td><td>{{if .Pool}}pool={{.Pool}} {{end}}{{if .Agent}}agent={{.Agent}} {{end}}{{if .Resource}}resource={{.Resource}}{{end}}</td></tr>
     {{end}}</tbody>
   </table>
   </div>

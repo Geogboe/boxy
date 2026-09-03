@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"embed"
 	"errors"
 	"fmt"
@@ -60,6 +61,10 @@ type pageData struct {
 	MintedServiceKeyName string
 	Diagnostics          []diagnostics.Event
 	DiagnosticsError     string
+	DiagnosticsQuery     diagnostics.Query
+	DiagnosticsSince     string
+	DiagnosticsExportURL string
+	DiagnosticsAgentURL  string
 }
 
 // sandboxView is the dashboard's per-sandbox row, joining the sandbox record
@@ -178,6 +183,7 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ui/catalog", s.uiHandler(catalogTmpl, "catalog", s.catalogData))
 	mux.HandleFunc("GET /ui/help", s.uiHandler(helpTmpl, "help", func(*http.Request) (pageData, error) { return pageData{}, nil }))
 	mux.HandleFunc("GET /ui/diagnostics", s.diagnosticsHandler(diagnosticsTmpl))
+	mux.HandleFunc("GET /ui/diagnostics/export", s.diagnosticsExportHandler)
 	mux.HandleFunc("POST /ui/profile/personal-key", s.handleMintPersonalKey(profileTmpl))
 
 	// HTMX fragment routes.
@@ -265,15 +271,33 @@ func (s *Server) diagnosticsHandler(tmpl *template.Template) http.HandlerFunc {
 			return
 		}
 		d := s.decoratePageData(w, r, pageData{}, "diagnostics")
-		if s.diagnostics == nil {
-			d.DiagnosticsError = "Diagnostics are temporarily unavailable."
+		query, audit, err := parseDiagnosticsQuery(r)
+		if err != nil {
+			d.DiagnosticsError = err.Error()
 		} else {
-			page, err := s.diagnostics.Query(r.Context(), diagnostics.Query{})
-			if err != nil {
-				slog.Error("diagnostics query failed")
+			audit.Actor = principal.Subject
+			d.DiagnosticsQuery = query
+			d.DiagnosticsSince = r.URL.Query().Get("since")
+			d.DiagnosticsExportURL = "/ui/diagnostics/export?" + diagnosticsQueryValues(query).Encode()
+			d.DiagnosticsAgentURL = "/ui/diagnostics?" + diagnosticsQueryValues(query).Encode()
+		}
+		if err == nil {
+			if s.diagnostics == nil {
 				d.DiagnosticsError = "Diagnostics are temporarily unavailable."
 			} else {
-				d.Diagnostics = page.Events
+				page, err := s.diagnostics.Query(r.Context(), query)
+				if err != nil {
+					slog.Error("diagnostics query failed")
+					d.DiagnosticsError = "Diagnostics are temporarily unavailable."
+				} else {
+					d.Diagnostics = page.Events
+					audit.ResultCount = len(page.Events)
+					if s.audit != nil {
+						if err := s.audit.RecordDiagnosticsQuery(r.Context(), audit); err != nil {
+							slog.Error("diagnostics audit failed")
+						}
+					}
+				}
 			}
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -281,6 +305,49 @@ func (s *Server) diagnosticsHandler(tmpl *template.Template) http.HandlerFunc {
 			slog.Error("diagnostics render", "err", err)
 		}
 	}
+}
+
+func (s *Server) diagnosticsExportHandler(w http.ResponseWriter, r *http.Request) {
+	principal, ok := sessionPrincipalFromRequest(r)
+	if !ok {
+		redirectToLogin(w, r)
+		return
+	}
+	if principal.Role != model.APIKeyRoleAdmin {
+		http.Error(w, "diagnostics requires an administrator", http.StatusForbidden)
+		return
+	}
+	if s.diagnostics == nil {
+		http.Error(w, "diagnostics are temporarily unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	query, audit, err := parseDiagnosticsQuery(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	archive, resultCount, err := s.buildDiagnosticsExport(r.Context(), query)
+	if err != nil {
+		http.Error(w, "failed to build diagnostics export", http.StatusInternalServerError)
+		return
+	}
+	audit.Actor = principal.Subject
+	audit.ResultCount = resultCount
+	if s.audit != nil {
+		if err := s.audit.RecordDiagnosticsQuery(r.Context(), audit); err != nil {
+			http.Error(w, "failed to record diagnostics query", http.StatusInternalServerError)
+			return
+		}
+	}
+	var body bytes.Buffer
+	if err := diagnostics.WriteExport(&body, archive); err != nil {
+		http.Error(w, "failed to encode diagnostics export", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", `attachment; filename="boxy-diagnostics.json"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body.Bytes())
 }
 
 func (s *Server) serviceKeysHandler(tmpl *template.Template) http.HandlerFunc {
