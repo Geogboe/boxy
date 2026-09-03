@@ -31,15 +31,27 @@ func (r *CompositeRegistry) Resolve(ctx context.Context, ref Ref) (Artifact, err
 		return Artifact{}, fmt.Errorf("artifact registry is empty")
 	}
 	var last error
+	var found *Artifact
 	for _, registry := range r.Registries {
 		value, err := registry.Resolve(ctx, ref)
 		if err == nil {
-			return value, nil
+			if found == nil {
+				copy := cloneArtifact(value)
+				found = &copy
+				continue
+			}
+			if !sameArtifact(*found, value) {
+				return Artifact{}, fmt.Errorf("conflicting content for immutable artifact %q", ref.String())
+			}
+			continue
 		}
 		if !isNotFound(err) {
 			return Artifact{}, err
 		}
 		last = err
+	}
+	if found != nil {
+		return *found, nil
 	}
 	return Artifact{}, last
 }
@@ -49,15 +61,27 @@ func (r *CompositeRegistry) ResolveSource(ctx context.Context, name string) (Sou
 		return Source{}, fmt.Errorf("artifact registry is empty")
 	}
 	var last error
+	var found *Source
 	for _, registry := range r.Registries {
 		value, err := registry.ResolveSource(ctx, name)
 		if err == nil {
-			return value, nil
+			if found == nil {
+				copy := cloneSource(value)
+				found = &copy
+				continue
+			}
+			if !sameSource(*found, value) {
+				return Source{}, fmt.Errorf("conflicting content for immutable source %q", name)
+			}
+			continue
 		}
 		if !isNotFound(err) {
 			return Source{}, err
 		}
 		last = err
+	}
+	if found != nil {
+		return *found, nil
 	}
 	return Source{}, last
 }

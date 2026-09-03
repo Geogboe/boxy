@@ -300,9 +300,10 @@ func (r *S3Registry) sourceKey(name string) string {
 }
 
 func (r *S3Registry) sourceBytesKey(source Source) string {
-	// Source.Path is the developer-managed object key. A store may use a
-	// prefix for metadata while source bytes can live anywhere in its bucket.
-	return strings.Trim(source.Path, "/")
+	// Source.Path is relative to the configured store prefix, matching
+	// published package/object metadata. The developer still owns the bytes
+	// and uploads them with storage tooling.
+	return r.objectKey(source.Path)
 }
 
 func (r *S3Registry) objectKey(parts ...string) string {
