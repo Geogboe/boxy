@@ -674,6 +674,14 @@ Wrap repeated commands in `Taskfile.yml`. If a command is run more than once, ad
   branch already has open PRs from an earlier attempt at per-issue branches
   covering some of the same commits, close those as superseded (referencing
   the new batch PR) once the batch PR exists — don't leave both live.
+- **One planning session per batch** (2026-09-03 decision). Plan one
+  substantial issue in a focused session, then spend the rest of the batch on
+  low-hanging issues that already have clear scope and acceptance criteria.
+  Do not start multiple heavyweight planning sessions concurrently or pause
+  every small fix for a new design session. Keep each implementation on its
+  own topic branch, merge it locally into the shared `dev` integration branch,
+  rerun the full validation gate after each merge, and open one aggregate PR
+  from `dev` to `main` when the batch is substantial.
 - **Push/PR/CI cadence is deliberately low, separate from the batching
   pattern above (2026-08-28 decision).** The mechanics above (topic branch
   per fix, merged into one local integration branch, full `task ci:validate`
@@ -814,6 +822,13 @@ it's no longer needed. See #100.
 - For feature work, use TDD red/green/blue: add a failing test, implement the
   smallest fix, then review/refactor with `gopls`; finish with `task test`,
   `task lint`, and documentation/drift checks.
+- Do not run long-running integration, race, browser, smoke, or full CI suites
+  until implementation and focused unit tests for the entire requested batch
+  are complete. Red/green TDD runs are encouraged for small unit tests per
+  feature; defer the expensive end-to-end gates until the final work is ready.
+- Prefer the quiet `agent:*` Taskfile wrappers for verbose test, race, smoke,
+  and CI commands. They capture successful output in `.tmp` and print only
+  bounded diagnostics when a command fails.
 - Guest credential delivery for Hyper-V pools (#188/#189) is implemented with
   server-owned bootstrap storage, mTLS-authorized agent resolution, allocation
   time password rotation, one-time sandbox delivery, and caller-supplied exec
