@@ -18,6 +18,8 @@ func DescribeError(err error) (code, summary string) {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded) || strings.Contains(lower, "context deadline exceeded"):
 		return "operation_timeout", "operation timed out"
+	case strings.Contains(lower, "agent authentication failed"):
+		return "agent_authentication_failed", "agent registration authentication failed"
 	case strings.Contains(lower, "hyperv parse available memory"):
 		return "provider_availability_parse_failed", "Hyper-V available-memory probe returned invalid output"
 	case strings.Contains(lower, "hyperv query available memory") && (strings.Contains(lower, "access is denied") || strings.Contains(lower, "permission denied") || strings.Contains(lower, "unauthorized")):

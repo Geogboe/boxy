@@ -256,13 +256,14 @@ func (s *Server) Connect(stream boxyagentv1.AgentTransportService_ConnectServer)
 	// (useful for an operator diagnosing a real skewed agent) goes to the
 	// server log instead, not to whatever opened the stream.
 	if reg.GetAgentVersion() != s.version {
-		s.log().Warn("agent registration rejected: version mismatch", "agent_name", reg.GetAgentName(), "agent_version", reg.GetAgentVersion(), "server_version", s.version)
+		s.log().Warn("agent registration rejected", "operation", "agent_registration", "error_code", "agent_version_mismatch", "error_summary", "agent and server versions do not match")
 		return fmt.Errorf("agent version does not match server version; upgrade the agent (or the server) so both sides match")
 	}
 
 	agentID, certPEM, keyPEM, err := s.authenticate(ctx, reg)
 	if err != nil {
-		s.log().Warn("agent registration rejected", "error", err)
+		code, summary := diagnostics.DescribeError(fmt.Errorf("agent authentication failed: %w", err))
+		s.log().Warn("agent registration rejected", "operation", "agent_registration", "error_code", code, "error_summary", summary)
 		return fmt.Errorf("authenticate: %w", err)
 	}
 

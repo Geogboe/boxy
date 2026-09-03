@@ -32,3 +32,10 @@ func TestDescribeErrorClassifiesActionableCategoriesWithoutRawDetails(t *testing
 		})
 	}
 }
+
+func TestDescribeErrorAgentAuthentication(t *testing.T) {
+	code, summary := DescribeError(errors.New("agent authentication failed: token=secret-value"))
+	if code != "agent_authentication_failed" || summary != "agent registration authentication failed" {
+		t.Fatalf("DescribeError() = (%q, %q), want stable agent authentication classification", code, summary)
+	}
+}
