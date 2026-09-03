@@ -107,7 +107,7 @@ func TestAPI_DiagnosticsExportIsSanitizedAndBounded(t *testing.T) {
 		Timestamp: time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC),
 		Level:     "ERROR",
 		Component: "agent",
-		Message:   "host=worker.example.test password=secret ip=10.20.30.40",
+		Message:   "host=worker.example.test password=secret ip=203.0.113.40",
 		Agent:     "agent-1",
 	}); err != nil {
 		t.Fatalf("Append: %v", err)
@@ -128,7 +128,7 @@ func TestAPI_DiagnosticsExportIsSanitizedAndBounded(t *testing.T) {
 	if !archive.Sanitized || len(archive.Events) != 1 {
 		t.Fatalf("archive = %+v, want sanitized single event", archive)
 	}
-	for _, secret := range []string{"worker.example.test", "secret", "10.20.30.40", "agent-1"} {
+	for _, secret := range []string{"worker.example.test", "secret", "203.0.113.40", "agent-1"} {
 		if strings.Contains(w.Body.String(), secret) {
 			t.Fatalf("export contains unsanitized value %q: %s", secret, w.Body.String())
 		}

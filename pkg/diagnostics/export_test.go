@@ -14,7 +14,7 @@ func TestBuildExportSanitizesSensitiveValuesAndPreservesCorrelation(t *testing.T
 		Timestamp: time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC),
 		Level:     "ERROR",
 		Component: "agent",
-		Message:   "connect to https://worker.example.test/path?X-Amz-Signature=secret&x=1 from 10.20.30.40 as username=George password=topsecret",
+		Message:   "connect to https://worker.example.test/path?X-Amz-Signature=secret&x=1 from 203.0.113.40 as username=boxy-test-user password=topsecret",
 		Agent:     "worker.example.test",
 		Resource:  "resource-1",
 		Pool:      "production-pool",
@@ -35,7 +35,7 @@ func TestBuildExportSanitizesSensitiveValuesAndPreservesCorrelation(t *testing.T
 		t.Fatalf("event count = %d, want 1", len(archive.Events))
 	}
 	message := archive.Events[0].Message
-	for _, secret := range []string{"secret", "topsecret", "George", "worker.example.test", "10.20.30.40"} {
+	for _, secret := range []string{"secret", "topsecret", "boxy-test-user", "worker.example.test", "203.0.113.40"} {
 		if strings.Contains(message, secret) {
 			t.Fatalf("sanitized message contains %q: %s", secret, message)
 		}
