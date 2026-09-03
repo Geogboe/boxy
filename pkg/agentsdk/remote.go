@@ -223,8 +223,12 @@ func (a *RemoteAgent) receiveLogBatch(ctx context.Context, batch *boxyagentv1.Lo
 		if item == nil {
 			continue
 		}
+		timestamp := time.Now().UTC()
+		if item.GetUnixNano() != 0 {
+			timestamp = time.Unix(0, item.GetUnixNano()).UTC()
+		}
 		event := diagnostics.Event{
-			Timestamp:    time.Unix(0, item.GetUnixNano()).UTC(),
+			Timestamp:    timestamp,
 			Level:        item.GetLevel(),
 			Component:    item.GetComponent(),
 			Message:      diagnostics.RedactText(item.GetMessage()),
@@ -234,9 +238,6 @@ func (a *RemoteAgent) receiveLogBatch(ctx context.Context, batch *boxyagentv1.Lo
 			Pool:         item.GetPool(),
 			Resource:     item.GetResource(),
 			Request:      item.GetRequest(),
-		}
-		if event.Timestamp.IsZero() {
-			event.Timestamp = time.Now().UTC()
 		}
 		events = append(events, event)
 	}
