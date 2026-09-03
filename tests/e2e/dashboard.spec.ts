@@ -1,13 +1,24 @@
 import { test, expect } from "@playwright/test";
 
+const adminPassword = process.env.BOXY_E2E_ADMIN_PASSWORD;
+
 test.describe("Dashboard — UI enabled", () => {
+  test.beforeEach(async ({ page }) => {
+    test.skip(!adminPassword, "set BOXY_E2E_ADMIN_PASSWORD for the session-authenticated dashboard");
+    await page.goto("/login");
+    await page.getByRole("textbox", { name: "Username" }).fill("admin");
+    await page.getByRole("textbox", { name: "Password" }).fill(adminPassword!);
+    await page.getByRole("button", { name: "Log in" }).click();
+    await expect(page).toHaveURL(/\/$/);
+  });
+
   test("home page renders with layout and stats", async ({ page }) => {
     await page.goto("/");
 
     // Layout elements
     await expect(page.locator(".sidebar-brand")).toHaveText("Boxy");
-    // Home, Pools, Sandboxes, Agents.
-    await expect(page.locator(".sidebar-nav a")).toHaveCount(4);
+    // Help is always available alongside the role-dependent operator links.
+    await expect(page.locator('.sidebar-nav a[href="/ui/help"]')).toHaveCount(1);
 
     // Active nav
     await expect(page.locator('.sidebar-nav a.active')).toHaveText("Home");
@@ -33,7 +44,7 @@ test.describe("Dashboard — UI enabled", () => {
 
     await expect(page.locator('.sidebar-nav a.active')).toHaveText("Pools");
     await expect(page.locator(".page-title")).toHaveText("Pools");
-    await expect(page.locator(".table-card-header")).toContainText("All Pools");
+    await expect(page.locator(".table-card-header").filter({ hasText: "All Pools" })).toContainText("All Pools");
     await expect(page.locator(".empty")).toHaveText("No pools configured");
   });
 
@@ -57,6 +68,10 @@ test.describe("Dashboard — UI enabled", () => {
     await page.click('a[href="/ui/sandboxes"]');
     await expect(page.locator(".page-title")).toHaveText("Sandboxes");
     await expect(page.locator('.sidebar-nav a.active')).toHaveText("Sandboxes");
+
+    await page.click('a[href="/ui/help"]');
+    await expect(page.locator(".help-content h1")).toHaveText("Boxy package help");
+    await expect(page.locator('.sidebar-nav a.active')).toHaveText("Help");
 
     await page.click('a[href="/"]');
     await expect(page.locator(".page-title")).toHaveText("Overview");
