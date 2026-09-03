@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Geogboe/boxy/pkg/agentsdk"
+	"github.com/Geogboe/boxy/pkg/diagnostics"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/policycontroller"
 	"github.com/Geogboe/boxy/pkg/providersdk"
@@ -72,7 +73,8 @@ func RunAgentReconciliation(ctx context.Context, st store.Store, registry *Agent
 	for {
 		pctx, cancel := context.WithTimeout(ctx, passTimeout)
 		if err := ReconcileAgent(pctx, st, registry, agentID, logger); err != nil {
-			logger.Warn("periodic reconciliation failed", "agent_id", agentID, "error", err)
+			code, summary := diagnostics.DescribeError(err)
+			logger.Warn("periodic reconciliation failed", "agent_id", agentID, "operation", "agent_reconcile", "error_code", code, "error_summary", summary)
 		}
 		cancel()
 
@@ -158,8 +160,9 @@ func reconcileObserver(st store.Store, registry *AgentRegistry, agentID string, 
 					// here, deliberately indistinguishable (see
 					// pkg/agentsdk.RemoteAgent.List) — either way this
 					// pass can't trust data for this provider type.
+					code, summary := diagnostics.DescribeError(err)
 					logger.Warn("reconciliation: list failed, skipping audit for this provider type",
-						"agent_id", agentID, "provider", provider, "error", err)
+						"agent_id", agentID, "provider", provider, "operation", "agent_inventory_list", "error_code", code, "error_summary", summary)
 					continue
 				}
 				listed[provider] = len(statuses)

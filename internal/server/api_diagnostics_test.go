@@ -100,6 +100,41 @@ func TestAPI_DiagnosticsLogsRequiresAdmin(t *testing.T) {
 	}
 }
 
+func TestAPI_DiagnosticsExportIsSanitizedAndBounded(t *testing.T) {
+	st := store.NewMemoryStore()
+	logs := diagnostics.NewMemoryStore()
+	if err := logs.Append(context.Background(), diagnostics.Event{
+		Timestamp: time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC),
+		Level:     "ERROR",
+		Component: "agent",
+		Message:   "host=worker.example.test password=secret ip=10.20.30.40",
+		Agent:     "agent-1",
+	}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	mux := server.NewTestMuxWithDiagnostics(st, sandbox.New(st, nil), logs, nil, false, false)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/diagnostics/export?limit=1", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Content-Disposition"); got == "" {
+		t.Fatal("missing export content disposition")
+	}
+	var archive diagnostics.Export
+	if err := json.Unmarshal(w.Body.Bytes(), &archive); err != nil {
+		t.Fatalf("decode export: %v", err)
+	}
+	if !archive.Sanitized || len(archive.Events) != 1 {
+		t.Fatalf("archive = %+v, want sanitized single event", archive)
+	}
+	for _, secret := range []string{"worker.example.test", "secret", "10.20.30.40", "agent-1"} {
+		if strings.Contains(w.Body.String(), secret) {
+			t.Fatalf("export contains unsanitized value %q: %s", secret, w.Body.String())
+		}
+	}
+}
+
 func TestUI_DiagnosticsRendersRedactedEvents(t *testing.T) {
 	st := store.NewMemoryStore()
 	logs := diagnostics.NewMemoryStore()

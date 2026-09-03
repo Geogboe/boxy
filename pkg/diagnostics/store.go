@@ -30,15 +30,18 @@ const (
 // Event is the safe, structured representation exposed by diagnostics.
 // Fields not represented here must never cross the diagnostics boundary.
 type Event struct {
-	ID        string    `json:"id"`
-	Timestamp time.Time `json:"timestamp"`
-	Level     string    `json:"level"`
-	Component string    `json:"component,omitempty"`
-	Message   string    `json:"message"`
-	Pool      string    `json:"pool,omitempty"`
-	Agent     string    `json:"agent,omitempty"`
-	Resource  string    `json:"resource,omitempty"`
-	Request   string    `json:"request,omitempty"`
+	ID           string    `json:"id"`
+	Timestamp    time.Time `json:"timestamp"`
+	Level        string    `json:"level"`
+	Component    string    `json:"component,omitempty"`
+	Message      string    `json:"message"`
+	Operation    string    `json:"operation,omitempty"`
+	ErrorCode    string    `json:"error_code,omitempty"`
+	ErrorSummary string    `json:"error_summary,omitempty"`
+	Pool         string    `json:"pool,omitempty"`
+	Agent        string    `json:"agent,omitempty"`
+	Resource     string    `json:"resource,omitempty"`
+	Request      string    `json:"request,omitempty"`
 }
 
 // Query selects a bounded page of diagnostic events. Cursor values are opaque

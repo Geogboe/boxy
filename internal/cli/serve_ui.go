@@ -3,6 +3,7 @@ package cli
 import (
 	"log/slog"
 
+	"github.com/Geogboe/boxy/pkg/diagnostics"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/pterm/pterm"
 )
@@ -28,19 +29,19 @@ func (u *serveUI) step(label string) (done func(detail string), fail func(msg st
 
 // reconcileError reports a pool reconciliation error.
 func (u *serveUI) reconcileError(pool model.PoolName, err error) {
+	code, summary := diagnostics.DescribeError(err)
+	slog.Error("reconcile pool", "pool", pool, "operation", "pool_reconcile", "error_code", code, "error_summary", summary)
 	if u.pretty {
 		pterm.Error.Printfln("[pool=%s] %v", pool, err)
-	} else {
-		slog.Error("reconcile pool", "pool", pool, "err", err)
 	}
 }
 
 // printErr reports a non-pool-specific reconciliation error.
 func (u *serveUI) printErr(err error) {
+	code, summary := diagnostics.DescribeError(err)
+	slog.Error("reconcile sandboxes", "operation", "sandbox_reconcile", "error_code", code, "error_summary", summary)
 	if u.pretty {
 		pterm.Error.Printfln("%v", err)
-	} else {
-		slog.Error("reconcile sandboxes", "err", err)
 	}
 }
 

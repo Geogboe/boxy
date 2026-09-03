@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"errors"
 	"net/http"
 	"strconv"
@@ -38,6 +39,53 @@ func (s *Server) handleListDiagnostics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	httpjson.Write(w, http.StatusOK, page)
+}
+
+func (s *Server) handleExportDiagnostics(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRole(w, r, model.APIKeyRoleAdmin) {
+		return
+	}
+	if s.diagnostics == nil {
+		httpjson.Error(w, http.StatusServiceUnavailable, "diagnostics are unavailable")
+		return
+	}
+	query, audit, err := parseDiagnosticsQuery(r)
+	if err != nil {
+		httpjson.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	page, err := s.diagnostics.Query(r.Context(), query)
+	if err != nil {
+		httpjson.Error(w, http.StatusInternalServerError, "failed to query diagnostics")
+		return
+	}
+	archive, err := diagnostics.BuildExport(page.Events, diagnostics.ExportOptions{
+		GeneratedAt: time.Now().UTC(),
+		Components: []diagnostics.ComponentSpec{
+			{Name: "control-plane", Description: "Boxy server and reconciliation diagnostics"},
+			{Name: "agent", Description: "authenticated provider-agent diagnostics"},
+		},
+	})
+	if err != nil {
+		httpjson.Error(w, http.StatusInternalServerError, "failed to build diagnostics export")
+		return
+	}
+	audit.ResultCount = len(page.Events)
+	if s.audit != nil {
+		if err := s.audit.RecordDiagnosticsQuery(r.Context(), audit); err != nil {
+			httpjson.Error(w, http.StatusInternalServerError, "failed to record diagnostics query")
+			return
+		}
+	}
+	var body bytes.Buffer
+	if err := diagnostics.WriteExport(&body, archive); err != nil {
+		httpjson.Error(w, http.StatusInternalServerError, "failed to encode diagnostics export")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", `attachment; filename="boxy-diagnostics.json"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body.Bytes())
 }
 
 func parseDiagnosticsQuery(r *http.Request) (diagnostics.Query, diagnostics.QueryAudit, error) {

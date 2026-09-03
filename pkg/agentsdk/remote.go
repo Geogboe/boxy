@@ -12,9 +12,15 @@ import (
 	"github.com/google/uuid"
 
 	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
+	"github.com/Geogboe/boxy/pkg/diagnostics"
 	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
+
+// LogSink receives sanitized agent events with the authenticated agent ID.
+// Implementations should be bounded and best effort; a logging failure must
+// not terminate the agent transport.
+type LogSink func(context.Context, string, []diagnostics.Event) error
 
 // RemoteAgent is the server-side proxy for one connected remote agent. It
 // implements Agent by sending Commands down the agent's gRPC stream and
@@ -33,6 +39,7 @@ type RemoteAgent struct {
 	mu            sync.Mutex
 	pending       map[string]chan *boxyagentv1.CommandResult
 	streamPending map[string]*streamWaiter
+	logSink       LogSink
 
 	// sendMu serializes Send calls: a single gRPC stream is not safe for
 	// concurrent use by multiple goroutines on the send side.
@@ -112,6 +119,15 @@ func NewRemoteAgent(info AgentInfo, stream boxyagentv1.AgentTransportService_Con
 	return a
 }
 
+// SetLogSink attaches the server-side destination for authenticated agent
+// log batches. It must be called before Serve starts.
+func (a *RemoteAgent) SetLogSink(sink LogSink) {
+	if a == nil {
+		return
+	}
+	a.logSink = sink
+}
+
 func (a *RemoteAgent) Info() AgentInfo {
 	return a.info
 }
@@ -174,6 +190,7 @@ func (a *RemoteAgent) updateAvailability(entries []*boxyagentv1.ProviderAvailabi
 // Close has already been called, failing every still-pending call.
 func (a *RemoteAgent) Serve() error {
 	defer a.Close()
+	ctx := a.stream.Context()
 	for {
 		msg, err := a.stream.Recv()
 		if err != nil {
@@ -186,12 +203,45 @@ func (a *RemoteAgent) Serve() error {
 			a.updateAvailability(payload.Heartbeat.GetAvailability())
 		case *boxyagentv1.AgentMessage_Result:
 			a.deliver(payload.Result)
+		case *boxyagentv1.AgentMessage_LogBatch:
+			a.receiveLogBatch(ctx, payload.LogBatch)
 		default:
 			// A RegisterRequest arriving again (or an empty payload) after
 			// the connection is already established is a protocol
 			// violation from a well-behaved agent, but not fatal to the
 			// stream — ignore and keep serving.
 		}
+	}
+}
+
+func (a *RemoteAgent) receiveLogBatch(ctx context.Context, batch *boxyagentv1.LogBatch) {
+	if a == nil || a.logSink == nil || batch == nil || len(batch.GetEvents()) == 0 {
+		return
+	}
+	events := make([]diagnostics.Event, 0, len(batch.GetEvents()))
+	for _, item := range batch.GetEvents() {
+		if item == nil {
+			continue
+		}
+		event := diagnostics.Event{
+			Timestamp:    time.Unix(0, item.GetUnixNano()).UTC(),
+			Level:        item.GetLevel(),
+			Component:    item.GetComponent(),
+			Message:      diagnostics.RedactText(item.GetMessage()),
+			Operation:    item.GetOperation(),
+			ErrorCode:    item.GetErrorCode(),
+			ErrorSummary: diagnostics.RedactText(item.GetErrorSummary()),
+			Pool:         item.GetPool(),
+			Resource:     item.GetResource(),
+			Request:      item.GetRequest(),
+		}
+		if event.Timestamp.IsZero() {
+			event.Timestamp = time.Now().UTC()
+		}
+		events = append(events, event)
+	}
+	if len(events) != 0 {
+		_ = a.logSink(ctx, a.info.ID, events)
 	}
 }
 

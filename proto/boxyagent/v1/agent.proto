@@ -33,6 +33,7 @@ message AgentMessage {
     RegisterRequest register = 1;  // sent once, first frame only
     Heartbeat heartbeat = 2;       // sent periodically
     CommandResult result = 3;      // sent in response to a pushed Command
+    LogBatch log_batch = 4;         // bounded, sanitized agent diagnostics
   }
 }
 
@@ -94,6 +95,25 @@ message AgentError {
   // rationale above: a new typed error never needs another proto change.
   string error_type = 2;        // e.g. "capacity"; empty = no typed error
   bytes error_detail_json = 3;  // opaque JSON payload for error_type
+}
+
+// LogBatch carries only the public diagnostics fields. The server supplies
+// the authenticated agent identity instead of trusting a peer-provided one.
+message LogBatch {
+  repeated LogEvent events = 1;
+}
+
+message LogEvent {
+  int64 unix_nano = 1;
+  string level = 2;
+  string component = 3;
+  string message = 4;
+  string operation = 5;
+  string error_code = 6;
+  string error_summary = 7;
+  string pool = 8;
+  string resource = 9;
+  string request = 10;
 }
 
 // ---- Server -> Agent ----

@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
+	"github.com/Geogboe/boxy/pkg/diagnostics"
 	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
@@ -24,6 +25,37 @@ type fakeServerStream struct {
 	recvCh  chan *boxyagentv1.AgentMessage
 	sentCh  chan *boxyagentv1.ServerMessage
 	recvErr error
+}
+
+func TestRemoteAgentReceivesLogBatchWithAuthenticatedIdentity(t *testing.T) {
+	stream := &fakeServerStream{
+		ctx:    context.Background(),
+		recvCh: make(chan *boxyagentv1.AgentMessage, 2),
+		sentCh: make(chan *boxyagentv1.ServerMessage, 1),
+	}
+	var gotAgent string
+	var got []diagnostics.Event
+	agent := NewRemoteAgent(AgentInfo{ID: "agent-authenticated"}, stream)
+	agent.SetLogSink(func(_ context.Context, agentID string, events []diagnostics.Event) error {
+		gotAgent = agentID
+		got = events
+		return nil
+	})
+	done := make(chan error, 1)
+	go func() { done <- agent.Serve() }()
+	stream.recvCh <- &boxyagentv1.AgentMessage{Payload: &boxyagentv1.AgentMessage_LogBatch{LogBatch: &boxyagentv1.LogBatch{
+		Events: []*boxyagentv1.LogEvent{{Message: "password=secret", Component: "agent"}},
+	}}}
+	stream.closeWith(io.EOF)
+	if err := <-done; !errors.Is(err, io.EOF) {
+		t.Fatalf("Serve error = %v, want EOF", err)
+	}
+	if gotAgent != "agent-authenticated" || len(got) != 1 || got[0].Agent != "" {
+		t.Fatalf("agent=%q events=%+v, want authenticated identity passed separately", gotAgent, got)
+	}
+	if got[0].Message != "password=[REDACTED]" {
+		t.Fatalf("message = %q, want credential redaction", got[0].Message)
+	}
 }
 
 func newFakeServerStream() *fakeServerStream {

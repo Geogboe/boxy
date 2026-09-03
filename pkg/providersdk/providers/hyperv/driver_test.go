@@ -577,6 +577,27 @@ func TestDriver_Availability_QueryFailurePropagates(t *testing.T) {
 	}
 }
 
+func TestDriver_AvailabilityRetriesTransientMemoryQuery(t *testing.T) {
+	calls := 0
+	d := mockDriver(func(context.Context, string) (string, error) {
+		calls++
+		if calls == 1 {
+			return "", fmt.Errorf("exit status 1")
+		}
+		return "8192", nil
+	})
+	d.memoryQueryTimeout = time.Second
+	d.hostReserveConfigured = true
+	d.hostReserveMB = 0
+	availability, err := d.Availability(context.Background())
+	if err != nil {
+		t.Fatalf("Availability: %v", err)
+	}
+	if availability.MemoryMB != 8192 || calls != 2 {
+		t.Fatalf("availability=%+v calls=%d, want 8192 MB after one retry", availability, calls)
+	}
+}
+
 func TestDriver_ReserveMemory_SufficientCapacitySucceeds(t *testing.T) {
 	d := mockDriver(func(_ context.Context, _ string) (string, error) {
 		return "16384\n", nil // 16 GB

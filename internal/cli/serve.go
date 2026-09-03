@@ -360,6 +360,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		failTLS(err.Error())
 		return err
 	}
+	agentSrv.SetDiagnosticsStore(diagnosticStore)
 	agentSrv.SetGuestBootstrapResolver(func(ctx context.Context, resource model.Resource) (providersdk.GuestBootstrapCredential, error) {
 		return resolveGuestBootstrap(ctx, st, guestSecrets, specsMap, resource)
 	})

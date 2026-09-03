@@ -15,6 +15,23 @@ func (s *captureStore) Append(_ context.Context, event Event) error {
 	return nil
 }
 
+func TestHandlerStoresStructuredErrorDetails(t *testing.T) {
+	store := &captureStore{}
+	logger := slog.New(NewHandler(slog.NewTextHandler(io.Discard, nil), store))
+	logger.Error("pool reconciliation failed", "operation", "pool_reconcile", "error_code", "hyperv_guest_authentication_failed", "error_summary", "PowerShell Direct guest authentication failed; check bootstrap credentials", "password", "do-not-store")
+
+	if len(store.events) != 1 {
+		t.Fatalf("events = %+v, want one event", store.events)
+	}
+	event := store.events[0]
+	if event.Operation != "pool_reconcile" || event.ErrorCode != "hyperv_guest_authentication_failed" {
+		t.Fatalf("event = %+v, missing structured error details", event)
+	}
+	if event.ErrorSummary != "PowerShell Direct guest authentication failed; check bootstrap credentials" {
+		t.Fatalf("error summary = %q", event.ErrorSummary)
+	}
+}
+
 func (s *captureStore) Query(context.Context, Query) (Page, error) { return Page{}, nil }
 
 func TestHandlerStoresOnlySafeRedactedFields(t *testing.T) {

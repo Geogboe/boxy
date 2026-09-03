@@ -1,11 +1,13 @@
 package agentsdk
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -14,9 +16,37 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
+	"github.com/Geogboe/boxy/pkg/diagnostics"
 	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
+
+func TestClientSessionSendsLogBatchWithoutAgentIdentityLeak(t *testing.T) {
+	stream := &fakeClientStream{
+		ctx:    context.Background(),
+		sentCh: make(chan *boxyagentv1.AgentMessage, 1),
+		recvCh: make(chan *boxyagentv1.ServerMessage),
+	}
+	session := &clientSession{stream: stream}
+	err := session.sendLogBatch(context.Background(), []diagnostics.Event{{
+		Timestamp: time.Unix(1, 2),
+		Level:     "ERROR",
+		Component: "agent",
+		Message:   "agent failed",
+		Agent:     "[AGENT-1]",
+	}})
+	if err != nil {
+		t.Fatalf("sendLogBatch: %v", err)
+	}
+	message := <-stream.sentCh
+	batch := message.GetLogBatch()
+	if batch == nil || len(batch.GetEvents()) != 1 {
+		t.Fatalf("message = %+v, want one log event", message)
+	}
+	if batch.GetEvents()[0].GetMessage() != "agent failed" || batch.GetEvents()[0].GetComponent() != "agent" {
+		t.Fatalf("event = %+v, want safe fields", batch.GetEvents()[0])
+	}
+}
 
 const testRegistrationToken = "${BOXY_TEST_REGISTRATION_TOKEN}"
 
@@ -540,9 +570,14 @@ func TestSampleAvailability_ReporterErrorOmitsEntry(t *testing.T) {
 		"hyperv": &fakeAvailabilityDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}, availErr: fmt.Errorf("query failed")},
 		"docker": &fakeAvailabilityDriver{fakeDriver: &fakeDriver{providerType: "docker"}, avail: &providersdk.ResourceAvailability{MemoryMB: 2048}},
 	}
-	entries := sampleAvailability(context.Background(), drivers, time.Second, nil)
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	entries := sampleAvailability(context.Background(), drivers, time.Second, logger)
 	if len(entries) != 1 || entries[0].GetProviderType() != "docker" {
 		t.Fatalf("expected only the docker entry, got %#v", entries)
+	}
+	if !strings.Contains(logs.String(), "error_code=provider_availability_failed") || !strings.Contains(logs.String(), "operation=availability_probe") {
+		t.Fatalf("availability failure log lacks structured details: %s", logs.String())
 	}
 }
 

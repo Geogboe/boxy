@@ -164,6 +164,56 @@ tasks:
           NAME: test-installers
           PACKAGES: ./scripts
 
+  agent:test:coverage:
+    desc: Run Go tests with captured output and report total coverage
+    cmds:
+      - task: agent:test:coverage:windows
+      - task: agent:test:coverage:unix
+
+  agent:test:diagnostics:
+    desc: Run focused diagnostics package tests with captured output
+    cmds:
+      - task: agent:go-test
+        vars:
+          NAME: diagnostics
+          PACKAGES: ./pkg/diagnostics
+
+  agent:test:diagnostics:server:
+    desc: Run focused agent and diagnostics API tests with captured output
+    cmds:
+      - task: agent:go-test
+        vars:
+          NAME: diagnostics-server
+          PACKAGES: ./pkg/agentsdk ./internal/agentserver ./internal/server ./internal/cli ./internal/pool
+
+  agent:test:coverage:windows:
+    platforms: [windows]
+    internal: true
+    silent: true
+    env:
+      GOFLAGS: -coverprofile=.tmp/coverage.out
+    cmds:
+      - task: agent:go-test
+        vars:
+          NAME: go-coverage
+          PACKAGES: ./...
+      - cmd: go tool cover -func=.tmp/coverage.out | Select-Object -Last 1
+        silent: true
+
+  agent:test:coverage:unix:
+    platforms: [linux, darwin]
+    internal: true
+    silent: true
+    env:
+      GOFLAGS: -coverprofile=.tmp/coverage.out
+    cmds:
+      - task: agent:go-test
+        vars:
+          NAME: go-coverage
+          PACKAGES: ./...
+      - cmd: go tool cover -func=.tmp/coverage.out | tail -n 1
+        silent: true
+
   agent:test:race:
     desc: Run the platform-appropriate race suite with captured diagnostics
     cmds:

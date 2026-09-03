@@ -745,6 +745,13 @@ func (d *Driver) Availability(ctx context.Context) (*providersdk.ResourceAvailab
 	queryCtx, cancel := context.WithTimeout(ctx, d.memQueryTimeout())
 	defer cancel()
 	availableMB, err := d.queryAvailableMemoryMB(queryCtx)
+	if err != nil && queryCtx.Err() == nil {
+		// The Hyper-V performance provider can transiently fail while the host
+		// is refreshing counters. One bounded retry avoids turning a single
+		// probe blip into a zero-capacity heartbeat while preserving fail-closed
+		// behavior when the provider remains unavailable.
+		availableMB, err = d.queryAvailableMemoryMB(queryCtx)
+	}
 	if err != nil {
 		return nil, err
 	}
