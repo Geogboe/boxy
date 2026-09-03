@@ -70,6 +70,8 @@ e570819d3744b15a62854ebf6f925d33131a4c02:docs/guides/getting-started.md:generic-
 # Diagnostics export tests use documentation-only hosts and TEST-NET fixture
 # addresses. Review these historical matches individually; keep new values
 # in the same files visible.
+1c479ebcafaa962dbd3b0bab8db3285b6cdffe39:pkg/diagnostics/export_test.go:boxy-pii-username:17
+1c479ebcafaa962dbd3b0bab8db3285b6cdffe39:pkg/diagnostics/export.go:boxy-pii-home-path:210
 a917ebdda2fca76bd5a7bdaec004f3d11779711f:pkg/diagnostics/export_test.go:boxy-pii-username:17
 f824d518a6a593b0f2468901aeb0adc1cc8e331e:internal/server/api_diagnostics_test.go:boxy-pii-private-ipv4:110
 f824d518a6a593b0f2468901aeb0adc1cc8e331e:internal/server/api_diagnostics_test.go:boxy-pii-private-ipv4:131
