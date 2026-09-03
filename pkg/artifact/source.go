@@ -28,6 +28,18 @@ type SourceDescriptor struct {
 	ExpiresAt time.Time         `json:"expires_at,omitempty" yaml:"expires_at,omitempty"`
 }
 
+// DefaultMaxSourceBytes bounds source materialization when a caller does not
+// provide a smaller limit. It is large enough for normal VHD/VHDX sources,
+// while ensuring a malformed or malicious descriptor cannot stream forever.
+const DefaultMaxSourceBytes int64 = 64 << 30
+
+// PullOptions controls source materialization limits.
+type PullOptions struct {
+	// MaxBytes is the maximum number of bytes written to the destination. Zero
+	// selects DefaultMaxSourceBytes.
+	MaxBytes int64
+}
+
 // Validate verifies that a provider can materialize this descriptor without
 // guessing which transport to use. A URL is restricted to HTTP(S), including
 // signed URLs from S3-compatible stores.
@@ -56,8 +68,22 @@ func (d SourceDescriptor) Validate() error {
 // declared digest while bytes are written. It uses a same-directory temporary
 // file so a cancelled or corrupt download can never replace a usable source.
 func PullSource(ctx context.Context, descriptor SourceDescriptor, destination string) error {
+	return PullSourceWithOptions(ctx, descriptor, destination, PullOptions{})
+}
+
+// PullSourceWithOptions materializes a local or remote source while hashing
+// it. The destination is replaced only after the complete, bounded stream has
+// passed digest verification.
+func PullSourceWithOptions(ctx context.Context, descriptor SourceDescriptor, destination string, options PullOptions) error {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	maxBytes := options.MaxBytes
+	if maxBytes == 0 {
+		maxBytes = DefaultMaxSourceBytes
+	}
+	if maxBytes < 0 || maxBytes >= int64(^uint64(0)>>1) {
+		return fmt.Errorf("source maximum size is invalid")
 	}
 	if err := descriptor.Validate(); err != nil {
 		return err
@@ -108,9 +134,14 @@ func PullSource(ctx context.Context, descriptor SourceDescriptor, destination st
 	defer func() { _ = input.Close() }()
 
 	hash := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(tmp, hash), input); err != nil {
+	written, err := io.Copy(io.MultiWriter(tmp, hash), io.LimitReader(input, maxBytes+1))
+	if err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("read source: %w", err)
+	}
+	if written > maxBytes {
+		_ = tmp.Close()
+		return fmt.Errorf("source exceeds maximum size of %d bytes", maxBytes)
 	}
 	if err := input.Close(); err != nil {
 		_ = tmp.Close()

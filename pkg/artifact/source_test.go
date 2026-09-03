@@ -1,6 +1,7 @@
 package artifact
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -71,5 +72,25 @@ func TestPullSourceHonorsCancellation(t *testing.T) {
 	err := PullSource(ctx, SourceDescriptor{URL: server.URL, Digest: "sha256:" + hex.EncodeToString(digest[:]), ExpiresAt: time.Now().Add(time.Minute)}, filepath.Join(t.TempDir(), "cancelled"))
 	if err == nil || !strings.Contains(err.Error(), "context canceled") {
 		t.Fatalf("cancelled pull error = %v", err)
+	}
+}
+
+func TestPullSourceRejectsConfiguredMaximum(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "source.bin")
+	if err := os.WriteFile(sourcePath, []byte("four"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256.Sum256(bytes.TrimSpace([]byte("four")))
+	destination := filepath.Join(root, "materialized.bin")
+	err := PullSourceWithOptions(context.Background(), SourceDescriptor{
+		Path:   sourcePath,
+		Digest: "sha256:" + hex.EncodeToString(hash[:]),
+	}, destination, PullOptions{MaxBytes: 3})
+	if err == nil || !strings.Contains(err.Error(), "maximum size") {
+		t.Fatalf("PullSourceWithOptions() error = %v, want maximum-size failure", err)
+	}
+	if _, statErr := os.Stat(destination); !os.IsNotExist(statErr) {
+		t.Fatalf("destination stat error = %v, want destination to remain absent", statErr)
 	}
 }

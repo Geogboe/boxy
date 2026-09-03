@@ -146,7 +146,10 @@ signed pull URL. Source bytes do not transit or persist in the control plane.
 Providers download directly, verify SHA-256, and fail closed on expiry,
 missing objects, download errors, cancellation, or digest mismatch. Hyper-V
 accepts local paths and VHD/VHDX descriptors; Docker continues to use image
-references and custom registries and rejects raw source descriptors.
+references and custom registries and rejects raw source descriptors. Source
+materialization is bounded by `pkg/artifact.DefaultMaxSourceBytes` (64 GiB) by
+default; callers that need a smaller policy can use
+`artifact.PullSourceWithOptions` with `PullOptions.MaxBytes`.
 
 ## Deployment examples
 
