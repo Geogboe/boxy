@@ -156,6 +156,14 @@ tasks:
           NAME: test-all
           PACKAGES: ./...
 
+  agent:test:installers:
+    desc: Run installer tests with captured diagnostics
+    cmds:
+      - task: agent:go-test
+        vars:
+          NAME: test-installers
+          PACKAGES: ./scripts
+
   agent:test:race:
     desc: Run the platform-appropriate race suite with captured diagnostics
     cmds:

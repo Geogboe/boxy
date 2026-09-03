@@ -462,7 +462,7 @@ func (c Config) Validate() error {
 			if hasProviderNativeSource(resolvedPool.Config) {
 				return fmt.Errorf("pool %q sets both provider-native source location and Boxy source %q", pool.Name, resolvedPool.Source)
 			}
-			if err := validatePoolSourceCompatibility(pool, resolvedPool, source); err != nil {
+			if err := c.validatePoolSourceCompatibility(pool, resolvedPool, source); err != nil {
 				return fmt.Errorf("pool %q source: %w", pool.Name, err)
 			}
 		}
@@ -501,13 +501,19 @@ func hasProviderNativeSource(config map[string]any) bool {
 	return false
 }
 
-func validatePoolSourceCompatibility(pool PoolSpec, resolved PoolSpec, source SourceSpec) error {
+func (c Config) validatePoolSourceCompatibility(pool PoolSpec, resolved PoolSpec, source SourceSpec) error {
 	provider := strings.ToLower(strings.TrimSpace(resolved.Provider))
+	for _, instance := range c.Providers {
+		if instance.Name == resolved.Provider {
+			provider = strings.ToLower(string(instance.Type))
+			break
+		}
+	}
 	poolType := strings.ToLower(strings.TrimSpace(resolved.Type))
 	if provider == "docker" || poolType == "docker" {
 		return fmt.Errorf("docker pools do not accept raw Boxy sources; use config.image or a custom registry")
 	}
-	if provider == "hyperv" || poolType == "vm" {
+	if provider == "hyperv" {
 		format := strings.ToLower(strings.TrimSpace(source.Format))
 		switch format {
 		case "", "vhd", "vhdx", "hyperv-vhd", "hyperv-vhdx":
