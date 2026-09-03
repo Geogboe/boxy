@@ -1,6 +1,8 @@
 // Package resourcepack plans and applies immutable, parameterized resource
 // configuration packages. It deliberately has no provider or guest-transport
 // dependency: those are supplied by the executor at the application boundary.
+// Compile turns the supported package-manager recipe into the same inline
+// shell or PowerShell package format used by ordinary manifests.
 package resourcepack
 
 import (
@@ -61,6 +63,7 @@ var (
 type Manifest struct {
 	Name     string         `json:"name" yaml:"name"`
 	Version  string         `json:"version" yaml:"version"`
+	Builtin  string         `json:"builtin,omitempty" yaml:"builtin,omitempty"`
 	Method   Method         `json:"method" yaml:"method"`
 	Scopes   []Scope        `json:"scopes" yaml:"scopes"`
 	Events   []Event        `json:"events" yaml:"events"`
@@ -72,10 +75,25 @@ func (m Manifest) Validate() error {
 	if strings.TrimSpace(m.Name) == "" || strings.TrimSpace(m.Version) == "" {
 		return fmt.Errorf("%w: name and version are required", ErrInvalidManifest)
 	}
-	switch m.Method {
-	case MethodShell, MethodPowerShell, MethodDSC, MethodAnsible:
-	default:
-		return fmt.Errorf("%w: unsupported method %q", ErrInvalidManifest, m.Method)
+	if m.Builtin != "" {
+		if m.Builtin != BuiltinPackageManager {
+			return fmt.Errorf("%w: unsupported builtin %q", ErrInvalidManifest, m.Builtin)
+		}
+		if m.Method != "" {
+			return fmt.Errorf("%w: builtin %q must not declare method", ErrInvalidManifest, m.Builtin)
+		}
+		if len(m.Defaults) != 0 {
+			return fmt.Errorf("%w: builtin %q does not support defaults", ErrInvalidManifest, m.Builtin)
+		}
+		if err := validatePackageManagerInputs(m.Inputs); err != nil {
+			return fmt.Errorf("%w: %w", ErrInvalidManifest, err)
+		}
+	} else {
+		switch m.Method {
+		case MethodShell, MethodPowerShell, MethodDSC, MethodAnsible:
+		default:
+			return fmt.Errorf("%w: unsupported method %q", ErrInvalidManifest, m.Method)
+		}
 	}
 	if len(m.Scopes) == 0 {
 		return fmt.Errorf("%w: at least one scope is required", ErrInvalidManifest)
@@ -181,7 +199,8 @@ func (e Engine) Plan(ctx context.Context, request Request) (Plan, error) {
 		if err != nil {
 			return Plan{}, fmt.Errorf("decode package %q: %w", rawRef, err)
 		}
-		if err := manifest.Validate(); err != nil {
+		manifest, err = Compile(manifest)
+		if err != nil {
 			return Plan{}, fmt.Errorf("package %q: %w", rawRef, err)
 		}
 		if manifest.Name != ref.Name || manifest.Version != ref.Version {

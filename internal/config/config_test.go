@@ -705,3 +705,22 @@ func TestConfigValidate_rejectsUnsupportedPackageMethod(t *testing.T) {
 		t.Fatalf("Validate() error = %v, want unsupported package method error", err)
 	}
 }
+
+func TestConfigValidate_rejectsUnsupportedBuiltinPackageManager(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{Packages: map[string]resourcepack.Manifest{
+		"tools": {
+			Version: "1.0.0",
+			Builtin: resourcepack.BuiltinPackageManager,
+			Scopes:  []resourcepack.Scope{resourcepack.ScopeResource},
+			Events:  []resourcepack.Event{resourcepack.EventProvision},
+			Inputs: map[string]any{"parameters": map[string]any{
+				"manager": "brew", "packages": []any{"curl"},
+			}},
+		},
+	}}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "unsupported package manager") {
+		t.Fatalf("Config.Validate() error = %v, want unsupported package manager", err)
+	}
+}

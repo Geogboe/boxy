@@ -231,6 +231,7 @@ graph TB
 | `pkg/store` | `pkg/model` | Persistence interface |
 | `pkg/policycontroller` | stdlib only | Generic control loop |
 | `pkg/resourcepool` | stdlib only | Generic pool data structure |
+| `pkg/resourcepack` | `pkg/artifact` | Package validation, recipe compilation, planning, and application |
 | `pkg/providersdk` | stdlib only | Driver interface + registry |
 | `pkg/agentsdk` | `pkg/providersdk` | Agent abstraction |
 
@@ -267,6 +268,33 @@ graph LR
 The pool manager (`internal/pool/`) wires this up with concrete types:
 - `T = observed{pool, now}` — the pool's inventory + current time
 - `P = plan{pool, stale, toProvision, reason}` — what to destroy and provision
+
+---
+
+### Resource Package Compiler
+
+`pkg/resourcepack` validates package identity, scope, and lifecycle metadata,
+then plans immutable package application. Its `Compile` function handles the
+`builtin: package-manager` declaration without introducing provider policy into
+the agent layer:
+
+```mermaid
+flowchart LR
+    Config[boxy.yaml or package manifest]
+    Compiler[pkg/resourcepack.Compile]
+    Artifact[Immutable inline shell or PowerShell package]
+    Engine[Package plan and applied digest]
+    Agent[Existing provider-neutral agent operation]
+
+    Config --> Compiler --> Artifact --> Engine --> Agent
+```
+
+The compiler supports only `apt`, `apk`, `winget`, and `chocolatey`. It sorts
+safe package IDs, rejects duplicates and unsupported options, and emits a
+manager-presence check so missing managers and nonzero installer exits fail the
+lifecycle operation. It never discovers, bootstraps, upgrades, or elevates a
+manager. The agent receives only the generated operation and configured guest
+credential.
 
 ---
 

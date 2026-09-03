@@ -1,7 +1,12 @@
 package config
 
 import (
+	"context"
+	"strings"
 	"testing"
+
+	"github.com/Geogboe/boxy/pkg/artifact"
+	"github.com/Geogboe/boxy/pkg/resourcepack"
 )
 
 func TestConfigLoadsTemplatesAndSandboxPackages(t *testing.T) {
@@ -33,6 +38,39 @@ pools:
 	}
 	if resolved.Type != "vm" || resolved.Source != "windows-2022" || len(resolved.Packages) != 1 {
 		t.Fatalf("resolved template = %#v, want inherited shape and package", resolved)
+	}
+}
+
+func TestPackageRegistryCompilesBuiltinPackageManager(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{Packages: map[string]resourcepack.Manifest{
+		"developer-tools": {
+			Version: "1.0.0",
+			Builtin: resourcepack.BuiltinPackageManager,
+			Scopes:  []resourcepack.Scope{resourcepack.ScopeResource},
+			Events:  []resourcepack.Event{resourcepack.EventProvision},
+			Inputs: map[string]any{"parameters": map[string]any{
+				"manager": "apk", "packages": []any{"git", "curl"},
+			}},
+		},
+	}}
+	registry, err := cfg.PackageRegistry(context.Background())
+	if err != nil {
+		t.Fatalf("PackageRegistry: %v", err)
+	}
+	value, err := registry.Resolve(context.Background(), artifact.Ref{
+		Type: artifact.ArtifactTypePackage, Name: "developer-tools", Version: "1.0.0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := string(value.Manifest)
+	if !strings.Contains(manifest, "method: shell") || !strings.Contains(manifest, "apk add") {
+		t.Fatalf("registry manifest was not compiled:\n%s", manifest)
+	}
+	if strings.Contains(manifest, "builtin:") || strings.Contains(manifest, "manager:") {
+		t.Fatalf("registry manifest retained recipe fields:\n%s", manifest)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 
 	boxyconfig "github.com/Geogboe/boxy/internal/config"
 	"github.com/Geogboe/boxy/internal/server"
+	"github.com/Geogboe/boxy/pkg/resourcepack"
 )
 
 // catalogSnapshotFromConfig is the daemon boundary for the UI catalog. It
@@ -37,6 +38,9 @@ func catalogSnapshotFromConfig(cfg boxyconfig.Config, poolSpecs []boxyconfig.Poo
 	for name, manifest := range cfg.Packages {
 		if strings.TrimSpace(manifest.Name) == "" {
 			manifest.Name = name
+		}
+		if compiled, err := resourcepack.Compile(manifest); err == nil {
+			manifest = compiled
 		}
 		scopes := make([]string, 0, len(manifest.Scopes))
 		for _, scope := range manifest.Scopes {
