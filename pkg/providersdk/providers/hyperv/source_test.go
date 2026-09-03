@@ -1,6 +1,7 @@
 package hyperv
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
@@ -23,7 +24,7 @@ func TestMaterializeSourceDownloadsVHDXAndVerifiesDigest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	path, err := materializeSource(nil, &providersdk.SourceDescriptor{
+	path, err := materializeSource(context.Background(), &providersdk.SourceDescriptor{
 		URL:       server.URL,
 		Digest:    "sha256:" + hex.EncodeToString(sum[:]),
 		Format:    "vhdx",
@@ -46,7 +47,7 @@ func TestMaterializeSourceDownloadsVHDXAndVerifiesDigest(t *testing.T) {
 
 func TestMaterializeSourceRejectsUnsupportedFormat(t *testing.T) {
 	t.Parallel()
-	_, err := materializeSource(nil, &providersdk.SourceDescriptor{
+	_, err := materializeSource(context.Background(), &providersdk.SourceDescriptor{
 		Path:   filepath.Join(t.TempDir(), "disk.iso"),
 		Digest: "sha256:" + strings.Repeat("a", 64),
 		Format: "iso",

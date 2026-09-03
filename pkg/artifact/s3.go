@@ -287,8 +287,15 @@ func (r *S3Registry) get(ctx context.Context, key string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer response.Body.Close()
-	return io.ReadAll(response.Body)
+	defer func() { _ = response.Body.Close() }()
+	data, err := io.ReadAll(response.Body)
+	if err != nil {
+		return nil, err
+	}
+	if err := response.Body.Close(); err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 func (r *S3Registry) artifactKey(ref Ref) string {

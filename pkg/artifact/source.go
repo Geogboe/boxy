@@ -105,7 +105,7 @@ func PullSource(ctx context.Context, descriptor SourceDescriptor, destination st
 		}
 		input = resp.Body
 	}
-	defer input.Close()
+	defer func() { _ = input.Close() }()
 
 	hash := sha256.New()
 	if _, err := io.Copy(io.MultiWriter(tmp, hash), input); err != nil {
