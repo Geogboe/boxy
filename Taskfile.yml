@@ -193,11 +193,8 @@ tasks:
     env:
       GOFLAGS: -coverprofile=.tmp/coverage.out
     cmds:
-      - task: agent:go-test
-        vars:
-          NAME: go-coverage
-          PACKAGES: ./...
-      - cmd: go tool cover -func=.tmp/coverage.out | Select-Object -Last 1
+      - cmd: pwsh -NoProfile -File scripts/agent-check.ps1 -Name go-coverage -Executable go test ./...
+      - cmd: pwsh -NoProfile -File scripts/coverage-report.ps1
         silent: true
 
   agent:test:coverage:unix:
@@ -207,11 +204,8 @@ tasks:
     env:
       GOFLAGS: -coverprofile=.tmp/coverage.out
     cmds:
-      - task: agent:go-test
-        vars:
-          NAME: go-coverage
-          PACKAGES: ./...
-      - cmd: go tool cover -func=.tmp/coverage.out | tail -n 1
+      - cmd: bash scripts/agent-check.sh go-coverage go test ./...
+      - cmd: bash scripts/coverage-report.sh
         silent: true
 
   agent:test:race:
