@@ -16,7 +16,8 @@ func TestPackageBuildAndPublish(t *testing.T) {
 	manifestPath := filepath.Join(dir, "package.yaml")
 	scriptPath := filepath.Join(dir, "install.sh")
 	artifactPath := filepath.Join(dir, "out", "package.json")
-	if err := os.WriteFile(manifestPath, []byte("name: baseline\nversion: 1.0.0\nmethod: shell\nscopes: [resource]\nevents: [provision]\ninputs:\n  script: install.sh\n"), 0o600); err != nil {
+	manifest := "name: baseline\nversion: 1.0.0\nmethod: shell\nscopes: [resource]\nevents: [provision]\ninputs:\n  script: install.sh\n"
+	if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(scriptPath, []byte("echo baseline\n"), 0o600); err != nil {
@@ -28,6 +29,9 @@ func TestPackageBuildAndPublish(t *testing.T) {
 	value, err := readPackageArtifact(artifactPath)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if string(value.Manifest) != manifest {
+		t.Fatalf("ordinary package manifest was rewritten:\nwant:\n%s\ngot:\n%s", manifest, value.Manifest)
 	}
 	if string(value.Blobs["install.sh"]) != "echo baseline\n" {
 		t.Fatalf("script blob = %q", value.Blobs["install.sh"])
