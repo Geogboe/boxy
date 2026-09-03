@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Geogboe/boxy/pkg/fulfillment"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/store"
 )
@@ -101,13 +102,20 @@ func (f *Fulfiller) reconcileSandbox(ctx context.Context, id model.SandboxID) er
 		return f.failSandbox(ctx, sb, err.Error())
 	}
 
-	needsProvisioning := false
+	groups := make([]fulfillment.Group[model.PoolName], 0, len(allocations))
+	packagesByPool := make(map[model.PoolName][]string, len(allocations))
 	for _, alloc := range allocations {
-		pl, err := f.store.GetPool(ctx, alloc.poolName)
+		groups = append(groups, fulfillment.Group[model.PoolName]{Key: alloc.poolName, Count: alloc.count})
+		packagesByPool[alloc.poolName] = append([]string(nil), alloc.packages...)
+	}
+
+	needsProvisioning := false
+	for _, group := range groups {
+		pl, err := f.store.GetPool(ctx, group.Key)
 		if err != nil {
-			return fmt.Errorf("get pool %q: %w", alloc.poolName, err)
+			return fmt.Errorf("get pool %q: %w", group.Key, err)
 		}
-		if readyCount(pl) < alloc.count {
+		if readyCount(pl) < group.Count {
 			needsProvisioning = true
 			break
 		}
@@ -121,44 +129,61 @@ func (f *Fulfiller) reconcileSandbox(ctx context.Context, id model.SandboxID) er
 		}
 	}
 
-	for _, alloc := range allocations {
-		if err := f.pools.EnsureReady(ctx, alloc.poolName, alloc.count); err != nil {
-			return f.failSandbox(ctx, sb, fmt.Sprintf("ensure ready for pool %q: %v", alloc.poolName, err))
-		}
-	}
-
-	for _, alloc := range allocations {
-		pl, err := f.store.GetPool(ctx, alloc.poolName)
-		if err != nil {
-			return fmt.Errorf("get pool %q after reconcile: %w", alloc.poolName, err)
-		}
-		if readyCount(pl) < alloc.count {
-			return f.failSandbox(ctx, sb, fmt.Sprintf("pool %q has %d ready resource(s), need %d", alloc.poolName, readyCount(pl), alloc.count))
-		}
-	}
-
-	snapshot, err := f.captureAllocationSnapshot(ctx, sb, allocations)
-	if err != nil {
-		return fmt.Errorf("capture allocation snapshot for sandbox %q: %w", sb.ID, err)
-	}
-
-	for _, alloc := range allocations {
-		current, err := f.store.GetSandbox(ctx, sb.ID)
-		if err == store.ErrNotFound {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("get sandbox %q before allocation: %w", sb.ID, err)
-		}
-		if current.Status == model.SandboxStatusDeleting {
-			return nil
-		}
-		if _, err := f.sandboxMgr.AddFromPoolWithPackages(ctx, sb.ID, alloc.poolName, alloc.count, alloc.packages); err != nil {
-			if errors.Is(err, ErrSandboxDeleting) {
-				return nil
+	transaction := fulfillment.Transaction[model.PoolName, allocationSnapshot]{
+		Prepare: func(ctx context.Context, group fulfillment.Group[model.PoolName]) error {
+			if err := f.pools.EnsureReady(ctx, group.Key, group.Count); err != nil {
+				return fmt.Errorf("ensure ready for pool %q: %w", group.Key, err)
 			}
-			return f.rollbackAllocation(ctx, snapshot, fmt.Sprintf("allocate from pool %q: %v", alloc.poolName, err))
+			pl, err := f.store.GetPool(ctx, group.Key)
+			if err != nil {
+				return fmt.Errorf("get pool %q after reconcile: %w", group.Key, err)
+			}
+			if readyCount(pl) < group.Count {
+				return fmt.Errorf("pool %q has %d ready resource(s), need %d", group.Key, readyCount(pl), group.Count)
+			}
+			return nil
+		},
+		Snapshot: func(ctx context.Context, groups []fulfillment.Group[model.PoolName]) (allocationSnapshot, error) {
+			allocationGroups := make([]poolAllocation, 0, len(groups))
+			for _, group := range groups {
+				allocationGroups = append(allocationGroups, poolAllocation{
+					poolName: group.Key,
+					count:    group.Count,
+					packages: packagesByPool[group.Key],
+				})
+			}
+			return f.captureAllocationSnapshot(ctx, sb, allocationGroups)
+		},
+		Fulfill: func(ctx context.Context, group fulfillment.Group[model.PoolName]) error {
+			current, err := f.store.GetSandbox(ctx, sb.ID)
+			if err == store.ErrNotFound {
+				return fulfillment.Abort(store.ErrNotFound)
+			}
+			if err != nil {
+				return fmt.Errorf("get sandbox %q before allocation: %w", sb.ID, err)
+			}
+			if current.Status == model.SandboxStatusDeleting {
+				return fulfillment.Abort(ErrSandboxDeleting)
+			}
+			if _, err := f.sandboxMgr.AddFromPoolWithPackages(ctx, sb.ID, group.Key, group.Count, packagesByPool[group.Key]); err != nil {
+				if errors.Is(err, ErrSandboxDeleting) {
+					return fulfillment.Abort(err)
+				}
+				return fmt.Errorf("allocate from pool %q: %w", group.Key, err)
+			}
+			return nil
+		},
+		Rollback: func(ctx context.Context, snapshot allocationSnapshot, cause error) error {
+			return f.rollbackAllocation(ctx, snapshot, cause.Error())
+		},
+	}
+
+	if err := transaction.Run(ctx, groups); err != nil {
+		var rolledBack fulfillment.RolledBackError
+		if errors.As(err, &rolledBack) || errors.Is(err, ErrSandboxDeleting) || errors.Is(err, store.ErrNotFound) {
+			return nil
 		}
+		return f.failSandbox(ctx, sb, err.Error())
 	}
 
 	final, err := f.store.GetSandbox(ctx, sb.ID)
