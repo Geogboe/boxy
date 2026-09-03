@@ -14,6 +14,7 @@ This batch combined package dependency graphs, S3-compatible artifacts, UI impro
 - Agent identity is bound by the authenticated server session rather than accepted from log payloads. Diagnostic exports are bounded and sanitized by default, with stable placeholders for correlating events without exposing hostnames, usernames, credentials, URLs, IPs, or resource identifiers.
 - Provider logs retain structured operation, error code, and safe summary fields. The Hyper-V investigation found insufficient evidence for a broader admission change; a bounded transient-memory-probe retry was the justified provider fix, while unknown capacity remains fail-closed.
 - Dev Factory stubs provide a practical path for smoke and source-ingestion validation when Windows Hyper-V is unavailable. Hyper-V guest validation remains an environment-dependent gate.
+- `act` is installed in WSL, but this host's WSL Docker context has no reachable `/var/run/docker.sock`; the local workflow was therefore skipped after the preflight failed before job startup. The repository's native/WSL CI-equivalent task still passed.
 
 ## Follow-up guidance
 
