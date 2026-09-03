@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Geogboe/boxy/internal/buildcfg"
 	"github.com/Geogboe/boxy/pkg/diagnostics"
 	"github.com/Geogboe/boxy/pkg/humanize"
 	"github.com/Geogboe/boxy/pkg/model"
@@ -32,12 +33,16 @@ type pageData struct {
 	// never reference .User — the sidebar itself is only ever rendered by
 	// a full-page response.
 	User                 string
+	Version              string
+	RepositoryURL        string
 	PoolCount            int
 	SandboxCount         int
 	ResourceCount        int
 	Pools                []model.Pool
 	PoolViews            []poolView
 	PoolDetail           *poolView
+	PoolHistory          bool
+	ResourceLimitHit     bool
 	CSRFToken            string
 	CanManagePools       bool
 	PoolResult           string
@@ -84,22 +89,24 @@ type resourceView struct {
 }
 
 type poolView struct {
-	Name               string
-	DetailPath         string
-	Type               model.ResourceType
-	ExpectedProfile    model.ResourceProfile
-	Template           string
-	Source             string
-	Packages           []string
-	MinReady           int
-	MaxTotal           int
-	ReadyCount         int
-	TotalCount         int
-	EffectivelyDrained bool
-	ConfigDrain        bool
-	OperatorDrain      bool
-	ProviderNames      []string
-	Resources          []poolResourceView
+	Name                string
+	DetailPath          string
+	Type                model.ResourceType
+	ExpectedProfile     model.ResourceProfile
+	Template            string
+	Source              string
+	Packages            []string
+	MinReady            int
+	MaxTotal            int
+	ReadyCount          int
+	TotalCount          int
+	EffectivelyDrained  bool
+	ConfigDrain         bool
+	OperatorDrain       bool
+	ProviderNames       []string
+	Resources           []poolResourceView
+	HistoricalResources []poolResourceView
+	HistoricalCount     int
 }
 
 type poolResourceView struct {
@@ -216,20 +223,34 @@ func (s *Server) uiHandler(tmpl *template.Template, nav string, data dataFn) htt
 			}
 			return
 		}
-		d.Nav = nav
-		if principal, ok := sessionPrincipalFromRequest(r); ok {
-			d.User = principal.Subject
-			d.CanManageServiceKeys = principal.Role == model.APIKeyRoleAdmin
-			d.CanViewDiagnostics = principal.Role == model.APIKeyRoleAdmin
-			d.CanManagePools = principal.Role == model.APIKeyRoleAdmin
-			d.CSRFToken = ensureCSRFCookie(w, r, s.insecureHTTP)
-		}
+		d = s.decoratePageData(w, r, d, nav)
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.ExecuteTemplate(w, "layout.html", d); err != nil {
 			slog.Error("ui render", "err", err)
 		}
 	}
+}
+
+func (s *Server) decoratePageData(w http.ResponseWriter, r *http.Request, d pageData, nav string) pageData {
+	d.Nav = nav
+	d.Version = s.version
+	d.RepositoryURL = s.repositoryURL
+	if d.Version == "" {
+		d.Version = "dev"
+	}
+	if d.RepositoryURL == "" {
+		d.RepositoryURL = "https://github.com/" + buildcfg.Repo
+	}
+	if principal, ok := sessionPrincipalFromRequest(r); ok {
+		d.User = principal.Subject
+		isAdmin := principal.Role == model.APIKeyRoleAdmin
+		d.CanManageServiceKeys = isAdmin
+		d.CanViewDiagnostics = isAdmin
+		d.CanManagePools = isAdmin
+		d.CSRFToken = ensureCSRFCookie(w, r, s.insecureHTTP)
+	}
+	return d
 }
 
 func (s *Server) diagnosticsHandler(tmpl *template.Template) http.HandlerFunc {
@@ -243,7 +264,7 @@ func (s *Server) diagnosticsHandler(tmpl *template.Template) http.HandlerFunc {
 			http.Error(w, "diagnostics requires an administrator", http.StatusForbidden)
 			return
 		}
-		d := pageData{Nav: "diagnostics", User: principal.Subject, CanViewDiagnostics: true}
+		d := s.decoratePageData(w, r, pageData{}, "diagnostics")
 		if s.diagnostics == nil {
 			d.DiagnosticsError = "Diagnostics are temporarily unavailable."
 		} else {
@@ -279,12 +300,9 @@ func (s *Server) serviceKeysHandler(tmpl *template.Template) http.HandlerFunc {
 			http.Error(w, "service-key management is temporarily unavailable", http.StatusInternalServerError)
 			return
 		}
-		s.renderServiceKeys(w, tmpl, pageData{
-			Nav:                  "service-keys",
-			User:                 principal.Subject,
-			CanManageServiceKeys: true,
-			ServiceKeys:          keys,
-		})
+		d := s.decoratePageData(w, r, pageData{}, "service-keys")
+		d.ServiceKeys = keys
+		s.renderServiceKeys(w, tmpl, d)
 	}
 }
 
@@ -299,7 +317,7 @@ func (s *Server) handleCreateServiceKey(tmpl *template.Template) http.HandlerFun
 			http.Error(w, "service-key management requires an administrator", http.StatusForbidden)
 			return
 		}
-		d := pageData{Nav: "service-keys", User: principal.Subject, CanManageServiceKeys: true}
+		d := s.decoratePageData(w, r, pageData{}, "service-keys")
 		if err := r.ParseForm(); err != nil {
 			d.ServiceKeyError = "Invalid service-key request."
 		} else {
@@ -376,7 +394,10 @@ func (s *Server) fragmentHandler(tmpl *template.Template, fragment string, data 
 			return
 		}
 		if principal, ok := sessionPrincipalFromRequest(r); ok {
-			d.CanManagePools = principal.Role == model.APIKeyRoleAdmin
+			isAdmin := principal.Role == model.APIKeyRoleAdmin
+			d.CanManagePools = isAdmin
+			d.CanViewDiagnostics = isAdmin
+			d.CanManageServiceKeys = isAdmin
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -418,11 +439,17 @@ func (s *Server) poolsData(r *http.Request) (pageData, error) {
 	if err != nil {
 		return pageData{}, err
 	}
+	resourceLimitHit := len(resources) > 1000
+	if resourceLimitHit {
+		resources = resources[:1000]
+	}
 	views := buildPoolViews(pools, resources)
 	data := pageData{
-		Pools:      pools,
-		PoolViews:  views,
-		PoolResult: poolResultFromQuery(r),
+		Pools:            pools,
+		PoolViews:        views,
+		PoolResult:       poolResultFromQuery(r),
+		PoolHistory:      r.URL.Query().Get("view") == "history",
+		ResourceLimitHit: resourceLimitHit,
 	}
 	if name := r.PathValue("name"); name != "" {
 		for i := range views {

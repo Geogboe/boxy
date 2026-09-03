@@ -153,6 +153,9 @@ func (d *Driver) List(ctx context.Context) ([]providersdk.ResourceStatus, error)
 // This is intentionally synchronous: the pool manager has no async
 // polling loop, so the latency must be observed inside Create.
 func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, error) {
+	if err := validateSourceConfig(cfg); err != nil {
+		return nil, err
+	}
 	if d.cfg.FailCreate {
 		return nil, fmt.Errorf("devfactory: simulated create failure")
 	}

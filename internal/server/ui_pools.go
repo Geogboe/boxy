@@ -60,19 +60,20 @@ func buildPoolViews(pools []model.Pool, resources []model.Resource) []poolView {
 
 func makePoolView(configured model.Pool, resources []model.Resource) poolView {
 	view := poolView{
-		Name:               string(configured.Name),
-		DetailPath:         "/ui/pools/" + url.PathEscape(string(configured.Name)),
-		Type:               configured.Inventory.ExpectedType,
-		ExpectedProfile:    configured.Inventory.ExpectedProfile,
-		Template:           configured.Template,
-		Source:             configured.Source,
-		Packages:           append([]string(nil), configured.Packages...),
-		MinReady:           configured.Policies.Preheat.MinReady,
-		MaxTotal:           configured.Policies.Preheat.MaxTotal,
-		EffectivelyDrained: configured.EffectivelyDrained(),
-		ConfigDrain:        configured.Drain.ConfigDeclared,
-		OperatorDrain:      configured.Drain.Operator,
-		Resources:          make([]poolResourceView, 0, len(resources)),
+		Name:                string(configured.Name),
+		DetailPath:          "/ui/pools/" + url.PathEscape(string(configured.Name)),
+		Type:                configured.Inventory.ExpectedType,
+		ExpectedProfile:     configured.Inventory.ExpectedProfile,
+		Template:            configured.Template,
+		Source:              configured.Source,
+		Packages:            append([]string(nil), configured.Packages...),
+		MinReady:            configured.Policies.Preheat.MinReady,
+		MaxTotal:            configured.Policies.Preheat.MaxTotal,
+		EffectivelyDrained:  configured.EffectivelyDrained(),
+		ConfigDrain:         configured.Drain.ConfigDeclared,
+		OperatorDrain:       configured.Drain.Operator,
+		Resources:           make([]poolResourceView, 0, len(resources)),
+		HistoricalResources: make([]poolResourceView, 0),
 	}
 	providerNames := make(map[string]struct{})
 	for _, resource := range resources {
@@ -80,10 +81,16 @@ func makePoolView(configured model.Pool, resources []model.Resource) poolView {
 		if resource.State == model.ResourceStateReady {
 			view.ReadyCount++
 		}
-		view.Resources = append(view.Resources, poolResourceView{
+		resourceView := poolResourceView{
 			ID: string(resource.ID), Type: resource.Type, Profile: resource.Profile,
 			State: resource.State, Provider: resource.Provider.Name,
-		})
+		}
+		if isHistoricalResource(resource) {
+			view.HistoricalResources = append(view.HistoricalResources, resourceView)
+			view.HistoricalCount++
+		} else {
+			view.Resources = append(view.Resources, resourceView)
+		}
 		if resource.Provider.Name != "" {
 			providerNames[resource.Provider.Name] = struct{}{}
 		}
@@ -93,6 +100,10 @@ func makePoolView(configured model.Pool, resources []model.Resource) poolView {
 	}
 	sort.Strings(view.ProviderNames)
 	return view
+}
+
+func isHistoricalResource(resource model.Resource) bool {
+	return resource.State == model.ResourceStateReleased || resource.State == model.ResourceStateDestroyed
 }
 
 func requireUIAdmin(w http.ResponseWriter, r *http.Request) (string, bool) {

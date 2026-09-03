@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -370,6 +371,16 @@ func (c Config) Validate() error {
 		default:
 			return fmt.Errorf("artifact store %q has unsupported type %q", name, store.Type)
 		}
+		if strings.EqualFold(strings.TrimSpace(store.Type), "s3") {
+			if strings.TrimSpace(store.Bucket) == "" {
+				return fmt.Errorf("artifact store %q s3 bucket is required", name)
+			}
+			for field, ref := range map[string]string{"access_key": store.AccessKey, "secret_key": store.SecretKey} {
+				if strings.TrimSpace(ref) != "" && !strings.HasPrefix(strings.TrimSpace(ref), "env:") {
+					return fmt.Errorf("artifact store %q %s must be an env:NAME secret reference", name, field)
+				}
+			}
+		}
 	}
 	for name, source := range c.Sources {
 		if strings.TrimSpace(source.Store) == "" {
@@ -399,6 +410,9 @@ func (c Config) Validate() error {
 		if !compiled.Method.Supported() {
 			return fmt.Errorf("package %q uses unsupported method %q", name, compiled.Method)
 		}
+	}
+	if err := c.validatePackageGraphs(); err != nil {
+		return err
 	}
 	for name := range c.Templates {
 		resolved, err := c.ResolveTemplate(name)
@@ -441,8 +455,15 @@ func (c Config) Validate() error {
 			return fmt.Errorf("pool %q: %w", pool.Name, err)
 		}
 		if resolvedPool.Source != "" {
-			if _, ok := c.Sources[resolvedPool.Source]; !ok {
+			source, ok := c.Sources[resolvedPool.Source]
+			if !ok {
 				return fmt.Errorf("pool %q references unknown source %q", pool.Name, resolvedPool.Source)
+			}
+			if hasProviderNativeSource(resolvedPool.Config) {
+				return fmt.Errorf("pool %q sets both provider-native source location and Boxy source %q", pool.Name, resolvedPool.Source)
+			}
+			if err := validatePoolSourceCompatibility(pool, resolvedPool, source); err != nil {
+				return fmt.Errorf("pool %q source: %w", pool.Name, err)
 			}
 		}
 		if err := c.validatePackageRefs(resolvedPool.Packages, resourcepack.ScopeResource, resourcepack.EventProvision); err != nil {
@@ -464,36 +485,165 @@ func (c Config) Validate() error {
 	return nil
 }
 
+func hasProviderNativeSource(config map[string]any) bool {
+	for _, key := range []string{"template_vhd", "image", "source_path", "source_url"} {
+		value, ok := config[key]
+		if !ok {
+			continue
+		}
+		if s, ok := value.(string); ok && strings.TrimSpace(s) != "" {
+			return true
+		}
+		if value != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func validatePoolSourceCompatibility(pool PoolSpec, resolved PoolSpec, source SourceSpec) error {
+	provider := strings.ToLower(strings.TrimSpace(resolved.Provider))
+	poolType := strings.ToLower(strings.TrimSpace(resolved.Type))
+	if provider == "docker" || poolType == "docker" {
+		return fmt.Errorf("docker pools do not accept raw Boxy sources; use config.image or a custom registry")
+	}
+	if provider == "hyperv" || poolType == "vm" {
+		format := strings.ToLower(strings.TrimSpace(source.Format))
+		switch format {
+		case "", "vhd", "vhdx", "hyperv-vhd", "hyperv-vhdx":
+		default:
+			return fmt.Errorf("Hyper-V requires a VHD/VHDX source, got format %q", source.Format)
+		}
+	}
+	if source.Provider != "" && provider != "" && !strings.EqualFold(source.Provider, provider) {
+		return fmt.Errorf("source provider %q conflicts with pool provider %q", source.Provider, pool.Provider)
+	}
+	return nil
+}
+
 func (c Config) validatePackageRefs(refs []string, scope resourcepack.Scope, event resourcepack.Event) error {
+	seen := make(map[string]struct{})
+	active := make(map[string]int)
+	var stack []string
 	for _, rawRef := range refs {
 		ref, err := artifact.ParseRef(rawRef)
 		if err != nil {
 			return err
 		}
-		manifest, ok := c.Packages[ref.Name]
-		if !ok {
-			return fmt.Errorf("package %q is not configured", rawRef)
-		}
-		if manifest.Name == "" {
-			manifest.Name = ref.Name
-		}
-		if manifest.Version != ref.Version {
-			return fmt.Errorf("package %q version does not match configured version %q", rawRef, manifest.Version)
-		}
-		if err := manifest.Validate(); err != nil {
+		ref.Type = artifact.ArtifactTypePackage
+		if err := c.visitPackageGraph(ref, scope, event, true, seen, active, &stack); err != nil {
 			return err
-		}
-		if !manifest.Method.Supported() {
-			return fmt.Errorf("package %q uses unsupported method %q", rawRef, manifest.Method)
-		}
-		if !containsPackageScope(manifest.Scopes, scope) {
-			return fmt.Errorf("package %q does not declare scope %q", rawRef, scope)
-		}
-		if !containsPackageEvent(manifest.Events, event) {
-			return fmt.Errorf("package %q does not declare event %q", rawRef, event)
 		}
 	}
 	return nil
+}
+
+// validatePackageGraphs validates every configured package's immutable
+// dependency edges at startup, including packages that are not currently used
+// by a pool. Sorting the roots matters because maps intentionally do not have
+// a discovery order and configuration errors should be reproducible.
+func (c Config) validatePackageGraphs() error {
+	refs := make([]artifact.Ref, 0, len(c.Packages))
+	for name, manifest := range c.Packages {
+		if strings.TrimSpace(manifest.Name) == "" {
+			manifest.Name = name
+		}
+		refs = append(refs, artifact.Ref{Type: artifact.ArtifactTypePackage, Name: manifest.Name, Version: manifest.Version})
+	}
+	sort.Slice(refs, func(i, j int) bool { return refs[i].String() < refs[j].String() })
+	seen := make(map[string]struct{})
+	active := make(map[string]int)
+	var stack []string
+	for _, ref := range refs {
+		if err := c.visitPackageGraph(ref, "", "", false, seen, active, &stack); err != nil {
+			return fmt.Errorf("package graph: %w", err)
+		}
+	}
+	return nil
+}
+
+// visitPackageGraph follows dependency declarations in their authored order.
+// Lifecycle checks are applied to dependencies when requireLifecycle is true;
+// the all-packages startup pass only needs graph and manifest validity.
+func (c Config) visitPackageGraph(ref artifact.Ref, scope resourcepack.Scope, event resourcepack.Event, requireLifecycle bool, seen map[string]struct{}, active map[string]int, stack *[]string) error {
+	ref.Type = artifact.ArtifactTypePackage
+	canonical := ref.String()
+	if index, ok := active[canonical]; ok {
+		cycle := append([]string(nil), (*stack)[index:]...)
+		cycle = append(cycle, canonical)
+		return fmt.Errorf("package dependency cycle: %s", strings.Join(cycle, " -> "))
+	}
+	if _, ok := seen[canonical]; ok {
+		return nil
+	}
+
+	manifest, err := c.configuredPackageManifest(ref)
+	if err != nil {
+		if c.hasExternalArtifactStore() && !c.packageConfigured(ref) {
+			// The package may be published in a configured remote store. The
+			// context-aware runtime validation performs the authoritative
+			// resolve and lifecycle check after stores are constructed.
+			return nil
+		}
+		return err
+	}
+	if requireLifecycle {
+		if !containsPackageScope(manifest.Scopes, scope) {
+			return fmt.Errorf("package %q does not declare scope %q", canonical, scope)
+		}
+		if !containsPackageEvent(manifest.Events, event) {
+			return fmt.Errorf("package %q does not declare event %q", canonical, event)
+		}
+	}
+
+	active[canonical] = len(*stack)
+	*stack = append(*stack, canonical)
+	defer func() {
+		delete(active, canonical)
+		*stack = (*stack)[:len(*stack)-1]
+	}()
+	for i, rawDependency := range manifest.Dependencies {
+		dependency, parseErr := artifact.ParseRef(rawDependency)
+		if parseErr != nil {
+			return fmt.Errorf("package %q dependency[%d]: %w", canonical, i, parseErr)
+		}
+		dependency.Type = artifact.ArtifactTypePackage
+		if err := c.visitPackageGraph(dependency, scope, event, requireLifecycle, seen, active, stack); err != nil {
+			return err
+		}
+	}
+	seen[canonical] = struct{}{}
+	return nil
+}
+
+func (c Config) packageConfigured(ref artifact.Ref) bool {
+	_, ok := c.Packages[ref.Name]
+	return ok
+}
+
+func (c Config) hasExternalArtifactStore() bool {
+	return len(c.ArtifactStores) > 0
+}
+
+func (c Config) configuredPackageManifest(ref artifact.Ref) (resourcepack.Manifest, error) {
+	manifest, ok := c.Packages[ref.Name]
+	if !ok {
+		return resourcepack.Manifest{}, fmt.Errorf("package %q is not configured", ref.String())
+	}
+	if strings.TrimSpace(manifest.Name) == "" {
+		manifest.Name = ref.Name
+	}
+	if manifest.Version != ref.Version {
+		return resourcepack.Manifest{}, fmt.Errorf("package %q version does not match configured version %q", ref.String(), manifest.Version)
+	}
+	compiled, err := resourcepack.Compile(manifest)
+	if err != nil {
+		return resourcepack.Manifest{}, fmt.Errorf("package %q: %w", ref.String(), err)
+	}
+	if !compiled.Method.Supported() {
+		return resourcepack.Manifest{}, fmt.Errorf("package %q uses unsupported method %q", ref.String(), compiled.Method)
+	}
+	return compiled, nil
 }
 
 func containsPackageScope(scopes []resourcepack.Scope, want resourcepack.Scope) bool {

@@ -12,6 +12,7 @@ import (
 	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/internal/sandbox"
 	"github.com/Geogboe/boxy/internal/server"
+	"github.com/Geogboe/boxy/pkg/diagnostics"
 	"github.com/Geogboe/boxy/pkg/humanize"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
@@ -55,6 +56,53 @@ func TestUI_home_renders(t *testing.T) {
 	}
 	if !strings.Contains(body, "Overview") {
 		t.Fatal("home page missing 'Overview' heading")
+	}
+}
+
+func TestUI_layoutRendersBrandingVersionThemeAndAdminLinks(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	mux := server.NewTestMuxWithDiagnostics(st, sandbox.New(st, nil), diagnostics.NewMemoryStore(), nil, true, false)
+
+	for _, path := range []string{"/", "/ui/diagnostics", "/ui/service-keys"} {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, path, nil)))
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET %s status = %d", path, w.Code)
+		}
+		body := w.Body.String()
+		for _, want := range []string{"/static/favicon.svg", "Repository", "dev", "data-theme-toggle", `href="/ui/diagnostics"`, `href="/ui/service-keys"`} {
+			if !strings.Contains(body, want) {
+				t.Errorf("GET %s missing %q", path, want)
+			}
+		}
+	}
+}
+
+func TestUI_poolsHistoryFilterSeparatesTerminalResources(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	if err := st.PutPool(ctx, model.Pool{Name: "pool-a"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, resource := range []model.Resource{
+		{ID: "active-id", OriginPool: "pool-a", State: model.ResourceStateReady},
+		{ID: "history-id", OriginPool: "pool-a", State: model.ResourceStateDestroyed},
+	} {
+		if err := st.PutResource(ctx, resource); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/pools?view=history", nil)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "history-id") || strings.Contains(body, "active-id") {
+		t.Fatalf("history filter body = %q", body)
 	}
 }
 

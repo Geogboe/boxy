@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // DirectoryRegistry is a small local artifact registry. It is useful for
@@ -113,6 +114,27 @@ func (r *DirectoryRegistry) ResolveSource(ctx context.Context, name string) (Sou
 		return Source{}, err
 	}
 	return source, nil
+}
+
+// SignSource returns a local-path descriptor for a source owned by this
+// filesystem store. A relative source path is resolved against the store
+// root, while an absolute path is preserved for compatibility with existing
+// local configurations.
+func (r *DirectoryRegistry) SignSource(ctx context.Context, source Source, _ time.Duration) (SourceDescriptor, error) {
+	if err := contextErr(ctx); err != nil {
+		return SourceDescriptor{}, err
+	}
+	if err := ValidateDigest(source.Digest); err != nil {
+		return SourceDescriptor{}, err
+	}
+	if r == nil || strings.TrimSpace(r.Root) == "" {
+		return SourceDescriptor{}, fmt.Errorf("artifact registry directory is required")
+	}
+	location := source.Path
+	if !filepath.IsAbs(location) {
+		location = filepath.Join(r.Root, location)
+	}
+	return SourceDescriptor{Path: location, Digest: source.Digest, Format: source.Format, OS: source.OS, Provider: source.Provider, Metadata: cloneStrings(source.Metadata)}, nil
 }
 
 func (r *DirectoryRegistry) artifactPath(ref Ref) (string, error) {

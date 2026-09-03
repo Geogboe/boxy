@@ -11,8 +11,11 @@ package devfactory
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"time"
+
+	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
 // Duration is a time.Duration that can be unmarshaled from a JSON string
@@ -120,6 +123,46 @@ type Config struct {
 	//     be confirmed torn down — so ResourceLister and quarantine/cleanup
 	//     flows have something real to find and later Delete.
 	FailCreateAs string `yaml:"fail_create_as" json:"fail_create_as"`
+}
+
+// CreateConfig is the provider-neutral source-ingestion seam used by the
+// simulator. devfactory does not materialize bytes, but it validates the same
+// descriptor that a real provider receives.
+type CreateConfig struct {
+	Source *providersdk.SourceDescriptor `yaml:"source,omitempty" json:"source,omitempty"`
+}
+
+func validateSourceConfig(cfg any) error {
+	var source *providersdk.SourceDescriptor
+	switch value := cfg.(type) {
+	case CreateConfig:
+		source = value.Source
+	case *CreateConfig:
+		if value != nil {
+			source = value.Source
+		}
+	case map[string]any:
+		raw, ok := value["source"]
+		if !ok || raw == nil {
+			return nil
+		}
+		encoded, err := json.Marshal(raw)
+		if err != nil {
+			return fmt.Errorf("devfactory: encode source descriptor: %w", err)
+		}
+		if err := json.Unmarshal(encoded, &source); err != nil {
+			return fmt.Errorf("devfactory: decode source descriptor: %w", err)
+		}
+	default:
+		return nil
+	}
+	if source == nil {
+		return nil
+	}
+	if err := source.Validate(); err != nil {
+		return fmt.Errorf("devfactory: invalid source descriptor: %w", err)
+	}
+	return nil
 }
 
 // ResolveRelativePaths implements providersdk.RelativePathResolver. A

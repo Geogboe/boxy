@@ -118,15 +118,11 @@ func (s *Server) handleMintPersonalKey(profileTmpl *template.Template) http.Hand
 			return
 		}
 
-		d := pageData{
-			Nav:                  "profile",
-			User:                 principal.Subject,
-			CanManageServiceKeys: principal.Role == model.APIKeyRoleAdmin,
-			Profile: profileData{
-				Subject:      principal.Subject,
-				Role:         principal.Role,
-				SignInMethod: signInMethodLabel(principal.Kind),
-			},
+		d := s.decoratePageData(w, r, pageData{}, "profile")
+		d.Profile = profileData{
+			Subject:      principal.Subject,
+			Role:         principal.Role,
+			SignInMethod: signInMethodLabel(principal.Kind),
 		}
 		d.Profile.PersonalKeys, _ = s.personalAPIKeySummaries(r.Context(), personalKeySubject(principal.Kind, principal.Subject))
 

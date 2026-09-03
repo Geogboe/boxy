@@ -19,6 +19,12 @@
           "path": {
             "type": "string"
           },
+          "path_style": {
+            "type": "boolean"
+          },
+          "region": {
+            "type": "string"
+          },
           "secret_key": {
             "pattern": "^env:.+",
             "type": "string"
@@ -78,6 +84,13 @@
           },
           "defaults": {
             "type": "object"
+          },
+          "dependencies": {
+            "items": {
+              "pattern": "^[^@]+@[^@]+$",
+              "type": "string"
+            },
+            "type": "array"
           },
           "events": {
             "items": {

@@ -185,10 +185,20 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		failValidate(err.Error())
 		return fmt.Errorf("resolve pool specs: %w", err)
 	}
-	packageRegistry, err := cfg.PackageRegistry(ctx)
+	packageRegistry, err := cfg.ArtifactRegistry(ctx)
 	if err != nil {
 		failValidate(err.Error())
-		return fmt.Errorf("build resource package registry: %w", err)
+		return fmt.Errorf("build artifact registry: %w", err)
+	}
+	sourceSigners, err := cfg.SourceSigners(ctx)
+	if err != nil {
+		failValidate(err.Error())
+		return fmt.Errorf("build source signers: %w", err)
+	}
+	packageEngine := &resourcepack.Engine{Registry: packageRegistry}
+	if err := validateRuntimePackageGraphs(ctx, packageEngine, poolSpecs); err != nil {
+		failValidate(err.Error())
+		return fmt.Errorf("validate artifact package graphs: %w", err)
 	}
 	catalogSource := server.NewStaticCatalogSource(catalogSnapshotFromConfig(cfg, poolSpecs))
 	doneValidate(fmt.Sprintf("%d configured", len(cfg.Providers)))
@@ -264,11 +274,14 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 
 	// Use AgentProvisioner to route pool operations through the registry.
 	provisioner := &pool.AgentProvisioner{
-		Registry:      agentRegistry,
-		Specs:         specsMap,
-		Providers:     providersMap,
-		GuestSecrets:  guestSecrets,
-		PackageEngine: &resourcepack.Engine{Registry: packageRegistry},
+		Registry:         agentRegistry,
+		Specs:            specsMap,
+		Providers:        providersMap,
+		GuestSecrets:     guestSecrets,
+		PackageEngine:    packageEngine,
+		ArtifactRegistry: packageRegistry,
+		SourceSigners:    sourceSigners,
+		SourceTTL:        15 * time.Minute,
 	}
 	poolMgr := pool.New(st, provisioner)
 	cleanupService := &pool.ResourceCleanupService{Store: st, Manager: poolMgr, Audit: auditStore}
@@ -392,6 +405,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		DiagnosticsAudit: auditStore,
 		OIDC:             oidcOptions,
 		SessionTTL:       sessionTTL,
+		Version:          Version,
 	})
 
 	g, ctx := errgroup.WithContext(ctx)
@@ -415,6 +429,20 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	printServeBanner(listenAddr, uiEnabled, len(poolSpecs), opts.insecure)
 
 	return g.Wait()
+}
+
+func validateRuntimePackageGraphs(ctx context.Context, engine *resourcepack.Engine, specs []boxyconfig.PoolSpec) error {
+	for _, spec := range specs {
+		if err := engine.Validate(ctx, spec.Packages, resourcepack.ScopeResource, resourcepack.EventProvision); err != nil {
+			return fmt.Errorf("pool %q provision packages: %w", spec.Name, err)
+		}
+		if strings.TrimSpace(spec.Template) != "" {
+			if err := engine.Validate(ctx, spec.Packages, resourcepack.ScopeResource, resourcepack.EventPromotion); err != nil {
+				return fmt.Errorf("pool %q promotion packages: %w", spec.Name, err)
+			}
+		}
+	}
+	return nil
 }
 
 func configureEmbeddedGuestBootstrapResolvers(drivers []providersdk.Driver, st store.Store, guestSecrets boxysecrets.Store, specs map[model.PoolName]boxyconfig.PoolSpec) {

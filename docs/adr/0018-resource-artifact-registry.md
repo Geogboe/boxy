@@ -23,7 +23,11 @@ validation.
 Stores remain externally owned. Boxy records a locator, digest, format, and
 metadata; it does not automatically copy every source into managed storage.
 When a store supports a provider/agent-readable direct pull, the registry
-returns that descriptor. Otherwise the server verifies and streams the bytes.
+returns that descriptor. Otherwise the server verifies and stages the bytes
+through the provider's ingestion seam. S3-compatible signed pull URLs are
+object-specific and expire after 15 minutes; they are never persisted, logged,
+or copied into resource properties. Providers download and verify the
+declared SHA-256 digest themselves.
 The first adapters are local filesystem and S3-compatible stores.
 
 Credentials are references, never raw persisted values. A package build creates

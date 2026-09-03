@@ -237,6 +237,16 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 	if err != nil {
 		return nil, fmt.Errorf("decode create config: %w", err)
 	}
+	if cc.Source != nil {
+		if strings.TrimSpace(cc.TemplateVHD) != "" {
+			return nil, fmt.Errorf("config.template_vhd and config.source are mutually exclusive")
+		}
+		templateVHD, sourceErr := materializeSource(ctx, cc.Source, cc.VHDDir)
+		if sourceErr != nil {
+			return nil, fmt.Errorf("ingest source: %w", sourceErr)
+		}
+		cc.TemplateVHD = templateVHD
+	}
 	if strings.TrimSpace(cc.TemplateVHD) == "" {
 		return nil, fmt.Errorf("config.template_vhd is required")
 	}
@@ -388,6 +398,34 @@ Start-VM -Name '%s' | Out-Null
 			"guest_user": guestUser,
 		},
 	}, nil
+}
+
+func materializeSource(ctx context.Context, source *providersdk.SourceDescriptor, destinationDir string) (string, error) {
+	if source == nil {
+		return "", fmt.Errorf("source is nil")
+	}
+	if err := source.Validate(); err != nil {
+		return "", err
+	}
+	format := strings.ToLower(strings.TrimSpace(source.Format))
+	var extension string
+	switch format {
+	case "vhd", "hyperv-vhd":
+		extension = ".vhd"
+	case "vhdx", "hyperv-vhdx":
+		extension = ".vhdx"
+	default:
+		return "", fmt.Errorf("unsupported source format %q; expected vhd or vhdx", source.Format)
+	}
+	digest := strings.TrimPrefix(strings.ToLower(source.Digest), "sha256:")
+	if destinationDir == "" {
+		destinationDir = filepath.Join(os.TempDir(), "boxy-source-cache")
+	}
+	path := filepath.Join(destinationDir, "boxy-source-"+digest+extension)
+	if err := providersdk.PullSource(ctx, *source, path); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // --- Read ---

@@ -61,14 +61,15 @@ var (
 
 // Manifest is the typed content of a published resource package.
 type Manifest struct {
-	Name     string         `json:"name" yaml:"name"`
-	Version  string         `json:"version" yaml:"version"`
-	Builtin  string         `json:"builtin,omitempty" yaml:"builtin,omitempty"`
-	Method   Method         `json:"method" yaml:"method"`
-	Scopes   []Scope        `json:"scopes" yaml:"scopes"`
-	Events   []Event        `json:"events" yaml:"events"`
-	Defaults map[string]any `json:"defaults,omitempty" yaml:"defaults,omitempty"`
-	Inputs   map[string]any `json:"inputs,omitempty" yaml:"inputs,omitempty"`
+	Name         string         `json:"name" yaml:"name"`
+	Version      string         `json:"version" yaml:"version"`
+	Builtin      string         `json:"builtin,omitempty" yaml:"builtin,omitempty"`
+	Method       Method         `json:"method" yaml:"method"`
+	Scopes       []Scope        `json:"scopes" yaml:"scopes"`
+	Events       []Event        `json:"events" yaml:"events"`
+	Dependencies []string       `json:"dependencies,omitempty" yaml:"dependencies,omitempty"`
+	Defaults     map[string]any `json:"defaults,omitempty" yaml:"defaults,omitempty"`
+	Inputs       map[string]any `json:"inputs,omitempty" yaml:"inputs,omitempty"`
 }
 
 func (m Manifest) Validate() error {
@@ -109,6 +110,11 @@ func (m Manifest) Validate() error {
 	for _, event := range m.Events {
 		if event != EventProvision && event != EventPromotion && event != EventAllocation {
 			return fmt.Errorf("%w: unknown event %q", ErrInvalidManifest, event)
+		}
+	}
+	for i, dependency := range m.Dependencies {
+		if _, err := artifact.ParseRef(dependency); err != nil {
+			return fmt.Errorf("%w: dependency[%d]: %v", ErrInvalidManifest, i, err)
 		}
 	}
 	return nil
@@ -185,55 +191,126 @@ func (e Engine) Plan(ctx context.Context, request Request) (Plan, error) {
 		return Plan{}, fmt.Errorf("%w: unknown scope %q", ErrInvalidManifest, request.Scope)
 	}
 	plan := Plan{Target: request.Target, Event: request.Event}
+	state := packageDiscovery{
+		engine:  e,
+		ctx:     ctx,
+		request: request,
+		plan:    &plan,
+		seen:    make(map[string]struct{}),
+		active:  make(map[string]int),
+	}
 	for _, rawRef := range request.References {
 		ref, err := artifact.ParseRef(rawRef)
 		if err != nil {
 			return Plan{}, err
 		}
-		ref.Type = artifact.ArtifactTypePackage
-		value, err := e.Registry.Resolve(ctx, ref)
-		if err != nil {
-			return Plan{}, fmt.Errorf("resolve package %q: %w", rawRef, err)
+		if err := state.visit(ref, nil); err != nil {
+			return Plan{}, err
 		}
-		manifest, err := decodeManifest(value.Manifest)
-		if err != nil {
-			return Plan{}, fmt.Errorf("decode package %q: %w", rawRef, err)
-		}
-		manifest, err = Compile(manifest)
-		if err != nil {
-			return Plan{}, fmt.Errorf("package %q: %w", rawRef, err)
-		}
-		if manifest.Name != ref.Name || manifest.Version != ref.Version {
-			return Plan{}, fmt.Errorf("%w: package %q manifest identity is %s@%s", ErrInvalidManifest, rawRef, manifest.Name, manifest.Version)
-		}
-		if !containsScope(manifest.Scopes, request.Scope) {
-			return Plan{}, fmt.Errorf("%w: package %q does not declare scope %q", ErrInvalidPackageScope, rawRef, request.Scope)
-		}
-		if !containsEvent(manifest.Events, request.Event) {
-			return Plan{}, fmt.Errorf("%w: package %q does not declare event %q", ErrInvalidPackageScope, rawRef, request.Event)
-		}
-		if !manifest.Method.Supported() {
-			return Plan{}, fmt.Errorf("%w: package %q uses method %q", ErrUnsupportedMethod, rawRef, manifest.Method)
-		}
-		parameters := mergeMaps(manifest.Defaults, inputParameters(manifest.Inputs))
-		maps.Copy(parameters, request.Overrides)
-		digest, err := digestInputs(manifest.Inputs, parameters)
-		if err != nil {
-			return Plan{}, fmt.Errorf("canonicalize package %q inputs: %w", rawRef, err)
-		}
-		if alreadyApplied(request.Applied, ref.String(), digest) {
-			continue
-		}
-		plan.Packages = append(plan.Packages, PlannedPackage{
-			Reference:   ref.String(),
-			Manifest:    manifest,
-			Inputs:      cloneMap(manifest.Inputs),
-			Parameters:  parameters,
-			InputDigest: digest,
-			Content:     packageContent(manifest, value),
-		})
 	}
 	return plan, nil
+}
+
+// Validate resolves and validates a reference graph without producing an
+// executable plan. Servers use it at startup for packages that live in a
+// remote artifact store; the package registry abstraction keeps this check
+// identical to the defensive planner validation performed later.
+func (e Engine) Validate(ctx context.Context, refs []string, scope Scope, event Event) error {
+	_, err := e.Plan(ctx, Request{References: refs, Scope: scope, Event: event})
+	return err
+}
+
+// packageDiscovery resolves one request's package graph. The maps are scoped
+// to a single plan so a failed plan cannot leave partial discovery state in a
+// reusable engine. seen is keyed by the canonical immutable reference, which
+// makes duplicate roots and duplicate dependency edges first-occurrence wins.
+type packageDiscovery struct {
+	engine  Engine
+	ctx     context.Context
+	request Request
+	plan    *Plan
+	seen    map[string]struct{}
+	active  map[string]int
+	stack   []string
+}
+
+func (d *packageDiscovery) visit(ref artifact.Ref, ownerChain []string) error {
+	ref.Type = artifact.ArtifactTypePackage
+	canonical := ref.String()
+	if index, ok := d.active[canonical]; ok {
+		cycle := append([]string(nil), d.stack[index:]...)
+		cycle = append(cycle, canonical)
+		return fmt.Errorf("package dependency cycle: %s", strings.Join(cycle, " -> "))
+	}
+	if _, ok := d.seen[canonical]; ok {
+		return nil
+	}
+
+	d.active[canonical] = len(d.stack)
+	d.stack = append(d.stack, canonical)
+	defer func() {
+		delete(d.active, canonical)
+		d.stack = d.stack[:len(d.stack)-1]
+	}()
+
+	value, err := d.engine.Registry.Resolve(d.ctx, ref)
+	if err != nil {
+		if len(ownerChain) == 0 {
+			return fmt.Errorf("resolve package %q: %w", canonical, err)
+		}
+		return fmt.Errorf("resolve dependency %q of %q: %w", canonical, ownerChain[len(ownerChain)-1], err)
+	}
+	manifest, err := decodeManifest(value.Manifest)
+	if err != nil {
+		return fmt.Errorf("decode package %q: %w", canonical, err)
+	}
+	manifest, err = Compile(manifest)
+	if err != nil {
+		return fmt.Errorf("package %q: %w", canonical, err)
+	}
+	if manifest.Name != ref.Name || manifest.Version != ref.Version {
+		return fmt.Errorf("%w: package %q manifest identity is %s@%s", ErrInvalidManifest, canonical, manifest.Name, manifest.Version)
+	}
+	if !containsScope(manifest.Scopes, d.request.Scope) {
+		return fmt.Errorf("%w: package %q does not declare scope %q", ErrInvalidPackageScope, canonical, d.request.Scope)
+	}
+	if !containsEvent(manifest.Events, d.request.Event) {
+		return fmt.Errorf("%w: package %q does not declare event %q", ErrInvalidPackageScope, canonical, d.request.Event)
+	}
+	if !manifest.Method.Supported() {
+		return fmt.Errorf("%w: package %q uses method %q", ErrUnsupportedMethod, canonical, manifest.Method)
+	}
+
+	chain := append(append([]string(nil), ownerChain...), canonical)
+	for i, rawDependency := range manifest.Dependencies {
+		dependency, parseErr := artifact.ParseRef(rawDependency)
+		if parseErr != nil {
+			return fmt.Errorf("package %q dependency[%d]: %w", canonical, i, parseErr)
+		}
+		if err := d.visit(dependency, chain); err != nil {
+			return err
+		}
+	}
+
+	parameters := mergeMaps(manifest.Defaults, inputParameters(manifest.Inputs))
+	maps.Copy(parameters, d.request.Overrides)
+	digest, err := digestInputs(manifest.Inputs, parameters)
+	if err != nil {
+		return fmt.Errorf("canonicalize package %q inputs: %w", canonical, err)
+	}
+	d.seen[canonical] = struct{}{}
+	if alreadyApplied(d.request.Applied, canonical, digest) {
+		return nil
+	}
+	d.plan.Packages = append(d.plan.Packages, PlannedPackage{
+		Reference:   canonical,
+		Manifest:    manifest,
+		Inputs:      cloneMap(manifest.Inputs),
+		Parameters:  parameters,
+		InputDigest: digest,
+		Content:     packageContent(manifest, value),
+	})
+	return nil
 }
 
 func (e Engine) Apply(ctx context.Context, plan Plan, executor Executor) ([]AppliedPackage, error) {

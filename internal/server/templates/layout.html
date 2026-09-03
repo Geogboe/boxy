@@ -6,12 +6,13 @@
   <title>{{block "title" .}}Boxy{{end}}</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <link rel="stylesheet" href="/static/style.css">
+  <script>(function(){var t=localStorage.getItem("boxy-theme");if(t){document.documentElement.dataset.theme=t;}})();</script>
   <script src="/static/htmx.min.js"></script>
 </head>
 <body>
   <div class="layout">
     <nav class="sidebar" aria-label="Primary">
-      <div class="sidebar-brand">Boxy</div>
+      <a class="sidebar-brand" href="/"><img src="/static/favicon.svg" alt="" aria-hidden="true"> <span>Boxy</span></a>
       <ul class="sidebar-nav">
         <li><a href="/" {{if eq .Nav "home"}}class="active" aria-current="page"{{end}}>Home</a></li>
         <li><a href="/ui/pools" {{if eq .Nav "pools"}}class="active" aria-current="page"{{end}}>Pools</a></li>
@@ -30,9 +31,17 @@
       {{end}}
     </nav>
     <main class="main">
+      <header class="app-header">
+        <div class="app-header-meta">
+          {{if .RepositoryURL}}<a href="{{.RepositoryURL}}" target="_blank" rel="noreferrer">Repository</a>{{end}}
+          <span class="version-label">{{.Version}}</span>
+        </div>
+        <button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch to light theme" aria-pressed="false">☼ <span>Light theme</span></button>
+      </header>
       {{block "content" .}}{{end}}
     </main>
   </div>
+  <script>(function(){var root=document.documentElement,b=document.querySelector("[data-theme-toggle]");if(!b)return;function sync(){var light=root.dataset.theme==="light";b.setAttribute("aria-pressed",String(light));b.setAttribute("aria-label",light?"Switch to dark theme":"Switch to light theme");b.querySelector("span").textContent=light?"Dark theme":"Light theme";}b.addEventListener("click",function(){var next=root.dataset.theme==="light"?"dark":"light";root.dataset.theme=next;localStorage.setItem("boxy-theme",next);sync();});sync();})();</script>
 </body>
 </html>
 
