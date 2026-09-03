@@ -20,7 +20,7 @@ import (
 
 const (
 	DefaultMaxBytes = 10 << 20
-	DefaultMaxAge   = 7 * 24 * time.Hour
+	DefaultMaxAge   = 14 * 24 * time.Hour
 	DefaultLimit    = 100
 	HardMaxLimit    = 1000
 	maxMessageBytes = 4096

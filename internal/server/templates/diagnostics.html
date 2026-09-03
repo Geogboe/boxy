@@ -13,8 +13,15 @@
     <div class="table-card-actions">
       {{if .DiagnosticsExportURL}}<a class="button-link" href="{{.DiagnosticsExportURL}}">Export current query</a>{{end}}
       {{if .DiagnosticsAgentURL}}<a class="button-link secondary" href="{{.DiagnosticsAgentURL}}">View agent logs</a>{{end}}
+      {{if .DiagnosticsPullURL}}<form method="post" action="{{.DiagnosticsPullURL}}">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="since" value="{{.DiagnosticsSince}}">
+        <input type="hidden" name="limit" value="1000">
+        <button type="submit" class="secondary-btn">Pull agent logs</button>
+      </form>{{end}}
     </div>
   </div>
+  {{if .DiagnosticsMessage}}<div class="result-banner">{{.DiagnosticsMessage}}</div>{{end}}
   <form class="diagnostics-filters" method="get" action="/ui/diagnostics">
     <label>Level
       <select name="level">

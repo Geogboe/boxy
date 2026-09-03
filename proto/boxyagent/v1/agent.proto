@@ -101,6 +101,9 @@ message AgentError {
 // the authenticated agent identity instead of trusting a peer-provided one.
 message LogBatch {
   repeated LogEvent events = 1;
+  // Empty for compatibility with unsolicited batches; populated when this
+  // batch answers a server LogRequest.
+  string request_id = 2;
 }
 
 message LogEvent {
@@ -122,7 +125,16 @@ message ServerMessage {
   oneof payload {
     RegisterResponse registered = 1;  // ack for RegisterRequest
     Command command = 2;
+    LogRequest log_request = 3;       // one-time pull of agent-local logs
   }
+}
+
+// LogRequest asks an authenticated agent for a bounded slice of its local
+// diagnostic history. A zero since_unix_nano requests the retained history.
+message LogRequest {
+  string request_id = 1;
+  int64 since_unix_nano = 2;
+  int32 limit = 3;
 }
 
 message RegisterResponse {

@@ -196,7 +196,20 @@ func (s *Server) ListAgents() []pool.AgentSummary {
 	return summaries
 }
 
-// DefaultTokenTTL is how long a freshly minted registration token stays
+// RequestAgentLogs starts a pull from a connected remote agent. Disconnected
+// identities remain in the registry for inventory visibility, but have no
+// stream over which a request could be delivered.
+func (s *Server) RequestAgentLogs(ctx context.Context, agentID string, since time.Time, limit int) (string, error) {
+	s.mu.Lock()
+	remote, ok := s.remoteAgents[agentID]
+	s.mu.Unlock()
+	if !ok || remote == nil {
+		return "", fmt.Errorf("agent %q is not connected", agentID)
+	}
+	return remote.RequestLogs(ctx, since, limit)
+}
+
+// DefaultTokenTTL is how long a freshly minted single-use registration token stays
 // redeemable when no explicit TTL is given.
 const DefaultTokenTTL = time.Hour
 

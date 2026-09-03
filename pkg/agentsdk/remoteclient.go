@@ -53,6 +53,11 @@ type RemoteClientConfig struct {
 	// heartbeat; a failed flush is retained for retry.
 	LogShipper *diagnostics.Shipper
 
+	// LogStore is the agent-local retained diagnostics history. It is queried
+	// only when the authenticated server sends a LogRequest; no history is
+	// transmitted during ordinary heartbeats.
+	LogStore diagnostics.Store
+
 	// OnRegistered is invoked once per successful registration (both the
 	// first, token-based registration and any later cert-based reconnect)
 	// with the server's RegisterResponse. The caller is responsible for
@@ -201,7 +206,7 @@ func RunSession(ctx context.Context, stream boxyagentv1.AgentTransportService_Co
 	g.Go(func() error {
 		return sess.sendHeartbeats(gctx, reg.GetAgentId(), providerTypes, cfg.Drivers, interval, availabilityTimeout, cfg.LogShipper, log)
 	})
-	g.Go(func() error { return sess.dispatchCommands(gctx, cfg.Drivers) })
+	g.Go(func() error { return sess.dispatchCommands(gctx, cfg.Drivers, cfg.LogStore, log) })
 	return g.Wait()
 }
 
@@ -248,6 +253,13 @@ func (s *clientSession) sendHeartbeats(ctx context.Context, agentID string, prov
 }
 
 func (s *clientSession) sendLogBatch(ctx context.Context, events []diagnostics.Event) error {
+	return s.sendLogBatchRequest(ctx, events, "")
+}
+
+func (s *clientSession) sendLogBatchRequest(ctx context.Context, events []diagnostics.Event, requestID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	items := make([]*boxyagentv1.LogEvent, 0, len(events))
 	for _, event := range events {
 		timestamp := event.Timestamp
@@ -267,12 +279,35 @@ func (s *clientSession) sendLogBatch(ctx context.Context, events []diagnostics.E
 			Request:      event.Request,
 		})
 	}
-	if len(items) == 0 {
+	if len(items) == 0 && requestID == "" {
 		return nil
 	}
 	return s.send(&boxyagentv1.AgentMessage{Payload: &boxyagentv1.AgentMessage_LogBatch{
-		LogBatch: &boxyagentv1.LogBatch{Events: items},
+		LogBatch: &boxyagentv1.LogBatch{Events: items, RequestId: requestID},
 	}})
+}
+
+func (s *clientSession) sendRequestedLogs(ctx context.Context, request *boxyagentv1.LogRequest, logs diagnostics.Store) error {
+	if request == nil {
+		return nil
+	}
+	if logs == nil {
+		return s.sendLogBatchRequest(ctx, nil, request.GetRequestId())
+	}
+
+	var since time.Time
+	if request.GetSinceUnixNano() > 0 {
+		since = time.Unix(0, request.GetSinceUnixNano()).UTC()
+	}
+	limit := int(request.GetLimit())
+	if limit <= 0 || limit > diagnostics.HardMaxLimit {
+		limit = diagnostics.HardMaxLimit
+	}
+	page, err := logs.Query(ctx, diagnostics.Query{Since: since, Limit: limit})
+	if err != nil {
+		return fmt.Errorf("query agent diagnostics: %w", err)
+	}
+	return s.sendLogBatchRequest(ctx, page.Events, request.GetRequestId())
 }
 
 // defaultAvailabilitySampleTimeout is the per-provider bound applied to a
@@ -367,11 +402,20 @@ func sampleAvailability(ctx context.Context, drivers DriverSet, timeout time.Dur
 // goroutine (so a slow Create doesn't block subsequent Commands from being
 // picked up), sending each CommandResult back through the shared,
 // mutex-serialized sender. Returns when the stream's receive side ends.
-func (s *clientSession) dispatchCommands(ctx context.Context, drivers DriverSet) error {
+func (s *clientSession) dispatchCommands(ctx context.Context, drivers DriverSet, logs diagnostics.Store, log *slog.Logger) error {
 	for {
 		msg, err := s.stream.Recv()
 		if err != nil {
 			return err
+		}
+		if request := msg.GetLogRequest(); request != nil {
+			go func(request *boxyagentv1.LogRequest) {
+				if err := s.sendRequestedLogs(ctx, request, logs); err != nil && log != nil {
+					code, summary := diagnostics.DescribeError(fmt.Errorf("agent log pull: %w", err))
+					log.Warn("agent: requested log pull failed", "operation", "agent_log_pull", "error_code", code, "error_summary", summary)
+				}
+			}(request)
+			continue
 		}
 		cmd := msg.GetCommand()
 		if cmd == nil {

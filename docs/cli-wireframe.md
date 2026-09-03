@@ -183,6 +183,10 @@ boxy
 │       Only administrators can query diagnostics. Raw credentials and signed
 │       URL query values are redacted before events are persisted.
 │
+│   └── collect <agent-id>                      Pull retained logs once from a connected agent
+│       ├── --since <timestamp>                   RFC3339 lower time bound for an incremental pull
+│       └── --limit <1-1000>                      Maximum events (default 1000)
+│
 │
 ├── config                                      (alias: cfg)
 │   ├── validate                               Validate config file and exit

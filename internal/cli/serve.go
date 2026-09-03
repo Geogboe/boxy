@@ -222,7 +222,11 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	doneState(statePath)
 
 	diagnosticsPath := filepath.Join(filepath.Dir(statePath), "diagnostics.jsonl")
-	diagnosticStore, err := diagnostics.NewFileStore(diagnosticsPath, diagnostics.DefaultMaxBytes, diagnostics.DefaultMaxAge)
+	diagnosticsMaxAge, err := cfg.Server.EffectiveDiagnosticsRetention()
+	if err != nil {
+		return fmt.Errorf("resolve diagnostics retention: %w", err)
+	}
+	diagnosticStore, err := diagnostics.NewFileStore(diagnosticsPath, diagnostics.DefaultMaxBytes, diagnosticsMaxAge)
 	if err != nil {
 		return fmt.Errorf("open diagnostics store: %w", err)
 	}

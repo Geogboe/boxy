@@ -60,6 +60,30 @@ server:
 		}
 	})
 
+	t.Run("diagnostics_retention_defaults_to_fourteen_days", func(t *testing.T) {
+		d, err := ServerSpec{}.EffectiveDiagnosticsRetention()
+		if err != nil {
+			t.Fatalf("EffectiveDiagnosticsRetention: %v", err)
+		}
+		if d != DefaultDiagnosticsRetention {
+			t.Fatalf("retention = %v, want default %v", d, DefaultDiagnosticsRetention)
+		}
+	})
+
+	t.Run("diagnostics_retention_parses_duration", func(t *testing.T) {
+		d, err := (ServerSpec{DiagnosticsRetention: "48h"}).EffectiveDiagnosticsRetention()
+		if err != nil || d != 48*time.Hour {
+			t.Fatalf("retention = %v, err = %v, want 48h", d, err)
+		}
+	})
+
+	t.Run("invalid_diagnostics_retention_fails_validate", func(t *testing.T) {
+		cfg := Config{Server: ServerSpec{DiagnosticsRetention: "not-a-duration"}}
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("Validate: expected error for an unparseable diagnostics retention")
+		}
+	})
+
 	t.Run("invalid_interval_fails_validate", func(t *testing.T) {
 		cfg := Config{Server: ServerSpec{AgentHeartbeatInterval: "not-a-duration"}}
 		if err := cfg.Validate(); err == nil {

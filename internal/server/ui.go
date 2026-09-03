@@ -9,6 +9,8 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/Geogboe/boxy/internal/buildcfg"
@@ -61,10 +63,12 @@ type pageData struct {
 	MintedServiceKeyName string
 	Diagnostics          []diagnostics.Event
 	DiagnosticsError     string
+	DiagnosticsMessage   string
 	DiagnosticsQuery     diagnostics.Query
 	DiagnosticsSince     string
 	DiagnosticsExportURL string
 	DiagnosticsAgentURL  string
+	DiagnosticsPullURL   string
 }
 
 // sandboxView is the dashboard's per-sandbox row, joining the sandbox record
@@ -184,6 +188,7 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ui/help", s.uiHandler(helpTmpl, "help", func(*http.Request) (pageData, error) { return pageData{}, nil }))
 	mux.HandleFunc("GET /ui/diagnostics", s.diagnosticsHandler(diagnosticsTmpl))
 	mux.HandleFunc("GET /ui/diagnostics/export", s.diagnosticsExportHandler)
+	mux.HandleFunc("POST /ui/diagnostics/agents/{id}/logs", s.handleRequestAgentLogsUI)
 	mux.HandleFunc("POST /ui/profile/personal-key", s.handleMintPersonalKey(profileTmpl))
 
 	// HTMX fragment routes.
@@ -279,11 +284,17 @@ func (s *Server) diagnosticsHandler(tmpl *template.Template) http.HandlerFunc {
 			d.DiagnosticsQuery = query
 			d.DiagnosticsSince = r.URL.Query().Get("since")
 			d.DiagnosticsExportURL = "/ui/diagnostics/export?" + diagnosticsQueryValues(query).Encode()
+			if query.Agent != "" {
+				d.DiagnosticsPullURL = "/ui/diagnostics/agents/" + url.PathEscape(query.Agent) + "/logs"
+			}
 			agentQuery := query
 			if agentQuery.Agent == "" {
 				agentQuery.Component = "agent"
 			}
 			d.DiagnosticsAgentURL = "/ui/diagnostics?" + diagnosticsQueryValues(agentQuery).Encode()
+		}
+		if requestID := strings.TrimSpace(r.URL.Query().Get("log_request")); requestID != "" {
+			d.DiagnosticsMessage = "Requested agent logs (request ID: " + requestID + ")."
 		}
 		if err == nil {
 			if s.diagnostics == nil {

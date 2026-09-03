@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -184,6 +185,34 @@ func TestUI_DiagnosticsFiltersAgentAndExportsCurrentQuery(t *testing.T) {
 	}
 	if len(archive.Events) != 1 || archive.Events[0].Message != "agent a failure" {
 		t.Fatalf("archive events = %+v, want only agent-a event", archive.Events)
+	}
+}
+
+func TestUI_DiagnosticsPullAgentLogs(t *testing.T) {
+	t.Parallel()
+
+	st := store.NewMemoryStore()
+	admin := &fakeAgentAdmin{}
+	mux := server.NewTestMuxWithAgentAdminUI(st, sandbox.New(st, nil), admin, true)
+
+	get := httptest.NewRecorder()
+	mux.ServeHTTP(get, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/diagnostics?agent=agent-a", nil)))
+	if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), "Pull agent logs") {
+		t.Fatalf("diagnostics page status=%d, missing pull action: %q", get.Code, get.Body.String())
+	}
+	csrf := csrfCookieFromResponse(t, get)
+
+	post := httptest.NewRecorder()
+	form := url.Values{"csrf_token": {csrf.Value}, "since": {"2026-09-03T18:30:00Z"}}
+	r := server.AuthedRequest(httptest.NewRequest(http.MethodPost, "/ui/diagnostics/agents/agent-a/logs", strings.NewReader(form.Encode())))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(csrf)
+	mux.ServeHTTP(post, r)
+	if post.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want redirect (body: %s)", post.Code, post.Body.String())
+	}
+	if !strings.Contains(post.Header().Get("Location"), "log_request=pull-1") || len(admin.logPulls) != 1 {
+		t.Fatalf("location=%q log pulls=%v, want request id and one pull", post.Header().Get("Location"), admin.logPulls)
 	}
 }
 

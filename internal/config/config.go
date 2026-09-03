@@ -54,6 +54,10 @@ type ServerSpec struct {
 	// can't silently disable mTLS in a real deployment.
 	AgentHeartbeatInterval string `json:"agent_heartbeat_interval,omitempty" yaml:"agent_heartbeat_interval,omitempty"`
 
+	// DiagnosticsRetention controls how long the bounded server diagnostics
+	// store retains events. Empty means the 14-day default.
+	DiagnosticsRetention string `json:"diagnostics_retention,omitempty" yaml:"diagnostics_retention,omitempty"`
+
 	// GRPCCertSANs are extra DNS names/IPs to include in the agent gRPC
 	// server certificate's Subject Alternative Names, on top of the
 	// always-included localhost/127.0.0.1/listen-host entries. Needed when
@@ -277,6 +281,9 @@ func (s ServerSpec) UIEnabled() bool {
 // unset — close to the daemon's existing 10s reconcile tick.
 const DefaultAgentHeartbeatInterval = 15 * time.Second
 
+// DefaultDiagnosticsRetention is used when diagnostics_retention is unset.
+const DefaultDiagnosticsRetention = 14 * 24 * time.Hour
+
 // EffectiveAgentHeartbeatInterval parses AgentHeartbeatInterval, applying
 // the default when unset. Invalid values error (Validate also rejects them
 // at load time, so a running daemon should never hit that path).
@@ -290,6 +297,23 @@ func (s ServerSpec) EffectiveAgentHeartbeatInterval() (time.Duration, error) {
 	}
 	if d <= 0 {
 		return 0, fmt.Errorf("agent_heartbeat_interval %q must be positive", s.AgentHeartbeatInterval)
+	}
+	return d, nil
+}
+
+// EffectiveDiagnosticsRetention parses DiagnosticsRetention, applying the
+// default when unset. Invalid or non-positive values are rejected during
+// config validation rather than after the daemon starts.
+func (s ServerSpec) EffectiveDiagnosticsRetention() (time.Duration, error) {
+	if strings.TrimSpace(s.DiagnosticsRetention) == "" {
+		return DefaultDiagnosticsRetention, nil
+	}
+	d, err := time.ParseDuration(s.DiagnosticsRetention)
+	if err != nil {
+		return 0, fmt.Errorf("diagnostics_retention %q: %w", s.DiagnosticsRetention, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("diagnostics_retention %q must be positive", s.DiagnosticsRetention)
 	}
 	return d, nil
 }
@@ -352,6 +376,9 @@ func ensureJSONEOF(dec *json.Decoder) error {
 // Validate checks semantic config constraints that decoding alone does not enforce.
 func (c Config) Validate() error {
 	if _, err := c.Server.EffectiveAgentHeartbeatInterval(); err != nil {
+		return fmt.Errorf("server: %w", err)
+	}
+	if _, err := c.Server.EffectiveDiagnosticsRetention(); err != nil {
 		return fmt.Errorf("server: %w", err)
 	}
 	if err := c.Server.Secrets.Validate(); err != nil {

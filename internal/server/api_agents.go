@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Geogboe/boxy/internal/agentserver"
+	"github.com/Geogboe/boxy/pkg/diagnostics"
 	"github.com/Geogboe/boxy/pkg/httpjson"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/store"
@@ -122,6 +124,60 @@ func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpjson.Write(w, http.StatusOK, s.agentAdmin.ListAgents())
+}
+
+type requestAgentLogsRequest struct {
+	Since string `json:"since,omitempty"`
+	Limit int    `json:"limit,omitempty"`
+}
+
+type requestAgentLogsResponse struct {
+	RequestID string `json:"request_id"`
+}
+
+// handleRequestAgentLogs starts a bounded, administrator-only pull from a
+// connected agent. The response is deliberately asynchronous: the agent
+// sends its batch over the already-authenticated stream and the server stores
+// it as server-observed diagnostics.
+func (s *Server) handleRequestAgentLogs(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRole(w, r, model.APIKeyRoleAdmin) {
+		return
+	}
+	if s.agentAdmin == nil {
+		httpjson.Error(w, http.StatusServiceUnavailable, "agent transport not available")
+		return
+	}
+	var req requestAgentLogsRequest
+	if r.Body != nil && r.ContentLength != 0 {
+		dec := json.NewDecoder(r.Body)
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&req); err != nil {
+			httpjson.Error(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+	}
+	var since time.Time
+	if strings.TrimSpace(req.Since) != "" {
+		var err error
+		since, err = time.Parse(time.RFC3339, req.Since)
+		if err != nil {
+			httpjson.Error(w, http.StatusBadRequest, "since must be an RFC3339 timestamp")
+			return
+		}
+	}
+	if req.Limit == 0 {
+		req.Limit = diagnostics.HardMaxLimit
+	}
+	if req.Limit < 1 || req.Limit > diagnostics.HardMaxLimit {
+		httpjson.Error(w, http.StatusBadRequest, "limit must be between 1 and 1000")
+		return
+	}
+	requestID, err := s.agentAdmin.RequestAgentLogs(r.Context(), r.PathValue("id"), since, req.Limit)
+	if err != nil {
+		httpjson.Error(w, http.StatusServiceUnavailable, "agent is not connected")
+		return
+	}
+	httpjson.Write(w, http.StatusAccepted, requestAgentLogsResponse{RequestID: requestID})
 }
 
 // revokeAgentRequest is the optional request body for

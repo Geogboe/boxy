@@ -79,6 +79,7 @@ API-key roles:
 | DELETE | `/api/v1/agent-tokens/{id}` | admin | Revoke an unused registration token. |
 | GET | `/api/v1/agents` | auditor/admin | List registered agents, connection state, heartbeat time, and capacity samples. |
 | DELETE | `/api/v1/agents/{id}` | admin | Revoke an agent identity. |
+| POST | `/api/v1/agents/{id}/logs` | admin | Request a bounded, on-demand pull of retained agent diagnostics. |
 
 ### Diagnostics
 
@@ -118,9 +119,9 @@ CLI execution follows the same durable API. Normal `boxy sandbox exec` attaches 
 
 ## Diagnostics logs
 
-`GET /api/v1/diagnostics/logs` is administrator-only. It returns bounded, redacted control-plane and server-observed agent events as `{"events": [...], "next_cursor": "..."}`. Filter with `since`, `level`, `component`, `pool`, `agent`, `resource`, and `limit`; pass the opaque `cursor` returned by a prior response for the next page. Events are retained for up to seven days and 10 MiB, with 100 events per page by default and 1000 as the hard maximum. Credentials, signed URL queries, and secret-bearing fields are removed before events are persisted or rendered. Query access is recorded in a separate audit log.
+`GET /api/v1/diagnostics/logs` is administrator-only. It returns bounded, redacted control-plane and server-observed agent events as `{"events": [...], "next_cursor": "..."}`. Filter with `since`, `level`, `component`, `pool`, `agent`, `resource`, and `limit`; pass the opaque `cursor` returned by a prior response for the next page. Events are retained for up to 14 days by default and 10 MiB, with 100 events per page by default and 1000 as the hard maximum. Override server retention with `server.diagnostics_retention` (for example, `720h`). Credentials, signed URL queries, and secret-bearing fields are removed before events are persisted or rendered. Query access is recorded in a separate audit log.
 
-`GET /api/v1/diagnostics/export` uses the same filters and returns a bounded JSON archive for issue sharing. It always sanitizes credentials, signed URLs, hostnames, IP addresses, usernames, and host/resource identifiers, while preserving stable placeholders for correlation within that export. The CLI equivalent is `boxy diagnostics export --agent <agent-id> --output diagnostics.json`.
+`GET /api/v1/diagnostics/export` uses the same filters and returns a bounded JSON archive for issue sharing. It always sanitizes credentials, signed URLs, hostnames, IP addresses, usernames, and host/resource identifiers, while preserving stable placeholders for correlation within that export. The CLI equivalents are `boxy diagnostics export --agent <agent-id> --output diagnostics.json` and `boxy diagnostics collect --agent <agent-id> [--since <RFC3339>]` for an on-demand pull from a connected agent.
 
 ## Compatibility
 

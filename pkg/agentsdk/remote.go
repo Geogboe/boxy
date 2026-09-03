@@ -3,6 +3,7 @@ package agentsdk
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -126,6 +127,35 @@ func (a *RemoteAgent) SetLogSink(sink LogSink) {
 		return
 	}
 	a.logSink = sink
+}
+
+// RequestLogs asks this connected agent for a bounded slice of its local
+// diagnostic history. The agent identity is established by the mTLS stream;
+// the request ID is only a correlation value for the returned LogBatch.
+func (a *RemoteAgent) RequestLogs(ctx context.Context, since time.Time, limit int) (string, error) {
+	if a == nil || a.stream == nil {
+		return "", errors.New("agent transport is unavailable")
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if limit <= 0 || limit > diagnostics.HardMaxLimit {
+		limit = diagnostics.HardMaxLimit
+	}
+	requestID := uuid.NewString()
+	request := &boxyagentv1.LogRequest{RequestId: requestID, Limit: int32(limit)}
+	if !since.IsZero() {
+		request.SinceUnixNano = since.UnixNano()
+	}
+	a.sendMu.Lock()
+	err := a.stream.Send(&boxyagentv1.ServerMessage{Payload: &boxyagentv1.ServerMessage_LogRequest{
+		LogRequest: request,
+	}})
+	a.sendMu.Unlock()
+	if err != nil {
+		return "", fmt.Errorf("agent %q: request logs: %w", a.info.ID, err)
+	}
+	return requestID, nil
 }
 
 func (a *RemoteAgent) Info() AgentInfo {

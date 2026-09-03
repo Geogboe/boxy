@@ -41,6 +41,7 @@ func APIRouteCatalog() []APIRoute {
 		{Group: "Agents", Method: "DELETE", Path: "/api/v1/agent-tokens/{id}", Auth: "admin", Description: "Revoke an unused registration token."},
 		{Group: "Agents", Method: "GET", Path: "/api/v1/agents", Auth: "auditor/admin", Description: "List registered agents, connection state, heartbeat time, and capacity samples."},
 		{Group: "Agents", Method: "DELETE", Path: "/api/v1/agents/{id}", Auth: "admin", Description: "Revoke an agent identity."},
+		{Group: "Agents", Method: "POST", Path: "/api/v1/agents/{id}/logs", Auth: "admin", Description: "Request a bounded, on-demand pull of retained agent diagnostics."},
 		{Group: "Diagnostics", Method: "GET", Path: "/api/v1/diagnostics/logs", Auth: "admin", Description: "Query bounded, redacted control-plane and server-observed agent diagnostics."},
 		{Group: "Diagnostics", Method: "GET", Path: "/api/v1/diagnostics/export", Auth: "admin", Description: "Download a bounded diagnostics archive sanitized for issue sharing."},
 	}

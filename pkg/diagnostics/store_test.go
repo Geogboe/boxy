@@ -10,6 +10,16 @@ import (
 	"time"
 )
 
+func TestNewFileStore_DefaultRetentionIsFourteenDays(t *testing.T) {
+	store, err := NewFileStore(filepath.Join(t.TempDir(), "diagnostics.jsonl"), 0, 0)
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+	if store.maxAge != 14*24*time.Hour {
+		t.Fatalf("max age = %v, want 14 days", store.maxAge)
+	}
+}
+
 func TestFileStorePersistsOrdersAndPaginates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "diagnostics.jsonl")
 	first := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)

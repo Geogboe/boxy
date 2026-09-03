@@ -42,6 +42,7 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/agent-tokens/{id}", s.handleDeleteAgentToken)
 	mux.HandleFunc("GET /api/v1/agents", s.handleListAgents)
 	mux.HandleFunc("DELETE /api/v1/agents/{id}", s.handleRevokeAgent)
+	mux.HandleFunc("POST /api/v1/agents/{id}/logs", s.handleRequestAgentLogs)
 	mux.HandleFunc("GET /api/v1/diagnostics/logs", s.handleListDiagnostics)
 	mux.HandleFunc("GET /api/v1/diagnostics/export", s.handleExportDiagnostics)
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Geogboe/boxy/pkg/diagnostics"
 	"github.com/spf13/cobra"
@@ -30,6 +31,15 @@ type diagnosticsPageResponse struct {
 	NextCursor string              `json:"next_cursor,omitempty"`
 }
 
+type agentLogPullRequest struct {
+	Since string `json:"since,omitempty"`
+	Limit int    `json:"limit,omitempty"`
+}
+
+type agentLogPullResponse struct {
+	RequestID string `json:"request_id"`
+}
+
 func newDiagnosticsCommand() *cobra.Command {
 	var server string
 	cmd := &cobra.Command{
@@ -44,7 +54,50 @@ func newDiagnosticsCommand() *cobra.Command {
 	cmd.PersistentFlags().Bool("insecure", false, "skip HTTPS certificate verification (development only)")
 	cmd.AddCommand(newDiagnosticsLogsCommand(func() string { return server }))
 	cmd.AddCommand(newDiagnosticsExportCommand(func() string { return server }))
+	cmd.AddCommand(newDiagnosticsCollectCommand(func() string { return server }))
 	return cmd
+}
+
+func newDiagnosticsCollectCommand(serverAddr func() string) *cobra.Command {
+	var since string
+	var limit int
+	cmd := &cobra.Command{
+		Use:   "collect <agent-id>",
+		Short: "Request retained logs from a connected agent",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runDiagnosticsCollect(cmd.Context(), args[0], since, limit, serverAddr(), cmd)
+		},
+	}
+	cmd.Flags().StringVar(&since, "since", "", "only request events after an RFC3339 timestamp")
+	cmd.Flags().IntVar(&limit, "limit", diagnostics.HardMaxLimit, "maximum number of events (1-1000)")
+	return cmd
+}
+
+func runDiagnosticsCollect(ctx context.Context, rawAgent, rawSince string, limit int, server string, cmd *cobra.Command) error {
+	agentID, err := validatePathID("agent id", rawAgent)
+	if err != nil {
+		return err
+	}
+	if limit < 1 || limit > diagnostics.HardMaxLimit {
+		return fmt.Errorf("--limit must be between 1 and %d", diagnostics.HardMaxLimit)
+	}
+	since := strings.TrimSpace(rawSince)
+	if since != "" {
+		if _, err := time.Parse(time.RFC3339, since); err != nil {
+			return fmt.Errorf("--since must be an RFC3339 timestamp: %w", err)
+		}
+	}
+	client, err := apiClientForCommand(cmd, server)
+	if err != nil {
+		return err
+	}
+	response, err := postJSON[agentLogPullRequest, agentLogPullResponse](ctx, client, apiBaseURL(server)+"/api/v1/agents/"+agentID+"/logs", agentLogPullRequest{Since: since, Limit: limit})
+	if err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "requested logs from agent %s (request ID: %s)\n", rawAgent, response.RequestID)
+	return nil
 }
 
 type diagnosticsExportOpts struct {
