@@ -2,9 +2,11 @@ package artifact
 
 import (
 	"context"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseRef(t *testing.T) {
@@ -111,6 +113,20 @@ func TestDirectoryRegistryRejectsInvalidArtifactTypes(t *testing.T) {
 		if err == nil {
 			t.Fatalf("Publish with artifact type %q succeeded", artifactType)
 		}
+	}
+}
+
+func TestDirectoryRegistryRejectsSourceOutsideRoot(t *testing.T) {
+	reg, err := NewDirectoryRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = reg.SignSource(context.Background(), Source{
+		Path:   filepath.Join(reg.Root, "..", "outside.vhdx"),
+		Digest: "sha256:" + strings.Repeat("0", 64),
+	}, time.Minute)
+	if err == nil || !strings.Contains(err.Error(), "outside artifact registry directory") {
+		t.Fatalf("SignSource() error = %v, want registry containment failure", err)
 	}
 }
 

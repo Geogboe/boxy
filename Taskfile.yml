@@ -178,6 +178,14 @@ tasks:
           NAME: diagnostics
           PACKAGES: ./pkg/diagnostics
 
+  agent:test:artifacts:
+    desc: Run artifact registry and source delivery tests
+    cmds:
+      - task: agent:go-test
+        vars:
+          NAME: artifacts
+          PACKAGES: ./pkg/artifact
+
   agent:test:diagnostics:server:
     desc: Run focused agent and diagnostics API tests with captured output
     cmds:
