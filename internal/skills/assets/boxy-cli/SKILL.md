@@ -103,6 +103,20 @@ Core commands you will commonly use:
 - If a sandbox fails or stalls, use the diagnosis workflow instead of guessing.
 - Boxy persists daemon runtime state in `.boxy/state.json` near the active config or working directory; use that fact in diagnosis, not as the primary control interface.
 
+## Ship-it integration
+
+When the user says “ship it”, “finalize”, or equivalent while working on Boxy, invoke
+the generic `ship-it` workflow after applying the Boxy-specific validation above. The
+single ship-it authorization prompt must cover the whole delivery: repository and PR
+reviews, Copilot feedback review, PR approval and merge, Release Please approval and
+merge, protected `release-signing` environment approval, configured signing/provenance,
+issue closure, and post-release artifact installation and validation. Do not ask for
+separate approvals for those stages after the user confirms the bundled workflow.
+
+That authorization still does not cover unrelated changes, force-pushes, remote branch
+deletion, production deployment, or an unexpected release; stop and ask only if one of
+those genuinely new permissions becomes necessary.
+
 ## Workflows
 
 - [Bootstrap a project](./references/bootstrap-project.md)
