@@ -496,3 +496,9 @@ tasks:
         if: '{{eq OS "windows"}}'
       - cmd: bash scripts/e2e-serve.sh {{.CLI_ARGS}}
         if: '{{ne OS "windows"}}'
+
+  test:e2e:browser:
+    desc: Run Firefox browser coverage for the dashboard
+    dir: ./tests/e2e
+    cmds:
+      - npm test -- --reporter=line
