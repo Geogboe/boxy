@@ -499,6 +499,27 @@ tasks:
 
   test:e2e:browser:
     desc: Run Firefox browser coverage for the dashboard
+    cmds:
+      - task: agent:test:e2e:browser
+
+  agent:test:e2e:browser:
+    desc: Run Firefox browser coverage with captured diagnostics
+    cmds:
+      - task: agent:test:e2e:browser:windows
+      - task: agent:test:e2e:browser:unix
+
+  agent:test:e2e:browser:windows:
+    platforms: [windows]
+    internal: true
+    silent: true
     dir: ./tests/e2e
     cmds:
-      - npm test -- --reporter=line
+      - pwsh -NoProfile -File "{{.ROOT_DIR}}/scripts/agent-check.ps1" -Name test-e2e-browser -Executable npm test
+
+  agent:test:e2e:browser:unix:
+    platforms: [linux, darwin]
+    internal: true
+    silent: true
+    dir: ./tests/e2e
+    cmds:
+      - bash "{{.ROOT_DIR}}/scripts/agent-check.sh" test-e2e-browser npm test
