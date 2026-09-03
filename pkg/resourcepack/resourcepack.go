@@ -274,11 +274,22 @@ func (d *packageDiscovery) visit(ref artifact.Ref, ownerChain []string) error {
 	if !containsScope(manifest.Scopes, d.request.Scope) {
 		return fmt.Errorf("%w: package %q does not declare scope %q", ErrInvalidPackageScope, canonical, d.request.Scope)
 	}
-	if !containsEvent(manifest.Events, d.request.Event) {
-		return fmt.Errorf("%w: package %q does not declare event %q", ErrInvalidPackageScope, canonical, d.request.Event)
-	}
 	if !manifest.Method.Supported() {
 		return fmt.Errorf("%w: package %q uses method %q", ErrUnsupportedMethod, canonical, manifest.Method)
+	}
+
+	parameters := mergeMaps(manifest.Defaults, inputParameters(manifest.Inputs))
+	maps.Copy(parameters, d.request.Overrides)
+	digest, err := digestInputs(manifest.Inputs, parameters)
+	if err != nil {
+		return fmt.Errorf("canonicalize package %q inputs: %w", canonical, err)
+	}
+	d.seen[canonical] = struct{}{}
+	if alreadyApplied(d.request.Applied, canonical, digest) {
+		return nil
+	}
+	if !containsEvent(manifest.Events, d.request.Event) {
+		return fmt.Errorf("%w: package %q does not declare event %q", ErrInvalidPackageScope, canonical, d.request.Event)
 	}
 
 	chain := append(append([]string(nil), ownerChain...), canonical)
@@ -292,16 +303,6 @@ func (d *packageDiscovery) visit(ref artifact.Ref, ownerChain []string) error {
 		}
 	}
 
-	parameters := mergeMaps(manifest.Defaults, inputParameters(manifest.Inputs))
-	maps.Copy(parameters, d.request.Overrides)
-	digest, err := digestInputs(manifest.Inputs, parameters)
-	if err != nil {
-		return fmt.Errorf("canonicalize package %q inputs: %w", canonical, err)
-	}
-	d.seen[canonical] = struct{}{}
-	if alreadyApplied(d.request.Applied, canonical, digest) {
-		return nil
-	}
 	d.plan.Packages = append(d.plan.Packages, PlannedPackage{
 		Reference:   canonical,
 		Manifest:    manifest,
