@@ -18,7 +18,7 @@ templates:
     source: windows-2022
   windows-apps:
     extends: windows-base
-    packages: [app1@1.0.0]
+    packages: [chocolatey@1.0.0, windows-tools@1.0.0]
 pools:
   - name: apps
     template: windows-apps
@@ -36,8 +36,11 @@ pools:
 	if err != nil {
 		t.Fatalf("ResolveTemplate: %v", err)
 	}
-	if resolved.Type != "vm" || resolved.Source != "windows-2022" || len(resolved.Packages) != 1 {
+	if resolved.Type != "vm" || resolved.Source != "windows-2022" || len(resolved.Packages) != 2 {
 		t.Fatalf("resolved template = %#v, want inherited shape and package", resolved)
+	}
+	if got := resolved.Packages; got[0] != "chocolatey@1.0.0" || got[1] != "windows-tools@1.0.0" {
+		t.Fatalf("resolved package order = %v, want declaration order", got)
 	}
 }
 
@@ -70,7 +73,7 @@ func TestPackageRegistryCompilesBuiltinPackageManager(t *testing.T) {
 		t.Fatalf("registry manifest was not compiled:\n%s", manifest)
 	}
 	if strings.Contains(manifest, "builtin:") || strings.Contains(manifest, "manager:") {
-		t.Fatalf("registry manifest retained recipe fields:\n%s", manifest)
+		t.Fatalf("registry manifest retained package declaration fields:\n%s", manifest)
 	}
 }
 

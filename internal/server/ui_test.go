@@ -58,6 +58,30 @@ func TestUI_home_renders(t *testing.T) {
 	}
 }
 
+func TestUI_help_rendersPackageGuidanceAndNavbarLink(t *testing.T) {
+	t.Parallel()
+
+	st := store.NewMemoryStore()
+	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/help", nil)))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	body := w.Body.String()
+	for _, want := range []string{
+		"Boxy package help",
+		"packages: [chocolatey@1.0.0, windows-tools@1.0.0]",
+		"Chocolatey.Chocolatey",
+		`href="/ui/help" class="active" aria-current="page"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("help page missing %q, body = %q", want, body)
+		}
+	}
+}
+
 func TestUI_pools_renders(t *testing.T) {
 	t.Parallel()
 	st := store.NewMemoryStore()

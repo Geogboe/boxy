@@ -24,11 +24,11 @@ packages:
 
 The selected executable (`winget` or `choco`) must already be installed and
 available to the configured guest credential. Its sources require network
-access, and installed versions follow those sources because this recipe does
+access, and installed versions follow those sources because this package does
 not pin versions. Missing managers and nonzero installer exits fail the
 package operation; Boxy does not elevate, bootstrap, upgrade, or auto-detect a
 manager.
 
-Use a real Windows guest smoke test before relying on these recipes in a
+Use a real Windows guest smoke test before relying on these packages in a
 production pool. See [`docs/package-artifacts.md`](../../docs/package-artifacts.md)
 for the shared contract.

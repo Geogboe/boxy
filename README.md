@@ -301,7 +301,7 @@ pools:
 - `templates` are reusable desired resource shapes; `pools` own inventory policy and may override template fields for a particular pool.
 - Config is stateless and declarative and is read once on startup. Runtime state (resources, sandboxes) lives in the state store — see [State Store](#state-store) below.
 
-### Built-in package-manager recipes
+### Built-in package-manager packages
 
 Packages can declare common guest setup without carrying a script file. Boxy
 compiles the declaration into the same immutable inline `shell` or
@@ -320,6 +320,42 @@ packages:
         packages: [curl, git]
 ```
 
+For a Windows guest, Chocolatey can be installed explicitly through Winget.
+The official Winget package identifier is
+[`Chocolatey.Chocolatey`](https://github.com/microsoft/winget-pkgs/tree/master/manifests/c/Chocolatey/Chocolatey):
+
+```yaml
+packages:
+  chocolatey:
+    builtin: package-manager
+    version: 1.0.0
+    scopes: [resource]
+    events: [provision]
+    inputs:
+      parameters:
+        manager: winget
+        packages: [Chocolatey.Chocolatey]
+  windows-tools:
+    builtin: package-manager
+    version: 1.0.0
+    scopes: [resource]
+    events: [provision]
+    inputs:
+      parameters:
+        manager: chocolatey
+        packages: [git]
+
+templates:
+  windows-base:
+    packages: [chocolatey@1.0.0, windows-tools@1.0.0]
+```
+
+The first package installs Chocolatey through Winget; the second uses
+Chocolatey. Package-reference order is retained. Until an explicit dependency
+graph exists, list packages in dependency order; a future design must define
+missing-dependency, cycle, deterministic-order, inheritance, and failure
+semantics; see [issue #310](https://github.com/Geogboe/boxy/issues/310).
+
 Package IDs are validated and sorted before the script is generated; duplicate
 IDs and shell/PowerShell metacharacters are rejected. Only safe portable
 identifier characters are accepted;
@@ -331,7 +367,7 @@ and package versions follow those repositories because this first slice does
 not pin versions. Missing managers and nonzero manager exits fail the package
 operation; a successful applied-package digest preserves normal idempotency.
 
-Build a package artifact explicitly with `boxy package build`; recipe
+Build a package artifact explicitly with `boxy package build`; package
 compilation also runs during config validation, registry construction, and
 package planning. See [Resource package artifacts](docs/package-artifacts.md)
 for command details and [Deployment examples](docs/package-artifacts.md#deployment-examples)
