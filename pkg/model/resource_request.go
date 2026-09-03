@@ -5,7 +5,7 @@ import "fmt"
 // ResourceRequest expresses demand for one or more resources matching a (Type, Profile) key.
 //
 // This is intentionally small scaffolding:
-// - It is not a full "spec" or "recipe".
+// - It is not a full "spec" or "configuration".
 // - It exists to make pooling/matching deterministic beyond coarse ResourceType.
 //
 // Examples:
