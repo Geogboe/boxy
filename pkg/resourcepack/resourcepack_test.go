@@ -162,6 +162,9 @@ func TestEngineApplyPreservesPackageOrderAndStopsAfterFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
 	}
+	if len(plan.Packages) != 2 {
+		t.Fatalf("planned package count = %d, want 2", len(plan.Packages))
+	}
 	if got := []string{plan.Packages[0].Reference, plan.Packages[1].Reference}; got[0] != "chocolatey@1.0.0" || got[1] != "windows-tools@1.0.0" {
 		t.Fatalf("planned references = %v, want declaration order", got)
 	}
