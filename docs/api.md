@@ -85,6 +85,7 @@ API-key roles:
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/api/v1/diagnostics/logs` | admin | Query bounded, redacted control-plane and server-observed agent diagnostics. |
+| GET | `/api/v1/diagnostics/export` | admin | Download a bounded diagnostics archive sanitized for issue sharing. |
 
 ## Agent list response
 
