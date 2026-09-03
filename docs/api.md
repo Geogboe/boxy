@@ -120,6 +120,8 @@ CLI execution follows the same durable API. Normal `boxy sandbox exec` attaches 
 
 `GET /api/v1/diagnostics/logs` is administrator-only. It returns bounded, redacted control-plane and server-observed agent events as `{"events": [...], "next_cursor": "..."}`. Filter with `since`, `level`, `component`, `pool`, `agent`, `resource`, and `limit`; pass the opaque `cursor` returned by a prior response for the next page. Events are retained for up to seven days and 10 MiB, with 100 events per page by default and 1000 as the hard maximum. Credentials, signed URL queries, and secret-bearing fields are removed before events are persisted or rendered. Query access is recorded in a separate audit log.
 
+`GET /api/v1/diagnostics/export` uses the same filters and returns a bounded JSON archive for issue sharing. It always sanitizes credentials, signed URLs, hostnames, IP addresses, usernames, and host/resource identifiers, while preserving stable placeholders for correlation within that export. The CLI equivalent is `boxy diagnostics export --agent <agent-id> --output diagnostics.json`.
+
 ## Compatibility
 
 The API version is part of the URL. Additive response fields are compatible within `/api/v1`; breaking changes require a new API version.
