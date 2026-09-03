@@ -32,7 +32,7 @@ func generate(input, output string) error {
 	if err != nil {
 		return fmt.Errorf("render help source %q: %w", input, err)
 	}
-	if err := os.WriteFile(output, []byte(content), 0o600); err != nil {
+	if err := os.WriteFile(output, []byte(content), 0o600); err != nil { //nolint:gosec // output is the explicit generator target
 		return fmt.Errorf("write help template %q: %w", output, err)
 	}
 	if err := os.Chmod(output, 0o644); err != nil { //nolint:gosec // generated dashboard template is intentionally world-readable
