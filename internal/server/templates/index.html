@@ -13,6 +13,16 @@
      hx-swap="innerHTML">
   {{template "stats_fragment" .}}
 </div>
+<section class="quick-links" aria-labelledby="quick-links-title">
+  <div class="section-heading"><h2 id="quick-links-title">Workspace</h2><span class="table-card-subtitle">Jump to the operational view you need</span></div>
+  <div class="quick-link-grid">
+    <a class="quick-link-card" href="/ui/pools"><strong>Pools</strong><span>Capacity and resources</span></a>
+    <a class="quick-link-card" href="/ui/sandboxes"><strong>Sandboxes</strong><span>Active environments</span></a>
+    <a class="quick-link-card" href="/ui/agents"><strong>Agents</strong><span>Provider hosts</span></a>
+    <a class="quick-link-card" href="/ui/catalog"><strong>Catalog</strong><span>Templates and artifacts</span></a>
+    {{if .CanViewDiagnostics}}<a class="quick-link-card" href="/ui/diagnostics"><strong>Diagnostics</strong><span>Redacted operational events</span></a>{{end}}
+  </div>
+</section>
 {{end}}
 
 {{define "stats_fragment"}}

@@ -156,7 +156,7 @@ assert_json_array "GET /api/v1/sandboxes" "$BASE/api/v1/sandboxes"
 assert_status "GET /api/v1/diagnostics/logs" "$BASE/api/v1/diagnostics/logs?limit=2" 200
 
 assert_html_contains "GET /"              "$BASE/"                   "Overview"
-assert_html_contains "GET /ui/pools"      "$BASE/ui/pools"           "All Pools"
+assert_html_contains "GET /ui/pools"      "$BASE/ui/pools"           "Active pools"
 assert_html_contains "GET /ui/sandboxes"  "$BASE/ui/sandboxes"       "All Sandboxes"
 assert_html_contains "GET /ui/agents"     "$BASE/ui/agents"           "Agents"
 assert_html_contains "GET /ui/diagnostics" "$BASE/ui/diagnostics"     "Diagnostics"

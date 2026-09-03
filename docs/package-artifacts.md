@@ -7,6 +7,8 @@ Build one explicitly with:
 ```sh
 boxy package build --manifest package.yaml --output package.json
 boxy package publish --artifact package.json --registry .boxy/registry
+# Publish to a configured store (the config must name the store)
+boxy package publish --artifact package.json --config boxy.yaml --store guest-artifacts
 ```
 
 ## Built-in package-manager package
@@ -60,10 +62,27 @@ templates:
 ```
 
 The first package installs Chocolatey through Winget; the second uses
-Chocolatey. Boxy retains the order of package references and skips later
-packages when an earlier package fails. A future dependency graph should
-define missing-dependency, cycle, deterministic-order, inheritance, and
-failure semantics explicitly; see [issue #310](https://github.com/Geogboe/boxy/issues/310).
+Chocolatey. Dependencies are exact immutable references and are resolved
+before their dependents:
+
+```yaml
+packages:
+  windows-tools:
+    version: 1.0.0
+    dependencies: [chocolatey@1.0.0]
+    method: powershell
+    scopes: [resource]
+    events: [provision]
+```
+
+Discovery is stable: inherited/template package declarations retain their
+order, each dependency list retains its order, and an exact reference runs
+once at its first discovery. Missing references and cycles fail validation
+with deterministic messages containing the complete cycle chain. Validation
+runs at startup and planning re-checks the graph defensively. With no
+dependencies, the historical ordered-reference behavior is unchanged. Apply
+still stops at the first failure: successful applications remain recorded,
+while the failed package, its dependents, and later packages do not run.
 
 Boxy compiles this declaration into the normal immutable inline-script
 package. Linux managers use `shell`; Windows managers use `powershell`.
@@ -92,6 +111,45 @@ receive package policy or resolve package references.
 Manager bootstrapping is deliberately deferred. Any future opt-in bootstrap
 feature must specify installer provenance, checksums or signatures, privilege,
 network-failure handling, and rollback first.
+
+## Artifact stores and source delivery
+
+`artifact_stores` supports `local`, `filesystem`, and S3-compatible stores.
+S3 endpoints may set `bucket`, `path`, `region`, and `path_style`. Credentials
+must be references such as `env:BOXY_S3_ACCESS_KEY`, never literal secrets:
+
+```yaml
+artifact_stores:
+  guest-artifacts:
+    type: s3
+    endpoint: https://s3.example.invalid
+    bucket: boxy-artifacts
+    path: production
+    region: us-east-1
+    path_style: true
+    access_key: env:BOXY_S3_ACCESS_KEY
+    secret_key: env:BOXY_S3_SECRET_KEY
+sources:
+  windows-2022:
+    store: guest-artifacts
+    path: images/windows-2022.vhdx
+    digest: sha256:<64 hex characters>
+    format: vhdx
+    provider: hyperv
+```
+
+Source registration remains declarative. Upload source bytes with the
+provider's storage tooling, add the store/source/template entries to
+`boxy.yaml`, and restart or reload Boxy. At provisioning time Boxy gives the
+provider a provider-neutral descriptor with a 15-minute, object-specific
+signed pull URL. Source bytes do not transit or persist in the control plane.
+Providers download directly, verify SHA-256, and fail closed on expiry,
+missing objects, download errors, cancellation, or digest mismatch. Hyper-V
+accepts local paths and VHD/VHDX descriptors; Docker continues to use image
+references and custom registries and rejects raw source descriptors. Source
+materialization is bounded by `pkg/artifact.DefaultMaxSourceBytes` (64 GiB) by
+default; callers that need a smaller policy can use
+`artifact.PullSourceWithOptions` with `PullOptions.MaxBytes`.
 
 ## Deployment examples
 

@@ -26,6 +26,7 @@ import (
 	"github.com/Geogboe/boxy/internal/pool"
 	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
 	"github.com/Geogboe/boxy/pkg/agentsdk"
+	"github.com/Geogboe/boxy/pkg/diagnostics"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/pki"
 	"github.com/Geogboe/boxy/pkg/providersdk"
@@ -62,8 +63,9 @@ type Server struct {
 	heartbeatInterval    time.Duration
 	missedHeartbeatLimit int
 
-	logger *slog.Logger
-	now    func() time.Time
+	logger      *slog.Logger
+	diagnostics diagnostics.Store
+	now         func() time.Time
 
 	mu           sync.Mutex
 	remoteAgents map[string]*agentsdk.RemoteAgent
@@ -102,6 +104,34 @@ func New(st store.Store, registry *pool.AgentRegistry, ca *pki.CA, heartbeatInte
 		remoteAgents:         make(map[string]*agentsdk.RemoteAgent),
 		forceStop:            make(map[string]chan struct{}),
 	}
+}
+
+// SetDiagnosticsStore attaches the bounded server-observed agent log store.
+// It must be called before an agent connection is accepted.
+func (s *Server) SetDiagnosticsStore(logs diagnostics.Store) {
+	if s != nil {
+		s.diagnostics = logs
+	}
+}
+
+func (s *Server) storeAgentLogs(ctx context.Context, agentID string, events []diagnostics.Event) error {
+	if s == nil || s.diagnostics == nil {
+		return nil
+	}
+	for _, event := range events {
+		event.Agent = agentID
+		event.Message = diagnostics.RedactText(event.Message)
+		event.ErrorSummary = diagnostics.RedactText(event.ErrorSummary)
+		if event.Component == "" {
+			event.Component = "agent"
+		}
+		if err := s.diagnostics.Append(ctx, event); err != nil {
+			code, summary := diagnostics.DescribeError(fmt.Errorf("agent log append: %w", err))
+			s.log().Warn("agent diagnostics append failed", "agent_id", agentID, "operation", "agent_log_ingest", "error_code", code, "error_summary", summary)
+			return err
+		}
+	}
+	return nil
 }
 
 // log returns s.logger, falling back to slog.Default() — same pattern as
@@ -226,13 +256,14 @@ func (s *Server) Connect(stream boxyagentv1.AgentTransportService_ConnectServer)
 	// (useful for an operator diagnosing a real skewed agent) goes to the
 	// server log instead, not to whatever opened the stream.
 	if reg.GetAgentVersion() != s.version {
-		s.log().Warn("agent registration rejected: version mismatch", "agent_name", reg.GetAgentName(), "agent_version", reg.GetAgentVersion(), "server_version", s.version)
+		s.log().Warn("agent registration rejected", "operation", "agent_registration", "error_code", "agent_version_mismatch", "error_summary", "agent and server versions do not match")
 		return fmt.Errorf("agent version does not match server version; upgrade the agent (or the server) so both sides match")
 	}
 
 	agentID, certPEM, keyPEM, err := s.authenticate(ctx, reg)
 	if err != nil {
-		s.log().Warn("agent registration rejected", "error", err)
+		code, summary := diagnostics.DescribeError(fmt.Errorf("agent authentication failed: %w", err))
+		s.log().Warn("agent registration rejected", "operation", "agent_registration", "error_code", code, "error_summary", summary)
 		return fmt.Errorf("authenticate: %w", err)
 	}
 
@@ -242,6 +273,7 @@ func (s *Server) Connect(stream boxyagentv1.AgentTransportService_ConnectServer)
 		Providers: toProviderTypes(reg.GetProviderTypes()),
 	}
 	remote := agentsdk.NewRemoteAgent(info, stream)
+	remote.SetLogSink(s.storeAgentLogs)
 	forceStop := make(chan struct{})
 
 	s.mu.Lock()

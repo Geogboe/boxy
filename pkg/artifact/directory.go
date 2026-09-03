@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // DirectoryRegistry is a small local artifact registry. It is useful for
@@ -113,6 +114,60 @@ func (r *DirectoryRegistry) ResolveSource(ctx context.Context, name string) (Sou
 		return Source{}, err
 	}
 	return source, nil
+}
+
+// SignSource returns a local-path descriptor for a source owned by this
+// filesystem store. A relative source path is resolved against the store
+// root, while an absolute path is preserved for compatibility with existing
+// local configurations.
+func (r *DirectoryRegistry) SignSource(ctx context.Context, source Source, _ time.Duration) (SourceDescriptor, error) {
+	if err := contextErr(ctx); err != nil {
+		return SourceDescriptor{}, err
+	}
+	if err := ValidateDigest(source.Digest); err != nil {
+		return SourceDescriptor{}, err
+	}
+	if r == nil || strings.TrimSpace(r.Root) == "" {
+		return SourceDescriptor{}, fmt.Errorf("artifact registry directory is required")
+	}
+	root, err := filepath.Abs(filepath.Clean(r.Root))
+	if err != nil {
+		return SourceDescriptor{}, fmt.Errorf("resolve artifact registry directory: %w", err)
+	}
+	if resolvedRoot, resolveErr := filepath.EvalSymlinks(root); resolveErr == nil {
+		root = resolvedRoot
+	}
+	location := strings.TrimSpace(source.Path)
+	if location == "" {
+		return SourceDescriptor{}, fmt.Errorf("source path is required")
+	}
+	if !filepath.IsAbs(location) {
+		location = filepath.Join(root, location)
+	}
+	location, err = filepath.Abs(filepath.Clean(location))
+	if err != nil {
+		return SourceDescriptor{}, fmt.Errorf("resolve source path: %w", err)
+	}
+	if !pathWithin(root, location) {
+		return SourceDescriptor{}, fmt.Errorf("source path is outside artifact registry directory")
+	}
+	if resolvedLocation, resolveErr := filepath.EvalSymlinks(location); resolveErr == nil {
+		location = resolvedLocation
+		if !pathWithin(root, location) {
+			return SourceDescriptor{}, fmt.Errorf("source path is outside artifact registry directory")
+		}
+	} else if !os.IsNotExist(resolveErr) {
+		return SourceDescriptor{}, fmt.Errorf("resolve source path: %w", resolveErr)
+	}
+	return SourceDescriptor{Path: location, Digest: source.Digest, Format: source.Format, OS: source.OS, Provider: source.Provider, Metadata: cloneStrings(source.Metadata)}, nil
+}
+
+func pathWithin(root, location string) bool {
+	relative, err := filepath.Rel(root, location)
+	if err != nil {
+		return false
+	}
+	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 func (r *DirectoryRegistry) artifactPath(ref Ref) (string, error) {

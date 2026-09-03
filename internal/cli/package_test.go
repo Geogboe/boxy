@@ -57,6 +57,40 @@ func TestPackageBuildAndPublish(t *testing.T) {
 	}
 }
 
+func TestPackagePublishUsesNamedConfiguredStore(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	artifactPath := filepath.Join(dir, "package.json")
+	value := artifact.Artifact{
+		Type:     artifact.ArtifactTypePackage,
+		Ref:      artifact.Ref{Type: artifact.ArtifactTypePackage, Name: "configured", Version: "1.0.0"},
+		Manifest: []byte("name: configured\nversion: 1.0.0\nmethod: shell\nscopes: [resource]\nevents: [provision]\n"),
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifactPath, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	storePath := filepath.Join(dir, "configured-store")
+	configPath := filepath.Join(dir, "boxy.yaml")
+	config := "artifact_stores:\n  release:\n    type: local\n    path: " + storePath + "\n"
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runPackagePublishWithOptions(context.Background(), artifactPath, "", configPath, "release"); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := artifact.NewDirectoryRegistry(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Resolve(context.Background(), value.Ref); err != nil {
+		t.Fatalf("resolve configured publication: %v", err)
+	}
+}
+
 func TestPackageBuildCompilesBuiltinPackageManager(t *testing.T) {
 	t.Parallel()
 

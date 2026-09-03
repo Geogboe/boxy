@@ -156,11 +156,91 @@ tasks:
           NAME: test-all
           PACKAGES: ./...
 
+  agent:test:installers:
+    desc: Run installer tests with captured diagnostics
+    cmds:
+      - task: agent:go-test
+        vars:
+          NAME: test-installers
+          PACKAGES: ./scripts
+
+  agent:test:coverage:
+    desc: Run Go tests with captured output and report total coverage
+    cmds:
+      - task: agent:test:coverage:windows
+      - task: agent:test:coverage:unix
+
+  agent:test:diagnostics:
+    desc: Run focused diagnostics package tests with captured output
+    cmds:
+      - task: agent:go-test
+        vars:
+          NAME: diagnostics
+          PACKAGES: ./pkg/diagnostics
+
+  agent:test:artifacts:
+    desc: Run artifact registry and source delivery tests
+    cmds:
+      - task: agent:go-test
+        vars:
+          NAME: artifacts
+          PACKAGES: ./pkg/artifact
+
+  agent:test:diagnostics:server:
+    desc: Run focused agent and diagnostics API tests with captured output
+    cmds:
+      - task: agent:go-test
+        vars:
+          NAME: diagnostics-server
+          PACKAGES: ./pkg/agentsdk ./internal/agentserver ./internal/server ./internal/cli ./internal/pool
+
+  agent:test:coverage:windows:
+    platforms: [windows]
+    internal: true
+    silent: true
+    env:
+      GOFLAGS: -coverprofile=.tmp/coverage.out
+    cmds:
+      - cmd: pwsh -NoProfile -File scripts/agent-check.ps1 -Name go-coverage -Executable go test ./...
+      - cmd: pwsh -NoProfile -File scripts/coverage-report.ps1
+        silent: true
+
+  agent:test:coverage:unix:
+    platforms: [linux, darwin]
+    internal: true
+    silent: true
+    env:
+      GOFLAGS: -coverprofile=.tmp/coverage.out
+    cmds:
+      - cmd: bash scripts/agent-check.sh go-coverage go test ./...
+      - cmd: bash scripts/coverage-report.sh
+        silent: true
+
   agent:test:race:
     desc: Run the platform-appropriate race suite with captured diagnostics
     cmds:
       - task: agent:test:race:windows
       - task: agent:test:race:unix
+
+  agent:ci:validate:
+    desc: Run the complete CI validation with captured diagnostics
+    cmds:
+      - task: agent:ci:validate:windows
+      - task: agent:ci:validate:unix
+
+  agent:ci:validate:windows:
+    platforms: [windows]
+    internal: true
+    silent: true
+    cmds:
+      - pwsh -NoProfile -File scripts/agent-check.ps1 -Name ci-validate -Executable task ci:validate
+
+  agent:ci:validate:unix:
+    platforms: [linux, darwin]
+    internal: true
+    silent: true
+    cmds:
+      - bash scripts/agent-check.sh ci-validate task ci:validate
 
   agent:test:race:windows:
     platforms: [windows]
@@ -410,7 +490,9 @@ tasks:
     cmds:
       - cmd: pwsh -NoProfile -File scripts/betterleaks-git.ps1 {{.BETTERLEAKS_PII_CONFIG}}
         if: '{{eq OS "windows"}}'
-      - cmd: betterleaks git . --config {{.BETTERLEAKS_PII_CONFIG}} --no-banner --redact --log-opts HEAD
+      - cmd: mkdir -p .tmp
+        if: '{{ne OS "windows"}}'
+      - cmd: betterleaks --gitleaks-ignore-path .betterleaksignore --report-format json --report-path .tmp/pii-findings.json git . --config {{.BETTERLEAKS_PII_CONFIG}} --no-banner --redact --log-opts HEAD
         if: '{{ne OS "windows"}}'
 
   pii:scan:stdin:
@@ -468,3 +550,30 @@ tasks:
         if: '{{eq OS "windows"}}'
       - cmd: bash scripts/e2e-serve.sh {{.CLI_ARGS}}
         if: '{{ne OS "windows"}}'
+
+  test:e2e:browser:
+    desc: Run Firefox browser coverage for the dashboard
+    cmds:
+      - task: agent:test:e2e:browser
+
+  agent:test:e2e:browser:
+    desc: Run Firefox browser coverage with captured diagnostics
+    cmds:
+      - task: agent:test:e2e:browser:windows
+      - task: agent:test:e2e:browser:unix
+
+  agent:test:e2e:browser:windows:
+    platforms: [windows]
+    internal: true
+    silent: true
+    dir: ./tests/e2e
+    cmds:
+      - pwsh -NoProfile -File "{{.ROOT_DIR}}/scripts/agent-check.ps1" -Name test-e2e-browser -Executable npm test
+
+  agent:test:e2e:browser:unix:
+    platforms: [linux, darwin]
+    internal: true
+    silent: true
+    dir: ./tests/e2e
+    cmds:
+      - bash "{{.ROOT_DIR}}/scripts/agent-check.sh" test-e2e-browser npm test

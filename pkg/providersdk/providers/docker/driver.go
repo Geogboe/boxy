@@ -95,6 +95,9 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 	if err != nil {
 		return nil, fmt.Errorf("decode create config: %w", err)
 	}
+	if cc.Source != nil {
+		return nil, fmt.Errorf("docker provider does not support raw source format %q; use config.image or a custom registry", cc.Source.Format)
+	}
 	if strings.TrimSpace(cc.Image) == "" {
 		return nil, fmt.Errorf("config.image is required")
 	}

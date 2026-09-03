@@ -4,6 +4,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$reportDirectory = Join-Path (Get-Location) ".tmp"
+New-Item -ItemType Directory -Force -Path $reportDirectory | Out-Null
+
 # Betterleaks' Git source deliberately isolates the user's system and global
 # Git configuration. On Windows, Betterleaks maps Go's os.DevNull to the DOS
 # device name NUL for GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM. Native ARM64
@@ -33,7 +36,7 @@ $env:PATH = "$shimDirectory$([IO.Path]::PathSeparator)$env:PATH"
 # that never touched it. HEAD's ancestry already includes full history back
 # to the initial commit, so this loses no real coverage of what's being
 # tested — it only drops sibling branches this run isn't about.
-$betterleaksArgs = @("git", ".", "--no-banner", "--redact", "--log-opts", "HEAD")
+$betterleaksArgs = @("--gitleaks-ignore-path", ".betterleaksignore", "--report-format", "json", "--report-path", (Join-Path $reportDirectory "pii-findings.json"), "git", ".", "--no-banner", "--redact", "--log-opts", "HEAD")
 if (-not [string]::IsNullOrWhiteSpace($ConfigPath)) {
     $betterleaksArgs += @("--config", $ConfigPath)
 }

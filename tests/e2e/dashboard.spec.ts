@@ -17,6 +17,9 @@ test.describe("Dashboard — UI enabled", () => {
 
     // Layout elements
     await expect(page.locator(".sidebar-brand")).toHaveText("Boxy");
+    await expect(page.locator('.sidebar-brand img[src="/static/favicon.svg"]')).toHaveCount(1);
+    await expect(page.locator('.app-header a[href="https://github.com/Geogboe/boxy"]')).toHaveCount(1);
+    await expect(page.locator(".version-label")).toHaveText("dev");
     // Help is always available alongside the role-dependent operator links.
     await expect(page.locator('.sidebar-nav a[href="/ui/help"]')).toHaveCount(1);
 
@@ -44,8 +47,9 @@ test.describe("Dashboard — UI enabled", () => {
 
     await expect(page.locator('.sidebar-nav a.active')).toHaveText("Pools");
     await expect(page.locator(".page-title")).toHaveText("Pools");
-    await expect(page.locator(".table-card-header").filter({ hasText: "All Pools" })).toContainText("All Pools");
+    await expect(page.locator(".table-card-header").filter({ hasText: "Active pools" })).toContainText("Active pools");
     await expect(page.locator(".empty")).toHaveText("No pools configured");
+    await expect(page.locator('.filter-pill[href="/ui/pools?view=history"]')).toHaveCount(1);
   });
 
   test("sandboxes page renders empty state", async ({ page }) => {
@@ -134,5 +138,26 @@ test.describe("Dashboard — UI enabled", () => {
     expect(r).toBeLessThan(50);
     expect(g).toBeLessThan(50);
     expect(b).toBeLessThan(50);
+  });
+
+  test("theme toggle persists light and dark modes", async ({ page }) => {
+    await page.goto("/");
+    const toggle = page.locator("[data-theme-toggle]");
+    await expect(toggle).toHaveAttribute("aria-label", "Switch to light theme");
+    await toggle.click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    await expect(toggle).toHaveAttribute("aria-label", "Switch to dark theme");
+    await toggle.click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  });
+
+  test("admin navigation exposes diagnostics and service keys", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator('.sidebar-nav a[href="/ui/diagnostics"]')).toHaveCount(1);
+    await expect(page.locator('.sidebar-nav a[href="/ui/service-keys"]')).toHaveCount(1);
+    await page.goto("/ui/diagnostics");
+    await expect(page.locator('.sidebar-nav a[href="/ui/service-keys"]')).toHaveCount(1);
+    await page.goto("/ui/service-keys");
+    await expect(page.locator('.sidebar-nav a[href="/ui/diagnostics"]')).toHaveCount(1);
   });
 });

@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
+	"github.com/Geogboe/boxy/pkg/diagnostics"
 	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
@@ -46,6 +47,11 @@ type RemoteClientConfig struct {
 	// defaultAvailabilitySampleTimeout; tests override it to avoid real
 	// sleeps, mirroring hyperv.Driver.memoryQueryTimeout's pattern.
 	AvailabilitySampleTimeout time.Duration
+
+	// LogShipper optionally buffers safe agent diagnostics. RunSession flushes
+	// one bounded batch over the authenticated agent stream after each
+	// heartbeat; a failed flush is retained for retry.
+	LogShipper *diagnostics.Shipper
 
 	// OnRegistered is invoked once per successful registration (both the
 	// first, token-based registration and any later cert-based reconnect)
@@ -193,7 +199,7 @@ func RunSession(ctx context.Context, stream boxyagentv1.AgentTransportService_Co
 
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		return sess.sendHeartbeats(gctx, reg.GetAgentId(), providerTypes, cfg.Drivers, interval, availabilityTimeout, log)
+		return sess.sendHeartbeats(gctx, reg.GetAgentId(), providerTypes, cfg.Drivers, interval, availabilityTimeout, cfg.LogShipper, log)
 	})
 	g.Go(func() error { return sess.dispatchCommands(gctx, cfg.Drivers) })
 	return g.Wait()
@@ -213,7 +219,7 @@ func (s *clientSession) send(msg *boxyagentv1.AgentMessage) error {
 	return s.stream.Send(msg)
 }
 
-func (s *clientSession) sendHeartbeats(ctx context.Context, agentID string, providerTypes []string, drivers DriverSet, interval, availabilityTimeout time.Duration, log *slog.Logger) error {
+func (s *clientSession) sendHeartbeats(ctx context.Context, agentID string, providerTypes []string, drivers DriverSet, interval, availabilityTimeout time.Duration, shipper *diagnostics.Shipper, log *slog.Logger) error {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -231,8 +237,42 @@ func (s *clientSession) sendHeartbeats(ctx context.Context, agentID string, prov
 			}); err != nil {
 				return fmt.Errorf("send heartbeat: %w", err)
 			}
+			if shipper != nil {
+				if err := shipper.Flush(ctx, diagnostics.BatchSinkFunc(s.sendLogBatch)); err != nil {
+					code, summary := diagnostics.DescribeError(fmt.Errorf("agent log ship: %w", err))
+					log.Warn("agent: log batch flush failed, retaining events for retry", "agent_id", agentID, "operation", "agent_log_ship", "error_code", code, "error_summary", summary)
+				}
+			}
 		}
 	}
+}
+
+func (s *clientSession) sendLogBatch(ctx context.Context, events []diagnostics.Event) error {
+	items := make([]*boxyagentv1.LogEvent, 0, len(events))
+	for _, event := range events {
+		timestamp := event.Timestamp
+		if timestamp.IsZero() {
+			timestamp = time.Now().UTC()
+		}
+		items = append(items, &boxyagentv1.LogEvent{
+			UnixNano:     timestamp.UnixNano(),
+			Level:        event.Level,
+			Component:    event.Component,
+			Message:      event.Message,
+			Operation:    event.Operation,
+			ErrorCode:    event.ErrorCode,
+			ErrorSummary: event.ErrorSummary,
+			Pool:         event.Pool,
+			Resource:     event.Resource,
+			Request:      event.Request,
+		})
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	return s.send(&boxyagentv1.AgentMessage{Payload: &boxyagentv1.AgentMessage_LogBatch{
+		LogBatch: &boxyagentv1.LogBatch{Events: items},
+	}})
 }
 
 // defaultAvailabilitySampleTimeout is the per-provider bound applied to a
@@ -292,7 +332,8 @@ func sampleAvailability(ctx context.Context, drivers DriverSet, timeout time.Dur
 			avail, err := r.Availability(qctx)
 			if err != nil {
 				if log != nil {
-					log.Warn("agent: availability reporter failed, omitting from this heartbeat", "provider_type", pt, "error", err)
+					code, summary := diagnostics.DescribeError(fmt.Errorf("%s availability probe: %w", pt, err))
+					log.Warn("agent: availability reporter failed, omitting from this heartbeat", "provider_type", pt, "operation", "availability_probe", "error_code", code, "error_summary", summary)
 				}
 				results <- sample{providerType: pt}
 				return

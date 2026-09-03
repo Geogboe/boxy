@@ -52,17 +52,21 @@ func (h *Handler) WithGroup(name string) slog.Handler {
 }
 
 func (h *Handler) event(record slog.Record) Event {
+	return eventFromSlog(record, h.attrs, h.groups)
+}
+
+func eventFromSlog(record slog.Record, attrs []slog.Attr, groups []string) Event {
 	values := make(map[string]string)
 	add := func(attr slog.Attr) {
 		key := strings.ToLower(strings.TrimSpace(attr.Key))
 		canonical, ok := safeField(key)
-		if !ok || len(h.groups) != 0 {
+		if !ok || len(groups) != 0 {
 			return
 		}
 		attr.Value = attr.Value.Resolve()
 		values[canonical] = truncate(RedactText(fmt.Sprint(attr.Value.Any())), maxFieldBytes)
 	}
-	for _, attr := range h.attrs {
+	for _, attr := range attrs {
 		add(attr)
 	}
 	record.Attrs(func(attr slog.Attr) bool {
@@ -70,14 +74,17 @@ func (h *Handler) event(record slog.Record) Event {
 		return true
 	})
 	return Event{
-		Timestamp: record.Time,
-		Level:     record.Level.String(),
-		Component: values["component"],
-		Message:   RedactText(record.Message),
-		Pool:      values["pool"],
-		Agent:     values["agent"],
-		Resource:  values["resource"],
-		Request:   values["request"],
+		Timestamp:    record.Time,
+		Level:        record.Level.String(),
+		Component:    values["component"],
+		Message:      RedactText(record.Message),
+		Operation:    values["operation"],
+		ErrorCode:    values["error_code"],
+		ErrorSummary: values["error_summary"],
+		Pool:         values["pool"],
+		Agent:        values["agent"],
+		Resource:     values["resource"],
+		Request:      values["request"],
 	}
 }
 
@@ -93,6 +100,12 @@ func safeField(key string) (string, bool) {
 		return "resource", true
 	case "request", "request_id", "correlation_id":
 		return "request", true
+	case "operation":
+		return "operation", true
+	case "error_code":
+		return "error_code", true
+	case "error_summary":
+		return "error_summary", true
 	default:
 		return "", false
 	}

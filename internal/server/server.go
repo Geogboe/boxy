@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Geogboe/boxy/internal/buildcfg"
 	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/internal/sandbox"
 	"github.com/Geogboe/boxy/pkg/diagnostics"
@@ -73,6 +74,8 @@ type Server struct {
 	uiEnabled       bool
 	authRequired    bool
 	insecureHTTP    bool
+	version         string
+	repositoryURL   string
 	tlsCertPEM      []byte
 	tlsKeyPEM       []byte
 	addr            string
@@ -104,6 +107,8 @@ type ServerOptions struct {
 	// of how it was established (OIDC or the local-admin account). Zero
 	// defaults to 12h (see session.go's defaultSessionTTL).
 	SessionTTL time.Duration
+	// Version is displayed in the dashboard footer. Empty defaults to dev.
+	Version string
 }
 
 // New creates a Server that will listen on addr. It retains the in-process,
@@ -116,6 +121,10 @@ func New(st store.Store, sm *sandbox.Manager, pm PoolMaintenance, aa AgentAdmin,
 
 // NewWithOptions creates a daemon-configured HTTP server.
 func NewWithOptions(st store.Store, sm *sandbox.Manager, pm PoolMaintenance, aa AgentAdmin, addr string, uiEnabled bool, opts ServerOptions) *Server {
+	version := opts.Version
+	if version == "" {
+		version = "dev"
+	}
 	s := &Server{
 		store:           st,
 		sandboxMgr:      sm,
@@ -132,6 +141,8 @@ func NewWithOptions(st store.Store, sm *sandbox.Manager, pm PoolMaintenance, aa 
 		uiEnabled:       uiEnabled,
 		authRequired:    opts.AuthRequired,
 		insecureHTTP:    opts.InsecureHTTP,
+		version:         version,
+		repositoryURL:   "https://github.com/" + buildcfg.Repo,
 		tlsCertPEM:      append([]byte(nil), opts.TLSCertPEM...),
 		tlsKeyPEM:       append([]byte(nil), opts.TLSKeyPEM...),
 		addr:            addr,

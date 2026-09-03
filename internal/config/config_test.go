@@ -724,3 +724,59 @@ func TestConfigValidate_rejectsUnsupportedBuiltinPackageManager(t *testing.T) {
 		t.Fatalf("Config.Validate() error = %v, want unsupported package manager", err)
 	}
 }
+
+func TestConfigValidateRejectsUnreferencedPackageGraphErrors(t *testing.T) {
+	t.Parallel()
+
+	base := func(name string, deps []string) resourcepack.Manifest {
+		return resourcepack.Manifest{
+			Name: name, Version: "1.0.0", Method: resourcepack.MethodShell,
+			Scopes: []resourcepack.Scope{resourcepack.ScopeResource},
+			Events: []resourcepack.Event{resourcepack.EventProvision}, Dependencies: deps,
+		}
+	}
+	tests := []struct {
+		name     string
+		packages map[string]resourcepack.Manifest
+		want     string
+	}{
+		{name: "missing", packages: map[string]resourcepack.Manifest{"unused": base("unused", []string{"missing@1.0.0"})}, want: "missing@1.0.0"},
+		{name: "cycle", packages: map[string]resourcepack.Manifest{
+			"a": base("a", []string{"b@1.0.0"}), "b": base("b", []string{"a@1.0.0"}),
+		}, want: "a@1.0.0 -> b@1.0.0 -> a@1.0.0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := (Config{Packages: tt.packages}).Validate()
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Validate() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestConfigValidateRejectsProviderNativeAndNamedSourceTogether(t *testing.T) {
+	t.Parallel()
+	cfg := Config{
+		ArtifactStores: map[string]ArtifactStoreSpec{
+			"images": {Type: "local", Path: t.TempDir()},
+		},
+		Sources: map[string]SourceSpec{
+			"base": {Store: "images", Path: "base.vhdx", Digest: "sha256:" + strings.Repeat("a", 64), Format: "vhdx", Provider: "hyperv"},
+		},
+		Pools: []PoolSpec{{Name: "windows", Type: "vm", Provider: "hyperv", Source: "base", Config: map[string]any{"template_vhd": `C:\\base.vhdx`}}},
+	}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "both provider-native source location") {
+		t.Fatalf("Validate error = %v", err)
+	}
+}
+
+func TestConfigValidateRejectsLiteralS3Credentials(t *testing.T) {
+	t.Parallel()
+	cfg := Config{ArtifactStores: map[string]ArtifactStoreSpec{
+		"remote": {Type: "s3", Bucket: "boxy", AccessKey: "literal", SecretKey: "env:BOXY_SECRET"},
+	}}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "access_key must be an env:NAME") {
+		t.Fatalf("Validate error = %v", err)
+	}
+}

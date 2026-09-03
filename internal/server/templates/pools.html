@@ -34,6 +34,10 @@
 {{end}}
 {{else}}
 <h1 class="page-title">Pools</h1>
+<div class="filter-pills" aria-label="Pool resource view">
+  <a class="filter-pill {{if not .PoolHistory}}active{{end}}" href="/ui/pools">Active</a>
+  <a class="filter-pill {{if .PoolHistory}}active{{end}}" href="/ui/pools?view=history">History</a>
+</div>
 {{if .PoolResult}}<div class="result-banner">{{.PoolResult}}</div>{{end}}
 {{if .PoolError}}<div class="error-banner">{{.PoolError}}</div>{{end}}
 {{if .CanManagePools}}
@@ -72,7 +76,7 @@
 {{end}}
 <div class="table-card">
   <div class="table-card-header">
-    <div>All Pools</div>
+    <div>{{if .PoolHistory}}Historical resources{{else}}Active pools{{end}}</div>
     <button type="button" class="refresh-btn" hx-get="/ui/fragments/pools-table" hx-target="#pools-fragment" hx-swap="innerHTML" hx-sync="#pools-fragment:replace" aria-label="Refresh pools now" title="Refresh now">
       <span class="refresh-icon" aria-hidden="true">⟳</span> Refresh
     </button>
@@ -83,6 +87,7 @@
        hx-swap="innerHTML">
     {{template "pools_table_fragment" .}}
   </div>
+  {{if .ResourceLimitHit}}<div class="table-card-subtitle bounded-note">Showing the first 1,000 resources. Use filters or the API for larger inventories.</div>{{end}}
 </div>
 {{end}}
 
@@ -91,19 +96,26 @@
 <div class="empty">Pool inventory is restricted to administrators.</div>
 {{else if .PoolViews}}
 {{range .PoolViews}}
-<div class="pool-group">
-  <div class="pool-group-header">
+<details class="pool-group" {{if not $.PoolHistory}}open{{end}}>
+  <summary class="pool-group-header">
     <div><a class="pool-detail-link" href="{{.DetailPath}}"><strong>{{.Name}}</strong></a>{{if .Type}} <span class="pool-type">{{.Type}}</span>{{end}}</div>
-    <div class="pool-counts"><span>{{.ReadyCount}} ready / {{.TotalCount}} total</span>{{if .EffectivelyDrained}}<span class="badge badge-drained">Drained</span>{{else}}<span class="badge badge-ready">Active</span>{{end}}</div>
-  </div>
+    <div class="pool-counts"><span>{{.ReadyCount}} ready / {{.TotalCount}} total</span>{{if .HistoricalCount}}<span class="badge badge-released">{{.HistoricalCount}} history</span>{{end}}{{if .EffectivelyDrained}}<span class="badge badge-drained">Drained</span>{{else}}<span class="badge badge-ready">Active</span>{{end}}</div>
+  </summary>
   <div class="pool-policy">min_ready={{.MinReady}} · max_total={{.MaxTotal}}</div>
-  {{if .Resources}}
+  {{if $.PoolHistory}}
+  {{if .HistoricalResources}}
+  <div class="table-scroll"><table>
+    <thead><tr><th scope="col">Resource</th><th scope="col">Type</th><th scope="col">Profile</th><th scope="col">State</th><th scope="col">Provider</th></tr></thead>
+    <tbody>{{range .HistoricalResources}}<tr><td><code>{{.ID}}</code></td><td>{{.Type}}</td><td>{{.Profile}}</td><td><span class="badge badge-{{.State}}">{{.State}}</span></td><td>{{if .Provider}}{{.Provider}}{{else}}—{{end}}</td></tr>{{end}}</tbody>
+  </table></div>
+  {{else}}<div class="empty">No historical resources in this pool</div>{{end}}
+  {{else if .Resources}}
   <div class="table-scroll"><table>
     <thead><tr><th scope="col">Resource</th><th scope="col">Type</th><th scope="col">Profile</th><th scope="col">State</th><th scope="col">Provider</th></tr></thead>
     <tbody>{{range .Resources}}<tr><td><code>{{.ID}}</code></td><td>{{.Type}}</td><td>{{.Profile}}</td><td><span class="badge badge-{{.State}}">{{.State}}</span></td><td>{{if .Provider}}{{.Provider}}{{else}}—{{end}}</td></tr>{{end}}</tbody>
   </table></div>
   {{else}}<div class="empty">No resources in this pool</div>{{end}}
-</div>
+</details>
 {{end}}
 {{else}}
 <div class="empty">No pools configured</div>

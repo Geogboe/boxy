@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/Geogboe/boxy/pkg/artifact"
@@ -40,6 +41,8 @@ type ArtifactStoreSpec struct {
 	Endpoint  string `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
 	Bucket    string `json:"bucket,omitempty" yaml:"bucket,omitempty"`
 	Path      string `json:"path,omitempty" yaml:"path,omitempty"`
+	Region    string `json:"region,omitempty" yaml:"region,omitempty"`
+	PathStyle bool   `json:"path_style,omitempty" yaml:"path_style,omitempty"`
 	AccessKey string `json:"access_key,omitempty" yaml:"access_key,omitempty"`
 	SecretKey string `json:"secret_key,omitempty" yaml:"secret_key,omitempty"`
 }
@@ -206,4 +209,86 @@ func (c Config) PackageRegistry(ctx context.Context) (*artifact.MemoryRegistry, 
 		}
 	}
 	return registry, nil
+}
+
+// ArtifactRegistry builds the logical registry used by runtime package
+// planning. Inline package/source declarations remain first so existing
+// configurations keep their behavior; configured filesystem and S3 stores
+// are appended as resolution fallbacks for published artifacts.
+func (c Config) ArtifactRegistry(ctx context.Context) (artifact.Registry, error) {
+	inline, err := c.PackageRegistry(ctx)
+	if err != nil {
+		return nil, err
+	}
+	registries := []artifact.Registry{inline}
+	names := make([]string, 0, len(c.ArtifactStores))
+	for name := range c.ArtifactStores {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		store, storeErr := c.ArtifactStore(ctx, name)
+		if storeErr != nil {
+			return nil, storeErr
+		}
+		if store != nil {
+			registries = append(registries, store)
+		}
+	}
+	return artifact.NewCompositeRegistry(registries...), nil
+}
+
+// ArtifactStore builds one named physical store. It is used by the runtime
+// resolver and by explicit package publication, so both paths use identical
+// endpoint, region, path-style, and secret-reference handling.
+func (c Config) ArtifactStore(ctx context.Context, name string) (artifact.Registry, error) {
+	store, ok := c.ArtifactStores[name]
+	if !ok {
+		return nil, fmt.Errorf("artifact store %q not found", name)
+	}
+	switch strings.ToLower(strings.TrimSpace(store.Type)) {
+	case "local", "filesystem":
+		if strings.TrimSpace(store.Path) == "" {
+			return nil, fmt.Errorf("artifact store %q path is required", name)
+		}
+		local, err := artifact.NewDirectoryRegistry(store.Path)
+		if err != nil {
+			return nil, fmt.Errorf("artifact store %q: %w", name, err)
+		}
+		return local, nil
+	case "s3":
+		remote, err := artifact.NewS3RegistryFromRefs(ctx, artifact.S3RegistryConfig{
+			Endpoint: store.Endpoint, Bucket: store.Bucket, Prefix: store.Path,
+			Region: store.Region, UsePathStyle: store.PathStyle,
+			AccessKeyRef: store.AccessKey, SecretKeyRef: store.SecretKey,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("artifact store %q: %w", name, err)
+		}
+		return remote, nil
+	default:
+		return nil, fmt.Errorf("artifact store %q has unsupported type %q", name, store.Type)
+	}
+}
+
+// SourceSigners builds the store-specific direct-delivery adapters used at
+// provisioning time. The server resolves metadata from the logical registry,
+// then signs/copies bytes in the provider's requested transport.
+func (c Config) SourceSigners(ctx context.Context) (map[string]artifact.SourceSigner, error) {
+	signers := make(map[string]artifact.SourceSigner, len(c.ArtifactStores))
+	names := make([]string, 0, len(c.ArtifactStores))
+	for name := range c.ArtifactStores {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		store, err := c.ArtifactStore(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		if signer, ok := store.(artifact.SourceSigner); ok {
+			signers[name] = signer
+		}
+	}
+	return signers, nil
 }

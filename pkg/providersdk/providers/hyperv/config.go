@@ -8,6 +8,8 @@ import (
 	"net/netip"
 	"path/filepath"
 	"strings"
+
+	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
 // ProviderType is the registry key for Hyper-V providers.
@@ -77,6 +79,11 @@ type CreateConfig struct {
 	// TemplateVHD is the path to the parent VHD/VHDX used for differencing disks.
 	// Required.
 	TemplateVHD string `json:"template_vhd" yaml:"template_vhd"`
+
+	// Source is a provider-neutral local path or short-lived signed URL for a
+	// VHD/VHDX. It is consumed during Create and is never written to VM notes
+	// or returned as resource metadata.
+	Source *providersdk.SourceDescriptor `json:"source,omitempty" yaml:"source,omitempty"`
 
 	// VHDDir is the directory where differencing VHDs are created.
 	// Defaults to the directory containing TemplateVHD.

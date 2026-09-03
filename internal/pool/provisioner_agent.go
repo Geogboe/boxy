@@ -11,6 +11,7 @@ import (
 
 	boxyconfig "github.com/Geogboe/boxy/internal/config"
 	"github.com/Geogboe/boxy/pkg/agentsdk"
+	"github.com/Geogboe/boxy/pkg/artifact"
 	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
@@ -42,6 +43,12 @@ type AgentProvisioner struct {
 	// admission. It is consumed and removed after allocation-time rotation.
 	GuestSecrets  boxysecrets.Store
 	PackageEngine *resourcepack.Engine
+	// ArtifactRegistry resolves declarative source metadata. SourceSigners
+	// sign or stage bytes in their owning store so source payloads bypass the
+	// control plane and the agent transport.
+	ArtifactRegistry artifact.Registry
+	SourceSigners    map[string]artifact.SourceSigner
+	SourceTTL        time.Duration
 }
 
 // Provision implements pool.Provisioner. It's a thin wrapper around
@@ -80,7 +87,11 @@ func (ap *AgentProvisioner) ProvisionLocked(ctx context.Context, pool model.Pool
 	release := ap.Registry.LockProvisioning(agent.Info().ID)
 	defer release()
 
-	res, err := agent.Create(ctx, driverType, spec.Config)
+	createConfig, err := ap.configForSource(ctx, spec)
+	if err != nil {
+		return model.Resource{}, false, fmt.Errorf("prepare source for pool %q: %w", pool.Name, err)
+	}
+	res, err := agent.Create(ctx, driverType, createConfig)
 	if err != nil {
 		wrapped := fmt.Errorf("agent create for pool %q: %w", pool.Name, err)
 		var orphanErr *providersdk.OrphanedResourceError
@@ -125,6 +136,43 @@ func (ap *AgentProvisioner) ProvisionLocked(ctx context.Context, pool model.Pool
 		}
 	}
 	return built, true, nil
+}
+
+// configForSource injects a short-lived provider-neutral source descriptor
+// into a copy of the provider config. The signed URL never enters a model
+// resource, store record, or log line.
+func (ap *AgentProvisioner) configForSource(ctx context.Context, spec boxyconfig.PoolSpec) (map[string]any, error) {
+	config := make(map[string]any, len(spec.Config)+1)
+	for key, value := range spec.Config {
+		config[key] = value
+	}
+	if strings.TrimSpace(spec.Source) == "" {
+		return config, nil
+	}
+	if ap.ArtifactRegistry == nil {
+		return nil, fmt.Errorf("artifact registry is not configured")
+	}
+	source, err := ap.ArtifactRegistry.ResolveSource(ctx, spec.Source)
+	if err != nil {
+		return nil, fmt.Errorf("resolve source %q: %w", spec.Source, err)
+	}
+	signer, ok := ap.SourceSigners[source.Store]
+	if !ok || signer == nil {
+		return nil, fmt.Errorf("source %q store %q has no direct-delivery signer", spec.Source, source.Store)
+	}
+	ttl := ap.SourceTTL
+	if ttl <= 0 {
+		ttl = 15 * time.Minute
+	}
+	descriptor, err := signer.SignSource(ctx, source, ttl)
+	if err != nil {
+		return nil, fmt.Errorf("sign source %q: %w", spec.Source, err)
+	}
+	if err := descriptor.Validate(); err != nil {
+		return nil, fmt.Errorf("source %q descriptor: %w", spec.Source, err)
+	}
+	config["source"] = descriptor
+	return config, nil
 }
 
 // now resolves ap.Now, defaulting to time.Now().UTC() when unset.

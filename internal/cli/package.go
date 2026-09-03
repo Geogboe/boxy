@@ -89,29 +89,57 @@ func runPackageBuild(ctx context.Context, manifestPath, outputPath string) error
 }
 
 func newPackagePublishCommand() *cobra.Command {
-	var artifactPath, registryPath string
+	var artifactPath, registryPath, configPath, storeName string
 	cmd := &cobra.Command{
 		Use:   "publish",
-		Short: "Publish a built package artifact to a local registry",
+		Short: "Publish a built package artifact to a local or configured registry",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runPackagePublish(cmd.Context(), artifactPath, registryPath)
+			return runPackagePublishWithOptions(cmd.Context(), artifactPath, registryPath, configPath, storeName)
 		},
 	}
 	cmd.Flags().StringVar(&artifactPath, "artifact", "", "built artifact path")
-	cmd.Flags().StringVar(&registryPath, "registry", "", "local artifact registry directory")
+	cmd.Flags().StringVar(&registryPath, "registry", "", "local artifact registry directory (legacy flow)")
+	cmd.Flags().StringVar(&configPath, "config", "", "Boxy config containing the named artifact store")
+	cmd.Flags().StringVar(&storeName, "store", "", "configured artifact store name")
 	_ = cmd.MarkFlagRequired("artifact")
-	_ = cmd.MarkFlagRequired("registry")
 	return cmd
 }
 
 func runPackagePublish(ctx context.Context, artifactPath, registryPath string) error {
+	return runPackagePublishWithOptions(ctx, artifactPath, registryPath, "", "")
+}
+
+func runPackagePublishWithOptions(ctx context.Context, artifactPath, registryPath, configPath, storeName string) error {
+	if strings.TrimSpace(registryPath) != "" && (strings.TrimSpace(configPath) != "" || strings.TrimSpace(storeName) != "") {
+		return fmt.Errorf("--registry cannot be combined with --config or --store")
+	}
+	if strings.TrimSpace(registryPath) == "" {
+		if strings.TrimSpace(configPath) == "" || strings.TrimSpace(storeName) == "" {
+			return fmt.Errorf("provide --registry, or provide both --config and --store")
+		}
+	}
 	value, err := readPackageArtifact(artifactPath)
 	if err != nil {
 		return err
 	}
-	registry, err := artifact.NewDirectoryRegistry(registryPath)
-	if err != nil {
-		return err
+	var registry artifact.Registry
+	if strings.TrimSpace(registryPath) != "" {
+		registry, err = artifact.NewDirectoryRegistry(registryPath)
+		if err != nil {
+			return err
+		}
+	} else {
+		cfg, _, err := loadConfig(configPath)
+		if err != nil {
+			return fmt.Errorf("load artifact config: %w", err)
+		}
+		if err := cfg.Validate(); err != nil {
+			return fmt.Errorf("validate artifact config: %w", err)
+		}
+		registry, err = cfg.ArtifactStore(ctx, storeName)
+		if err != nil {
+			return err
+		}
 	}
 	if err := registry.Publish(ctx, value); err != nil {
 		return fmt.Errorf("publish package: %w", err)

@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ArtifactType identifies the typed artifact manifest stored in the registry.
@@ -83,6 +84,21 @@ type Registry interface {
 	PutSource(ctx context.Context, source Source) error
 }
 
+// SourceDescriptorer is an optional registry capability. Stores that can be
+// read directly by a provider return a provider-neutral descriptor, commonly a
+// short-lived signed URL. The URL must not be persisted or included in
+// resource properties.
+type SourceDescriptorer interface {
+	ResolveSourceDescriptor(ctx context.Context, name string, ttl time.Duration) (SourceDescriptor, error)
+}
+
+// SourceSigner signs metadata supplied by the caller. This is used for
+// declarative sources whose metadata lives in boxy.yaml rather than in the
+// physical store's catalog object.
+type SourceSigner interface {
+	SignSource(ctx context.Context, source Source, ttl time.Duration) (SourceDescriptor, error)
+}
+
 // MemoryRegistry is a concurrency-safe registry useful for tests and the
 // devfactory reference path.
 type MemoryRegistry struct {
@@ -113,7 +129,7 @@ func (r *MemoryRegistry) Publish(_ context.Context, value Artifact) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if existing, ok := r.artifacts[keyFor(value.Type, key)]; ok {
-		if string(existing.Manifest) != string(value.Manifest) || !sameBlobs(existing.Blobs, value.Blobs) {
+		if string(existing.Manifest) != string(value.Manifest) || !sameBlobs(existing.Blobs, value.Blobs) || !reflectStrings(existing.Metadata, value.Metadata) {
 			return fmt.Errorf("artifact %q is immutable and already published with different content", key)
 		}
 		return nil

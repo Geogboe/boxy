@@ -22,6 +22,7 @@ import (
 	"github.com/Geogboe/boxy/internal/pool"
 	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
 	"github.com/Geogboe/boxy/pkg/agentsdk"
+	"github.com/Geogboe/boxy/pkg/diagnostics"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/pki"
 	"github.com/Geogboe/boxy/pkg/providersdk"
@@ -86,6 +87,26 @@ func newTestServerWithForceOrphaner(t *testing.T, fo ResourceForceOrphaner) (*Se
 		grpcServer.Stop()
 	}
 	return srv, st, boxyagentv1.NewAgentTransportServiceClient(conn), cleanup
+}
+
+func TestStoreAgentLogsBindsAuthenticatedIdentityAndRedactsCredentials(t *testing.T) {
+	srv, _, _, cleanup := newTestServer(t)
+	defer cleanup()
+	logs := diagnostics.NewMemoryStore()
+	srv.SetDiagnosticsStore(logs)
+	if err := srv.storeAgentLogs(context.Background(), "agent-authenticated", []diagnostics.Event{{
+		Level:   "ERROR",
+		Message: "password=secret",
+	}}); err != nil {
+		t.Fatalf("storeAgentLogs: %v", err)
+	}
+	page, err := logs.Query(context.Background(), diagnostics.Query{Agent: "agent-authenticated"})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(page.Events) != 1 || page.Events[0].Agent != "agent-authenticated" || page.Events[0].Message != "password=[REDACTED]" {
+		t.Fatalf("events = %+v, want authenticated identity and redacted credential", page.Events)
+	}
 }
 
 func mintToken(t *testing.T, st store.Store, raw string, expiresIn time.Duration) {
