@@ -5,14 +5,30 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/Geogboe/boxy/pkg/diagnostics"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/vmsdk"
 )
+
+// withDiagnosticsCapture installs a diagnostics.Handler as the process-wide
+// slog default for the duration of a test (mirroring what boxy serve/boxy
+// agent serve do in production) and restores the previous default on
+// cleanup. Returns the memory store the driver's structured events land in.
+func withDiagnosticsCapture(t *testing.T) *diagnostics.MemoryStore {
+	t.Helper()
+	logs := diagnostics.NewMemoryStore()
+	previous := slog.Default()
+	slog.SetDefault(slog.New(diagnostics.NewHandler(slog.NewTextHandler(io.Discard, nil), logs)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	return logs
+}
 
 const fakeGUID = "12345678-1234-1234-1234-123456789abc"
 
@@ -1372,6 +1388,87 @@ func TestDriver_PersonalizeGuest_SerializesConcurrentInvocations(t *testing.T) {
 	}
 }
 
+func TestDriver_PersonalizeGuest_EmitsSucceededDiagnosticsEvent(t *testing.T) {
+	logs := withDiagnosticsCapture(t)
+	d := &Driver{
+		psExec: func(_ context.Context, script string) (string, error) {
+			switch {
+			case strings.Contains(script, "Get-VMNetworkAdapter"):
+				return "10.0.0.5\n", nil
+			case strings.Contains(script, "(Get-VM -Id") && strings.Contains(script, ").Name"):
+				return "boxy-abc123\n", nil
+			default:
+				return "boxy_guest_os=windows;boxy_guest_user=Administrator\n", nil
+			}
+		},
+		resolveBootstrap: func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
+			return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "bootstrap"}, nil
+		},
+		guestExecFactory: func(vmGUID, guestOS, guestUser, guestPassword, sshHost string) vmsdk.GuestExec {
+			return &recordingGuestExec{password: guestPassword}
+		},
+	}
+	if _, err := d.PersonalizeGuest(context.Background(), fakeGUID); err != nil {
+		t.Fatalf("PersonalizeGuest: %v", err)
+	}
+	page, err := logs.Query(context.Background(), diagnostics.Query{Resource: fakeGUID, Status: "succeeded"})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(page.Events) != 1 || page.Events[0].Component != "hyperv" || page.Events[0].Provider != "hyperv" {
+		t.Fatalf("events = %+v, want one succeeded hyperv event for %s", page.Events, fakeGUID)
+	}
+}
+
+func TestDriver_PersonalizeGuest_EmitsClassifiedFailureDiagnosticsEvent(t *testing.T) {
+	logs := withDiagnosticsCapture(t)
+	d := &Driver{
+		psExec: func(_ context.Context, script string) (string, error) {
+			switch {
+			case strings.Contains(script, "Get-VMNetworkAdapter"):
+				return "10.0.0.5\n", nil
+			case strings.Contains(script, "(Get-VM -Id") && strings.Contains(script, ").Name"):
+				return "boxy-abc123\n", nil
+			default:
+				return "boxy_guest_os=windows;boxy_guest_user=Administrator\n", nil
+			}
+		},
+		resolveBootstrap: func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
+			return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "bootstrap"}, nil
+		},
+		guestExecFactory: func(vmGUID, guestOS, guestUser, guestPassword, sshHost string) vmsdk.GuestExec {
+			return &recordingGuestExec{password: guestPassword, execErr: errors.New("simulated rotation transport failure")}
+		},
+	}
+	if _, err := d.PersonalizeGuest(context.Background(), fakeGUID); err == nil {
+		t.Fatalf("PersonalizeGuest: want error")
+	}
+	page, err := logs.Query(context.Background(), diagnostics.Query{Resource: fakeGUID, Status: "failed"})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(page.Events) != 1 || page.Events[0].Step != "rotate" || page.Events[0].ErrorCode != "rotate_failed" {
+		t.Fatalf("events = %+v, want one rotate_failed event for %s", page.Events, fakeGUID)
+	}
+}
+
+func TestDriver_ReserveMemory_EmitsFailureDiagnosticsEvent(t *testing.T) {
+	logs := withDiagnosticsCapture(t)
+	d := mockDriver(func(_ context.Context, _ string) (string, error) {
+		return "1024\n", nil // 1 GB free, minus 512 reserve = 512 MB available
+	})
+	if _, err := d.reserveMemory(context.Background(), 2048); err == nil {
+		t.Fatalf("reserveMemory: want error")
+	}
+	page, err := logs.Query(context.Background(), diagnostics.Query{Component: "hyperv", Status: "failed"})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(page.Events) != 1 || page.Events[0].Step != "memory_reserve" || page.Events[0].ErrorCode != "insufficient_memory" {
+		t.Fatalf("events = %+v, want one insufficient_memory event", page.Events)
+	}
+}
+
 func TestDriver_Allocate_Windows(t *testing.T) {
 	callNum := 0
 	d := mockDriver(func(_ context.Context, _ string) (string, error) {
@@ -1978,10 +2075,14 @@ type fakeGuestExec struct {
 type recordingGuestExec struct {
 	password string
 	calls    [][]string
+	execErr  error
 }
 
 func (f *recordingGuestExec) Exec(_ context.Context, cmd string, args ...string) (*vmsdk.ExecResult, error) {
 	f.calls = append(f.calls, append([]string{cmd}, args...))
+	if f.execErr != nil {
+		return nil, f.execErr
+	}
 	return &vmsdk.ExecResult{ExitCode: 0}, nil
 }
 

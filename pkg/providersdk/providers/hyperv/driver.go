@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -916,6 +917,7 @@ func (d *Driver) reserveMemory(ctx context.Context, requestedMB int64) (release 
 		}
 	}
 	if available < requestedMB {
+		logHyperVEvent(slog.LevelWarn, "hyperv memory admission refused", "admission", "memory_reserve", "failed", "", "insufficient_memory")
 		return nil, &CapacityError{RequestedMemoryMB: requestedMB, AvailableMemoryMB: available}
 	}
 
@@ -930,6 +932,28 @@ func (d *Driver) reserveMemory(ctx context.Context, requestedMB int64) (release 
 			d.mu.Unlock()
 		})
 	}, nil
+}
+
+// logHyperVEvent emits a structured diagnostics event for a Hyper-V
+// admission/personalization phase. component/provider/operation/step/
+// status/resource/error_code are all attribute keys
+// pkg/diagnostics/handler.go's safeField recognizes, so on an agent that has
+// installed a diagnostics.Handler as its slog default (see boxy serve /
+// boxy agent serve), this reaches the diagnostics store with no direct
+// dependency on pkg/diagnostics from this package. resourceID may be empty
+// for a phase that runs before a VM exists (e.g. the memory preflight).
+func logHyperVEvent(level slog.Level, msg, operation, step, status, resourceID, errorCode string) {
+	attrs := []any{
+		"component", "hyperv", "provider", "hyperv",
+		"operation", operation, "step", step, "status", status,
+	}
+	if resourceID != "" {
+		attrs = append(attrs, "resource", resourceID)
+	}
+	if errorCode != "" {
+		attrs = append(attrs, "error_code", errorCode)
+	}
+	slog.Log(context.Background(), level, msg, attrs...)
 }
 
 func clampMemory(value int64) int64 {
@@ -1093,10 +1117,40 @@ func (d *Driver) Allocate(ctx context.Context, id string) (map[string]any, error
 // the duration (see lockPersonalize) so that overlapping invocations for the
 // same VM — preheat and allocation both call this, and either can retry —
 // cannot interleave their PowerShell Direct sessions against the same guest.
+// Failures emit a structured event distinguishing which phase failed (see
+// personalizeFailureStep) rather than a single undifferentiated bucket.
 func (d *Driver) PersonalizeGuest(ctx context.Context, id string) (*providersdk.GuestPersonalizationResult, error) {
 	unlock := d.lockPersonalize(id)
 	defer unlock()
-	return d.personalizeGuestLocked(ctx, id)
+	result, err := d.personalizeGuestLocked(ctx, id)
+	if err != nil {
+		step := personalizeFailureStep(err)
+		logHyperVEvent(slog.LevelWarn, "hyperv guest personalization failed", "personalize", step, "failed", id, step+"_failed")
+		return nil, err
+	}
+	logHyperVEvent(slog.LevelInfo, "hyperv guest personalization succeeded", "personalize", "guest_personalize", "succeeded", id, "")
+	return result, nil
+}
+
+// personalizeFailureStep classifies a personalizeGuestLocked failure by
+// which phase it came from, so diagnostics distinguish "network apply
+// failed" from "rotation failed" from "verification failed" instead of one
+// generic bucket (see #336's suggested fix direction).
+func personalizeFailureStep(err error) string {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "apply range IP"), strings.Contains(msg, "apply static IP"), strings.Contains(msg, "get IP for VM"):
+		return "network_apply"
+	case strings.Contains(msg, "rotate guest credential"):
+		return "rotate"
+	case strings.Contains(msg, "verify rotated guest credential"), strings.Contains(msg, "reconnect with rotated guest credential"):
+		return "verify"
+	case strings.Contains(msg, "resolve guest bootstrap credential"), strings.Contains(msg, "generate guest credential"),
+		strings.Contains(msg, "resolve VM name"), strings.Contains(msg, "read IP ledger"), strings.Contains(msg, "read VM notes"):
+		return "prepare"
+	default:
+		return "guest_personalize"
+	}
 }
 
 // personalizeGuestLocked is PersonalizeGuest's implementation, run only
