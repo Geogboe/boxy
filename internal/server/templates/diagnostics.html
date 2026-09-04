@@ -8,7 +8,7 @@
   <div class="table-card-header">
     <div>
       <div>Recent diagnostic events</div>
-      <div class="table-card-subtitle">Redacted control-plane and server-observed agent events. Showing the newest bounded page.</div>
+      <div class="table-card-subtitle">Redacted control-plane and server-observed agent events. Showing one bounded page at a time.</div>
     </div>
     <div class="table-card-actions">
       {{if .DiagnosticsExportURL}}<a class="button-link" href="{{.DiagnosticsExportURL}}">Export current query</a>{{end}}
@@ -53,6 +53,7 @@
     {{end}}</tbody>
   </table>
   </div>
+  {{if .DiagnosticsNextURL}}<div class="table-card-footer"><a class="button-link secondary" href="{{.DiagnosticsNextURL}}">Next page</a></div>{{end}}
   {{else}}
   <div class="empty">No diagnostic events are available.</div>
   {{end}}

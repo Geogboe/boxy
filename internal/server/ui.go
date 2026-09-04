@@ -70,6 +70,7 @@ type pageData struct {
 	DiagnosticsAgentURL   string
 	DiagnosticsPullURL    string
 	DiagnosticsViewAllURL string
+	DiagnosticsNextURL    string
 }
 
 // sandboxView is the dashboard's per-sandbox row, joining the sandbox record
@@ -313,6 +314,11 @@ func (s *Server) diagnosticsHandler(tmpl *template.Template) http.HandlerFunc {
 					d.DiagnosticsError = "Diagnostics are temporarily unavailable."
 				} else {
 					d.Diagnostics = page.Events
+					if page.NextCursor != "" {
+						nextQuery := query
+						nextQuery.Cursor = page.NextCursor
+						d.DiagnosticsNextURL = "/ui/diagnostics?" + diagnosticsPageQueryValues(nextQuery).Encode()
+					}
 					audit.ResultCount = len(page.Events)
 					if s.audit != nil {
 						if err := s.audit.RecordDiagnosticsQuery(r.Context(), audit); err != nil {
