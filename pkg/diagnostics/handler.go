@@ -90,6 +90,7 @@ func eventFromSlog(record slog.Record, attrs []slog.Attr, groups []string) Event
 		Pool:         values["pool"],
 		Agent:        values["agent"],
 		Resource:     values["resource"],
+		Provider:     values["provider"],
 		Request:      values["request"],
 	}
 }
@@ -104,6 +105,8 @@ func safeField(key string) (string, bool) {
 		return "agent", true
 	case "resource", "resource_id":
 		return "resource", true
+	case "provider", "provider_type":
+		return "provider", true
 	case "request", "request_id", "correlation_id":
 		return "request", true
 	case "operation":

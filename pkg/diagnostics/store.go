@@ -45,6 +45,7 @@ type Event struct {
 	Pool         string    `json:"pool,omitempty"`
 	Agent        string    `json:"agent,omitempty"`
 	Resource     string    `json:"resource,omitempty"`
+	Provider     string    `json:"provider,omitempty"`
 	Request      string    `json:"request,omitempty"`
 }
 
@@ -57,6 +58,7 @@ type Query struct {
 	Pool      string
 	Agent     string
 	Resource  string
+	Provider  string
 	Job       string
 	Status    string
 	Limit     int
@@ -84,6 +86,7 @@ type QueryAudit struct {
 	Pool        string
 	Agent       string
 	Resource    string
+	Provider    string
 	Limit       int
 	ResultCount int
 }
@@ -385,6 +388,7 @@ func normalizeEvent(event Event, now time.Time) Event {
 	event.Pool = truncate(redactText(strings.TrimSpace(event.Pool)), maxFieldBytes)
 	event.Agent = truncate(redactText(strings.TrimSpace(event.Agent)), maxFieldBytes)
 	event.Resource = truncate(redactText(strings.TrimSpace(event.Resource)), maxFieldBytes)
+	event.Provider = truncate(redactText(strings.TrimSpace(event.Provider)), maxFieldBytes)
 	event.Request = truncate(redactText(strings.TrimSpace(event.Request)), maxFieldBytes)
 	return event
 }
@@ -429,6 +433,9 @@ func pageForOrderedEvents(events []Event, query Query) (Page, error) {
 			continue
 		}
 		if query.Resource != "" && event.Resource != query.Resource {
+			continue
+		}
+		if query.Provider != "" && event.Provider != query.Provider {
 			continue
 		}
 		if query.Job != "" && event.Job != query.Job {

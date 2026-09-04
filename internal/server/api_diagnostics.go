@@ -50,8 +50,8 @@ func diagnosticsQueryValues(query diagnostics.Query) url.Values {
 	}
 	for key, value := range map[string]string{
 		"level": query.Level, "component": query.Component, "pool": query.Pool,
-		"agent": query.Agent, "resource": query.Resource, "job": query.Job,
-		"status": query.Status,
+		"agent": query.Agent, "resource": query.Resource, "provider": query.Provider,
+		"job": query.Job, "status": query.Status,
 	} {
 		if strings.TrimSpace(value) != "" {
 			values.Set(key, value)
@@ -135,6 +135,7 @@ func parseDiagnosticsQuery(r *http.Request) (diagnostics.Query, diagnostics.Quer
 		Pool:      strings.TrimSpace(values.Get("pool")),
 		Agent:     strings.TrimSpace(values.Get("agent")),
 		Resource:  strings.TrimSpace(values.Get("resource")),
+		Provider:  strings.TrimSpace(values.Get("provider")),
 		Cursor:    strings.TrimSpace(values.Get("cursor")),
 	}
 	if query.Level != "" {
@@ -174,7 +175,7 @@ func parseDiagnosticsQuery(r *http.Request) (diagnostics.Query, diagnostics.Quer
 	}
 	audit := diagnostics.QueryAudit{
 		Actor: actor, Level: query.Level, Component: query.Component,
-		Pool: query.Pool, Agent: query.Agent, Resource: query.Resource,
+		Pool: query.Pool, Agent: query.Agent, Resource: query.Resource, Provider: query.Provider,
 		Job: query.Job, Status: query.Status,
 		Limit: query.Limit,
 	}

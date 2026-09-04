@@ -53,6 +53,29 @@ func TestFileStoreCachesOrderedEventsAndInvalidatesOnExternalChange(t *testing.T
 	}
 }
 
+func TestFileStoreFiltersAndPersistsProvider(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "diagnostics.jsonl")
+	store, err := NewFileStore(path, 1<<20, 14*24*time.Hour)
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+	if err := store.Append(ctx, Event{ID: "hyperv-1", Timestamp: time.Now(), Provider: "hyperv", Component: "hyperv"}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if err := store.Append(ctx, Event{ID: "docker-1", Timestamp: time.Now(), Provider: "docker", Component: "docker"}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	page, err := store.Query(ctx, Query{Provider: "hyperv"})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(page.Events) != 1 || page.Events[0].Provider != "hyperv" {
+		t.Fatalf("filtered page = %+v, want only the hyperv event", page.Events)
+	}
+}
+
 func TestNewFileStore_DefaultRetentionIsFourteenDays(t *testing.T) {
 	store, err := NewFileStore(filepath.Join(t.TempDir(), "diagnostics.jsonl"), 0, 0)
 	if err != nil {

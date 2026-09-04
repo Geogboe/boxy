@@ -69,6 +69,36 @@ func TestAPI_DiagnosticsLogsFiltersAndAudits(t *testing.T) {
 	}
 }
 
+func TestAPI_DiagnosticsLogsFiltersByProvider(t *testing.T) {
+	st := store.NewMemoryStore()
+	logs := diagnostics.NewMemoryStore()
+	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
+	for _, event := range []diagnostics.Event{
+		{ID: "hyperv-1", Timestamp: now, Provider: "hyperv"},
+		{ID: "docker-1", Timestamp: now, Provider: "docker"},
+	} {
+		if err := logs.Append(context.Background(), event); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+
+	mux := server.NewTestMuxWithDiagnostics(st, sandbox.New(st, nil), logs, &captureDiagnosticsAudit{}, false, false)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/diagnostics/logs?provider=hyperv", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var page struct {
+		Events []diagnostics.Event `json:"events"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(page.Events) != 1 || page.Events[0].ID != "hyperv-1" {
+		t.Fatalf("page = %+v, want only hyperv-1", page)
+	}
+}
+
 func TestAPI_DiagnosticsLogsRequiresAdmin(t *testing.T) {
 	st := store.NewMemoryStore()
 	credentials := map[model.APIKeyRole]string{}
