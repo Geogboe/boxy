@@ -160,15 +160,15 @@ boxy
 │         password: <one-time generated password>
 │         This password will not be shown again.
 │
-│   ├── pool                                     Run administrator pool maintenance
+│   ├── pool (or pools)                           Run administrator pool maintenance
 │   │   ├── list                                  List configured pools and ready inventory
 │   │   │     $ boxy admin pool list
 │   │   │       web\t2 ready
 │   │   ├── drain|down <pool>                    Drain unused ready inventory
-│   │   │     $ boxy admin pool drain win-vm
+│   │   │     $ boxy admin pool drain win-vm       (also: admin pools down)
 │   │   │       drained pool win-vm
 │   │   └── fill|up <pool>                       Reconcile to configured min_ready
-│   │         $ boxy admin pool fill win-vm
+│   │         $ boxy admin pool fill win-vm        (also: admin pools up)
 │   │           filled pool win-vm
 │   │
 │   └── resource                                 Run administrator resource maintenance

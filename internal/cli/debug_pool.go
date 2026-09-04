@@ -43,8 +43,9 @@ func newPoolListCommand(serverAddr func() string) *cobra.Command {
 
 func newAdminPoolCommand(serverAddr func() string) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "pool",
-		Short: "Run administrator pool maintenance actions through the daemon",
+		Use:     "pool",
+		Aliases: []string{"pools"},
+		Short:   "Run administrator pool maintenance actions through the daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()
 		},
