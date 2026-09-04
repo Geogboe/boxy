@@ -1040,10 +1040,27 @@ func buildDrivers(reg *providersdk.Registry, instances []providersdk.Instance, c
 		}
 
 		// Get config for this type, or use zero-value proto if not configured.
-		instance := configByType[t]
+		explicitInstance, explicit := configByType[t]
+		instance := explicitInstance
 		instance.Type = t
 		driver, err := reg.NewDriverFromInstance(instance, baseDir)
 		if err != nil {
+			if !explicit {
+				// No provider instance was configured for this type. Every
+				// registered type is still attempted here so a pool can
+				// reference a type with sane zero-value defaults (e.g.
+				// docker) without an explicit provider: block. Not every
+				// driver has usable zero-value defaults, though -- hyperv
+				// requires an explicit memory_budget_mb, which would
+				// otherwise fail every non-Hyper-V deployment's boxy serve
+				// at startup. Skip a type that fails with
+				// defaults instead of failing the whole daemon over a
+				// provider this deployment never asked to use; a pool that
+				// actually needs it fails normally at resolution time later,
+				// same as if the type weren't registered at all. An
+				// explicitly configured instance still fails loudly below.
+				continue
+			}
 			return nil, err
 		}
 

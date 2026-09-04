@@ -358,8 +358,49 @@ func TestBuildDriversReportsDecodeAndFactoryErrors(t *testing.T) {
 		t.Fatal("buildDrivers decode error = nil")
 	}
 
-	if _, err := buildDrivers(reg, nil, ""); err == nil {
+	// An explicitly configured instance whose factory fails is still a
+	// fatal buildDrivers error -- only a type nobody configured is skipped
+	// on failure (see TestBuildDriversSkipsUnconfiguredTypeThatFailsWithDefaults).
+	if _, err := buildDrivers(reg, []providersdk.Instance{{Name: "alpha-local", Type: "alpha"}}, ""); err == nil {
 		t.Fatal("buildDrivers factory error = nil")
+	}
+}
+
+// TestBuildDriversSkipsUnconfiguredTypeThatFailsWithDefaults guards against a
+// real regression: hyperv.Config requires an explicit memory_budget_mb (see
+// hyperv.Config.effectiveMemoryBudgetMB), so building a driver for every
+// registered type with zero-value defaults -- including types nobody
+// configured -- used to fail the entire boxy serve startup for any
+// deployment that never mentions hyperv at all. A type with no explicit
+// provider instance must be skipped, not fatal, when its zero-value
+// defaults don't validate.
+func TestBuildDriversSkipsUnconfiguredTypeThatFailsWithDefaults(t *testing.T) {
+	reg := providersdk.NewRegistry()
+	if err := reg.Register(providersdk.Registration{
+		Type:        "alpha",
+		ConfigProto: func() any { return &serveDriverConfig{} },
+		NewDriver: func(any) (providersdk.Driver, error) {
+			return nil, fmt.Errorf("requires explicit configuration")
+		},
+	}); err != nil {
+		t.Fatalf("register alpha: %v", err)
+	}
+	if err := reg.Register(providersdk.Registration{
+		Type:        "beta",
+		ConfigProto: func() any { return &serveDriverConfig{} },
+		NewDriver: func(cfg any) (providersdk.Driver, error) {
+			return serveDriver{providerType: "beta", cfg: cfg}, nil
+		},
+	}); err != nil {
+		t.Fatalf("register beta: %v", err)
+	}
+
+	drivers, err := buildDrivers(reg, nil, "")
+	if err != nil {
+		t.Fatalf("buildDrivers: %v", err)
+	}
+	if len(drivers) != 1 || drivers[0].(serveDriver).providerType != "beta" {
+		t.Fatalf("drivers = %+v, want only beta (alpha skipped, unconfigured and failing)", drivers)
 	}
 }
 
