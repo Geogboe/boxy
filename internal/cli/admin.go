@@ -23,6 +23,7 @@ func newAdminCommand() *cobra.Command {
 	cmd.AddCommand(newAPIKeyAdminCommand(func() string { return server }))
 	cmd.AddCommand(newBootstrapPasswordCommand())
 	cmd.AddCommand(newAdminPoolCommand(func() string { return server }))
+	cmd.AddCommand(newAdminResourceCommand(func() string { return server }))
 	return cmd
 }
 

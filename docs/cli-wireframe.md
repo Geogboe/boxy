@@ -167,6 +167,11 @@ boxy
 │   │   └── fill <pool>                          Reconcile to configured min_ready
 │   │         $ boxy admin pool fill win-vm
 │   │           filled pool win-vm
+│   │
+│   └── resource                                 Run administrator resource maintenance
+│       └── purge [--dry-run|--force]             Preview or force stale-resource cleanup
+│             $ boxy admin resource purge --dry-run
+│               resource purge: candidates=2 cleaned=0 skipped=4 errors=0 dry-run=true force=false
 │
 │
 ├── diagnostics                                Inspect safe administrator diagnostics
