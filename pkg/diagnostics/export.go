@@ -165,6 +165,7 @@ func (s *Sanitizer) Event(event Event) Event {
 		s = NewSanitizer()
 	}
 	event.ID = s.identifier("EVENT", event.ID)
+	event.Job = s.identifier("JOB", event.Job)
 	event.Message = s.Text(event.Message)
 	event.ErrorSummary = s.Text(event.ErrorSummary)
 	event.Pool = s.identifier("POOL", event.Pool)

@@ -16,6 +16,7 @@ func TestBuildExportSanitizesSensitiveValuesAndPreservesCorrelation(t *testing.T
 		Component: "agent",
 		Message:   "connect to https://worker.example.test/path?X-Amz-Signature=secret&x=1 from 203.0.113.40 as username=boxy-test-user password=topsecret",
 		Agent:     "worker.example.test",
+		Job:       "job-secret-id",
 		Resource:  "resource-1",
 		Pool:      "production-pool",
 	}}
@@ -43,8 +44,8 @@ func TestBuildExportSanitizesSensitiveValuesAndPreservesCorrelation(t *testing.T
 	if !strings.Contains(message, "[SIGNED-URL-REDACTED]") || !strings.Contains(message, "[USER-1]") {
 		t.Fatalf("message = %q, want signed URL and user placeholders", message)
 	}
-	if archive.Events[0].Agent != "[AGENT-1]" || archive.Events[0].Resource != "[RESOURCE-1]" {
-		t.Fatalf("identifiers = agent %q resource %q, want stable placeholders", archive.Events[0].Agent, archive.Events[0].Resource)
+	if archive.Events[0].Agent != "[AGENT-1]" || archive.Events[0].Resource != "[RESOURCE-1]" || archive.Events[0].Job != "[JOB-1]" {
+		t.Fatalf("identifiers = agent %q resource %q job %q, want stable placeholders", archive.Events[0].Agent, archive.Events[0].Resource, archive.Events[0].Job)
 	}
 
 	var buf bytes.Buffer

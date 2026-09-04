@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strconv"
 	"strings"
 )
 
@@ -73,12 +74,17 @@ func eventFromSlog(record slog.Record, attrs []slog.Attr, groups []string) Event
 		add(attr)
 		return true
 	})
+	attempt, _ := strconv.Atoi(values["attempt"])
 	return Event{
 		Timestamp:    record.Time,
 		Level:        record.Level.String(),
 		Component:    values["component"],
 		Message:      RedactText(record.Message),
 		Operation:    values["operation"],
+		Job:          values["job"],
+		Step:         values["step"],
+		Status:       values["status"],
+		Attempt:      attempt,
 		ErrorCode:    values["error_code"],
 		ErrorSummary: values["error_summary"],
 		Pool:         values["pool"],
@@ -102,6 +108,14 @@ func safeField(key string) (string, bool) {
 		return "request", true
 	case "operation":
 		return "operation", true
+	case "job", "job_id":
+		return "job", true
+	case "step":
+		return "step", true
+	case "status":
+		return "status", true
+	case "attempt":
+		return "attempt", true
 	case "error_code":
 		return "error_code", true
 	case "error_summary":

@@ -63,6 +63,7 @@ type pageData struct {
 	MintedServiceKey      string
 	MintedServiceKeyName  string
 	Diagnostics           []diagnostics.Event
+	DiagnosticsTimeline   []diagnosticsTimelineView
 	DiagnosticsError      string
 	DiagnosticsMessage    string
 	DiagnosticsQuery      diagnostics.Query
@@ -322,6 +323,7 @@ func (s *Server) diagnosticsHandler(tmpl *template.Template) http.HandlerFunc {
 					d.DiagnosticsError = "Diagnostics are temporarily unavailable."
 				} else {
 					d.Diagnostics = page.Events
+					d.DiagnosticsTimeline = buildDiagnosticsTimeline(page.Events)
 					if page.NextCursor != "" {
 						nextQuery := query
 						nextQuery.Cursor = page.NextCursor

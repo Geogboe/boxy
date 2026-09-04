@@ -235,6 +235,32 @@ a:hover {
 .diagnostics-filters input, .diagnostics-filters select { background: var(--bg); border: 1px solid var(--border); border-radius: 0.35rem; color: var(--text); min-width: 7rem; padding: 0.4rem 0.5rem; }
 .diagnostics-filters button { background: var(--accent); border: 1px solid var(--accent); border-radius: 0.35rem; color: #fff; cursor: pointer; padding: 0.45rem 0.7rem; }
 .diagnostics-filters a { color: var(--text-muted); padding: 0.45rem 0; }
+.diagnostics-timeline { border-bottom: 1px solid var(--border); padding: 1.1rem 1.25rem 1.25rem; }
+.diagnostics-section-heading { align-items: center; display: flex; justify-content: space-between; margin-bottom: 0.8rem; }
+.diagnostics-section-heading h2 { font-size: 0.95rem; margin: 0; }
+.diagnostics-section-heading p { color: var(--text-muted); font-size: 0.78rem; margin: 0.2rem 0 0; }
+.diagnostics-table-heading { margin: 0; padding: 1rem 1.25rem 0.5rem; }
+.diagnostics-story { background: var(--bg); border: 1px solid var(--border); border-radius: 0.5rem; margin-top: 0.75rem; overflow: hidden; }
+.diagnostics-story > header { align-items: center; display: flex; gap: 1rem; justify-content: space-between; padding: 0.8rem 0.9rem; }
+.diagnostics-story > header > div { align-items: center; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.diagnostics-story header span, .diagnostics-story time, .diagnostics-job { color: var(--text-muted); font-size: 0.75rem; }
+.diagnostics-job { border-top: 1px solid var(--border); padding: 0.45rem 0.9rem; }
+.diagnostics-resource { border-top: 1px solid var(--border); }
+.diagnostics-resource summary { cursor: pointer; padding: 0.65rem 0.9rem; }
+.diagnostics-resource summary span { color: var(--accent); font-size: 0.72rem; font-weight: 700; text-transform: uppercase; }
+.diagnostics-resource summary small { color: var(--text-muted); margin-left: 0.4rem; }
+.diagnostics-resource-steps { border-top: 1px solid var(--border); padding: 0.35rem 0.9rem 0.6rem 1.6rem; }
+.diagnostics-step { display: grid; gap: 0.65rem; grid-template-columns: 0.55rem 1fr; padding: 0.45rem 0.9rem; }
+.diagnostics-step-dot { background: var(--accent); border-radius: 50%; height: 0.45rem; margin-top: 0.32rem; width: 0.45rem; }
+.diagnostics-step strong { font-size: 0.82rem; }
+.diagnostics-step span, .diagnostics-step small { color: var(--text-muted); font-size: 0.75rem; margin-left: 0.35rem; }
+.diagnostics-step p { color: var(--text-muted); font-size: 0.78rem; margin: 0.2rem 0 0; }
+.diagnostics-step .diagnostics-error { color: var(--red); }
+
+@media (max-width: 700px) {
+  .diagnostics-story > header { align-items: flex-start; flex-direction: column; }
+  .diagnostics-story > header > div:last-child { justify-content: space-between; width: 100%; }
+}
 
 .table-scroll {
   overflow-x: auto;

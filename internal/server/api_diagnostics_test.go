@@ -37,7 +37,7 @@ func TestAPI_DiagnosticsLogsFiltersAndAudits(t *testing.T) {
 	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
 	for _, event := range []diagnostics.Event{
 		{ID: "log-1", Timestamp: now.Add(-time.Minute), Level: "WARN", Component: "reconcile", Message: "pool warning", Pool: "pool-a"},
-		{ID: "log-2", Timestamp: now, Level: "ERROR", Component: "reconcile", Message: "agent failure", Pool: "pool-a", Agent: "agent-a"},
+		{ID: "log-2", Timestamp: now, Level: "ERROR", Component: "reconcile", Message: "agent failure", Pool: "pool-a", Agent: "agent-a", Job: "job-a", Status: "failed"},
 	} {
 		if err := logs.Append(context.Background(), event); err != nil {
 			t.Fatalf("Append: %v", err)
@@ -46,7 +46,7 @@ func TestAPI_DiagnosticsLogsFiltersAndAudits(t *testing.T) {
 
 	mux := server.NewTestMuxWithDiagnostics(st, sandbox.New(st, nil), logs, audit, false, false)
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/diagnostics/logs?level=ERROR&pool=pool-a&limit=1", nil)
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/diagnostics/logs?level=ERROR&pool=pool-a&job=job-a&status=failed&limit=1", nil)
 	mux.ServeHTTP(w, r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -63,6 +63,9 @@ func TestAPI_DiagnosticsLogsFiltersAndAudits(t *testing.T) {
 	}
 	if len(audit.queries) != 1 || audit.queries[0].ResultCount != 1 {
 		t.Fatalf("audit = %+v, want one query with result count 1", audit.queries)
+	}
+	if audit.queries[0].Job != "job-a" || audit.queries[0].Status != "failed" {
+		t.Fatalf("audit filters = %+v, want job and status", audit.queries[0])
 	}
 }
 
@@ -142,7 +145,8 @@ func TestUI_DiagnosticsRendersRedactedEvents(t *testing.T) {
 	st := store.NewMemoryStore()
 	logs := diagnostics.NewMemoryStore()
 	if err := logs.Append(context.Background(), diagnostics.Event{
-		ID: "log-ui", Timestamp: time.Now().UTC(), Level: "WARN", Component: "reconcile", Message: "safe warning", Pool: "pool-a",
+		ID: "log-ui", Timestamp: time.Now().UTC(), Level: "WARN", Component: "reconcile", Message: "safe warning",
+		Operation: "pool.fill", Job: "job-ui", Step: "vm.create", Status: "failed", Attempt: 2, Pool: "pool-a", Resource: "vm-a",
 	}); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
@@ -153,7 +157,7 @@ func TestUI_DiagnosticsRendersRedactedEvents(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
-	if body := w.Body.String(); !containsAll(body, "Diagnostics", "safe warning", "pool-a", "Export current query", "View agent logs", "/ui/diagnostics/export?limit=100", "component=agent") {
+	if body := w.Body.String(); !containsAll(body, "Diagnostics", "safe warning", "pool-a", "Export current query", "View agent logs", "/ui/diagnostics/export?limit=100", "component=agent", "diagnostics-timeline", "pool.fill", "vm-a", "vm.create", "attempt 2", "Structured event table") {
 		t.Fatalf("diagnostics page missing expected content: %s", body)
 	}
 }
