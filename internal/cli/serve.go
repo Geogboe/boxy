@@ -254,7 +254,8 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 
 	// Drivers + embedded agent
 	doneAgent, failAgent := ui.step("Starting embedded agent")
-	drivers, err := buildDrivers(reg, cfg.Providers, cfgPath)
+	embeddedTypes := embeddedProviderTypes(poolSpecs, providersMap, reg.Types())
+	drivers, err := buildDriversForTypes(reg, cfg.Providers, cfgPath, embeddedTypes)
 	if err != nil {
 		failAgent(err.Error())
 		return fmt.Errorf("build drivers: %w", err)
@@ -980,6 +981,41 @@ func providerTypes(reg *providersdk.Registry) []string {
 	return out
 }
 
+// embeddedProviderTypes returns provider types needed by pools that are not
+// pinned to a remote agent. Remote-only providers must not be advertised by
+// the embedded agent, or its reconciliation loop will probe hosts it cannot
+// serve and obscure the actual remote-agent state.
+func embeddedProviderTypes(specs []boxyconfig.PoolSpec, providers map[string]providersdk.Instance, registered []providersdk.Type) []providersdk.Type {
+	needed := make(map[providersdk.Type]struct{})
+	for _, spec := range specs {
+		if strings.TrimSpace(spec.Agent) != "" {
+			continue
+		}
+		t := providersdk.Type(strings.TrimSpace(spec.Provider))
+		if instance, ok := providers[spec.Provider]; ok {
+			t = instance.Type
+		}
+		if t == "" {
+			switch strings.TrimSpace(spec.Type) {
+			case "docker", "container", "":
+				t = "docker"
+			default:
+				t = providersdk.Type(strings.TrimSpace(spec.Type))
+			}
+		}
+		if t != "" {
+			needed[t] = struct{}{}
+		}
+	}
+	selected := make([]providersdk.Type, 0, len(needed))
+	for _, t := range registered {
+		if _, ok := needed[t]; ok {
+			selected = append(selected, t)
+		}
+	}
+	return selected
+}
+
 // buildDrivers instantiates drivers for all registered provider types.
 // For each type in the registry:
 // - If a provider instance with matching Type exists, use its Config
@@ -989,12 +1025,15 @@ func providerTypes(reg *providersdk.Registry) []string {
 // directory is passed to each config's providersdk.RelativePathResolver, if
 // implemented (see devfactory.Config.ResolveRelativePaths).
 func buildDrivers(reg *providersdk.Registry, instances []providersdk.Instance, cfgPath string) ([]providersdk.Driver, error) {
+	return buildDriversForTypes(reg, instances, cfgPath, reg.Types())
+}
+
+func buildDriversForTypes(reg *providersdk.Registry, instances []providersdk.Instance, cfgPath string, types []providersdk.Type) ([]providersdk.Driver, error) {
 	baseDir := ""
 	if cfgPath != "" {
 		baseDir = filepath.Dir(cfgPath)
 	}
 
-	types := reg.Types()
 	drivers := make([]providersdk.Driver, 0, len(types))
 
 	// Build a map of type -> configured instance for easy lookup.
