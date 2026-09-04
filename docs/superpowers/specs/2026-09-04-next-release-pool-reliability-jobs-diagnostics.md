@@ -49,9 +49,17 @@ it never selects a host's latest version.
 Admission creates and starts the VM, rotates its password once, persists the
 new credential, then applies packages. Package application gets three total
 attempts against the same powered-on VM and saved credential. After the third
-failure, Boxy powers down and removes the VM. A manual Retry uses the same VM
-and credential. Failed resources that consume `max_total` without ready
-capacity make the pool `blocked`; Fill must not report success in that state.
+failure, Boxy powers down and removes the VM by default, and a manual Retry
+provisions a new resource from the template rather than reusing the torn-down
+VM or its (now-deleted) credential. An opt-in, local-config-only pool policy,
+`policy.debug.retain_failed_resources`, changes this: when set, admission
+failures leave the VM running and its guest credential intact instead of
+tearing it down, and a manual Retry against a retained failed resource
+re-admits it in place, reusing the same VM and credential. This is
+troubleshooting-only — a retained failed resource still consumes `max_total`
+capacity and can make the pool `blocked` exactly like any other failed
+resource. Failed resources that consume `max_total` without ready capacity
+make the pool `blocked`; Fill must not report success in that state.
 
 Only one mutating pool job may run at a time. While it runs, Fill, Retry, and
 Destroy are unavailable; Cancel is the only mutation. Logs and Inspect remain

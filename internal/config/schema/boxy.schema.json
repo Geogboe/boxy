@@ -171,6 +171,16 @@
             "additionalProperties": false,
             "description": "\"policy\" and \"policies\" are aliases for the same setting and are mutually exclusive — set only one.",
             "properties": {
+              "debug": {
+                "additionalProperties": false,
+                "properties": {
+                  "retain_failed_resources": {
+                    "description": "Troubleshooting-only opt-in: keep a resource's VM and rotated guest credential running after admission fails instead of the default power-down-and-remove teardown, so a manual Retry re-admits it in place. A retained failed resource still counts against max_total, including toward a blocked pool.",
+                    "type": "boolean"
+                  }
+                },
+                "type": "object"
+              },
               "preheat": {
                 "additionalProperties": false,
                 "properties": {
@@ -202,6 +212,16 @@
             "additionalProperties": false,
             "description": "\"policy\" and \"policies\" are aliases for the same setting and are mutually exclusive — set only one.",
             "properties": {
+              "debug": {
+                "additionalProperties": false,
+                "properties": {
+                  "retain_failed_resources": {
+                    "description": "Troubleshooting-only opt-in: keep a resource's VM and rotated guest credential running after admission fails instead of the default power-down-and-remove teardown, so a manual Retry re-admits it in place. A retained failed resource still counts against max_total, including toward a blocked pool.",
+                    "type": "boolean"
+                  }
+                },
+                "type": "object"
+              },
               "preheat": {
                 "additionalProperties": false,
                 "properties": {

@@ -950,6 +950,9 @@ func poolSpecToModel(spec boxyconfig.PoolSpec) (model.Pool, error) {
 			Recycle: model.RecyclePolicy{
 				MaxAge: policy.Recycle.MaxAge,
 			},
+			Debug: model.PoolDebugPolicy{
+				RetainFailedResources: policy.Debug.RetainFailedResources,
+			},
 		},
 		Drain: model.PoolDrainState{
 			ConfigDeclared: policy.Preheat.ConfiguresDrain(),

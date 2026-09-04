@@ -191,6 +191,11 @@ func (m *Manager) FailAdmission(ctx context.Context, res model.Resource, cause e
 		pool, err := m.store.GetPool(ctx, res.OriginPool)
 		if err != nil {
 			cleanupErr = fmt.Errorf("load pool for admission cleanup: %w", err)
+		} else if pool.Policies.Debug.RetainFailedResources {
+			// Operator opted into keeping failed resources alive for
+			// investigation instead of the default teardown: leave the VM
+			// running and its guest credential intact so a manual Retry can
+			// reuse both in place. See retryRetainedResource.
 		} else {
 			res.State = model.ResourceStateDestroying
 			res.UpdatedAt = m.clock.Now().UTC()
@@ -460,8 +465,37 @@ func (m *Manager) RetryResource(ctx context.Context, res model.Resource) error {
 	if err != nil {
 		return fmt.Errorf("get origin pool %q: %w", res.OriginPool, err)
 	}
+	if pool.Policies.Debug.RetainFailedResources {
+		return m.retryRetainedResource(ctx, pool, res)
+	}
 	if err := m.destroyAndMark(ctx, pool, res, model.ResourceStateRecycling, m.clock.Now()); err != nil {
 		return err
+	}
+	return m.reconcileLocked(ctx, pool.Name, 0, false)
+}
+
+// retryRetainedResource re-admits a resource that FailAdmission left running
+// (see PoolPolicies.Debug.RetainFailedResources) instead of destroying it.
+// It clears the recorded failure and moves the resource back to
+// Provisioning; Reconcile's observer already republishes a fresh
+// resource.provisioned admission event for any resource in that state (see
+// the Observer func below). AdmissionHandler finds the still-stored guest
+// credential and skips personalization, so the retry reuses the same VM and
+// credential rather than destroying and recreating it from the template.
+// Requires an admission publisher: without one, nothing would ever pick the
+// resource back up out of Provisioning.
+func (m *Manager) retryRetainedResource(ctx context.Context, pool model.Pool, res model.Resource) error {
+	if m.admission == nil {
+		return fmt.Errorf("resource %q: retaining failed resources for retry requires an admission publisher", res.ID)
+	}
+	if res.Properties != nil {
+		delete(res.Properties, "lifecycle_error")
+		delete(res.Properties, "cleanup_error")
+	}
+	res.State = model.ResourceStateProvisioning
+	res.UpdatedAt = m.clock.Now().UTC()
+	if err := m.store.PutResource(ctx, res); err != nil {
+		return fmt.Errorf("reset retained resource %q for retry: %w", res.ID, err)
 	}
 	return m.reconcileLocked(ctx, pool.Name, 0, false)
 }

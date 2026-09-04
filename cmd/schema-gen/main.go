@@ -234,6 +234,16 @@ func buildPoolsSchema() map[string]any {
 					},
 				},
 			},
+			"debug": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"retain_failed_resources": map[string]any{
+						"type":        "boolean",
+						"description": `Troubleshooting-only opt-in: keep a resource's VM and rotated guest credential running after admission fails instead of the default power-down-and-remove teardown, so a manual Retry re-admits it in place. A retained failed resource still counts against max_total, including toward a blocked pool.`,
+					},
+				},
+			},
 		},
 	}
 

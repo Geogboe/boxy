@@ -340,6 +340,94 @@ func TestManager_RetryResourceCleansQuarantine(t *testing.T) {
 	}
 }
 
+func TestManager_FailAdmissionRetainsResourceWhenDebugPolicyEnabled(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	pool := model.Pool{Name: "windows", Policies: model.PoolPolicies{Debug: model.PoolDebugPolicy{RetainFailedResources: true}}}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	res := model.Resource{ID: "vm-1", OriginPool: pool.Name, CurrentPool: pool.Name, State: model.ResourceStateProvisioning}
+	if err := st.PutResource(ctx, res); err != nil {
+		t.Fatalf("PutResource: %v", err)
+	}
+	provisioner := &fakeProvisioner{}
+	if err := New(st, provisioner).FailAdmission(ctx, res, errors.New("packages failed after three attempts")); err != nil {
+		t.Fatalf("FailAdmission: %v", err)
+	}
+	if len(provisioner.destroyed) != 0 {
+		t.Fatalf("destroyed resources = %v, want none retained for debug", provisioner.destroyed)
+	}
+	failed, err := st.GetResource(ctx, res.ID)
+	if err != nil {
+		t.Fatalf("GetResource: %v", err)
+	}
+	if failed.State != model.ResourceStateError {
+		t.Fatalf("resource state = %s, want error", failed.State)
+	}
+	if failed.Properties["lifecycle_error"] == nil {
+		t.Fatalf("resource properties = %+v, want recorded lifecycle_error", failed.Properties)
+	}
+}
+
+func TestManager_RetryResourceReusesRetainedVMAndCredential(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	pool := model.Pool{Name: "windows", Policies: model.PoolPolicies{Debug: model.PoolDebugPolicy{RetainFailedResources: true}}}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	res := model.Resource{
+		ID: "vm-1", OriginPool: pool.Name, CurrentPool: pool.Name, State: model.ResourceStateError,
+		Properties: map[string]any{"lifecycle_error": "packages failed after three attempts"},
+	}
+	if err := st.PutResource(ctx, res); err != nil {
+		t.Fatalf("PutResource: %v", err)
+	}
+	provisioner := &fakeProvisioner{}
+	mgr := New(st, provisioner)
+	publisher := &fakeAdmissionPublisher{}
+	mgr.SetAdmissionPublisher(publisher)
+	if err := mgr.RetryResource(ctx, res); err != nil {
+		t.Fatalf("RetryResource: %v", err)
+	}
+	if len(provisioner.destroyed) != 0 {
+		t.Fatalf("destroyed resources = %v, want the VM never destroyed", provisioner.destroyed)
+	}
+	if publisher.calls == 0 {
+		t.Fatalf("admission publisher calls = %d, want at least one re-admission", publisher.calls)
+	}
+	retried, err := st.GetResource(ctx, res.ID)
+	if err != nil {
+		t.Fatalf("GetResource: %v", err)
+	}
+	if retried.State != model.ResourceStateProvisioning {
+		t.Fatalf("resource state = %s, want provisioning (re-admitted in place)", retried.State)
+	}
+	if retried.Properties["lifecycle_error"] != nil {
+		t.Fatalf("resource properties = %+v, want lifecycle_error cleared", retried.Properties)
+	}
+}
+
+func TestManager_RetryResourceWithoutAdmissionPublisherFailsRetainedResource(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	pool := model.Pool{Name: "windows", Policies: model.PoolPolicies{Debug: model.PoolDebugPolicy{RetainFailedResources: true}}}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	res := model.Resource{ID: "vm-1", OriginPool: pool.Name, CurrentPool: pool.Name, State: model.ResourceStateError}
+	if err := st.PutResource(ctx, res); err != nil {
+		t.Fatalf("PutResource: %v", err)
+	}
+	if err := New(st, &fakeProvisioner{}).RetryResource(ctx, res); err == nil {
+		t.Fatalf("RetryResource: want error without an admission publisher configured")
+	}
+}
+
 func TestManager_DestroyResource_MarksDestroyingBeforeDestroy(t *testing.T) {
 	ctx := context.Background()
 	st := store.NewMemoryStore()
