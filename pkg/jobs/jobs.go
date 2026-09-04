@@ -335,7 +335,9 @@ func (r *Runner) finish(id ID, status Status, errorCode string) {
 	job.ErrorCode = errorCode
 	job.ErrorDetail = ""
 	job.FinishedAt = &now
-	_ = r.store.Put(context.Background(), job)
+	if err := r.store.Put(context.Background(), job); err != nil {
+		return
+	}
 	r.releaseLocked(job)
 }
 

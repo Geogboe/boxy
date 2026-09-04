@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Geogboe/boxy/pkg/jobs"
 	"github.com/Geogboe/boxy/pkg/lifecycle"
 	"github.com/Geogboe/boxy/pkg/model"
 )
@@ -30,6 +31,7 @@ type diskState struct {
 	Resources              map[model.ResourceID]model.Resource                  `json:"resources"`
 	Sandboxes              map[model.SandboxID]model.Sandbox                    `json:"sandboxes"`
 	Executions             map[model.ExecutionID]model.Execution                `json:"executions"`
+	Jobs                   map[jobs.ID]jobs.Job                                 `json:"jobs"`
 	AgentTokens            map[model.AgentTokenID]model.AgentRegistrationToken  `json:"agent_tokens"`
 	APIKeys                map[model.APIKeyID]model.APIKey                      `json:"api_keys"`
 	Sessions               map[model.SessionID]model.Session                    `json:"sessions"`
@@ -51,6 +53,7 @@ func NewDiskStore(path string) (*DiskStore, error) {
 			Resources:              make(map[model.ResourceID]model.Resource),
 			Sandboxes:              make(map[model.SandboxID]model.Sandbox),
 			Executions:             make(map[model.ExecutionID]model.Execution),
+			Jobs:                   make(map[jobs.ID]jobs.Job),
 			AgentTokens:            make(map[model.AgentTokenID]model.AgentRegistrationToken),
 			APIKeys:                make(map[model.APIKeyID]model.APIKey),
 			Sessions:               make(map[model.SessionID]model.Session),
@@ -98,6 +101,9 @@ func (s *DiskStore) load() error {
 	if st.Executions == nil {
 		st.Executions = make(map[model.ExecutionID]model.Execution)
 	}
+	if st.Jobs == nil {
+		st.Jobs = make(map[jobs.ID]jobs.Job)
+	}
 	if st.AgentTokens == nil {
 		st.AgentTokens = make(map[model.AgentTokenID]model.AgentRegistrationToken)
 	}
@@ -118,6 +124,46 @@ func (s *DiskStore) load() error {
 	}
 	s.data = st
 	return nil
+}
+
+func (s *DiskStore) Put(_ context.Context, job jobs.Job) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if job.ID == "" {
+		return fmt.Errorf("job id is required")
+	}
+	s.data.Jobs[job.ID] = cloneJob(job)
+	return s.persistLocked()
+}
+
+func (s *DiskStore) Get(_ context.Context, id jobs.ID) (jobs.Job, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	job, ok := s.data.Jobs[id]
+	if !ok {
+		return jobs.Job{}, jobs.ErrNotFound
+	}
+	return cloneJob(job), nil
+}
+
+func (s *DiskStore) List(_ context.Context) ([]jobs.Job, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]jobs.Job, 0, len(s.data.Jobs))
+	for _, job := range s.data.Jobs {
+		out = append(out, cloneJob(job))
+	}
+	return out, nil
+}
+
+func (s *DiskStore) Delete(_ context.Context, id jobs.ID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.data.Jobs[id]; !ok {
+		return jobs.ErrNotFound
+	}
+	delete(s.data.Jobs, id)
+	return s.persistLocked()
 }
 
 func (s *DiskStore) persistLocked() error {

@@ -201,6 +201,50 @@ func TestRunnerPruneRemovesOnlyExpiredTerminalJobs(t *testing.T) {
 	}
 }
 
+func TestRunnerKeepsTargetLockedWhenTerminalStateCannotBePersisted(t *testing.T) {
+	t.Parallel()
+	base := NewMemoryStore()
+	store := &terminalFailStore{Store: base, attempted: make(chan struct{})}
+	runner, err := NewRunner(Config{Store: store})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	job, err := runner.Submit(context.Background(), Request{Kind: "pool.fill", Target: "pool:windows"}, HandlerFuncs{})
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	select {
+	case <-store.attempted:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for terminal persistence attempt")
+	}
+	_, err = runner.Submit(context.Background(), Request{Kind: "pool.retry", Target: "pool:windows"}, HandlerFuncs{})
+	var busy *TargetBusyError
+	if !errors.As(err, &busy) {
+		t.Fatalf("second Submit error = %v, want TargetBusyError", err)
+	}
+	persisted, err := base.Get(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if persisted.Status.IsTerminal() {
+		t.Fatalf("persisted status = %s, want active state", persisted.Status)
+	}
+}
+
+type terminalFailStore struct {
+	Store
+	attempted chan struct{}
+}
+
+func (s *terminalFailStore) Put(ctx context.Context, job Job) error {
+	if job.Status.IsTerminal() {
+		close(s.attempted)
+		return errors.New("terminal write failed")
+	}
+	return s.Store.Put(ctx, job)
+}
+
 func waitForStatus(t *testing.T, runner *Runner, id ID, want Status) Job {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)

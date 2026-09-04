@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/Geogboe/boxy/pkg/jobs"
 	"github.com/Geogboe/boxy/pkg/model"
 )
 
@@ -13,6 +14,8 @@ var ErrNotFound = errors.New("not found")
 //
 // This is intentionally small and may be split into narrower interfaces later.
 type Store interface {
+	jobs.Store
+
 	// Pools
 	GetPool(ctx context.Context, name model.PoolName) (model.Pool, error)
 	PutPool(ctx context.Context, pool model.Pool) error
