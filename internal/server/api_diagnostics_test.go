@@ -192,6 +192,35 @@ func TestUI_DiagnosticsRendersRedactedEvents(t *testing.T) {
 	}
 }
 
+func TestUI_DiagnosticsFlatTableHidesMessageForSucceededEvent(t *testing.T) {
+	st := store.NewMemoryStore()
+	logs := diagnostics.NewMemoryStore()
+	if err := logs.Append(context.Background(), diagnostics.Event{
+		ID: "log-ok", Timestamp: time.Now().UTC(), Level: "INFO", Component: "pool", Message: "pool job step",
+		Operation: "pool.fill", Job: "job-ok", Step: "pool.fill", Status: "succeeded", Pool: "pool-a",
+	}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	mux := server.NewTestMuxWithDiagnostics(st, sandbox.New(st, nil), logs, nil, true, false)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/diagnostics", nil)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	// The routine step message must not surface under the flat table's
+	// Error column for a succeeded event -- it reads as a failure even
+	// though nothing failed. It's fine for the timeline story (not labeled
+	// "Error") to still show it as step detail.
+	body := w.Body.String()
+	tableStart := strings.Index(body, "Structured event table")
+	if tableStart < 0 {
+		t.Fatalf("diagnostics page missing structured event table: %s", body)
+	}
+	if strings.Contains(body[tableStart:], "pool job step") {
+		t.Fatalf("flat table shows routine message as an error: %s", body[tableStart:])
+	}
+}
+
 func TestUI_DiagnosticsFiltersAgentAndExportsCurrentQuery(t *testing.T) {
 	st := store.NewMemoryStore()
 	logs := diagnostics.NewMemoryStore()
