@@ -161,6 +161,9 @@ boxy
 │         This password will not be shown again.
 │
 │   ├── pool                                     Run administrator pool maintenance
+│   │   ├── list                                  List configured pools and ready inventory
+│   │   │     $ boxy admin pool list
+│   │   │       web\t2 ready
 │   │   ├── drain <pool>                         Drain unused ready inventory
 │   │   │     $ boxy admin pool drain win-vm
 │   │   │       drained pool win-vm
