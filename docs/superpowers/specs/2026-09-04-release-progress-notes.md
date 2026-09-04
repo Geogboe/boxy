@@ -98,6 +98,36 @@ triggered it).
    this file doesn't exist yet per the audit; consider adding minimal
    coverage for the nested-story grouping function if time allows.
 
+## Diagnostics bridge: done (2026-09-04, later in session)
+
+Completed in three commits:
+
+- `a27ba11 feat(diagnostics): add spec-required Provider field end-to-end`
+- `655c614 feat(diagnostics): bridge pool and agent job steps into diagnostics`
+- `4ad2796 feat(hyperv): emit structured diagnostics for personalization/memory failures`
+
+What's now real: `pool.fill`/`pool.drain`/`pool.retry`/`pool.destroy`/
+`agent.logs` jobs emit started/succeeded/failed structured events
+correlated by job ID (`internal/server/api_pools.go`'s `logPoolJobStep`,
+`api_agents.go`'s `logAgentJobStep`, both riding the pre-existing global
+slog->diagnostics bridge from `internal/cli/serve.go:242`). `hyperv.Driver`
+emits classified personalization failures (network_apply/rotate/verify/
+prepare) and memory-admission failures. `Provider` is a first-class field
+end-to-end (Event/Query/export/both UI templates).
+
+**Known, deliberate scope boundary**: per-resource Hyper-V events
+(`personalizeGuestLocked`'s events, memory-reserve events) do NOT carry the
+triggering job's ID, so they don't nest under a Fill job's story in
+`buildDiagnosticsTimeline` (`internal/server/ui_diagnostics_timeline.go`) —
+they show as their own flat/individual entries instead, correlated by
+`resource`/`pool` rather than `job`. Doing better requires threading the job
+ID through `internal/pool.Manager`'s reconcile/admission call chain down
+into the hyperv driver via context, touching many function signatures. Ruled
+out this session as materially more invasive for a further nice-to-have,
+not the "story renders completely empty" gap the audit actually flagged
+(that gap is fixed: the outer Fill/Retry/Destroy/agent-log job itself now
+always produces a real story). Revisit as its own follow-up if wanted.
+
 ## Other audit findings, not yet actioned
 
 - Agent-log-pull diagnostics UI refresh uses a full-page `location.reload()`
@@ -106,9 +136,20 @@ triggered it).
   priority relative to the producer-bridge gap above.
 - `internal/server/ui_diagnostics_timeline.go` has no dedicated test file.
 
+## Also landed this session, not in the original plan
+
+- **Issue #336** (BLOCKING, user-requested mid-session): hyperv
+  `PersonalizeGuest` had no per-resource lock, so concurrent invocations
+  (preheat + allocation, or any retry) could race the same guest's
+  network-apply/rotation sequence and strand a VM on APIPA with its
+  original password. Fixed with a per-VM-ID mutex map
+  (`Driver.personalizeLocks`), cleaned up on confirmed `Delete`. Commit
+  `60f7840`, includes a concurrency regression test.
+
 ## Remaining checklist from the original task (unchanged from the request)
 
-- Finish diagnostics bridge (in progress, see above).
+- Diagnostics bridge: DONE (see above) modulo the one deliberate scope
+  boundary noted above.
 - UI validation pass with Playwright/Firefox per the original task's screenshot
   list — NOT STARTED yet this session.
 - Full validation gate (`task fmt/generate/test/lint/ci:validate`, WSL race
