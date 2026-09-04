@@ -92,6 +92,45 @@ type Driver struct {
 	// builds an ephemeral temp-backed store in that case.
 	ledgerStore *diskjson.Store[ledgerData]
 	ledgerOnce  sync.Once
+
+	// personalizeLocksMu guards personalizeLocks, one per-resource mutex per
+	// VM ID currently (or previously) personalizing. PersonalizeGuest is
+	// called at least twice per resource (preheat and allocation) and any
+	// retry can overlap either of those; without a per-resource lease,
+	// concurrent invocations each open an independent PowerShell Direct
+	// session and race the same clear-then-reapply network script and
+	// password rotation against the same guest, which can strand a VM on an
+	// APIPA address with its original bootstrap password (#336). This
+	// mirrors internal/pool.Manager.lockPool's per-key mutex-map pattern.
+	personalizeLocksMu sync.Mutex
+	personalizeLocks   map[string]*sync.Mutex
+}
+
+// lockPersonalize serializes PersonalizeGuest invocations for the same VM
+// ID. See personalizeLocks for why this is required.
+func (d *Driver) lockPersonalize(id string) func() {
+	d.personalizeLocksMu.Lock()
+	if d.personalizeLocks == nil {
+		d.personalizeLocks = make(map[string]*sync.Mutex)
+	}
+	lock := d.personalizeLocks[id]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		d.personalizeLocks[id] = lock
+	}
+	d.personalizeLocksMu.Unlock()
+	lock.Lock()
+	return lock.Unlock
+}
+
+// forgetPersonalizeLock drops id's entry from personalizeLocks once Delete
+// has confirmed the VM gone, so the map doesn't grow unboundedly over a
+// long-running daemon's lifetime as pools recycle resources. Safe to call
+// even if no lock was ever created for id.
+func (d *Driver) forgetPersonalizeLock(id string) {
+	d.personalizeLocksMu.Lock()
+	delete(d.personalizeLocks, id)
+	d.personalizeLocksMu.Unlock()
 }
 
 // ErrVMBusy indicates a VM is stuck transitioning between power states and
@@ -959,6 +998,7 @@ func (d *Driver) Delete(ctx context.Context, id string) (err error) {
 			if relErr := d.releaseAddress(id); relErr != nil {
 				err = relErr
 			}
+			d.forgetPersonalizeLock(id)
 		}
 	}()
 
@@ -1048,7 +1088,20 @@ func (d *Driver) Allocate(ctx context.Context, id string) (map[string]any, error
 	return result.AccessDetails.ToProperties(), nil
 }
 
+// PersonalizeGuest applies guest networking and rotates the guest's admin
+// credential for the VM identified by id. It holds a per-resource lock for
+// the duration (see lockPersonalize) so that overlapping invocations for the
+// same VM — preheat and allocation both call this, and either can retry —
+// cannot interleave their PowerShell Direct sessions against the same guest.
 func (d *Driver) PersonalizeGuest(ctx context.Context, id string) (*providersdk.GuestPersonalizationResult, error) {
+	unlock := d.lockPersonalize(id)
+	defer unlock()
+	return d.personalizeGuestLocked(ctx, id)
+}
+
+// personalizeGuestLocked is PersonalizeGuest's implementation, run only
+// while the caller holds this VM's personalize lock.
+func (d *Driver) personalizeGuestLocked(ctx context.Context, id string) (*providersdk.GuestPersonalizationResult, error) {
 	notes, err := d.readNotes(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("read VM notes for %s: %w", id, err)

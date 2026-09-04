@@ -1315,6 +1315,63 @@ func TestDriver_PersonalizeGuest_RotatesAndReturnsCredential(t *testing.T) {
 	}
 }
 
+// TestDriver_PersonalizeGuest_SerializesConcurrentInvocations guards against
+// #336: PersonalizeGuest is called at least twice per resource (preheat and
+// allocation), and any retry can overlap either. Without a per-resource
+// lock, two concurrent invocations for the same VM ID would each open an
+// independent guest session and race the same network-apply/rotation
+// sequence against the same guest.
+func TestDriver_PersonalizeGuest_SerializesConcurrentInvocations(t *testing.T) {
+	var mu sync.Mutex
+	var active, maxActive int
+	d := &Driver{
+		psExec: func(_ context.Context, script string) (string, error) {
+			switch {
+			case strings.Contains(script, "Get-VMNetworkAdapter"):
+				return "10.0.0.5\n", nil
+			case strings.Contains(script, "(Get-VM -Id") && strings.Contains(script, ").Name"):
+				return "boxy-abc123\n", nil
+			default:
+				return "boxy_guest_os=windows;boxy_guest_user=Administrator\n", nil
+			}
+		},
+		resolveBootstrap: func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
+			mu.Lock()
+			active++
+			if active > maxActive {
+				maxActive = active
+			}
+			mu.Unlock()
+			time.Sleep(20 * time.Millisecond)
+			mu.Lock()
+			active--
+			mu.Unlock()
+			return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "bootstrap"}, nil
+		},
+		guestExecFactory: func(vmGUID, guestOS, guestUser, guestPassword, sshHost string) vmsdk.GuestExec {
+			return &recordingGuestExec{password: guestPassword}
+		},
+	}
+
+	var wg sync.WaitGroup
+	for range 5 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := d.PersonalizeGuest(context.Background(), fakeGUID); err != nil {
+				t.Errorf("PersonalizeGuest: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if maxActive > 1 {
+		t.Fatalf("max concurrent PersonalizeGuest critical sections = %d, want 1 (serialized per resource)", maxActive)
+	}
+}
+
 func TestDriver_Allocate_Windows(t *testing.T) {
 	callNum := 0
 	d := mockDriver(func(_ context.Context, _ string) (string, error) {
