@@ -39,6 +39,10 @@
         <button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch to light theme" aria-pressed="false">☼ <span>Light theme</span></button>
       </header>
       {{block "content" .}}{{end}}
+      <footer class="app-footer">
+        {{if .RepositoryURL}}<a href="{{.RepositoryURL}}" target="_blank" rel="noreferrer"><span class="repo-icon" aria-hidden="true">↗</span> Repository</a>{{end}}
+        <span>Boxy {{.Version}}</span>
+      </footer>
     </main>
   </div>
   <script>(function(){var root=document.documentElement,b=document.querySelector("[data-theme-toggle]");if(!b)return;function sync(){var light=root.dataset.theme==="light";b.setAttribute("aria-pressed",String(light));b.setAttribute("aria-label",light?"Switch to dark theme":"Switch to light theme");b.querySelector("span").textContent=light?"Dark theme":"Light theme";}b.addEventListener("click",function(){var next=root.dataset.theme==="light"?"dark":"light";root.dataset.theme=next;localStorage.setItem("boxy-theme",next);sync();});sync();})();</script>

@@ -9,6 +9,8 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/Geogboe/boxy/internal/buildcfg"
@@ -33,38 +35,42 @@ type pageData struct {
 	// by fragmentHandler (HTMX polling routes), whose fragment templates
 	// never reference .User — the sidebar itself is only ever rendered by
 	// a full-page response.
-	User                 string
-	Version              string
-	RepositoryURL        string
-	PoolCount            int
-	SandboxCount         int
-	ResourceCount        int
-	Pools                []model.Pool
-	PoolViews            []poolView
-	PoolDetail           *poolView
-	PoolHistory          bool
-	ResourceLimitHit     bool
-	CSRFToken            string
-	CanManagePools       bool
-	PoolResult           string
-	PoolError            string
-	Sandboxes            []sandboxView
-	Resources            []model.Resource
-	Agents               []agentView
-	Profile              profileData
-	Catalog              catalogPageData
-	CanManageServiceKeys bool
-	CanViewDiagnostics   bool
-	ServiceKeys          []apiKeySummary
-	ServiceKeyError      string
-	MintedServiceKey     string
-	MintedServiceKeyName string
-	Diagnostics          []diagnostics.Event
-	DiagnosticsError     string
-	DiagnosticsQuery     diagnostics.Query
-	DiagnosticsSince     string
-	DiagnosticsExportURL string
-	DiagnosticsAgentURL  string
+	User                  string
+	Version               string
+	RepositoryURL         string
+	PoolCount             int
+	SandboxCount          int
+	ResourceCount         int
+	Pools                 []model.Pool
+	PoolViews             []poolView
+	PoolDetail            *poolView
+	PoolHistory           bool
+	ResourceLimitHit      bool
+	CSRFToken             string
+	CanManagePools        bool
+	PoolResult            string
+	PoolError             string
+	Sandboxes             []sandboxView
+	Resources             []model.Resource
+	Agents                []agentView
+	Profile               profileData
+	Catalog               catalogPageData
+	CanManageServiceKeys  bool
+	CanViewDiagnostics    bool
+	ServiceKeys           []apiKeySummary
+	ServiceKeyError       string
+	MintedServiceKey      string
+	MintedServiceKeyName  string
+	Diagnostics           []diagnostics.Event
+	DiagnosticsError      string
+	DiagnosticsMessage    string
+	DiagnosticsQuery      diagnostics.Query
+	DiagnosticsSince      string
+	DiagnosticsExportURL  string
+	DiagnosticsAgentURL   string
+	DiagnosticsPullURL    string
+	DiagnosticsViewAllURL string
+	DiagnosticsNextURL    string
 }
 
 // sandboxView is the dashboard's per-sandbox row, joining the sandbox record
@@ -125,6 +131,7 @@ type poolResourceView struct {
 type agentView struct {
 	ID        string
 	Name      string
+	LogsURL   string
 	Connected bool
 	Available bool
 	LastSeen  string
@@ -184,6 +191,7 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ui/help", s.uiHandler(helpTmpl, "help", func(*http.Request) (pageData, error) { return pageData{}, nil }))
 	mux.HandleFunc("GET /ui/diagnostics", s.diagnosticsHandler(diagnosticsTmpl))
 	mux.HandleFunc("GET /ui/diagnostics/export", s.diagnosticsExportHandler)
+	mux.HandleFunc("POST /ui/diagnostics/agents/{id}/logs", s.handleRequestAgentLogsUI)
 	mux.HandleFunc("POST /ui/profile/personal-key", s.handleMintPersonalKey(profileTmpl))
 
 	// HTMX fragment routes.
@@ -279,11 +287,22 @@ func (s *Server) diagnosticsHandler(tmpl *template.Template) http.HandlerFunc {
 			d.DiagnosticsQuery = query
 			d.DiagnosticsSince = r.URL.Query().Get("since")
 			d.DiagnosticsExportURL = "/ui/diagnostics/export?" + diagnosticsQueryValues(query).Encode()
-			agentQuery := query
-			if agentQuery.Agent == "" {
-				agentQuery.Component = "agent"
+			if query.Agent != "" {
+				d.DiagnosticsPullURL = "/ui/diagnostics/agents/" + url.PathEscape(query.Agent) + "/logs"
 			}
-			d.DiagnosticsAgentURL = "/ui/diagnostics?" + diagnosticsQueryValues(agentQuery).Encode()
+			if query.Component == "agent" || query.Agent != "" {
+				allQuery := query
+				allQuery.Component = ""
+				allQuery.Agent = ""
+				d.DiagnosticsViewAllURL = "/ui/diagnostics?" + diagnosticsQueryValues(allQuery).Encode()
+			} else {
+				agentQuery := query
+				agentQuery.Component = "agent"
+				d.DiagnosticsAgentURL = "/ui/diagnostics?" + diagnosticsQueryValues(agentQuery).Encode()
+			}
+		}
+		if requestID := strings.TrimSpace(r.URL.Query().Get("log_request")); requestID != "" {
+			d.DiagnosticsMessage = "Requested agent logs (request ID: " + requestID + ")."
 		}
 		if err == nil {
 			if s.diagnostics == nil {
@@ -295,6 +314,11 @@ func (s *Server) diagnosticsHandler(tmpl *template.Template) http.HandlerFunc {
 					d.DiagnosticsError = "Diagnostics are temporarily unavailable."
 				} else {
 					d.Diagnostics = page.Events
+					if page.NextCursor != "" {
+						nextQuery := query
+						nextQuery.Cursor = page.NextCursor
+						d.DiagnosticsNextURL = "/ui/diagnostics?" + diagnosticsPageQueryValues(nextQuery).Encode()
+					}
 					audit.ResultCount = len(page.Events)
 					if s.audit != nil {
 						if err := s.audit.RecordDiagnosticsQuery(r.Context(), audit); err != nil {
@@ -608,6 +632,7 @@ func (s *Server) agentsData(_ *http.Request) (pageData, error) {
 		agent := agentView{
 			ID:        summary.ID,
 			Name:      summary.Name,
+			LogsURL:   "/ui/diagnostics?" + url.Values{"agent": {summary.ID}}.Encode(),
 			Connected: summary.Connected,
 			Available: summary.Available,
 			LastSeen:  "No heartbeat sample",

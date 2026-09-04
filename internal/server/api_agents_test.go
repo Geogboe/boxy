@@ -22,6 +22,7 @@ type fakeAgentAdmin struct {
 	agents               []pool.AgentSummary
 	revoked              []string
 	forceOrphanResources []bool
+	logPulls             []string
 }
 
 func (f *fakeAgentAdmin) ListAgents() []pool.AgentSummary { return f.agents }
@@ -30,6 +31,31 @@ func (f *fakeAgentAdmin) Revoke(_ context.Context, agentID, _ string, forceOrpha
 	f.revoked = append(f.revoked, agentID)
 	f.forceOrphanResources = append(f.forceOrphanResources, forceOrphanResources)
 	return nil
+}
+
+func (f *fakeAgentAdmin) RequestAgentLogs(_ context.Context, agentID string, _ time.Time, _ int) (string, error) {
+	f.logPulls = append(f.logPulls, agentID)
+	return "pull-1", nil
+}
+
+func TestRequestAgentLogsEndpoint(t *testing.T) {
+	t.Parallel()
+
+	st := store.NewMemoryStore()
+	admin := &fakeAgentAdmin{}
+	mux := server.NewTestMuxWithAgentAdmin(st, sandbox.New(st, nil), admin)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/agents/agent-a/logs", strings.NewReader(`{"since":"2026-09-03T18:30:00Z","limit":25}`))
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d (body: %s)", w.Code, http.StatusAccepted, w.Body.String())
+	}
+	if len(admin.logPulls) != 1 || admin.logPulls[0] != "agent-a" {
+		t.Fatalf("log pulls = %v, want [agent-a]", admin.logPulls)
+	}
+	if !strings.Contains(w.Body.String(), `"request_id":"pull-1"`) {
+		t.Fatalf("response = %s, missing request id", w.Body.String())
+	}
 }
 
 func TestAgentTokenEndpoints(t *testing.T) {

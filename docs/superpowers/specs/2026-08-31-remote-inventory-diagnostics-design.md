@@ -25,7 +25,7 @@ small laptop without a Hyper-V host.
 The daemon exposes control-plane logs and server-observed remote-agent errors;
 it does not add a remote-agent log-forwarding protocol in this release. Logs
 are persisted in a bounded, redacted JSONL file below the daemon data
-directory. The default retention is seven days or 10 MiB, whichever is
+directory. The default retention is 14 days or 10 MiB, whichever is
 reached first. The store is append-only from the handler's perspective and
 uses a temporary-file replacement when compacting or rewriting state.
 

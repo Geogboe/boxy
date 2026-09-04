@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -184,6 +187,79 @@ func TestUI_DiagnosticsFiltersAgentAndExportsCurrentQuery(t *testing.T) {
 	}
 	if len(archive.Events) != 1 || archive.Events[0].Message != "agent a failure" {
 		t.Fatalf("archive events = %+v, want only agent-a event", archive.Events)
+	}
+
+	filtered := httptest.NewRecorder()
+	mux.ServeHTTP(filtered, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/diagnostics?component=agent", nil)))
+	if filtered.Code != http.StatusOK || !strings.Contains(filtered.Body.String(), "View all diagnostics") || strings.Contains(filtered.Body.String(), `href="/ui/diagnostics?component=agent`) {
+		t.Fatalf("agent-filtered page has non-functional navigation: status=%d body=%s", filtered.Code, filtered.Body.String())
+	}
+}
+
+func TestUI_DiagnosticsPaginatesAndPreservesFilters(t *testing.T) {
+	st := store.NewMemoryStore()
+	logs := diagnostics.NewMemoryStore()
+	now := time.Now().UTC()
+	for _, event := range []diagnostics.Event{
+		{ID: "newer", Timestamp: now, Level: "ERROR", Component: "agent", Message: "newer event", Agent: "agent-a"},
+		{ID: "older", Timestamp: now.Add(-time.Minute), Level: "ERROR", Component: "agent", Message: "older event", Agent: "agent-a"},
+	} {
+		if err := logs.Append(context.Background(), event); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+	mux := server.NewTestMuxWithDiagnostics(st, sandbox.New(st, nil), logs, nil, true, false)
+
+	first := httptest.NewRecorder()
+	mux.ServeHTTP(first, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/diagnostics?agent=agent-a&limit=1", nil)))
+	if first.Code != http.StatusOK || !containsAll(first.Body.String(), "newer event", "Next page") || strings.Contains(first.Body.String(), "older event") {
+		t.Fatalf("first diagnostics page status=%d body=%s", first.Code, first.Body.String())
+	}
+
+	match := regexp.MustCompile(`href="([^"]+)"[^>]*>Next page</a>`).FindStringSubmatch(first.Body.String())
+	if len(match) != 2 {
+		t.Fatalf("first diagnostics page missing next-page link: %s", first.Body.String())
+	}
+	next, err := url.Parse(html.UnescapeString(match[1]))
+	if err != nil {
+		t.Fatalf("parse next-page URL: %v", err)
+	}
+	if next.Query().Get("agent") != "agent-a" || next.Query().Get("limit") != "1" || next.Query().Get("cursor") == "" {
+		t.Fatalf("next-page query = %v, want agent, limit, and cursor", next.Query())
+	}
+
+	second := httptest.NewRecorder()
+	mux.ServeHTTP(second, server.AuthedRequest(httptest.NewRequest(http.MethodGet, next.String(), nil)))
+	if second.Code != http.StatusOK || !containsAll(second.Body.String(), "older event", "agent-a") || strings.Contains(second.Body.String(), "newer event") || strings.Contains(second.Body.String(), "Next page") {
+		t.Fatalf("second diagnostics page status=%d body=%s", second.Code, second.Body.String())
+	}
+}
+
+func TestUI_DiagnosticsPullAgentLogs(t *testing.T) {
+	t.Parallel()
+
+	st := store.NewMemoryStore()
+	admin := &fakeAgentAdmin{}
+	mux := server.NewTestMuxWithAgentAdminUI(st, sandbox.New(st, nil), admin, true)
+
+	get := httptest.NewRecorder()
+	mux.ServeHTTP(get, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/diagnostics?agent=agent-a", nil)))
+	if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), "Pull agent logs") || !strings.Contains(get.Body.String(), `action="/ui/diagnostics/agents/agent-a/logs"`) {
+		t.Fatalf("diagnostics page status=%d, missing pull action: %q", get.Code, get.Body.String())
+	}
+	csrf := csrfCookieFromResponse(t, get)
+
+	post := httptest.NewRecorder()
+	form := url.Values{"csrf_token": {csrf.Value}, "since": {"2026-09-03T18:30:00Z"}}
+	r := server.AuthedRequest(httptest.NewRequest(http.MethodPost, "/ui/diagnostics/agents/agent-a/logs", strings.NewReader(form.Encode())))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(csrf)
+	mux.ServeHTTP(post, r)
+	if post.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want redirect (body: %s)", post.Code, post.Body.String())
+	}
+	if !strings.Contains(post.Header().Get("Location"), "log_request=pull-1") || len(admin.logPulls) != 1 {
+		t.Fatalf("location=%q log pulls=%v, want request id and one pull", post.Header().Get("Location"), admin.logPulls)
 	}
 }
 

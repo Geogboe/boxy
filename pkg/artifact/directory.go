@@ -159,6 +159,7 @@ func (r *DirectoryRegistry) SignSource(ctx context.Context, source Source, _ tim
 	} else if !os.IsNotExist(resolveErr) {
 		return SourceDescriptor{}, fmt.Errorf("resolve source path: %w", resolveErr)
 	}
+
 	return SourceDescriptor{Path: location, Digest: source.Digest, Format: source.Format, OS: source.OS, Provider: source.Provider, Metadata: cloneStrings(source.Metadata)}, nil
 }
 

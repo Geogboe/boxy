@@ -20,6 +20,7 @@ import (
 	"github.com/Geogboe/boxy/internal/svcmgr"
 	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
 	"github.com/Geogboe/boxy/pkg/agentsdk"
+	"github.com/Geogboe/boxy/pkg/diagnostics"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/providersdk/builtins"
 )
@@ -245,6 +246,13 @@ func runAgentServe(ctx context.Context, opts agentServeOpts) error {
 		}
 		dataDir = filepath.Join(wd, ".boxy-agent")
 	}
+	agentDiagnostics, err := diagnostics.NewFileStore(filepath.Join(dataDir, "diagnostics.jsonl"), diagnostics.DefaultMaxBytes, diagnostics.DefaultMaxAge)
+	if err != nil {
+		return fmt.Errorf("open agent diagnostics store: %w", err)
+	}
+	// Keep the configured stderr/service log destination while also retaining
+	// a bounded, redacted local history for explicit server-side pulls.
+	agentLog := slog.New(diagnostics.NewHandler(slog.Default().Handler(), agentDiagnostics))
 
 	name := opts.name
 	if name == "" {
@@ -283,7 +291,7 @@ func runAgentServe(ctx context.Context, opts agentServeOpts) error {
 		token = ""
 	}
 
-	slog.Info("starting boxy agent", "server", opts.server, "providers", providerTypes, "data_dir", dataDir, "insecure", opts.insecure)
+	agentLog.Info("starting boxy agent", "server", opts.server, "providers", providerTypes, "data_dir", dataDir, "insecure", opts.insecure)
 
 	dial := newAgentDialer(opts.server, dataDir, opts.caCert, opts.insecure, connectionHolder)
 	return agentsdk.Run(ctx, dial, agentsdk.RemoteClientConfig{
@@ -292,17 +300,19 @@ func runAgentServe(ctx context.Context, opts agentServeOpts) error {
 		AgentVersion:  Version,
 		ProviderTypes: providerTypes,
 		Drivers:       drivers,
+		LogStore:      agentDiagnostics,
+		Logger:        agentLog,
 		OnRegistered: func(resp *boxyagentv1.RegisterResponse) {
-			slog.Info("registered with server", "agent_id", resp.GetAgentId())
+			agentLog.Info("registered with server", "agent_id", resp.GetAgentId())
 			if len(resp.GetClientCertificatePem()) > 0 {
 				if err := persistAgentCredentials(dataDir, resp); err != nil {
 					// Fatal-worthy in spirit (a restart would need a fresh
 					// token), but the live session keeps working — surface
 					// loudly and keep serving.
-					slog.Error("failed to persist issued credentials; reconnects after restart will need a new token", "error", err, "data_dir", dataDir)
+					agentLog.Error("failed to persist issued credentials; reconnects after restart will need a new token", "error", err, "data_dir", dataDir)
 				} else if opts.serviceConfigPath != "" {
 					if err := scrubAgentServiceConfigToken(opts.serviceConfigPath); err != nil {
-						slog.Warn("failed to scrub bootstrap token from service config after registration", "error", err, "path", opts.serviceConfigPath)
+						agentLog.Warn("failed to scrub bootstrap token from service config after registration", "error", err, "path", opts.serviceConfigPath)
 					}
 				}
 			}

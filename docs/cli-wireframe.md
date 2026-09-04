@@ -160,6 +160,22 @@ boxy
 │         password: <one-time generated password>
 │         This password will not be shown again.
 │
+│   ├── pool (or pools)                           Run administrator pool maintenance
+│   │   ├── list                                  List configured pools and ready inventory
+│   │   │     $ boxy admin pool list
+│   │   │       web\t2 ready
+│   │   ├── drain|down <pool>                    Drain unused ready inventory
+│   │   │     $ boxy admin pool drain win-vm       (also: admin pools down)
+│   │   │       drained pool win-vm
+│   │   └── fill|up <pool>                       Reconcile to configured min_ready
+│   │         $ boxy admin pool fill win-vm        (also: admin pools up)
+│   │           filled pool win-vm
+│   │
+│   └── resource                                 Run administrator resource maintenance
+│       └── purge [--dry-run|--force]             Preview or force stale-resource cleanup
+│             $ boxy admin resource purge --dry-run
+│               resource purge: candidates=2 cleaned=0 skipped=4 errors=0 dry-run=true force=false
+│
 │
 ├── diagnostics                                Inspect safe administrator diagnostics
 │   ├── --server <url>                           Server URL (overrides env/global defaults)
@@ -182,6 +198,10 @@ boxy
 │
 │       Only administrators can query diagnostics. Raw credentials and signed
 │       URL query values are redacted before events are persisted.
+│
+│   └── collect <agent-id>                      Pull retained logs once from a connected agent
+│       ├── --since <timestamp>                   RFC3339 lower time bound for an incremental pull
+│       └── --limit <1-1000>                      Maximum events (default 1000)
 │
 │
 ├── config                                      (alias: cfg)

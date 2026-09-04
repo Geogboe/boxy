@@ -9,12 +9,15 @@
       "release-type": "go",
       "include-component-in-tag": false,
       "include-v-in-tag": true,
-      "skip-changelog": true,
       "changelog-sections": [
         {"type": "feat", "section": "Features"},
         {"type": "fix", "section": "Bug Fixes"},
         {"type": "refactor", "section": "Refactoring"},
         {"type": "perf", "section": "Performance"},
+        {"type": "style", "section": "User Interface"},
+        {"type": "test", "section": "Testing"},
+        {"type": "build", "section": "Build"},
+        {"type": "ci", "section": "Continuous Integration"},
         {"type": "docs", "section": "Documentation", "hidden": false},
         {"type": "chore", "section": "Miscellaneous", "hidden": true}
       ]

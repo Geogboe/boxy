@@ -1,6 +1,9 @@
 package model
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // ResourceRequest expresses demand for one or more resources matching a (Type, Profile) key.
 //
@@ -28,6 +31,13 @@ func (r ResourceRequest) Validate() error {
 	}
 	if r.Count <= 0 {
 		return fmt.Errorf("request count must be > 0")
+	}
+	for i, rawRef := range r.Packages {
+		ref := strings.TrimSpace(rawRef)
+		name, version, ok := strings.Cut(ref, "@")
+		if !ok || strings.TrimSpace(name) == "" || strings.TrimSpace(version) == "" || strings.Contains(version, "@") {
+			return fmt.Errorf("request package[%d] %q must use name@version", i, rawRef)
+		}
 	}
 	return nil
 }

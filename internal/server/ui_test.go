@@ -71,7 +71,7 @@ func TestUI_layoutRendersBrandingVersionThemeAndAdminLinks(t *testing.T) {
 			t.Fatalf("GET %s status = %d", path, w.Code)
 		}
 		body := w.Body.String()
-		for _, want := range []string{"/static/favicon.svg", "Repository", "dev", "data-theme-toggle", `href="/ui/diagnostics"`, `href="/ui/service-keys"`} {
+		for _, want := range []string{"/static/favicon.svg", "Repository", "app-footer", "dev", "data-theme-toggle", `href="/ui/diagnostics"`, `href="/ui/service-keys"`} {
 			if !strings.Contains(body, want) {
 				t.Errorf("GET %s missing %q", path, want)
 			}
@@ -146,6 +146,28 @@ func TestUI_pools_renders(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, "test-pool") {
 		t.Fatal("pools page missing pool name")
+	}
+}
+
+func TestUI_poolsCollapsesResourceGroupsByDefault(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	if err := st.PutPool(ctx, model.Pool{Name: "test-pool"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutResource(ctx, model.Resource{ID: "resource-1", OriginPool: "test-pool", State: model.ResourceStateReady}); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/pools", nil)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	if strings.Contains(w.Body.String(), `<details class="pool-group" open>`) {
+		t.Fatal("active pool resource groups should be collapsed by default")
 	}
 }
 
@@ -381,6 +403,7 @@ func TestUI_agents_rendersStatusesCapacityAndPolling(t *testing.T) {
 		"Agents", "Embedded Agent", "Lab Hypervisor", "remote-1", "Connected", "Disconnected",
 		"Available", "Unavailable", "hyperv", "4,096 MB free", "No heartbeat sample", "No capacity sample",
 		"2026-08-21 14:30:00 UTC", `hx-get="/ui/fragments/agents-table"`, `hx-trigger="every 5s"`,
+		`href="/ui/diagnostics?agent=embedded">View logs</a>`,
 		`href="/ui/agents" class="active" aria-current="page"`,
 	} {
 		if !strings.Contains(body, want) {

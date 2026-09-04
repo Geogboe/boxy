@@ -219,12 +219,12 @@ func (ap *AgentProvisioner) Allocate(ctx context.Context, pool model.Pool, res m
 // optional sandbox allocator capability so callers without package requests
 // retain the old path.
 func (ap *AgentProvisioner) AllocateWithPackages(ctx context.Context, pool model.Pool, res model.Resource, packages []string) (providersdk.AllocationResult, error) {
+	if len(packages) > 0 && ap.PackageEngine == nil {
+		return providersdk.AllocationResult{}, fmt.Errorf("resource package engine is not configured")
+	}
 	allocation, err := ap.Allocate(ctx, pool, res)
 	if err != nil || len(packages) == 0 {
 		return allocation, err
-	}
-	if ap.PackageEngine == nil {
-		return providersdk.AllocationResult{}, fmt.Errorf("resource package engine is not configured")
 	}
 	plan, err := ap.PackageEngine.Plan(ctx, resourcepack.Request{
 		Target:     resourcepack.Target{ResourceID: string(res.ID), Provider: string(res.Provider.Name), AgentID: res.Provider.AgentID},

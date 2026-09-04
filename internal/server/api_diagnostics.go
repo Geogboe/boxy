@@ -62,6 +62,14 @@ func diagnosticsQueryValues(query diagnostics.Query) url.Values {
 	return values
 }
 
+func diagnosticsPageQueryValues(query diagnostics.Query) url.Values {
+	values := diagnosticsQueryValues(query)
+	if strings.TrimSpace(query.Cursor) != "" {
+		values.Set("cursor", query.Cursor)
+	}
+	return values
+}
+
 func (s *Server) buildDiagnosticsExport(ctx context.Context, query diagnostics.Query) (diagnostics.Export, int, error) {
 	page, err := s.diagnostics.Query(ctx, query)
 	if err != nil {

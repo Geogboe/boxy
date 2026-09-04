@@ -822,6 +822,18 @@ func TestPackageCommandRejectsUnmaterializedScript(t *testing.T) {
 	}
 }
 
+func TestAllocateWithPackagesRequiresEngineBeforeAllocation(t *testing.T) {
+	_, err := (&AgentProvisioner{}).AllocateWithPackages(
+		context.Background(),
+		model.Pool{Name: "pool"},
+		model.Resource{ID: "resource"},
+		[]string{"package@1.0.0"},
+	)
+	if err == nil || !strings.Contains(err.Error(), "package engine is not configured") {
+		t.Fatalf("AllocateWithPackages() error = %v, want package engine configuration error", err)
+	}
+}
+
 // TestAgentProvisioner_ForceOrphan_SucceedsWhenAgentGone proves ForceOrphan
 // succeeds (never contacts any agent) once the owning agent is entirely
 // absent from the registry — the state Revoke leaves behind after

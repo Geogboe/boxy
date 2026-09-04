@@ -17,11 +17,23 @@ func newDebugResourceCommand() *cobra.Command {
 		},
 	}
 	cmd.PersistentFlags().StringVar(&server, "server", "", "server address (overrides BOXY_SERVER and the global client default)")
-	cmd.AddCommand(newDebugResourcePurgeCommand(func() string { return server }))
+	cmd.AddCommand(newResourcePurgeCommand(func() string { return server }))
 	return cmd
 }
 
-func newDebugResourcePurgeCommand(serverAddr func() string) *cobra.Command {
+func newAdminResourceCommand(serverAddr func() string) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "resource",
+		Short: "Run administrator resource maintenance actions through the daemon",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Help()
+		},
+	}
+	cmd.AddCommand(newResourcePurgeCommand(serverAddr))
+	return cmd
+}
+
+func newResourcePurgeCommand(serverAddr func() string) *cobra.Command {
 	var dryRun bool
 	var force bool
 	cmd := &cobra.Command{
