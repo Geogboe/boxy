@@ -164,10 +164,10 @@ boxy
 │   │   ├── list                                  List configured pools and ready inventory
 │   │   │     $ boxy admin pool list
 │   │   │       web\t2 ready
-│   │   ├── drain <pool>                         Drain unused ready inventory
+│   │   ├── drain|down <pool>                    Drain unused ready inventory
 │   │   │     $ boxy admin pool drain win-vm
 │   │   │       drained pool win-vm
-│   │   └── fill <pool>                          Reconcile to configured min_ready
+│   │   └── fill|up <pool>                       Reconcile to configured min_ready
 │   │         $ boxy admin pool fill win-vm
 │   │           filled pool win-vm
 │   │

@@ -57,9 +57,10 @@ func newAdminPoolCommand(serverAddr func() string) *cobra.Command {
 
 func newPoolDrainCommand(serverAddr func() string) *cobra.Command {
 	return &cobra.Command{
-		Use:   "drain <pool>",
-		Short: "Drain unused ready inventory from a pool",
-		Args:  cobra.ExactArgs(1),
+		Use:     "drain <pool>",
+		Aliases: []string{"down"},
+		Short:   "Drain unused ready inventory from a pool",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, err := validatePathID("pool name", args[0])
 			if err != nil {
@@ -82,9 +83,10 @@ func newPoolDrainCommand(serverAddr func() string) *cobra.Command {
 
 func newPoolFillCommand(serverAddr func() string) *cobra.Command {
 	return &cobra.Command{
-		Use:   "fill <pool>",
-		Short: "Fill a pool to its configured min_ready",
-		Args:  cobra.ExactArgs(1),
+		Use:     "fill <pool>",
+		Aliases: []string{"up"},
+		Short:   "Fill a pool to its configured min_ready",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, err := validatePathID("pool name", args[0])
 			if err != nil {

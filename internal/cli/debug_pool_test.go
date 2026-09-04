@@ -144,3 +144,37 @@ func TestAdminPoolDrain_success(t *testing.T) {
 		t.Fatalf("output = %q, want admin pool drain success", output)
 	}
 }
+
+func TestAdminPoolDown_alias(t *testing.T) {
+	srv := newDebugPoolTestServer(t)
+	defer srv.Close()
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"admin", "pool", "--server", srv.URL, "down", "web"})
+	output, err := captureSandboxStdout(t, func() error {
+		return cmd.ExecuteContext(context.Background())
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(output, "drained pool web") {
+		t.Fatalf("output = %q, want down alias success", output)
+	}
+}
+
+func TestAdminPoolUp_alias(t *testing.T) {
+	srv := newDebugPoolTestServer(t)
+	defer srv.Close()
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"admin", "pool", "--server", srv.URL, "up", "web"})
+	output, err := captureSandboxStdout(t, func() error {
+		return cmd.ExecuteContext(context.Background())
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(output, "filled pool web") {
+		t.Fatalf("output = %q, want up alias success", output)
+	}
+}
