@@ -200,12 +200,8 @@ func (r *AgentRegistry) Resolve(provider providersdk.Type, pinnedAgentID string)
 	}
 
 	start := int(r.cursor[provider] % uint64(len(availableIDs))) //nolint:gosec // G115: result is always < len(availableIDs), an int-bounded slice length
-	for i := 0; i < len(availableIDs); i++ {
-		idx := (start + i) % len(availableIDs)
-		r.cursor[provider]++
-		return r.agents[availableIDs[idx]], nil
-	}
-	return nil, fmt.Errorf("no available agent for provider %q", provider)
+	r.cursor[provider]++
+	return r.agents[availableIDs[start]], nil
 }
 
 // resolveByHeadroomLocked selects the highest-headroom candidate when every
