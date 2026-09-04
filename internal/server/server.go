@@ -168,7 +168,7 @@ func NewWithOptions(st store.Store, sm *sandbox.Manager, pm PoolMaintenance, aa 
 		tlsKeyPEM:       append([]byte(nil), opts.TLSKeyPEM...),
 		addr:            addr,
 	}
-	s.executions = newExecutionManager(st, opts.Executor)
+	s.executions = newExecutionManager(st, opts.Executor, jobRunner)
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
 	s.srv = &http.Server{

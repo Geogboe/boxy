@@ -25,6 +25,7 @@ var (
 	ErrStoreRequired     = errors.New("job store is required")
 	ErrInvalidRequest    = errors.New("job request is invalid")
 	ErrWorkerUnavailable = errors.New("job worker is unavailable")
+	ErrAlreadyExists     = errors.New("job already exists")
 )
 
 type ID string
@@ -89,6 +90,7 @@ type Job struct {
 }
 
 type Request struct {
+	ID     ID
 	Kind   string
 	Target string
 }
@@ -216,9 +218,18 @@ func (r *Runner) Submit(ctx context.Context, request Request, handler Handler) (
 		return Job{}, &TargetBusyError{Target: request.Target, ActiveJobID: activeID}
 	}
 	now := r.currentTime()
-	job := Job{ID: r.newID(), Kind: request.Kind, Target: request.Target, Status: StatusPending, CreatedAt: now}
+	id := request.ID
+	if id == "" {
+		id = r.newID()
+	}
+	job := Job{ID: id, Kind: request.Kind, Target: request.Target, Status: StatusPending, CreatedAt: now}
 	if job.ID == "" {
 		return Job{}, fmt.Errorf("%w: generated job ID is empty", ErrInvalidRequest)
+	}
+	if _, err := r.store.Get(ctx, job.ID); err == nil {
+		return Job{}, fmt.Errorf("%w: %s", ErrAlreadyExists, job.ID)
+	} else if !errors.Is(err, ErrNotFound) {
+		return Job{}, err
 	}
 	if err := r.store.Put(ctx, job); err != nil {
 		return Job{}, err

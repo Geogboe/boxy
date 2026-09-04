@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Geogboe/boxy/pkg/eventstream"
+	"github.com/Geogboe/boxy/pkg/jobs"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/store"
@@ -36,36 +37,36 @@ func (e *resourceBusyError) Error() string {
 
 func (e *resourceBusyError) Unwrap() error { return ErrResourceBusy }
 
-// executionManager owns the only non-durable part of an execution: its
-// provider operation and cancellation function. The durable record is always
-// authoritative for readers and survives process crashes without replaying
-// the operation.
+// executionManager keeps sandbox output and result details separate while the
+// generic runner owns lifecycle, cancellation, recovery, and target locking.
 type executionManager struct {
 	store    store.Store
 	executor SandboxExecutor
+	runner   *jobs.Runner
 
-	mu         sync.Mutex
-	active     map[model.ResourceID]model.ExecutionID
-	cancel     map[model.ExecutionID]context.CancelFunc
-	operations map[model.ExecutionID]providersdk.ExecOperation
+	mu sync.Mutex
 }
 
 func (s *Server) executionService() *executionManager {
 	s.executionMu.Lock()
 	defer s.executionMu.Unlock()
 	if s.executions == nil {
-		s.executions = newExecutionManager(s.store, s.executor)
+		runner, _ := s.ensureJobRunner()
+		s.executions = newExecutionManager(s.store, s.executor, runner)
 	}
 	return s.executions
 }
 
-func newExecutionManager(st store.Store, executor SandboxExecutor) *executionManager {
+func newExecutionManager(st store.Store, executor SandboxExecutor, runners ...*jobs.Runner) *executionManager {
+	var runner *jobs.Runner
+	if len(runners) > 0 {
+		runner = runners[0]
+	}
+	if runner == nil && st != nil {
+		runner, _ = jobs.NewRunner(jobs.Config{Store: st})
+	}
 	m := &executionManager{
-		store:      st,
-		executor:   executor,
-		active:     make(map[model.ResourceID]model.ExecutionID),
-		cancel:     make(map[model.ExecutionID]context.CancelFunc),
-		operations: make(map[model.ExecutionID]providersdk.ExecOperation),
+		store: st, executor: executor, runner: runner,
 	}
 	// A process restart cannot safely recover the opaque operation payload.
 	// Marking records interrupted is therefore deliberately the only recovery
@@ -95,19 +96,23 @@ func (m *executionManager) markInterrupted(ctx context.Context) error {
 }
 
 func (m *executionManager) shutdown() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, cancel := range m.cancel {
-		cancel()
+	if m == nil || m.runner == nil || m.store == nil {
+		return
+	}
+	items, err := m.store.List(context.Background())
+	if err != nil {
+		return
+	}
+	for _, job := range items {
+		if job.Kind == "sandbox.execute" && !job.Status.IsTerminal() {
+			_, _ = m.runner.Cancel(context.Background(), job.ID)
+		}
 	}
 }
 
 func (m *executionManager) submit(ctx context.Context, sb model.Sandbox, resource model.Resource, operation providersdk.ExecOperation, inputKind model.ExecutionInputKind, actor string, timeout time.Duration) (model.Execution, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if existingID, ok := m.active[resource.ID]; ok {
-		return model.Execution{}, &resourceBusyError{ExecutionID: existingID}
+	if m == nil || m.store == nil || m.runner == nil {
+		return model.Execution{}, errors.New("execution job service is unavailable")
 	}
 	if timeout <= 0 {
 		timeout = defaultExecTimeout
@@ -118,30 +123,60 @@ func (m *executionManager) submit(ctx context.Context, sb model.Sandbox, resourc
 		SandboxID:          sb.ID,
 		ResourceID:         resource.ID,
 		ActorID:            actor,
-		Status:             model.ExecutionStatusRunning,
+		Status:             model.ExecutionStatusPending,
 		InputKind:          inputKind,
 		RequestFingerprint: executionFingerprint(operation, inputKind),
 		CreatedAt:          now,
-		StartedAt:          timePtr(now),
 		DeadlineAt:         now.Add(timeout),
 	}
 	if err := m.store.PutExecution(ctx, execution); err != nil {
 		return model.Execution{}, fmt.Errorf("persist execution: %w", err)
 	}
-	m.active[resource.ID] = execution.ID
-	m.operations[execution.ID] = cloneExecOperation(operation)
-	workerCtx, cancel := context.WithTimeout(context.Background(), timeout)
-	m.cancel[execution.ID] = cancel
-	go func() {
-		defer cancel()
-		// Durable workers intentionally use the server-owned context so a client
-		// disconnect cannot cancel the provider operation.
-		m.run(workerCtx, execution, resource, cloneExecOperation(operation)) //nolint:gosec // see the durable worker context above.
-	}()
+	_, err := m.runner.Submit(ctx, jobs.Request{
+		ID: jobs.ID(execution.ID), Kind: "sandbox.execute", Target: "resource:" + string(resource.ID),
+	}, jobs.HandlerFuncs{
+		RunFunc: func(jobCtx context.Context, reporter jobs.Reporter) error {
+			now := time.Now().UTC()
+			execution.Status = model.ExecutionStatusRunning
+			execution.StartedAt = timePtr(now)
+			if err := m.store.PutExecution(context.Background(), execution); err != nil {
+				return &jobs.Failure{Code: "execution_state_persist_failed"}
+			}
+			step := jobs.Step{Code: "sandbox.execute", Subject: string(resource.ID), Status: jobs.StepStarted, Attempt: 1}
+			if err := reporter.Record(jobCtx, step); err != nil {
+				return err
+			}
+			execCtx, cancel := context.WithTimeout(jobCtx, timeout)
+			result, runErr := m.run(execCtx, execution, resource, cloneExecOperation(operation))
+			cancel()
+			if err := m.finish(execution.ID, result, runErr); err != nil {
+				step.Status = jobs.StepFailed
+				step.ErrorCode = "execution_state_persist_failed"
+				_ = reporter.Record(context.Background(), step)
+				return &jobs.Failure{Code: step.ErrorCode}
+			}
+			if runErr != nil || (result != nil && result.Outputs["exit_code"] != "" && result.Outputs["exit_code"] != "0") {
+				step.Status = jobs.StepFailed
+				step.ErrorCode = executionJobErrorCode(runErr)
+				_ = reporter.Record(context.Background(), step)
+				return &jobs.Failure{Code: step.ErrorCode}
+			}
+			step.Status = jobs.StepSucceeded
+			return reporter.Record(jobCtx, step)
+		},
+	})
+	if err != nil {
+		_ = m.store.DeleteExecution(context.Background(), execution.ID)
+		var busy *jobs.TargetBusyError
+		if errors.As(err, &busy) {
+			return model.Execution{}, &resourceBusyError{ExecutionID: model.ExecutionID(busy.ActiveJobID)}
+		}
+		return model.Execution{}, err
+	}
 	return execution, nil
 }
 
-func (m *executionManager) run(ctx context.Context, execution model.Execution, resource model.Resource, operation providersdk.ExecOperation) {
+func (m *executionManager) run(ctx context.Context, execution model.Execution, resource model.Resource, operation providersdk.ExecOperation) (*providersdk.Result, error) {
 	sink := &durableExecutionSink{manager: m, executionID: execution.ID}
 	var result *providersdk.Result
 	var runErr error
@@ -161,17 +196,15 @@ func (m *executionManager) run(ctx context.Context, execution model.Execution, r
 			}
 		}
 	}
-	m.finish(execution.ID, result, runErr)
+	return result, runErr
 }
 
-func (m *executionManager) finish(id model.ExecutionID, result *providersdk.Result, runErr error) {
+func (m *executionManager) finish(id model.ExecutionID, result *providersdk.Result, runErr error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	execution, err := m.store.GetExecution(context.Background(), id)
 	if err != nil {
-		delete(m.cancel, id)
-		delete(m.operations, id)
-		return
+		return err
 	}
 	now := time.Now().UTC()
 	execution.FinishedAt = timePtr(now)
@@ -198,18 +231,10 @@ func (m *executionManager) finish(id model.ExecutionID, result *providersdk.Resu
 	default:
 		execution.Status = model.ExecutionStatusSucceeded
 	}
-	// A failed store write cannot be reported to the provider caller anymore.
-	// Retain the active guard and in-memory state until the record is durable;
-	// allowing a second provider operation to race an execution whose terminal
-	// state was not persisted would violate the per-resource execution contract.
 	if err := m.store.PutExecution(context.Background(), execution); err != nil {
-		return
+		return err
 	}
-	delete(m.cancel, id)
-	delete(m.operations, id)
-	if m.active[execution.ResourceID] == id {
-		delete(m.active, execution.ResourceID)
-	}
+	return nil
 }
 
 func safeExecutionError(err error) string {
@@ -225,11 +250,25 @@ func safeExecutionError(err error) string {
 	return "provider execution failed"
 }
 
+func executionJobErrorCode(err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "execution_timeout"
+	case errors.Is(err, eventstream.ErrLimitExceeded):
+		return "execution_output_limit"
+	case errors.Is(err, context.Canceled):
+		return "execution_cancelled"
+	default:
+		return "execution_failed"
+	}
+}
+
 func (m *executionManager) cancelExecution(id model.ExecutionID) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	cancel, ok := m.cancel[id]
-	if !ok {
+	if m == nil || m.runner == nil {
+		return errors.New("execution worker is unavailable")
+	}
+	_, err := m.runner.Cancel(context.Background(), jobs.ID(id))
+	if errors.Is(err, jobs.ErrNotFound) || errors.Is(err, jobs.ErrWorkerUnavailable) {
 		execution, err := m.store.GetExecution(context.Background(), id)
 		if err != nil {
 			return err
@@ -239,8 +278,7 @@ func (m *executionManager) cancelExecution(id model.ExecutionID) error {
 		}
 		return errors.New("execution worker is unavailable")
 	}
-	cancel()
-	return nil
+	return err
 }
 
 func (m *executionManager) get(ctx context.Context, id model.ExecutionID) (model.Execution, error) {

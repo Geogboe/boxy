@@ -71,6 +71,27 @@ func TestRunnerRejectsSecondActiveJobForTarget(t *testing.T) {
 	waitForStatus(t, runner, first.ID, StatusSucceeded)
 }
 
+func TestRunnerUsesRequestedIDAndRejectsDuplicate(t *testing.T) {
+	t.Parallel()
+	store := NewMemoryStore()
+	runner, err := NewRunner(Config{Store: store})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	job, err := runner.Submit(context.Background(), Request{ID: "known-id", Kind: "sandbox.execute", Target: "resource:one"}, HandlerFuncs{})
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if job.ID != "known-id" {
+		t.Fatalf("job id = %q, want known-id", job.ID)
+	}
+	waitForStatus(t, runner, job.ID, StatusSucceeded)
+	_, err = runner.Submit(context.Background(), Request{ID: "known-id", Kind: "sandbox.execute", Target: "resource:two"}, HandlerFuncs{})
+	if !errors.Is(err, ErrAlreadyExists) {
+		t.Fatalf("duplicate Submit error = %v, want ErrAlreadyExists", err)
+	}
+}
+
 func TestRunnerCancelWaitsForCleanupBeforeCancelled(t *testing.T) {
 	t.Parallel()
 	store := NewMemoryStore()
