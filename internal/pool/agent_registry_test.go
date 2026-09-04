@@ -236,6 +236,97 @@ func TestAgentRegistry_ResolveRoundRobinsAcrossSameTypeAgents(t *testing.T) {
 	}
 }
 
+func TestAgentRegistry_ResolvePrefersReportedHeadroom(t *testing.T) {
+	r := NewAgentRegistry()
+	low := &mockAvailabilityAgent{
+		mockAgent: newMockAgent(providersdk.Type("docker")),
+		snapshot: agentsdk.AvailabilitySnapshot{
+			Data: map[providersdk.Type]providersdk.ResourceAvailability{"docker": {MemoryMB: 1024}},
+		},
+		ok: true,
+	}
+	low.info.ID = "agent-low"
+	high := &mockAvailabilityAgent{
+		mockAgent: newMockAgent(providersdk.Type("docker")),
+		snapshot: agentsdk.AvailabilitySnapshot{
+			Data: map[providersdk.Type]providersdk.ResourceAvailability{"docker": {MemoryMB: 4096}},
+		},
+		ok: true,
+	}
+	high.info.ID = "agent-high"
+	if err := r.Register(low); err != nil {
+		t.Fatalf("Register low: %v", err)
+	}
+	if err := r.Register(high); err != nil {
+		t.Fatalf("Register high: %v", err)
+	}
+
+	got, err := r.Resolve("docker", "")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got.Info().ID != "agent-high" {
+		t.Fatalf("resolved agent = %q, want agent-high", got.Info().ID)
+	}
+}
+
+func TestAgentRegistry_ResolveEqualHeadroomUsesRoundRobin(t *testing.T) {
+	r := NewAgentRegistry()
+	for _, id := range []string{"agent-a", "agent-b"} {
+		a := &mockAvailabilityAgent{
+			mockAgent: newMockAgent(providersdk.Type("docker")),
+			snapshot: agentsdk.AvailabilitySnapshot{
+				Data: map[providersdk.Type]providersdk.ResourceAvailability{"docker": {MemoryMB: 4096}},
+			},
+			ok: true,
+		}
+		a.info.ID = id
+		if err := r.Register(a); err != nil {
+			t.Fatalf("Register %s: %v", id, err)
+		}
+	}
+
+	for _, want := range []string{"agent-a", "agent-b"} {
+		got, err := r.Resolve("docker", "")
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if got.Info().ID != want {
+			t.Fatalf("resolved agent = %q, want %q", got.Info().ID, want)
+		}
+	}
+}
+
+func TestAgentRegistry_ResolveIncompleteAvailabilityFallsBackToRoundRobin(t *testing.T) {
+	r := NewAgentRegistry()
+	reported := &mockAvailabilityAgent{
+		mockAgent: newMockAgent(providersdk.Type("docker")),
+		snapshot: agentsdk.AvailabilitySnapshot{
+			Data: map[providersdk.Type]providersdk.ResourceAvailability{"docker": {MemoryMB: 4096}},
+		},
+		ok: true,
+	}
+	reported.info.ID = "agent-reported"
+	legacy := newMockAgent(providersdk.Type("docker"))
+	legacy.info.ID = "agent-legacy"
+	if err := r.Register(reported); err != nil {
+		t.Fatalf("Register reported: %v", err)
+	}
+	if err := r.Register(legacy); err != nil {
+		t.Fatalf("Register legacy: %v", err)
+	}
+
+	for _, want := range []string{"agent-reported", "agent-legacy"} {
+		got, err := r.Resolve("docker", "")
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if got.Info().ID != want {
+			t.Fatalf("resolved agent = %q, want %q", got.Info().ID, want)
+		}
+	}
+}
+
 func TestAgentRegistry_ResolveSkipsUnavailableAgent(t *testing.T) {
 	r := NewAgentRegistry()
 	agentA := newMockAgent(providersdk.Type("docker"))

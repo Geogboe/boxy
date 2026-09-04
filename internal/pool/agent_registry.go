@@ -149,9 +149,10 @@ func (r *AgentRegistry) Availability(agentID string) (agentsdk.AvailabilitySnaps
 // currently-available agent that supports the provider type — pinning to
 // the wrong, nonexistent, or unavailable agent is a fail-fast config/state
 // error, never a silent fallback to a different agent. Otherwise, an
-// available agent offering the provider type is returned via round-robin
-// rotation across all agents registered for that type, so load spreads
-// across peers rather than always landing on the earliest-registered one.
+// available agent offering the provider type is selected by reported
+// headroom when every eligible agent provides a provider-specific snapshot.
+// If any eligible agent lacks that data, resolution falls back to round-robin
+// rotation so older or partially upgraded agents remain usable.
 func (r *AgentRegistry) Resolve(provider providersdk.Type, pinnedAgentID string) (agentsdk.Agent, error) {
 	// The non-pinned branch advances r.cursor[provider], which is a write,
 	// so the whole function takes the write lock (matching Register's
@@ -183,16 +184,64 @@ func (r *AgentRegistry) Resolve(provider providersdk.Type, pinnedAgentID string)
 		return nil, fmt.Errorf("no available agent for provider %q", provider)
 	}
 
-	start := int(r.cursor[provider] % uint64(len(ids))) //nolint:gosec // G115: result is always < len(ids), an int-bounded slice length
-	for i := 0; i < len(ids); i++ {
-		idx := (start + i) % len(ids)
-		id := ids[idx]
+	availableIDs := make([]string, 0, len(ids))
+	for _, id := range ids {
 		if r.avail[id] {
-			r.cursor[provider]++
-			return r.agents[id], nil
+			availableIDs = append(availableIDs, id)
 		}
 	}
+	if len(availableIDs) == 0 {
+		return nil, fmt.Errorf("no available agent for provider %q", provider)
+	}
+
+	if a, ok := r.resolveByHeadroomLocked(provider, availableIDs); ok {
+		r.cursor[provider]++
+		return a, nil
+	}
+
+	start := int(r.cursor[provider] % uint64(len(availableIDs))) //nolint:gosec // G115: result is always < len(availableIDs), an int-bounded slice length
+	for i := 0; i < len(availableIDs); i++ {
+		idx := (start + i) % len(availableIDs)
+		r.cursor[provider]++
+		return r.agents[availableIDs[idx]], nil
+	}
 	return nil, fmt.Errorf("no available agent for provider %q", provider)
+}
+
+// resolveByHeadroomLocked selects the highest-headroom candidate when every
+// candidate has a provider-specific availability snapshot. Ties start at the
+// round-robin cursor so equal-capacity agents retain fair distribution.
+func (r *AgentRegistry) resolveByHeadroomLocked(provider providersdk.Type, ids []string) (agentsdk.Agent, bool) {
+	type candidate struct {
+		id       string
+		memoryMB int64
+	}
+	candidates := make([]candidate, len(ids))
+	for i, id := range ids {
+		reporter, ok := r.agents[id].(agentsdk.AvailabilityReportingAgent)
+		if !ok {
+			return nil, false
+		}
+		snapshot, ok := reporter.Availability()
+		if !ok {
+			return nil, false
+		}
+		availability, ok := snapshot.Data[provider]
+		if !ok {
+			return nil, false
+		}
+		candidates[i] = candidate{id: id, memoryMB: availability.MemoryMB}
+	}
+
+	start := int(r.cursor[provider] % uint64(len(candidates))) //nolint:gosec // G115: result is always < len(candidates), an int-bounded slice length
+	best := start
+	for i := 1; i < len(candidates); i++ {
+		idx := (start + i) % len(candidates)
+		if candidates[idx].memoryMB > candidates[best].memoryMB {
+			best = idx
+		}
+	}
+	return r.agents[candidates[best].id], true
 }
 
 // LockProvisioning acquires the per-agent provisioning lock, blocking until
