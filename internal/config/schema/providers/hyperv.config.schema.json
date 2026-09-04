@@ -4,8 +4,14 @@
   "title": "Hyper-V Provider Config",
   "description": "Host-wide settings for the Hyper-V provider. The boxy agent must run on the Hyper-V host as Administrator.",
   "type": "object",
+  "required": ["memory_budget_mb"],
   "additionalProperties": false,
   "properties": {
+    "memory_budget_mb": {
+      "description": "Maximum total startup memory, in MB, that Boxy-managed VMs may consume on this Hyper-V host.",
+      "type": "integer",
+      "minimum": 1
+    },
     "host_reserve_mb": {
       "description": "Memory headroom kept available for the host OS and other processes. Defaults to 512 MB; set to 0 to disable the reserve.",
       "type": "integer",

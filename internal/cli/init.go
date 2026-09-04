@@ -87,6 +87,8 @@ providers:
   # with Hyper-V available.
   # - name: hyperv-local
   #   type: hyperv
+  #   config:
+  #     memory_budget_mb: 8192
 
 pools:
   # Docker/container pool example.

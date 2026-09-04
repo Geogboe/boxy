@@ -24,29 +24,45 @@ func mockDriver(psExecFn func(ctx context.Context, script string) (string, error
 }
 
 func TestNew_HostReserveDefaultsAndValidation(t *testing.T) {
-	d, err := New(&Config{})
+	d, err := New(&Config{MemoryBudgetMB: int64Ptr(8192)})
 	if err != nil {
 		t.Fatalf("New(default): %v", err)
 	}
 	if got := d.hostReserve(); got != DefaultHostReserveMB {
 		t.Fatalf("default host reserve = %d, want %d", got, DefaultHostReserveMB)
 	}
-	zero, err := New(&Config{HostReserveMB: int64Ptr(0)})
+	zero, err := New(&Config{HostReserveMB: int64Ptr(0), MemoryBudgetMB: int64Ptr(8192)})
 	if err != nil {
 		t.Fatalf("New(zero): %v", err)
 	}
 	if got := zero.hostReserve(); got != 0 {
 		t.Fatalf("zero host reserve = %d, want 0", got)
 	}
-	custom, err := New(&Config{HostReserveMB: int64Ptr(1024)})
+	custom, err := New(&Config{HostReserveMB: int64Ptr(1024), MemoryBudgetMB: int64Ptr(8192)})
 	if err != nil {
 		t.Fatalf("New(custom): %v", err)
 	}
 	if got := custom.hostReserve(); got != 1024 {
 		t.Fatalf("custom host reserve = %d, want 1024", got)
 	}
-	if _, err := New(&Config{HostReserveMB: int64Ptr(-1)}); err == nil {
+	if _, err := New(&Config{HostReserveMB: int64Ptr(-1), MemoryBudgetMB: int64Ptr(8192)}); err == nil {
 		t.Fatal("New(negative) error = nil")
+	}
+}
+
+func TestNew_RequiresPositiveMemoryBudget(t *testing.T) {
+	if _, err := New(&Config{}); err == nil || !strings.Contains(err.Error(), "memory_budget_mb is required") {
+		t.Fatalf("New without memory budget error = %v", err)
+	}
+	if _, err := New(&Config{MemoryBudgetMB: int64Ptr(0)}); err == nil || !strings.Contains(err.Error(), "must be positive") {
+		t.Fatalf("New with zero memory budget error = %v", err)
+	}
+	d, err := New(&Config{MemoryBudgetMB: int64Ptr(8192)})
+	if err != nil {
+		t.Fatalf("New with memory budget: %v", err)
+	}
+	if got := d.memoryBudget(); got != 8192 {
+		t.Fatalf("memory budget = %d, want 8192", got)
 	}
 }
 
@@ -547,13 +563,13 @@ func TestDriver_Availability_NetsOutReserveAndReservations(t *testing.T) {
 }
 
 func TestDriver_Availability_UsesConfiguredHostReserve(t *testing.T) {
-	d, err := New(&Config{HostReserveMB: int64Ptr(1024)})
+	d, err := New(&Config{HostReserveMB: int64Ptr(1024), MemoryBudgetMB: int64Ptr(8192)})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	d.psExec = func(_ context.Context, script string) (string, error) {
-		if !strings.Contains(script, hyperVAvailableMemoryScript) {
-			t.Fatalf("unexpected script: %s", script)
+		if strings.Contains(script, hyperVBoxyMemoryScript) {
+			return "0\n", nil
 		}
 		return "4096\n", nil
 	}
@@ -564,6 +580,82 @@ func TestDriver_Availability_UsesConfiguredHostReserve(t *testing.T) {
 	}
 	if got, want := avail.MemoryMB, int64(4096-1024-512); got != want {
 		t.Fatalf("MemoryMB = %d, want %d", got, want)
+	}
+}
+
+const hyperVBoxyMemoryScript = "MemoryStartup"
+
+func TestDriver_AvailabilityUsesSmallerLiveAndBudgetRemaining(t *testing.T) {
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		switch {
+		case strings.Contains(script, hyperVAvailableMemoryScript):
+			return "16384\n", nil
+		case strings.Contains(script, hyperVBoxyMemoryScript):
+			return "4096\n", nil
+		default:
+			return "", fmt.Errorf("unexpected script: %s", script)
+		}
+	})
+	d.hostReserveConfigured = true
+	d.hostReserveMB = 512
+	d.memoryBudgetConfigured = true
+	d.memoryBudgetMB = 6144
+	d.reservedMB = 512
+
+	availability, err := d.Availability(context.Background())
+	if err != nil {
+		t.Fatalf("Availability: %v", err)
+	}
+	if availability.MemoryMB != 1536 {
+		t.Fatalf("MemoryMB = %d, want budget-limited 1536", availability.MemoryMB)
+	}
+}
+
+func TestDriver_ReserveMemoryRejectsWhenBudgetIsExhausted(t *testing.T) {
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		switch {
+		case strings.Contains(script, hyperVAvailableMemoryScript):
+			return "16384\n", nil
+		case strings.Contains(script, hyperVBoxyMemoryScript):
+			return "7168\n", nil
+		default:
+			return "", fmt.Errorf("unexpected script: %s", script)
+		}
+	})
+	d.memoryBudgetConfigured = true
+	d.memoryBudgetMB = 8192
+
+	_, err := d.reserveMemory(context.Background(), 2048)
+	var capacity *CapacityError
+	if !errors.As(err, &capacity) {
+		t.Fatalf("reserveMemory error = %v, want CapacityError", err)
+	}
+	if capacity.AvailableMemoryMB != 1024 {
+		t.Fatalf("available memory = %d, want budget-limited 1024", capacity.AvailableMemoryMB)
+	}
+}
+
+func TestDriver_ReserveMemoryRetriesTransientLiveProbe(t *testing.T) {
+	calls := 0
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		if !strings.Contains(script, hyperVAvailableMemoryScript) {
+			return "", fmt.Errorf("unexpected script: %s", script)
+		}
+		calls++
+		if calls < 3 {
+			return "", errors.New("transient counter failure")
+		}
+		return "8192", nil
+	})
+	d.memoryRetryInterval = time.Millisecond
+	d.reservationGraceInterval = time.Millisecond
+	release, err := d.reserveMemory(context.Background(), 1024)
+	if err != nil {
+		t.Fatalf("reserveMemory: %v", err)
+	}
+	release()
+	if calls != 3 {
+		t.Fatalf("live probe calls = %d, want 3", calls)
 	}
 }
 

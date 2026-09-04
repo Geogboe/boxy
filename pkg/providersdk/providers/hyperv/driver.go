@@ -73,6 +73,14 @@ type Driver struct {
 	hostReserveMB         int64
 	hostReserveConfigured bool
 
+	// memoryBudgetMB caps aggregate startup memory assigned to Boxy-owned VMs.
+	// Bare Drivers used by low-level tests remain unconfigured and retain the
+	// legacy live-memory-only behavior; production Drivers built by New require
+	// this value.
+	memoryBudgetMB         int64
+	memoryBudgetConfigured bool
+	memoryRetryInterval    time.Duration
+
 	// mu guards reservedMB, the memory (in MB) committed to in-flight Create
 	// calls that a live host query doesn't reflect yet. See reserveMemory.
 	mu         sync.Mutex
@@ -99,7 +107,9 @@ const (
 
 	// defaultMemoryQueryTimeout bounds reserveMemory/Availability's live
 	// PowerShell available-memory query. See Driver.memoryQueryTimeout.
-	defaultMemoryQueryTimeout = 15 * time.Second
+	defaultMemoryQueryTimeout  = 15 * time.Second
+	defaultMemoryRetryInterval = 250 * time.Millisecond
+	memoryProbeAttempts        = 3
 
 	// vmStateNotFound is a sentinel returned by state-polling scripts when
 	// the VM has disappeared (e.g. it finished tearing down on its own).
@@ -187,9 +197,27 @@ func (d *Driver) hostReserve() int64 {
 	return d.hostReserveMB
 }
 
+func (d *Driver) memoryBudget() int64 {
+	if !d.memoryBudgetConfigured {
+		return 0
+	}
+	return d.memoryBudgetMB
+}
+
+func (d *Driver) memoryRetryDelay() time.Duration {
+	if d.memoryRetryInterval > 0 {
+		return d.memoryRetryInterval
+	}
+	return defaultMemoryRetryInterval
+}
+
 // New creates a Hyper-V driver and validates its host-wide configuration.
 func New(cfg *Config) (*Driver, error) {
 	reserve, err := cfg.effectiveHostReserveMB()
+	if err != nil {
+		return nil, err
+	}
+	budget, err := cfg.effectiveMemoryBudgetMB()
 	if err != nil {
 		return nil, err
 	}
@@ -214,9 +242,11 @@ func New(cfg *Config) (*Driver, error) {
 	}
 
 	return &Driver{
-		hostReserveMB:         reserve,
-		hostReserveConfigured: true,
-		ledgerStore:           diskjson.New(filepath.Join(dataDir, ledgerFilename), newLedgerData),
+		hostReserveMB:          reserve,
+		hostReserveConfigured:  true,
+		memoryBudgetMB:         budget,
+		memoryBudgetConfigured: true,
+		ledgerStore:            diskjson.New(filepath.Join(dataDir, ledgerFilename), newLedgerData),
 	}, nil
 }
 
@@ -740,30 +770,72 @@ $ErrorActionPreference = 'Stop'
 	return mb, nil
 }
 
+func (d *Driver) queryAvailableMemoryWithRetry(ctx context.Context) (int64, error) {
+	var lastErr error
+	for attempt := 1; attempt <= memoryProbeAttempts; attempt++ {
+		available, err := d.queryAvailableMemoryMB(ctx)
+		if err == nil {
+			return available, nil
+		}
+		lastErr = err
+		if attempt == memoryProbeAttempts {
+			break
+		}
+		timer := time.NewTimer(d.memoryRetryDelay())
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return 0, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return 0, lastErr
+}
+
+// queryBoxyMemoryMB returns aggregate startup memory for every Boxy-owned VM
+// visible on the provider host. Querying the host makes the budget survive
+// process restarts and includes VMs created by another Boxy process.
+func (d *Driver) queryBoxyMemoryMB(ctx context.Context) (int64, error) {
+	out, err := d.ps(ctx, `
+$ErrorActionPreference = 'Stop'
+$sum = (Get-VM -Name 'boxy-*' -ErrorAction SilentlyContinue | Measure-Object -Property MemoryStartup -Sum).Sum
+if ($null -eq $sum) { 0 } else { [math]::Floor([double]$sum / 1MB) }
+`)
+	if err != nil {
+		return 0, fmt.Errorf("hyperv query Boxy VM memory: %w", err)
+	}
+	mb, err := strconv.ParseInt(strings.TrimSpace(out), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("hyperv parse Boxy VM memory %q: %w", out, err)
+	}
+	return mb, nil
+}
+
 // Availability implements providersdk.AvailabilityReporter.
 func (d *Driver) Availability(ctx context.Context) (*providersdk.ResourceAvailability, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, d.memQueryTimeout())
 	defer cancel()
-	availableMB, err := d.queryAvailableMemoryMB(queryCtx)
-	if err != nil && queryCtx.Err() == nil {
-		// The Hyper-V performance provider can transiently fail while the host
-		// is refreshing counters. One bounded retry avoids turning a single
-		// probe blip into a zero-capacity heartbeat while preserving fail-closed
-		// behavior when the provider remains unavailable.
-		availableMB, err = d.queryAvailableMemoryMB(queryCtx)
-	}
+	availableMB, err := d.queryAvailableMemoryWithRetry(queryCtx)
 	if err != nil {
 		return nil, err
 	}
 	d.mu.Lock()
+	defer d.mu.Unlock()
 	reserved := d.reservedMB
-	d.mu.Unlock()
 
-	avail := availableMB - d.hostReserve() - reserved
-	if avail < 0 {
-		avail = 0
+	liveRemaining := clampMemory(availableMB - d.hostReserve() - reserved)
+	remaining := liveRemaining
+	if d.memoryBudgetConfigured {
+		used, err := d.queryBoxyMemoryMB(queryCtx)
+		if err != nil {
+			return nil, err
+		}
+		budgetRemaining := clampMemory(d.memoryBudgetMB - used - reserved)
+		if budgetRemaining < remaining {
+			remaining = budgetRemaining
+		}
 	}
-	return &providersdk.ResourceAvailability{MemoryMB: avail}, nil
+	return &providersdk.ResourceAvailability{MemoryMB: remaining}, nil
 }
 
 // reserveMemory atomically checks and commits requestedMB of host memory
@@ -788,22 +860,24 @@ func (d *Driver) reserveMemory(ctx context.Context, requestedMB int64) (release 
 
 	queryCtx, cancel := context.WithTimeout(ctx, d.memQueryTimeout())
 	defer cancel()
-	availableMB, err := d.queryAvailableMemoryMB(queryCtx)
+	availableMB, err := d.queryAvailableMemoryWithRetry(queryCtx)
 	if err != nil {
 		return nil, err
 	}
 
-	available := availableMB - d.hostReserve() - d.reservedMB
-	if available < requestedMB {
-		// Clamp to 0 for the error message, matching Availability()'s clamp
-		// for the same computation — a negative "available" (e.g. reservedMB
-		// alone exceeding availableMB-reserve under load) is a confusing
-		// thing to show a caller.
-		reported := available
-		if reported < 0 {
-			reported = 0
+	available := clampMemory(availableMB - d.hostReserve() - d.reservedMB)
+	if d.memoryBudgetConfigured {
+		used, err := d.queryBoxyMemoryMB(queryCtx)
+		if err != nil {
+			return nil, err
 		}
-		return nil, &CapacityError{RequestedMemoryMB: requestedMB, AvailableMemoryMB: reported}
+		budgetRemaining := clampMemory(d.memoryBudgetMB - used - d.reservedMB)
+		if budgetRemaining < available {
+			available = budgetRemaining
+		}
+	}
+	if available < requestedMB {
+		return nil, &CapacityError{RequestedMemoryMB: requestedMB, AvailableMemoryMB: available}
 	}
 
 	d.reservedMB += requestedMB
@@ -817,6 +891,13 @@ func (d *Driver) reserveMemory(ctx context.Context, requestedMB int64) (release 
 			d.mu.Unlock()
 		})
 	}, nil
+}
+
+func clampMemory(value int64) int64 {
+	if value < 0 {
+		return 0
+	}
+	return value
 }
 
 // waitForTerminalVMState polls a VM's power state until it leaves the

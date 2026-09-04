@@ -18,6 +18,11 @@ const ProviderType = "hyperv"
 // Config holds provider-level settings. These settings apply to the entire
 // Hyper-V host, not to an individual pool or VM.
 type Config struct {
+	// MemoryBudgetMB is the maximum aggregate startup memory Boxy may assign
+	// to boxy-* VMs on this provider host. It is required and shared by every
+	// pool using the provider.
+	MemoryBudgetMB *int64 `json:"memory_budget_mb" yaml:"memory_budget_mb"`
+
 	// HostReserveMB is the memory headroom kept available for the host OS and
 	// other processes. nil uses the safe 512 MB default; a pointer preserves
 	// the explicit zero value, which disables the reserve.
@@ -52,6 +57,16 @@ func (c *Config) effectiveHostReserveMB() (int64, error) {
 		return 0, fmt.Errorf("host_reserve_mb must not be negative, got %d", *c.HostReserveMB)
 	}
 	return *c.HostReserveMB, nil
+}
+
+func (c *Config) effectiveMemoryBudgetMB() (int64, error) {
+	if c == nil || c.MemoryBudgetMB == nil {
+		return 0, fmt.Errorf("memory_budget_mb is required")
+	}
+	if *c.MemoryBudgetMB <= 0 {
+		return 0, fmt.Errorf("memory_budget_mb must be positive, got %d", *c.MemoryBudgetMB)
+	}
+	return *c.MemoryBudgetMB, nil
 }
 
 // ResolveRelativePaths implements providersdk.RelativePathResolver.
