@@ -96,7 +96,7 @@
 <div class="empty">Pool inventory is restricted to administrators.</div>
 {{else if .PoolViews}}
 {{range .PoolViews}}
-<details class="pool-group" {{if not $.PoolHistory}}open{{end}}>
+<details class="pool-group">
   <summary class="pool-group-header">
     <div><a class="pool-detail-link" href="{{.DetailPath}}"><strong>{{.Name}}</strong></a>{{if .Type}} <span class="pool-type">{{.Type}}</span>{{end}}</div>
     <div class="pool-counts"><span>{{.ReadyCount}} ready / {{.TotalCount}} total</span>{{if .HistoricalCount}}<span class="badge badge-released">{{.HistoricalCount}} history</span>{{end}}{{if .EffectivelyDrained}}<span class="badge badge-drained">Drained</span>{{else}}<span class="badge badge-ready">Active</span>{{end}}</div>
