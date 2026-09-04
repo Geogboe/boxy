@@ -311,6 +311,21 @@ func TestBuildDriversDecodesConfiguredInstancesAndDefaults(t *testing.T) {
 	}
 }
 
+func TestEmbeddedProviderTypesExcludeRemotePinnedPools(t *testing.T) {
+	providers := map[string]providersdk.Instance{
+		"docker-local": {Name: "docker-local", Type: "docker"},
+		"hyperv-local": {Name: "hyperv-local", Type: "hyperv"},
+	}
+	specs := []boxyconfig.PoolSpec{
+		{Name: "docker", Type: "container", Provider: "docker-local"},
+		{Name: "windows", Type: "vm", Provider: "hyperv-local", Agent: "remote-windows"},
+	}
+	got := embeddedProviderTypes(specs, providers, []providersdk.Type{"docker", "hyperv", "devfactory"})
+	if len(got) != 1 || got[0] != "docker" {
+		t.Fatalf("embedded provider types = %v, want [docker]", got)
+	}
+}
+
 type resolvingServeDriverConfig struct {
 	resolvedBaseDir string
 }
