@@ -84,10 +84,11 @@ func TestUI_poolDetailShowsPolicyDrainResourcesProviderAndCapacity(t *testing.T)
 	st := store.NewMemoryStore()
 	if err := st.PutPool(ctx, model.Pool{
 		Name: "pool-detail", Template: "windows-2025", Source: "golden-image",
-		Packages:  []string{"go", "git"},
-		Policies:  model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 2, MaxTotal: 5}},
-		Drain:     model.PoolDrainState{ConfigDeclared: true, Operator: true},
-		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeVM, ExpectedProfile: model.ResourceProfileDefault},
+		Packages:      []string{"go", "git"},
+		Policies:      model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 2, MaxTotal: 5}, Recycle: model.RecyclePolicy{MaxAge: "24h"}},
+		Drain:         model.PoolDrainState{ConfigDeclared: true, Operator: true},
+		Configuration: model.PoolConfigurationState{Provenance: "local", Pending: true},
+		Inventory:     model.ResourceCollection{ExpectedType: model.ResourceTypeVM, ExpectedProfile: model.ResourceProfileDefault},
 	}); err != nil {
 		t.Fatalf("PutPool: %v", err)
 	}
@@ -115,6 +116,7 @@ func TestUI_poolDetailShowsPolicyDrainResourcesProviderAndCapacity(t *testing.T)
 		"pool-detail", "windows-2025", "golden-image", "go", "git",
 		"min_ready=2", "max_total=5", "Config drain", "Operator drain",
 		"1 ready / 1 active", "detail-resource", "hyperv", "Back to pools", "Logs", "Copy ID", "Inspect", "Destroy",
+		"Pool settings", "Save and apply", "Local config remains authoritative", "future local-config deployment will overwrite", "value=\"24h\"", "pending apply",
 	} {
 		if !strings.Contains(detail.Body.String(), want) {
 			t.Fatalf("pool detail missing %q: %q", want, detail.Body.String())
@@ -125,6 +127,32 @@ func TestUI_poolDetailShowsPolicyDrainResourcesProviderAndCapacity(t *testing.T)
 	mux.ServeHTTP(missing, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/pools/does-not-exist", nil)))
 	if missing.Code != http.StatusNotFound {
 		t.Fatalf("missing pool status = %d, want 404", missing.Code)
+	}
+}
+
+func TestUI_poolConfigurationSavesAndApplies(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	if err := st.PutPool(ctx, model.Pool{Name: "pool-config", Policies: model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 1, MaxTotal: 2}}}); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	mux := server.NewTestMuxWithPoolAdmin(st, sandbox.New(st, nil), &poolConfigurationMaintenance{}, nil)
+	get := httptest.NewRecorder()
+	mux.ServeHTTP(get, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/pools/pool-config", nil)))
+	csrf := csrfCookieFromResponse(t, get)
+	form := url.Values{"csrf_token": {csrf.Value}, "min_ready": {"2"}, "max_total": {"3"}, "max_age": {"12h"}}
+	post := httptest.NewRecorder()
+	r := server.AuthedRequest(httptest.NewRequest(http.MethodPost, "/ui/pools/pool-config/configuration", strings.NewReader(form.Encode())))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(csrf)
+	mux.ServeHTTP(post, r)
+	if post.Code != http.StatusSeeOther || !strings.Contains(post.Header().Get("Location"), "result=config_saved") {
+		t.Fatalf("status=%d location=%q body=%q", post.Code, post.Header().Get("Location"), post.Body.String())
+	}
+	updated, _ := st.GetPool(ctx, "pool-config")
+	if updated.Policies.Preheat.MinReady != 2 || updated.Policies.Preheat.MaxTotal != 3 || updated.Policies.Recycle.MaxAge != "12h0m0s" || updated.Configuration.Provenance != "web" || updated.Configuration.Pending {
+		t.Fatalf("updated pool = %+v", updated)
 	}
 }
 

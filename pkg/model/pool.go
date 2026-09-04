@@ -1,5 +1,7 @@
 package model
 
+import "time"
+
 // PoolName is the stable, user-facing handle for a pool (the thing typed in CLI/config).
 type PoolName string
 
@@ -21,8 +23,19 @@ type Pool struct {
 	// Drain records desired drain state for unused pool inventory.
 	Drain PoolDrainState `json:"drain,omitempty" yaml:"drain,omitempty"`
 
+	// Configuration records where editable policy values came from. Static
+	// provider, template, store, and secret definitions remain local-file owned.
+	Configuration PoolConfigurationState `json:"configuration,omitempty" yaml:"configuration,omitempty"`
+
 	// Inventory is the current contents of the pool.
 	Inventory ResourceCollection `json:"inventory" yaml:"inventory"`
+}
+
+type PoolConfigurationState struct {
+	Provenance    string    `json:"provenance,omitempty" yaml:"provenance,omitempty"`
+	LocalRevision string    `json:"local_revision,omitempty" yaml:"local_revision,omitempty"`
+	Pending       bool      `json:"pending,omitempty" yaml:"pending,omitempty"`
+	UpdatedAt     time.Time `json:"updated_at,omitempty" yaml:"updated_at,omitempty"`
 }
 
 // PoolPolicies captures pool-level behavior without prescribing a specific

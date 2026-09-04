@@ -553,11 +553,47 @@ func TestSeedConfiguredPools_PreservesInventoryAndUpdatesConfig(t *testing.T) {
 	if got.Policies.Preheat.MinReady != 2 || got.Policies.Preheat.MaxTotal != 3 {
 		t.Fatalf("preheat policy = %+v, want min_ready=2 max_total=3", got.Policies.Preheat)
 	}
+	if got.Configuration.Provenance != "local" || got.Configuration.LocalRevision == "" {
+		t.Fatalf("configuration = %+v, want local provenance and revision", got.Configuration)
+	}
 	if len(got.Inventory.Resources) != 1 || got.Inventory.Resources[0].ID != "res-ready" {
 		t.Fatalf("inventory resources = %+v, want res-ready", got.Inventory.Resources)
 	}
 	if got.Inventory.Resources[0].Properties["source"] != "global" {
 		t.Fatalf("inventory resource source = %v, want global", got.Inventory.Resources[0].Properties["source"])
+	}
+}
+
+func TestSeedConfiguredPoolsPreservesWebEditsUntilLocalConfigChanges(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	spec := boxyconfig.PoolSpec{Name: "win-vm", Type: "vm", Policy: boxyconfig.PoolPolicySpec{Preheat: boxyconfig.PreheatPolicySpec{MinReady: 1, MaxTotal: 2}}}
+	if _, err := seedConfiguredPools(ctx, st, []boxyconfig.PoolSpec{spec}); err != nil {
+		t.Fatalf("initial seed: %v", err)
+	}
+	web, _ := st.GetPool(ctx, "win-vm")
+	firstRevision := web.Configuration.LocalRevision
+	web.Policies.Preheat = model.PreheatPolicy{MinReady: 3, MaxTotal: 4}
+	web.Configuration.Provenance = "web"
+	if err := st.PutPool(ctx, web); err != nil {
+		t.Fatalf("save web edit: %v", err)
+	}
+	if _, err := seedConfiguredPools(ctx, st, []boxyconfig.PoolSpec{spec}); err != nil {
+		t.Fatalf("restart seed: %v", err)
+	}
+	restarted, _ := st.GetPool(ctx, "win-vm")
+	if restarted.Policies.Preheat.MinReady != 3 || restarted.Configuration.Provenance != "web" {
+		t.Fatalf("restart pool = %+v, want preserved web edit", restarted)
+	}
+
+	spec.Policy.Preheat = boxyconfig.PreheatPolicySpec{MinReady: 2, MaxTotal: 5}
+	if _, err := seedConfiguredPools(ctx, st, []boxyconfig.PoolSpec{spec}); err != nil {
+		t.Fatalf("changed local seed: %v", err)
+	}
+	deployed, _ := st.GetPool(ctx, "win-vm")
+	if deployed.Policies.Preheat.MinReady != 2 || deployed.Policies.Preheat.MaxTotal != 5 || deployed.Configuration.Provenance != "local" || deployed.Configuration.LocalRevision == firstRevision {
+		t.Fatalf("deployed pool = %+v, want changed local config to overwrite web edit", deployed)
 	}
 }
 

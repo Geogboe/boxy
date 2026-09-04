@@ -2,8 +2,10 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -609,6 +611,11 @@ func seedConfiguredPools(ctx context.Context, st store.Store, specs []boxyconfig
 		if err != nil {
 			return nil, fmt.Errorf("create pool model for %q: %w", spec.Name, err)
 		}
+		localRevision, err := configuredPoolRevision(p)
+		if err != nil {
+			return nil, fmt.Errorf("revision pool %q: %w", spec.Name, err)
+		}
+		p.Configuration = model.PoolConfigurationState{Provenance: "local", LocalRevision: localRevision}
 
 		var fallback []model.Resource
 		existing, err := st.GetPool(ctx, p.Name)
@@ -618,6 +625,11 @@ func seedConfiguredPools(ctx context.Context, st store.Store, specs []boxyconfig
 		if err == nil {
 			fallback = existing.Inventory.Resources
 			p.Drain.Operator = existing.Drain.Operator
+			if existing.Configuration.Provenance == "web" && existing.Configuration.LocalRevision == localRevision {
+				p.Policies = existing.Policies
+				p.Drain.ConfigDeclared = existing.Drain.ConfigDeclared
+				p.Configuration = existing.Configuration
+			}
 		}
 
 		rebuilt, report, err := pool.RebuildReadyInventory(p, resources, fallback)
@@ -639,6 +651,17 @@ func seedConfiguredPools(ctx context.Context, st store.Store, specs []boxyconfig
 	}
 
 	return poolNames, nil
+}
+
+func configuredPoolRevision(pool model.Pool) (string, error) {
+	pool.Configuration = model.PoolConfigurationState{}
+	pool.Drain.Operator = false
+	pool.Inventory.Resources = nil
+	encoded, err := json.Marshal(pool)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("sha256:%x", sha256.Sum256(encoded)), nil
 }
 
 // resolveListenAddr picks the listen address with precedence:

@@ -79,6 +79,9 @@ func makePoolView(configured model.Pool, resources []model.Resource, active jobs
 		Packages:            append([]string(nil), configured.Packages...),
 		MinReady:            configured.Policies.Preheat.MinReady,
 		MaxTotal:            configured.Policies.Preheat.MaxTotal,
+		MaxAge:              configured.Policies.Recycle.MaxAge,
+		ConfigProvenance:    configured.Configuration.Provenance,
+		ConfigPending:       configured.Configuration.Pending,
 		EffectivelyDrained:  configured.EffectivelyDrained(),
 		ConfigDrain:         configured.Drain.ConfigDeclared,
 		OperatorDrain:       configured.Drain.Operator,
@@ -164,6 +167,35 @@ func requireUIAdmin(w http.ResponseWriter, r *http.Request) (string, bool) {
 		return "", false
 	}
 	return principal.Subject, true
+}
+
+func (s *Server) handleUpdatePoolConfigurationUI(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireUIAdmin(w, r); !ok || !requireUICSRF(w, r) {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid request form", http.StatusBadRequest)
+		return
+	}
+	minReady, minErr := strconv.Atoi(r.FormValue("min_ready"))
+	maxTotal, maxErr := strconv.Atoi(r.FormValue("max_total"))
+	name := model.PoolName(r.PathValue("name"))
+	values := url.Values{}
+	if minErr != nil || maxErr != nil {
+		values.Set("config_error", "min_ready and max_total must be whole numbers")
+	} else {
+		updated, err := s.applyPoolConfiguration(r.Context(), name, updatePoolConfigurationRequest{
+			MinReady: minReady, MaxTotal: maxTotal, MaxAge: r.FormValue("max_age"),
+		})
+		if err != nil {
+			values.Set("config_error", err.Error())
+		} else if updated.Configuration.Pending {
+			values.Set("result", "config_pending")
+		} else {
+			values.Set("result", "config_saved")
+		}
+	}
+	http.Redirect(w, r, "/ui/pools/"+url.PathEscape(string(name))+"?"+values.Encode(), http.StatusSeeOther)
 }
 
 func (s *Server) handleDrainPoolUI(w http.ResponseWriter, r *http.Request) {
@@ -318,6 +350,10 @@ func poolResultFromQuery(r *http.Request) string {
 		return fmt.Sprintf("Cleanup preview: %d candidates, %d skipped, %d errors.", queryInt(query.Get("candidates")), queryInt(query.Get("skipped")), queryInt(query.Get("errors")))
 	case "cleanup_force":
 		return fmt.Sprintf("Cleanup complete: %d cleaned, %d skipped, %d errors.", queryInt(query.Get("cleaned")), queryInt(query.Get("skipped")), queryInt(query.Get("errors")))
+	case "config_saved":
+		return "Pool settings saved and applied."
+	case "config_pending":
+		return "Pool settings saved. Apply is pending until the provider is available."
 	default:
 		return ""
 	}

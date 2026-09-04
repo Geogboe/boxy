@@ -113,6 +113,9 @@ type poolView struct {
 	Packages            []string
 	MinReady            int
 	MaxTotal            int
+	MaxAge              string
+	ConfigProvenance    string
+	ConfigPending       bool
 	ReadyCount          int
 	TotalCount          int
 	FailedCount         int
@@ -194,6 +197,7 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/service-keys/{id}/revoke", s.handleRevokeServiceKey)
 	mux.HandleFunc("POST /ui/pools/{name}/drain", s.handleDrainPoolUI)
 	mux.HandleFunc("POST /ui/pools/{name}/fill", s.handleFillPoolUI)
+	mux.HandleFunc("POST /ui/pools/{name}/configuration", s.handleUpdatePoolConfigurationUI)
 	mux.HandleFunc("POST /ui/pools/{name}/resources/{id}/retry", s.handleRetryPoolResourceUI)
 	mux.HandleFunc("POST /ui/pools/{name}/resources/{id}/destroy", s.handleDestroyPoolResourceUI)
 	mux.HandleFunc("POST /ui/jobs/{id}/cancel", s.handleCancelJobUI)
@@ -572,6 +576,7 @@ func (s *Server) poolsData(r *http.Request) (pageData, error) {
 		Pools:            pools,
 		PoolViews:        views,
 		PoolResult:       poolResultFromQuery(r),
+		PoolError:        r.URL.Query().Get("config_error"),
 		PoolHistory:      r.URL.Query().Get("view") == "history",
 		ResourceLimitHit: resourceLimitHit,
 	}

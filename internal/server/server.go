@@ -76,6 +76,7 @@ type Server struct {
 	executions      *executionManager
 	jobRunner       *jobs.Runner
 	jobMu           sync.Mutex
+	configMu        sync.Mutex
 	executionMu     sync.Mutex
 	guestSecrets    boxysecrets.Store
 	catalog         CatalogSource

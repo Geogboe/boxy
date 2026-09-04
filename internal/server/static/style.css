@@ -506,6 +506,16 @@ tbody tr:hover {
 .pool-detail-grid dt { color: var(--text-muted); font-size: 0.75rem; }
 .pool-detail-grid dd { margin: 0.2rem 0 0; overflow-wrap: anywhere; }
 .pool-detail-card + .table-card { margin-top: 1rem; }
+.pool-config-card { margin-top: 1rem; }
+.config-authority-warning { background: rgba(251, 191, 36, 0.09); border-bottom: 1px solid var(--border); border-left: 3px solid var(--yellow); color: var(--text-muted); font-size: 0.82rem; line-height: 1.45; padding: 0.8rem 1.1rem; }
+.config-authority-warning strong { color: var(--yellow); }
+.pool-config-form { align-items: end; display: grid; gap: 0.8rem; grid-template-columns: repeat(3, minmax(9rem, 1fr)) auto; padding: 1rem 1.1rem; }
+.pool-config-form label { color: var(--text-muted); display: grid; font-size: 0.75rem; gap: 0.3rem; }
+.pool-config-form input { background: var(--bg); border: 1px solid var(--border); border-radius: 0.35rem; color: var(--text); padding: 0.5rem 0.6rem; }
+.pool-config-form button { background: var(--accent); border: 0; border-radius: 0.35rem; color: #fff; cursor: pointer; padding: 0.55rem 0.8rem; }
+.pool-config-form button:disabled { cursor: not-allowed; opacity: 0.45; }
+@media (max-width: 900px) { .pool-config-form { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 600px) { .pool-config-form { grid-template-columns: 1fr; } }
 .secondary-btn, .danger-btn {
   border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
   font-size: 0.8rem; padding: 0.35rem 0.7rem;

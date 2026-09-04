@@ -289,7 +289,20 @@ func (m *Manager) Reconcile(ctx context.Context, poolName model.PoolName) error 
 			return fmt.Errorf("promote resource into pool %q: %w", poolName, err)
 		}
 	}
-	return m.reconcileLocked(ctx, poolName, 0, false)
+	if err := m.reconcileLocked(ctx, poolName, 0, false); err != nil {
+		return err
+	}
+	configured, err := m.store.GetPool(ctx, poolName)
+	if err != nil {
+		return err
+	}
+	if configured.Configuration.Pending {
+		configured.Configuration.Pending = false
+		if err := m.store.PutPool(ctx, configured); err != nil {
+			return fmt.Errorf("clear pending pool configuration %q: %w", poolName, err)
+		}
+	}
+	return nil
 }
 
 // EnsureReady ensures the pool has at least minReady resources available,

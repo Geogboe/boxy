@@ -25,6 +25,7 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/api-keys/{id}", s.handleRevokeAPIKey)
 	mux.HandleFunc("GET /api/v1/pools", s.handleListPools)
 	mux.HandleFunc("GET /api/v1/pools/{name}", s.handleGetPool)
+	mux.HandleFunc("PUT /api/v1/pools/{name}/configuration", s.handleUpdatePoolConfiguration)
 	mux.HandleFunc("POST /api/v1/pools/{name}/drain", s.handleDrainPool)
 	mux.HandleFunc("POST /api/v1/pools/{name}/fill", s.handleFillPool)
 	mux.HandleFunc("POST /api/v1/pools/{name}/resources/{id}/retry", s.handleRetryPoolResource)

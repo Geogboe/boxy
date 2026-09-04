@@ -35,6 +35,22 @@ type fakeProvisioner struct {
 	onDestroy func(model.ResourceID)
 }
 
+func TestManagerReconcileClearsPendingPoolConfiguration(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	if err := st.PutPool(ctx, model.Pool{Name: "pending", Policies: model.PoolPolicies{Preheat: model.PreheatPolicy{MaxTotal: 2}}, Configuration: model.PoolConfigurationState{Provenance: "web", Pending: true}}); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	if err := New(st, &fakeProvisioner{}).Reconcile(ctx, "pending"); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	updated, _ := st.GetPool(ctx, "pending")
+	if updated.Configuration.Pending {
+		t.Fatalf("configuration = %+v, want pending cleared", updated.Configuration)
+	}
+}
+
 func (p *fakeProvisioner) Provision(ctx context.Context, pool model.Pool) (model.Resource, error) {
 	_ = ctx
 	p.provisionCalls++

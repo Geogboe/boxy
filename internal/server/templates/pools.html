@@ -21,6 +21,17 @@
   </dl>
   {{if .PoolDetail.ActiveJobID}}<div class="pool-control-row"><span class="badge badge-{{.PoolDetail.Status}}">{{.PoolDetail.ActiveJobKind}}</span><form method="post" action="/ui/jobs/{{.PoolDetail.ActiveJobID}}/cancel"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="pool" value="{{.PoolDetail.Name}}"><button type="submit" class="secondary-btn">Cancel</button></form></div>{{end}}
 </div>
+<div class="table-card pool-config-card">
+  <div class="table-card-header"><div><div>Pool settings</div><div class="table-card-subtitle">Editable policy values for this pool.</div></div>{{if .PoolDetail.ConfigPending}}<span class="badge badge-pending">pending apply</span>{{end}}</div>
+  <div class="config-authority-warning" role="note"><strong>Local config remains authoritative.</strong> These values were populated from the deployed local config. A future local-config deployment will overwrite web or API changes.</div>
+  <form class="pool-config-form" method="post" action="/ui/pools/{{.PoolDetail.Name}}/configuration">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <label>Ready VMs to keep available <input name="min_ready" type="number" min="0" value="{{.PoolDetail.MinReady}}" required {{if .PoolDetail.ActiveJobID}}disabled{{end}}></label>
+    <label>Maximum VMs <input name="max_total" type="number" min="0" value="{{.PoolDetail.MaxTotal}}" required {{if .PoolDetail.ActiveJobID}}disabled{{end}}></label>
+    <label>Recycle unused VM after <input name="max_age" value="{{.PoolDetail.MaxAge}}" placeholder="24h" {{if .PoolDetail.ActiveJobID}}disabled{{end}}></label>
+    <button type="submit" {{if .PoolDetail.ActiveJobID}}disabled{{end}}>Save and apply</button>
+  </form>
+</div>
 <div class="table-card">
   <div class="table-card-header"><div>Resources</div></div>
   {{if .PoolDetail.Resources}}

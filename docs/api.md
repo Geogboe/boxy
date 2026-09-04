@@ -44,6 +44,7 @@ API-key roles:
 |---|---|---|---|
 | GET | `/api/v1/pools` | auditor/admin | List configured pools and ready inventory. |
 | GET | `/api/v1/pools/{name}` | auditor/admin | Inspect one pool. |
+| PUT | `/api/v1/pools/{name}/configuration` | admin | Validate, persist, and apply editable pool policy settings. |
 | POST | `/api/v1/pools/{name}/drain` | admin | Start a tracked job to drain unused ready inventory. |
 | POST | `/api/v1/pools/{name}/fill` | admin | Start a tracked job to reconcile a pool to its configured target. |
 | POST | `/api/v1/pools/{name}/guest-credential` | admin | Set a pool's guest bootstrap credential from a request body; the raw value is never returned. |
@@ -86,7 +87,7 @@ API-key roles:
 | DELETE | `/api/v1/agent-tokens/{id}` | admin | Revoke an unused registration token. |
 | GET | `/api/v1/agents` | auditor/admin | List registered agents, connection state, heartbeat time, and capacity samples. |
 | DELETE | `/api/v1/agents/{id}` | admin | Revoke an agent identity. |
-| POST | `/api/v1/agents/{id}/logs` | admin | Request a bounded, on-demand pull of retained agent diagnostics. |
+| POST | `/api/v1/agents/{id}/logs` | admin | Start a tracked job that pulls a bounded remote diagnostics snapshot. |
 
 ### Diagnostics
 
