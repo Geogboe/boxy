@@ -30,6 +30,19 @@ type MaxTotalReachedError struct {
 	RequestedReady int
 }
 
+// BlockedPoolError reports that failed resources consume the pool's entire
+// max_total allowance while ready capacity remains below its target.
+type BlockedPoolError struct {
+	PoolName    model.PoolName
+	MaxTotal    int
+	ReadyCount  int
+	FailedCount int
+}
+
+func (e *BlockedPoolError) Error() string {
+	return fmt.Sprintf("pool %q is blocked: %d failed resource(s) consume max_total %d with only %d ready", e.PoolName, e.FailedCount, e.MaxTotal, e.ReadyCount)
+}
+
 func (e *MaxTotalReachedError) Error() string {
 	return fmt.Sprintf(
 		"pool %q is at max_total %d (%d total, %d ready), cannot satisfy requested ready count %d",
@@ -686,6 +699,7 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 				return policycontroller.Decision[plan]{}, err
 			}
 			stale = append(stale, orphans...)
+			blockedTotal := countTrackedResources(p.Name, obs.resources, p.Inventory.Resources, nil)
 			stale = append(stale, quarantined...)
 			p.Inventory.Resources = kept
 
@@ -709,6 +723,12 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 			// configured min_ready. It must only ever feed
 			// computeToProvision below, never the admission check above.
 			effectiveMinReady := max(minReadyOverride, p.Policies.Preheat.MinReady)
+			if effectiveMinReady > readyCount && p.Policies.Preheat.MaxTotal > 0 && blockedTotal >= p.Policies.Preheat.MaxTotal && len(quarantined) > 0 {
+				return policycontroller.Decision[plan]{}, &BlockedPoolError{
+					PoolName: p.Name, MaxTotal: p.Policies.Preheat.MaxTotal,
+					ReadyCount: readyCount, FailedCount: len(quarantined),
+				}
+			}
 			toProv := computeToProvision(p, effectiveMinReady, totalCount)
 
 			// requiredToProv is how many of toProv's provisions are needed

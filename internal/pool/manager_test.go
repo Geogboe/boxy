@@ -2293,3 +2293,33 @@ func TestManager_Reconcile_PersistentQuarantineDestroyFailureBlocksProvisioning(
 		t.Fatalf("provisionCalls = %d, want 0 — the pool should not fill while the quarantined resource blocks the stale-destroy loop", prov.provisionCalls)
 	}
 }
+
+func TestManager_FillReportsBlockedWhenFailuresExhaustMaxTotal(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	pool := model.Pool{
+		Name: "p1", Policies: model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 1, MaxTotal: 2}},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeVM, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	for _, id := range []model.ResourceID{"failed-1", "failed-2"} {
+		if err := st.PutResource(ctx, model.Resource{ID: id, OriginPool: pool.Name, CurrentPool: pool.Name, State: model.ResourceStateError}); err != nil {
+			t.Fatalf("PutResource(%s): %v", id, err)
+		}
+	}
+	provisioner := &fakeProvisioner{}
+	_, err := New(st, provisioner).Fill(ctx, pool.Name)
+	var blocked *BlockedPoolError
+	if !errors.As(err, &blocked) {
+		t.Fatalf("Fill error = %v, want BlockedPoolError", err)
+	}
+	if blocked.FailedCount != 2 || blocked.MaxTotal != 2 || blocked.ReadyCount != 0 {
+		t.Fatalf("blocked details = %+v", blocked)
+	}
+	if len(provisioner.destroyed) != 0 || provisioner.provisionCalls != 0 {
+		t.Fatalf("provider calls: destroyed=%v provisioned=%d, want none", provisioner.destroyed, provisioner.provisionCalls)
+	}
+}
