@@ -71,7 +71,7 @@ func TestUI_layoutRendersBrandingVersionThemeAndAdminLinks(t *testing.T) {
 			t.Fatalf("GET %s status = %d", path, w.Code)
 		}
 		body := w.Body.String()
-		for _, want := range []string{"/static/favicon.svg", "Repository", "dev", "data-theme-toggle", `href="/ui/diagnostics"`, `href="/ui/service-keys"`} {
+		for _, want := range []string{"/static/favicon.svg", "Repository", "app-footer", "dev", "data-theme-toggle", `href="/ui/diagnostics"`, `href="/ui/service-keys"`} {
 			if !strings.Contains(body, want) {
 				t.Errorf("GET %s missing %q", path, want)
 			}
