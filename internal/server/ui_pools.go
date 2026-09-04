@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -8,10 +9,11 @@ import (
 	"strconv"
 
 	"github.com/Geogboe/boxy/internal/pool"
+	"github.com/Geogboe/boxy/pkg/jobs"
 	"github.com/Geogboe/boxy/pkg/model"
 )
 
-func buildPoolViews(pools []model.Pool, resources []model.Resource) []poolView {
+func buildPoolViews(pools []model.Pool, resources []model.Resource, poolJobs []jobs.Job) []poolView {
 	buckets := make(map[model.PoolName][]model.Resource)
 	for _, resource := range resources {
 		name := resource.EffectivePool()
@@ -25,6 +27,12 @@ func buildPoolViews(pools []model.Pool, resources []model.Resource) []poolView {
 	}
 
 	views := make([]poolView, 0, len(pools)+1)
+	activeJobs := make(map[string]jobs.Job)
+	for _, job := range poolJobs {
+		if !job.Status.IsTerminal() {
+			activeJobs[job.Target] = job
+		}
+	}
 	seen := make(map[model.PoolName]struct{}, len(pools))
 	for _, configured := range pools {
 		seen[configured.Name] = struct{}{}
@@ -42,7 +50,8 @@ func buildPoolViews(pools []model.Pool, resources []model.Resource) []poolView {
 			}
 			entries = append(entries, resource)
 		}
-		views = append(views, makePoolView(configured, entries))
+		active, ok := activeJobs["pool:"+string(configured.Name)]
+		views = append(views, makePoolView(configured, entries, active, ok))
 	}
 	// Keep orphaned records visible even if their configured pool was removed.
 	var extra []model.PoolName
@@ -53,12 +62,13 @@ func buildPoolViews(pools []model.Pool, resources []model.Resource) []poolView {
 	}
 	sort.Slice(extra, func(i, j int) bool { return extra[i] < extra[j] })
 	for _, name := range extra {
-		views = append(views, makePoolView(model.Pool{Name: name}, buckets[name]))
+		active, ok := activeJobs["pool:"+string(name)]
+		views = append(views, makePoolView(model.Pool{Name: name}, buckets[name], active, ok))
 	}
 	return views
 }
 
-func makePoolView(configured model.Pool, resources []model.Resource) poolView {
+func makePoolView(configured model.Pool, resources []model.Resource, active jobs.Job, hasActive bool) poolView {
 	view := poolView{
 		Name:                string(configured.Name),
 		DetailPath:          "/ui/pools/" + url.PathEscape(string(configured.Name)),
@@ -77,9 +87,14 @@ func makePoolView(configured model.Pool, resources []model.Resource) poolView {
 	}
 	providerNames := make(map[string]struct{})
 	for _, resource := range resources {
-		view.TotalCount++
+		if !isHistoricalResource(resource) {
+			view.TotalCount++
+		}
 		if resource.State == model.ResourceStateReady {
 			view.ReadyCount++
+		}
+		if resource.State == model.ResourceStateError {
+			view.FailedCount++
 		}
 		resourceView := poolResourceView{
 			ID: string(resource.ID), Type: resource.Type, Profile: resource.Profile,
@@ -99,7 +114,39 @@ func makePoolView(configured model.Pool, resources []model.Resource) poolView {
 		view.ProviderNames = append(view.ProviderNames, provider)
 	}
 	sort.Strings(view.ProviderNames)
+	view.Status = poolStatus(view, resources, active, hasActive)
+	if hasActive {
+		view.ActiveJobID = active.ID
+		view.ActiveJobKind = active.Kind
+	}
 	return view
+}
+
+func poolStatus(view poolView, resources []model.Resource, active jobs.Job, hasActive bool) string {
+	if hasActive {
+		if active.Kind == "pool.drain" || active.Kind == "pool.destroy" {
+			return "draining"
+		}
+		return "filling"
+	}
+	if view.EffectivelyDrained {
+		return "draining"
+	}
+	if view.FailedCount > 0 && view.MaxTotal > 0 && view.TotalCount >= view.MaxTotal && view.ReadyCount < view.MinReady {
+		return "blocked"
+	}
+	for _, resource := range resources {
+		if resource.State == model.ResourceStateProvisioning || resource.State == model.ResourceStatePromoting {
+			return "filling"
+		}
+		if resource.State == model.ResourceStateDestroying || resource.State == model.ResourceStateRecycling {
+			return "draining"
+		}
+	}
+	if view.ReadyCount >= view.MinReady {
+		return "ready"
+	}
+	return "unknown"
 }
 
 func isHistoricalResource(resource model.Resource) bool {
@@ -127,12 +174,12 @@ func (s *Server) handleDrainPoolUI(w http.ResponseWriter, r *http.Request) {
 		redirectPoolResult(w, r, "error", "drain", "")
 		return
 	}
-	_, err := s.poolMaintenance.Drain(r.Context(), model.PoolName(r.PathValue("name")))
+	job, err := s.startPoolMaintenanceJob(r.Context(), "pool.drain", model.PoolName(r.PathValue("name")), s.poolMaintenance.Drain)
 	if err != nil {
 		redirectPoolResult(w, r, "error", "drain", "")
 		return
 	}
-	redirectPoolResult(w, r, "drain", "", r.PathValue("name"))
+	redirectPoolJob(w, r, "drain", r.PathValue("name"), job.ID)
 }
 
 func (s *Server) handleFillPoolUI(w http.ResponseWriter, r *http.Request) {
@@ -143,12 +190,69 @@ func (s *Server) handleFillPoolUI(w http.ResponseWriter, r *http.Request) {
 		redirectPoolResult(w, r, "error", "fill", "")
 		return
 	}
-	_, err := s.poolMaintenance.Fill(r.Context(), model.PoolName(r.PathValue("name")))
+	job, err := s.startPoolMaintenanceJob(r.Context(), "pool.fill", model.PoolName(r.PathValue("name")), s.poolMaintenance.Fill)
 	if err != nil {
 		redirectPoolResult(w, r, "error", "fill", "")
 		return
 	}
-	redirectPoolResult(w, r, "fill", "", r.PathValue("name"))
+	redirectPoolJob(w, r, "fill", r.PathValue("name"), job.ID)
+}
+
+func (s *Server) handleRetryPoolResourceUI(w http.ResponseWriter, r *http.Request) {
+	s.handlePoolResourceJobUI(w, r, "pool.retry", func(ctx context.Context, maintenance PoolResourceMaintenance, resource model.Resource) error {
+		return maintenance.RetryResource(ctx, resource)
+	})
+}
+
+func (s *Server) handleDestroyPoolResourceUI(w http.ResponseWriter, r *http.Request) {
+	s.handlePoolResourceJobUI(w, r, "pool.destroy", func(ctx context.Context, maintenance PoolResourceMaintenance, resource model.Resource) error {
+		if err := maintenance.DestroyResource(ctx, resource); err != nil {
+			return err
+		}
+		if reconciler, ok := s.poolMaintenance.(interface {
+			Reconcile(context.Context, model.PoolName) error
+		}); ok {
+			return reconciler.Reconcile(ctx, resource.OriginPool)
+		}
+		return nil
+	})
+}
+
+func (s *Server) handlePoolResourceJobUI(w http.ResponseWriter, r *http.Request, kind string, operation func(context.Context, PoolResourceMaintenance, model.Resource) error) {
+	if _, ok := requireUIAdmin(w, r); !ok || !requireUICSRF(w, r) {
+		return
+	}
+	poolName := model.PoolName(r.PathValue("name"))
+	job, err := s.startPoolResourceJob(r.Context(), kind, poolName, model.ResourceID(r.PathValue("id")), operation)
+	if err != nil {
+		redirectPoolResult(w, r, "error", kind, string(poolName))
+		return
+	}
+	redirectPoolJob(w, r, kind, string(poolName), job.ID)
+}
+
+func (s *Server) handleCancelJobUI(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireUIAdmin(w, r); !ok || !requireUICSRF(w, r) {
+		return
+	}
+	runner, err := s.ensureJobRunner()
+	if err == nil {
+		_, err = runner.Cancel(r.Context(), jobs.ID(r.PathValue("id")))
+	}
+	if err != nil {
+		redirectPoolResult(w, r, "error", "cancel", r.FormValue("pool"))
+		return
+	}
+	redirectPoolResult(w, r, "cancel", "", r.FormValue("pool"))
+}
+
+func redirectPoolJob(w http.ResponseWriter, r *http.Request, action, name string, id jobs.ID) {
+	values := url.Values{}
+	values.Set("result", "started")
+	values.Set("action", action)
+	values.Set("pool", name)
+	values.Set("job", string(id))
+	http.Redirect(w, r, "/ui/pools?"+values.Encode(), http.StatusSeeOther)
 }
 
 func (s *Server) handlePurgeResourcesUI(w http.ResponseWriter, r *http.Request) {

@@ -22,6 +22,7 @@ import (
 	"github.com/Geogboe/boxy/internal/sandbox"
 	"github.com/Geogboe/boxy/pkg/diagnostics"
 	"github.com/Geogboe/boxy/pkg/eventstream"
+	"github.com/Geogboe/boxy/pkg/jobs"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
@@ -32,6 +33,13 @@ import (
 type PoolMaintenance interface {
 	Drain(ctx context.Context, poolName model.PoolName) (model.Pool, error)
 	Fill(ctx context.Context, poolName model.PoolName) (model.Pool, error)
+}
+
+// PoolResourceMaintenance performs provider-backed mutations for one tracked
+// pool resource. Jobs use the resource's origin pool as their lock target.
+type PoolResourceMaintenance interface {
+	DestroyResource(context.Context, model.Resource) error
+	RetryResource(context.Context, model.Resource) error
 }
 
 // ResourceCleanup performs the shared, confirmation-protected resource purge
@@ -65,6 +73,8 @@ type Server struct {
 	agentAdmin      AgentAdmin
 	executor        SandboxExecutor
 	executions      *executionManager
+	jobRunner       *jobs.Runner
+	jobMu           sync.Mutex
 	executionMu     sync.Mutex
 	guestSecrets    boxysecrets.Store
 	catalog         CatalogSource
@@ -90,6 +100,7 @@ type ServerOptions struct {
 	TLSCertPEM      []byte
 	TLSKeyPEM       []byte
 	Executor        SandboxExecutor
+	JobRunner       *jobs.Runner
 	ResourceCleanup ResourceCleanup
 	GuestSecrets    boxysecrets.Store
 	// Catalog is an immutable, startup-time view of configured templates,
@@ -126,6 +137,14 @@ func NewWithOptions(st store.Store, sm *sandbox.Manager, pm PoolMaintenance, aa 
 	if version == "" {
 		version = "dev"
 	}
+	jobRunner := opts.JobRunner
+	if jobRunner == nil {
+		var err error
+		jobRunner, err = jobs.NewRunner(jobs.Config{Store: st})
+		if err != nil {
+			slog.Error("initialize durable jobs", "error", err)
+		}
+	}
 	s := &Server{
 		store:           st,
 		sandboxMgr:      sm,
@@ -133,6 +152,7 @@ func NewWithOptions(st store.Store, sm *sandbox.Manager, pm PoolMaintenance, aa 
 		resourceCleanup: opts.ResourceCleanup,
 		agentAdmin:      aa,
 		executor:        opts.Executor,
+		jobRunner:       jobRunner,
 		guestSecrets:    opts.GuestSecrets,
 		catalog:         opts.Catalog,
 		diagnostics:     opts.Diagnostics,

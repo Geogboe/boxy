@@ -1,13 +1,16 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/pkg/httpjson"
+	"github.com/Geogboe/boxy/pkg/jobs"
 	"github.com/Geogboe/boxy/pkg/model"
 	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
 	"github.com/Geogboe/boxy/pkg/store"
@@ -24,7 +27,11 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/pools/{name}", s.handleGetPool)
 	mux.HandleFunc("POST /api/v1/pools/{name}/drain", s.handleDrainPool)
 	mux.HandleFunc("POST /api/v1/pools/{name}/fill", s.handleFillPool)
+	mux.HandleFunc("POST /api/v1/pools/{name}/resources/{id}/retry", s.handleRetryPoolResource)
+	mux.HandleFunc("DELETE /api/v1/pools/{name}/resources/{id}", s.handleDestroyPoolResource)
 	mux.HandleFunc("POST /api/v1/pools/{name}/guest-credential", s.handleSetPoolGuestCredential)
+	mux.HandleFunc("GET /api/v1/jobs/{id}", s.handleGetJob)
+	mux.HandleFunc("POST /api/v1/jobs/{id}/cancel", s.handleCancelJob)
 	mux.HandleFunc("GET /api/v1/resources", s.handleListResources)
 	mux.HandleFunc("GET /api/v1/resources/{id}", s.handleGetResource)
 	mux.HandleFunc("POST /api/v1/resources/purge", s.handlePurgeResources)
@@ -126,8 +133,7 @@ func (s *Server) handleDrainPool(w http.ResponseWriter, r *http.Request) {
 		httpjson.Error(w, http.StatusServiceUnavailable, "pool maintenance is not available")
 		return
 	}
-	p, err := s.poolMaintenance.Drain(r.Context(), model.PoolName(r.PathValue("name")))
-	s.writePoolMaintenanceResult(w, p, err, "drain")
+	s.submitPoolMaintenanceJob(w, r, "pool.drain", model.PoolName(r.PathValue("name")), s.poolMaintenance.Drain)
 }
 
 func (s *Server) handleFillPool(w http.ResponseWriter, r *http.Request) {
@@ -138,8 +144,147 @@ func (s *Server) handleFillPool(w http.ResponseWriter, r *http.Request) {
 		httpjson.Error(w, http.StatusServiceUnavailable, "pool maintenance is not available")
 		return
 	}
-	p, err := s.poolMaintenance.Fill(r.Context(), model.PoolName(r.PathValue("name")))
-	s.writePoolMaintenanceResult(w, p, err, "fill")
+	s.submitPoolMaintenanceJob(w, r, "pool.fill", model.PoolName(r.PathValue("name")), s.poolMaintenance.Fill)
+}
+
+func (s *Server) handleRetryPoolResource(w http.ResponseWriter, r *http.Request) {
+	s.handlePoolResourceJob(w, r, "pool.retry", func(ctx context.Context, maintenance PoolResourceMaintenance, resource model.Resource) error {
+		return maintenance.RetryResource(ctx, resource)
+	})
+}
+
+func (s *Server) handleDestroyPoolResource(w http.ResponseWriter, r *http.Request) {
+	s.handlePoolResourceJob(w, r, "pool.destroy", func(ctx context.Context, maintenance PoolResourceMaintenance, resource model.Resource) error {
+		if err := maintenance.DestroyResource(ctx, resource); err != nil {
+			return err
+		}
+		if reconciler, ok := s.poolMaintenance.(interface {
+			Reconcile(context.Context, model.PoolName) error
+		}); ok {
+			return reconciler.Reconcile(ctx, resource.OriginPool)
+		}
+		return nil
+	})
+}
+
+func (s *Server) handlePoolResourceJob(w http.ResponseWriter, r *http.Request, kind string, operation func(context.Context, PoolResourceMaintenance, model.Resource) error) {
+	if !s.requireRole(w, r, model.APIKeyRoleAdmin) {
+		return
+	}
+	poolName := model.PoolName(r.PathValue("name"))
+	resourceID := model.ResourceID(r.PathValue("id"))
+	job, err := s.startPoolResourceJob(r.Context(), kind, poolName, resourceID, operation)
+	if err != nil {
+		var busy *jobs.TargetBusyError
+		if errors.As(err, &busy) {
+			httpjson.Error(w, http.StatusConflict, busy.Error())
+			return
+		}
+		httpjson.Error(w, http.StatusInternalServerError, "failed to submit pool resource job")
+		return
+	}
+	httpjson.Write(w, http.StatusAccepted, job)
+}
+
+func (s *Server) startPoolResourceJob(ctx context.Context, kind string, poolName model.PoolName, resourceID model.ResourceID, operation func(context.Context, PoolResourceMaintenance, model.Resource) error) (jobs.Job, error) {
+	maintenance, ok := s.poolMaintenance.(PoolResourceMaintenance)
+	if !ok {
+		return jobs.Job{}, fmt.Errorf("pool resource maintenance is not available")
+	}
+	runner, err := s.ensureJobRunner()
+	if err != nil {
+		return jobs.Job{}, err
+	}
+	return runner.Submit(ctx, jobs.Request{Kind: kind, Target: "pool:" + string(poolName)}, jobs.HandlerFuncs{
+		RunFunc: func(ctx context.Context, reporter jobs.Reporter) error {
+			step := jobs.Step{Code: kind, Subject: string(resourceID), Status: jobs.StepStarted, Attempt: 1}
+			if err := reporter.Record(ctx, step); err != nil {
+				return err
+			}
+			resource, err := s.store.GetResource(ctx, resourceID)
+			if err == nil && resource.OriginPool != poolName {
+				err = fmt.Errorf("resource does not belong to pool")
+			}
+			if err == nil {
+				err = operation(ctx, maintenance, resource)
+			}
+			if err != nil {
+				step.Status = jobs.StepFailed
+				step.ErrorCode = "pool_resource_operation_failed"
+				_ = reporter.Record(context.Background(), step)
+				return &jobs.Failure{Code: step.ErrorCode}
+			}
+			step.Status = jobs.StepSucceeded
+			return reporter.Record(ctx, step)
+		},
+		CleanupFunc: func(ctx context.Context, _ jobs.Reporter) error {
+			if reconciler, ok := s.poolMaintenance.(interface {
+				Reconcile(context.Context, model.PoolName) error
+			}); ok {
+				return reconciler.Reconcile(ctx, poolName)
+			}
+			return nil
+		},
+	})
+}
+
+func (s *Server) submitPoolMaintenanceJob(w http.ResponseWriter, r *http.Request, kind string, poolName model.PoolName, operation func(context.Context, model.PoolName) (model.Pool, error)) {
+	job, err := s.startPoolMaintenanceJob(r.Context(), kind, poolName, operation)
+	if err != nil {
+		var busy *jobs.TargetBusyError
+		if errors.As(err, &busy) {
+			httpjson.Error(w, http.StatusConflict, busy.Error())
+			return
+		}
+		httpjson.Error(w, http.StatusInternalServerError, "failed to submit pool job")
+		return
+	}
+	httpjson.Write(w, http.StatusAccepted, job)
+}
+
+func (s *Server) startPoolMaintenanceJob(ctx context.Context, kind string, poolName model.PoolName, operation func(context.Context, model.PoolName) (model.Pool, error)) (jobs.Job, error) {
+	runner, err := s.ensureJobRunner()
+	if err != nil {
+		return jobs.Job{}, err
+	}
+	target := "pool:" + string(poolName)
+	return runner.Submit(ctx, jobs.Request{Kind: kind, Target: target}, jobs.HandlerFuncs{
+		RunFunc: func(ctx context.Context, reporter jobs.Reporter) error {
+			step := jobs.Step{Code: kind, Subject: string(poolName), Status: jobs.StepStarted, Attempt: 1}
+			if err := reporter.Record(ctx, step); err != nil {
+				return err
+			}
+			_, err := operation(ctx, poolName)
+			if err != nil {
+				step.Status = jobs.StepFailed
+				step.ErrorCode = poolJobErrorCode(err)
+				_ = reporter.Record(context.Background(), step)
+				return &jobs.Failure{Code: step.ErrorCode}
+			}
+			step.Status = jobs.StepSucceeded
+			return reporter.Record(ctx, step)
+		},
+		CleanupFunc: func(ctx context.Context, _ jobs.Reporter) error {
+			if reconciler, ok := s.poolMaintenance.(interface {
+				Reconcile(context.Context, model.PoolName) error
+			}); ok {
+				return reconciler.Reconcile(ctx, poolName)
+			}
+			return nil
+		},
+	})
+}
+
+func poolJobErrorCode(err error) string {
+	var blocked *pool.BlockedPoolError
+	if errors.As(err, &blocked) {
+		return "quarantine_exhausted"
+	}
+	var drained *pool.ConfigDeclaredDrainError
+	if errors.As(err, &drained) {
+		return "pool_config_drained"
+	}
+	return "pool_operation_failed"
 }
 
 func (s *Server) writePoolMaintenanceResult(w http.ResponseWriter, p model.Pool, err error, action string) {

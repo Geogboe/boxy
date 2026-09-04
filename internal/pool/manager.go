@@ -428,6 +428,31 @@ func (m *Manager) DestroyResource(ctx context.Context, res model.Resource) error
 	return nil
 }
 
+// RetryResource clears one quarantined resource through the provider and then
+// reconciles its pool. The replacement is provisioned from the pool template;
+// a failed VM is never silently reused after admission cleanup.
+func (m *Manager) RetryResource(ctx context.Context, res model.Resource) error {
+	if m == nil || m.store == nil || m.provisioner == nil {
+		return fmt.Errorf("pool retry dependencies are not configured")
+	}
+	if res.ID == "" || res.OriginPool == "" {
+		return fmt.Errorf("failed resource id and origin pool are required")
+	}
+	if res.State != model.ResourceStateError {
+		return fmt.Errorf("resource %q is %s, want error state", res.ID, res.State)
+	}
+	unlock := m.lockPool(res.OriginPool)
+	defer unlock()
+	pool, err := m.store.GetPool(ctx, res.OriginPool)
+	if err != nil {
+		return fmt.Errorf("get origin pool %q: %w", res.OriginPool, err)
+	}
+	if err := m.destroyAndMark(ctx, pool, res, model.ResourceStateRecycling, m.clock.Now()); err != nil {
+		return err
+	}
+	return m.reconcileLocked(ctx, pool.Name, 0, false)
+}
+
 // ForceOrphanResource detaches res from Boxy's bookkeeping (pool inventory +
 // store) without ever contacting res's owning agent. Unlike DestroyResource,
 // it never transitions the resource through a Destroying state and never

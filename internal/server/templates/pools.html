@@ -6,11 +6,11 @@
 <h1 class="page-title">Pool: {{.PoolDetail.Name}}</h1>
 {{if .CanManagePools}}
 <div class="table-card pool-detail-card">
-  <div class="table-card-header"><div>Pool details</div><span class="badge {{if .PoolDetail.EffectivelyDrained}}badge-drained{{else}}badge-ready{{end}}">{{if .PoolDetail.EffectivelyDrained}}Drained{{else}}Active{{end}}</span></div>
+  <div class="table-card-header"><div>Pool details</div><span class="badge badge-{{.PoolDetail.Status}}">{{.PoolDetail.Status}}</span></div>
   <dl class="pool-detail-grid">
     <div><dt>Resource type</dt><dd>{{if .PoolDetail.Type}}{{.PoolDetail.Type}}{{else}}—{{end}}</dd></div>
     <div><dt>Expected profile</dt><dd>{{if .PoolDetail.ExpectedProfile}}{{.PoolDetail.ExpectedProfile}}{{else}}—{{end}}</dd></div>
-    <div><dt>Capacity</dt><dd>{{.PoolDetail.ReadyCount}} ready / {{.PoolDetail.TotalCount}} total</dd></div>
+    <div><dt>Capacity</dt><dd>{{.PoolDetail.ReadyCount}} ready / {{.PoolDetail.TotalCount}} active{{if .PoolDetail.FailedCount}} · {{.PoolDetail.FailedCount}} failed{{end}}</dd></div>
     <div><dt>Policy</dt><dd><code>min_ready={{.PoolDetail.MinReady}} · max_total={{.PoolDetail.MaxTotal}}</code></dd></div>
     <div><dt>Config drain</dt><dd>{{if .PoolDetail.ConfigDrain}}enabled{{else}}disabled{{end}}</dd></div>
     <div><dt>Operator drain</dt><dd>{{if .PoolDetail.OperatorDrain}}enabled{{else}}disabled{{end}}</dd></div>
@@ -19,13 +19,14 @@
     <div><dt>Providers</dt><dd>{{if .PoolDetail.ProviderNames}}{{range .PoolDetail.ProviderNames}}<code>{{.}}</code> {{end}}{{else}}—{{end}}</dd></div>
     <div><dt>Packages</dt><dd>{{if .PoolDetail.Packages}}{{range .PoolDetail.Packages}}<code>{{.}}</code> {{end}}{{else}}—{{end}}</dd></div>
   </dl>
+  {{if .PoolDetail.ActiveJobID}}<div class="pool-control-row"><span class="badge badge-{{.PoolDetail.Status}}">{{.PoolDetail.ActiveJobKind}}</span><form method="post" action="/ui/jobs/{{.PoolDetail.ActiveJobID}}/cancel"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="pool" value="{{.PoolDetail.Name}}"><button type="submit" class="secondary-btn">Cancel</button></form></div>{{end}}
 </div>
 <div class="table-card">
   <div class="table-card-header"><div>Resources</div></div>
   {{if .PoolDetail.Resources}}
   <div class="table-scroll"><table>
-    <thead><tr><th scope="col">Resource</th><th scope="col">Type</th><th scope="col">Profile</th><th scope="col">State</th><th scope="col">Provider</th></tr></thead>
-    <tbody>{{range .PoolDetail.Resources}}<tr><td><code>{{.ID}}</code></td><td>{{.Type}}</td><td>{{.Profile}}</td><td><span class="badge badge-{{.State}}">{{.State}}</span></td><td>{{if .Provider}}{{.Provider}}{{else}}—{{end}}</td></tr>{{end}}</tbody>
+    <thead><tr><th scope="col">Resource</th><th scope="col">Type</th><th scope="col">Profile</th><th scope="col">State</th><th scope="col">Provider</th><th scope="col">Actions</th></tr></thead>
+    <tbody>{{range .PoolDetail.Resources}}<tr><td><code>{{.ID}}</code></td><td>{{.Type}}</td><td>{{.Profile}}</td><td><span class="badge badge-{{.State}}">{{.State}}</span></td><td>{{if .Provider}}{{.Provider}}{{else}}—{{end}}</td><td class="row-actions">{{if not $.PoolDetail.ActiveJobID}}{{if eq .State "error"}}<form method="post" action="/ui/pools/{{$.PoolDetail.Name}}/resources/{{.ID}}/retry"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" class="secondary-btn">Retry</button></form>{{end}}<form method="post" action="/ui/pools/{{$.PoolDetail.Name}}/resources/{{.ID}}/destroy"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" class="secondary-btn" onclick="return confirm('Destroy resource {{.ID}}? The pool may refill it.')">Destroy</button></form>{{end}}<a class="secondary-btn" href="/ui/diagnostics?pool={{$.PoolDetail.Name}}&resource={{.ID}}">Logs</a><button type="button" class="secondary-btn" onclick="navigator.clipboard.writeText('{{.ID}}')">Copy ID</button><a class="secondary-btn" href="/api/v1/resources/{{.ID}}">Inspect</a></td></tr>{{end}}</tbody>
   </table></div>
   {{else}}<div class="empty">No resources in this pool</div>{{end}}
 </div>
@@ -44,9 +45,17 @@
 <div class="table-card pool-controls">
   <div class="table-card-header"><div>Operator controls</div><a href="/ui/diagnostics">View diagnostics</a></div>
   <div class="pool-control-actions">
-    {{range .Pools}}
+    {{range .PoolViews}}
     <div class="pool-control-row">
       <strong>{{.Name}}</strong>
+      {{if .ActiveJobID}}
+      <span class="badge badge-{{.Status}}">{{.Status}} · {{.ActiveJobKind}}</span>
+      <form method="post" action="/ui/jobs/{{.ActiveJobID}}/cancel">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <input type="hidden" name="pool" value="{{.Name}}">
+        <button type="submit" class="secondary-btn">Cancel</button>
+      </form>
+      {{else}}
       <form method="post" action="/ui/pools/{{.Name}}/drain">
         <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
         <button type="submit" class="secondary-btn" onclick="return confirm('Drain unused ready resources from {{.Name}}?')">Drain</button>
@@ -55,6 +64,7 @@
         <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
         <button type="submit" class="secondary-btn">Fill</button>
       </form>
+      {{end}}
     </div>
     {{end}}
     <div class="pool-control-row pool-cleanup-row">
@@ -99,20 +109,21 @@
 <details class="pool-group">
   <summary class="pool-group-header">
     <div><a class="pool-detail-link" href="{{.DetailPath}}"><strong>{{.Name}}</strong></a>{{if .Type}} <span class="pool-type">{{.Type}}</span>{{end}}</div>
-    <div class="pool-counts"><span>{{.ReadyCount}} ready / {{.TotalCount}} total</span>{{if .HistoricalCount}}<span class="badge badge-released">{{.HistoricalCount}} history</span>{{end}}{{if .EffectivelyDrained}}<span class="badge badge-drained">Drained</span>{{else}}<span class="badge badge-ready">Active</span>{{end}}</div>
+    <div class="pool-counts"><span>{{.ReadyCount}} ready / {{.TotalCount}} active</span>{{if .FailedCount}}<span class="badge badge-blocked">{{.FailedCount}} failed</span>{{end}}{{if .HistoricalCount}}<span class="badge badge-released">{{.HistoricalCount}} history</span>{{end}}<span class="badge badge-{{.Status}}">{{.Status}}</span></div>
   </summary>
   <div class="pool-policy">min_ready={{.MinReady}} · max_total={{.MaxTotal}}</div>
+  {{$pool := .}}
   {{if $.PoolHistory}}
   {{if .HistoricalResources}}
   <div class="table-scroll"><table>
-    <thead><tr><th scope="col">Resource</th><th scope="col">Type</th><th scope="col">Profile</th><th scope="col">State</th><th scope="col">Provider</th></tr></thead>
-    <tbody>{{range .HistoricalResources}}<tr><td><code>{{.ID}}</code></td><td>{{.Type}}</td><td>{{.Profile}}</td><td><span class="badge badge-{{.State}}">{{.State}}</span></td><td>{{if .Provider}}{{.Provider}}{{else}}—{{end}}</td></tr>{{end}}</tbody>
+    <thead><tr><th scope="col">Resource</th><th scope="col">Type</th><th scope="col">Profile</th><th scope="col">State</th><th scope="col">Provider</th><th scope="col">Actions</th></tr></thead>
+    <tbody>{{range .HistoricalResources}}<tr><td><code>{{.ID}}</code></td><td>{{.Type}}</td><td>{{.Profile}}</td><td><span class="badge badge-{{.State}}">{{.State}}</span></td><td>{{if .Provider}}{{.Provider}}{{else}}—{{end}}</td><td class="row-actions"><a class="secondary-btn" href="/ui/diagnostics?pool={{$pool.Name}}&resource={{.ID}}">Logs</a><button type="button" class="secondary-btn" onclick="navigator.clipboard.writeText('{{.ID}}')">Copy ID</button><a class="secondary-btn" href="/api/v1/resources/{{.ID}}">Inspect</a></td></tr>{{end}}</tbody>
   </table></div>
   {{else}}<div class="empty">No historical resources in this pool</div>{{end}}
   {{else if .Resources}}
   <div class="table-scroll"><table>
-    <thead><tr><th scope="col">Resource</th><th scope="col">Type</th><th scope="col">Profile</th><th scope="col">State</th><th scope="col">Provider</th></tr></thead>
-    <tbody>{{range .Resources}}<tr><td><code>{{.ID}}</code></td><td>{{.Type}}</td><td>{{.Profile}}</td><td><span class="badge badge-{{.State}}">{{.State}}</span></td><td>{{if .Provider}}{{.Provider}}{{else}}—{{end}}</td></tr>{{end}}</tbody>
+    <thead><tr><th scope="col">Resource</th><th scope="col">Type</th><th scope="col">Profile</th><th scope="col">State</th><th scope="col">Provider</th><th scope="col">Actions</th></tr></thead>
+    <tbody>{{range .Resources}}<tr><td><code>{{.ID}}</code></td><td>{{.Type}}</td><td>{{.Profile}}</td><td><span class="badge badge-{{.State}}">{{.State}}</span></td><td>{{if .Provider}}{{.Provider}}{{else}}—{{end}}</td><td class="row-actions">{{if not $pool.ActiveJobID}}{{if eq .State "error"}}<form method="post" action="/ui/pools/{{$pool.Name}}/resources/{{.ID}}/retry"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" class="secondary-btn">Retry</button></form>{{end}}<form method="post" action="/ui/pools/{{$pool.Name}}/resources/{{.ID}}/destroy"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" class="secondary-btn" onclick="return confirm('Destroy resource {{.ID}}? The pool may refill it.')">Destroy</button></form>{{end}}<a class="secondary-btn" href="/ui/diagnostics?pool={{$pool.Name}}&resource={{.ID}}">Logs</a><button type="button" class="secondary-btn" onclick="navigator.clipboard.writeText('{{.ID}}')">Copy ID</button><a class="secondary-btn" href="/api/v1/resources/{{.ID}}">Inspect</a></td></tr>{{end}}</tbody>
   </table></div>
   {{else}}<div class="empty">No resources in this pool</div>{{end}}
 </details>

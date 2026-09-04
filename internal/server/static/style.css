@@ -286,6 +286,10 @@ tbody tr:hover {
 .badge-released { background: rgba(139, 143, 163, 0.15); color: var(--text-muted); }
 .badge-destroyed { background: rgba(139, 143, 163, 0.1); color: var(--text-muted); }
 .badge-drained { background: rgba(251, 146, 60, 0.15); color: var(--orange); }
+.badge-draining { background: rgba(251, 146, 60, 0.15); color: var(--orange); }
+.badge-filling { background: rgba(56, 189, 248, 0.15); color: var(--cyan); }
+.badge-blocked { background: rgba(248, 113, 113, 0.15); color: var(--red); }
+.badge-unknown { background: rgba(148, 163, 184, 0.15); color: var(--muted); }
 .badge-unknown { background: rgba(139, 143, 163, 0.15); color: var(--text-muted); }
 /* Sandbox-status-specific badges (SandboxStatus, distinct from ResourceState above). */
 .badge-pending { background: rgba(139, 143, 163, 0.15); color: var(--text-muted); }
@@ -451,6 +455,8 @@ tbody tr:hover {
 .pool-control-actions { display: grid; gap: 0.75rem; padding: 1rem 1.25rem; }
 .pool-control-row { align-items: center; display: flex; flex-wrap: wrap; gap: 0.6rem; }
 .pool-control-row strong { min-width: 12rem; }
+.row-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.row-actions form { display: inline-flex; margin: 0; }
 .pool-cleanup-row { border-top: 1px solid var(--border); padding-top: 0.75rem; }
 .pool-group { border-bottom: 1px solid var(--border); padding: 1rem 1.25rem; }
 .pool-group:last-child { border-bottom: none; }

@@ -15,6 +15,7 @@ import (
 	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/internal/sandbox"
 	"github.com/Geogboe/boxy/internal/server"
+	"github.com/Geogboe/boxy/pkg/jobs"
 	"github.com/Geogboe/boxy/pkg/model"
 	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
 	"github.com/Geogboe/boxy/pkg/store"
@@ -27,6 +28,36 @@ type fakePoolMaintenance struct {
 	fillErr   error
 	drained   []model.PoolName
 	filled    []model.PoolName
+}
+
+type blockingPoolMaintenance struct {
+	started chan struct{}
+}
+
+type fakePoolResourceMaintenance struct {
+	*fakePoolMaintenance
+	destroyed []model.ResourceID
+	retried   []model.ResourceID
+}
+
+func (m *fakePoolResourceMaintenance) DestroyResource(_ context.Context, resource model.Resource) error {
+	m.destroyed = append(m.destroyed, resource.ID)
+	return nil
+}
+
+func (m *fakePoolResourceMaintenance) RetryResource(_ context.Context, resource model.Resource) error {
+	m.retried = append(m.retried, resource.ID)
+	return nil
+}
+
+func (m *blockingPoolMaintenance) Fill(ctx context.Context, poolName model.PoolName) (model.Pool, error) {
+	close(m.started)
+	<-ctx.Done()
+	return model.Pool{Name: poolName}, ctx.Err()
+}
+
+func (m *blockingPoolMaintenance) Drain(_ context.Context, poolName model.PoolName) (model.Pool, error) {
+	return model.Pool{Name: poolName}, nil
 }
 
 type testSecretStore struct{ values map[string][]byte }
@@ -844,18 +875,19 @@ func TestAPI_DrainPool(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/pools/web/drain", nil)
 	mux.ServeHTTP(w, r)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body: %s", w.Code, w.Body.String())
+	}
+	var submitted jobs.Job
+	if err := json.Unmarshal(w.Body.Bytes(), &submitted); err != nil {
+		t.Fatalf("unmarshal submitted job: %v", err)
+	}
+	completed := waitForAPIJob(t, mux, submitted.ID)
+	if completed.Status != jobs.StatusSucceeded {
+		t.Fatalf("job status = %s, want succeeded", completed.Status)
 	}
 	if len(maintenance.drained) != 1 || maintenance.drained[0] != "web" {
 		t.Fatalf("drained = %v, want [web]", maintenance.drained)
-	}
-	var got model.Pool
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if !got.Drain.Operator {
-		t.Fatalf("operator drain = false, want true")
 	}
 }
 
@@ -868,8 +900,16 @@ func TestAPI_DrainPool_notFound(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/pools/missing/drain", nil)
 	mux.ServeHTTP(w, r)
 
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404; body: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body: %s", w.Code, w.Body.String())
+	}
+	var submitted jobs.Job
+	if err := json.Unmarshal(w.Body.Bytes(), &submitted); err != nil {
+		t.Fatalf("unmarshal submitted job: %v", err)
+	}
+	completed := waitForAPIJob(t, mux, submitted.ID)
+	if completed.Status != jobs.StatusFailed || completed.ErrorCode != "pool_operation_failed" {
+		t.Fatalf("job = %+v, want failed pool operation", completed)
 	}
 }
 
@@ -882,10 +922,126 @@ func TestAPI_FillPool_ConfigDeclaredDrain(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/pools/web/fill", nil)
 	mux.ServeHTTP(w, r)
 
-	if w.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want 409; body: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body: %s", w.Code, w.Body.String())
 	}
-	if !bytes.Contains(w.Body.Bytes(), []byte(`configured drained`)) {
-		t.Fatalf("body = %s, want configured drained message", w.Body.String())
+	var submitted jobs.Job
+	if err := json.Unmarshal(w.Body.Bytes(), &submitted); err != nil {
+		t.Fatalf("unmarshal submitted job: %v", err)
 	}
+	completed := waitForAPIJob(t, mux, submitted.ID)
+	if completed.Status != jobs.StatusFailed || completed.ErrorCode != "pool_config_drained" {
+		t.Fatalf("job = %+v, want pool_config_drained failure", completed)
+	}
+}
+
+func TestAPI_PoolJobsLockMutationsAndCanBeCancelled(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	maintenance := &blockingPoolMaintenance{started: make(chan struct{})}
+	mux := server.NewTestMux(st, sandbox.New(st, nil), false, maintenance)
+
+	fill := httptest.NewRecorder()
+	mux.ServeHTTP(fill, httptest.NewRequest(http.MethodPost, "/api/v1/pools/web/fill", nil))
+	if fill.Code != http.StatusAccepted {
+		t.Fatalf("fill status = %d; body: %s", fill.Code, fill.Body.String())
+	}
+	var submitted jobs.Job
+	if err := json.Unmarshal(fill.Body.Bytes(), &submitted); err != nil {
+		t.Fatalf("unmarshal submitted job: %v", err)
+	}
+	select {
+	case <-maintenance.started:
+	case <-time.After(time.Second):
+		t.Fatal("fill job did not start")
+	}
+
+	drain := httptest.NewRecorder()
+	mux.ServeHTTP(drain, httptest.NewRequest(http.MethodPost, "/api/v1/pools/web/drain", nil))
+	if drain.Code != http.StatusConflict {
+		t.Fatalf("concurrent drain status = %d, want 409; body: %s", drain.Code, drain.Body.String())
+	}
+
+	cancelled := httptest.NewRecorder()
+	mux.ServeHTTP(cancelled, httptest.NewRequest(http.MethodPost, "/api/v1/jobs/"+string(submitted.ID)+"/cancel", nil))
+	if cancelled.Code != http.StatusAccepted {
+		t.Fatalf("cancel status = %d; body: %s", cancelled.Code, cancelled.Body.String())
+	}
+	completed := waitForAPIJob(t, mux, submitted.ID)
+	if completed.Status != jobs.StatusCancelled {
+		t.Fatalf("cancelled job status = %s, want cancelled", completed.Status)
+	}
+
+	retryDrain := httptest.NewRecorder()
+	mux.ServeHTTP(retryDrain, httptest.NewRequest(http.MethodPost, "/api/v1/pools/web/drain", nil))
+	if retryDrain.Code != http.StatusAccepted {
+		t.Fatalf("drain after cancellation status = %d; body: %s", retryDrain.Code, retryDrain.Body.String())
+	}
+}
+
+func TestAPI_PoolResourceMutationsAreTrackedJobs(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	for _, resource := range []model.Resource{
+		{ID: "failed-1", OriginPool: "web", State: model.ResourceStateError},
+		{ID: "ready-1", OriginPool: "web", State: model.ResourceStateReady},
+	} {
+		if err := st.PutResource(ctx, resource); err != nil {
+			t.Fatalf("PutResource: %v", err)
+		}
+	}
+	maintenance := &fakePoolResourceMaintenance{fakePoolMaintenance: &fakePoolMaintenance{}}
+	mux := server.NewTestMux(st, sandbox.New(st, nil), false, maintenance)
+
+	for _, request := range []struct {
+		method string
+		path   string
+		kind   string
+	}{
+		{method: http.MethodPost, path: "/api/v1/pools/web/resources/failed-1/retry", kind: "pool.retry"},
+		{method: http.MethodDelete, path: "/api/v1/pools/web/resources/ready-1", kind: "pool.destroy"},
+	} {
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(request.method, request.path, nil))
+		if response.Code != http.StatusAccepted {
+			t.Fatalf("%s status = %d; body: %s", request.kind, response.Code, response.Body.String())
+		}
+		var submitted jobs.Job
+		if err := json.Unmarshal(response.Body.Bytes(), &submitted); err != nil {
+			t.Fatalf("unmarshal %s job: %v", request.kind, err)
+		}
+		completed := waitForAPIJob(t, mux, submitted.ID)
+		if completed.Status != jobs.StatusSucceeded || completed.Kind != request.kind {
+			t.Fatalf("completed job = %+v", completed)
+		}
+	}
+	if len(maintenance.retried) != 1 || maintenance.retried[0] != "failed-1" {
+		t.Fatalf("retried = %v", maintenance.retried)
+	}
+	if len(maintenance.destroyed) != 1 || maintenance.destroyed[0] != "ready-1" {
+		t.Fatalf("destroyed = %v", maintenance.destroyed)
+	}
+}
+
+func waitForAPIJob(t *testing.T, mux http.Handler, id jobs.ID) jobs.Job {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/jobs/"+string(id), nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("get job status = %d; body: %s", response.Code, response.Body.String())
+		}
+		var job jobs.Job
+		if err := json.Unmarshal(response.Body.Bytes(), &job); err != nil {
+			t.Fatalf("unmarshal job: %v", err)
+		}
+		if job.Status.IsTerminal() {
+			return job
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("job %s did not complete", id)
+	return jobs.Job{}
 }

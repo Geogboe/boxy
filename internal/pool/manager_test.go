@@ -296,6 +296,34 @@ func TestManager_FailAdmissionDestroysVMAndKeepsFailureRecord(t *testing.T) {
 	}
 }
 
+func TestManager_RetryResourceCleansQuarantine(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	pool := model.Pool{Name: "windows", Inventory: model.ResourceCollection{}}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	res := model.Resource{ID: "vm-1", OriginPool: pool.Name, CurrentPool: pool.Name, State: model.ResourceStateError}
+	if err := st.PutResource(ctx, res); err != nil {
+		t.Fatalf("PutResource: %v", err)
+	}
+	provisioner := &fakeProvisioner{}
+	if err := New(st, provisioner).RetryResource(ctx, res); err != nil {
+		t.Fatalf("RetryResource: %v", err)
+	}
+	if len(provisioner.destroyed) != 1 || provisioner.destroyed[0] != res.ID {
+		t.Fatalf("destroyed resources = %v, want [%s]", provisioner.destroyed, res.ID)
+	}
+	cleaned, err := st.GetResource(ctx, res.ID)
+	if err != nil {
+		t.Fatalf("GetResource: %v", err)
+	}
+	if cleaned.State != model.ResourceStateDestroyed {
+		t.Fatalf("resource state = %s, want destroyed", cleaned.State)
+	}
+}
+
 func TestManager_DestroyResource_MarksDestroyingBeforeDestroy(t *testing.T) {
 	ctx := context.Background()
 	st := store.NewMemoryStore()

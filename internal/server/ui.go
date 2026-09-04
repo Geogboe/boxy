@@ -16,6 +16,7 @@ import (
 	"github.com/Geogboe/boxy/internal/buildcfg"
 	"github.com/Geogboe/boxy/pkg/diagnostics"
 	"github.com/Geogboe/boxy/pkg/humanize"
+	"github.com/Geogboe/boxy/pkg/jobs"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/store"
 )
@@ -111,6 +112,10 @@ type poolView struct {
 	MaxTotal            int
 	ReadyCount          int
 	TotalCount          int
+	FailedCount         int
+	Status              string
+	ActiveJobID         jobs.ID
+	ActiveJobKind       string
 	EffectivelyDrained  bool
 	ConfigDrain         bool
 	OperatorDrain       bool
@@ -186,6 +191,9 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/service-keys/{id}/revoke", s.handleRevokeServiceKey)
 	mux.HandleFunc("POST /ui/pools/{name}/drain", s.handleDrainPoolUI)
 	mux.HandleFunc("POST /ui/pools/{name}/fill", s.handleFillPoolUI)
+	mux.HandleFunc("POST /ui/pools/{name}/resources/{id}/retry", s.handleRetryPoolResourceUI)
+	mux.HandleFunc("POST /ui/pools/{name}/resources/{id}/destroy", s.handleDestroyPoolResourceUI)
+	mux.HandleFunc("POST /ui/jobs/{id}/cancel", s.handleCancelJobUI)
 	mux.HandleFunc("POST /ui/resources/purge", s.handlePurgeResourcesUI)
 	mux.HandleFunc("GET /ui/catalog", s.uiHandler(catalogTmpl, "catalog", s.catalogData))
 	mux.HandleFunc("GET /ui/help", s.uiHandler(helpTmpl, "help", func(*http.Request) (pageData, error) { return pageData{}, nil }))
@@ -538,7 +546,11 @@ func (s *Server) poolsData(r *http.Request) (pageData, error) {
 	if resourceLimitHit {
 		resources = resources[:1000]
 	}
-	views := buildPoolViews(pools, resources)
+	poolJobs, err := s.store.List(r.Context())
+	if err != nil {
+		return pageData{}, err
+	}
+	views := buildPoolViews(pools, resources, poolJobs)
 	data := pageData{
 		Pools:            pools,
 		PoolViews:        views,

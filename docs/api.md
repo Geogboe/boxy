@@ -44,9 +44,16 @@ API-key roles:
 |---|---|---|---|
 | GET | `/api/v1/pools` | auditor/admin | List configured pools and ready inventory. |
 | GET | `/api/v1/pools/{name}` | auditor/admin | Inspect one pool. |
-| POST | `/api/v1/pools/{name}/drain` | admin | Drain unused ready inventory. |
-| POST | `/api/v1/pools/{name}/fill` | admin | Reconcile a pool to its configured target. |
+| POST | `/api/v1/pools/{name}/drain` | admin | Start a tracked job to drain unused ready inventory; returns `202 Accepted`. |
+| POST | `/api/v1/pools/{name}/fill` | admin | Start a tracked job to reconcile a pool to its configured target; returns `202 Accepted`. |
 | POST | `/api/v1/pools/{name}/guest-credential` | admin | Set a pool's guest bootstrap credential from a request body; the raw value is never returned. |
+
+### Jobs
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/api/v1/jobs/{id}` | auditor/admin | Inspect durable status and safe step progress. |
+| POST | `/api/v1/jobs/{id}/cancel` | admin | Request cancellation; the job enters cleanup before becoming cancelled. |
 
 ### Resources
 
