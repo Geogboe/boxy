@@ -1,6 +1,7 @@
 {{define "title"}}Boxy — Diagnostics{{end}}
 
 {{define "content"}}
+{{if .DiagnosticsRefresh}}<script>window.setTimeout(function () { window.location.reload(); }, 1500);</script>{{end}}
 <div class="page-header">
   <h1 class="page-title">Diagnostics</h1>
 </div>
@@ -22,7 +23,7 @@
       </form>{{end}}
     </div>
   </div>
-  {{if .DiagnosticsMessage}}<div class="result-banner">{{.DiagnosticsMessage}}</div>{{end}}
+  {{if .DiagnosticsMessage}}<div class="result-banner">{{.DiagnosticsMessage}}{{if .DiagnosticsJob}} <span class="badge badge-{{.DiagnosticsJob.Status}}">{{.DiagnosticsJob.Status}}</span>{{end}}</div>{{end}}
   <form class="diagnostics-filters" method="get" action="/ui/diagnostics">
     <label>Level
       <select name="level">

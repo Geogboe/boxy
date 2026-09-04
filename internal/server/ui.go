@@ -66,6 +66,8 @@ type pageData struct {
 	DiagnosticsTimeline   []diagnosticsTimelineView
 	DiagnosticsError      string
 	DiagnosticsMessage    string
+	DiagnosticsJob        *jobs.Job
+	DiagnosticsRefresh    bool
 	DiagnosticsQuery      diagnostics.Query
 	DiagnosticsSince      string
 	DiagnosticsExportURL  string
@@ -310,8 +312,21 @@ func (s *Server) diagnosticsHandler(tmpl *template.Template) http.HandlerFunc {
 				d.DiagnosticsAgentURL = "/ui/diagnostics?" + diagnosticsQueryValues(agentQuery).Encode()
 			}
 		}
-		if requestID := strings.TrimSpace(r.URL.Query().Get("log_request")); requestID != "" {
-			d.DiagnosticsMessage = "Requested agent logs (request ID: " + requestID + ")."
+		if jobID := strings.TrimSpace(r.URL.Query().Get("log_job")); jobID != "" {
+			if runner, runnerErr := s.ensureJobRunner(); runnerErr == nil {
+				if job, jobErr := runner.Get(r.Context(), jobs.ID(jobID)); jobErr == nil && job.Kind == "agent.logs" {
+					d.DiagnosticsJob = &job
+					d.DiagnosticsRefresh = !job.Status.IsTerminal()
+					switch job.Status {
+					case jobs.StatusSucceeded:
+						d.DiagnosticsMessage = "Agent log snapshot received. The timeline now includes the returned events."
+					case jobs.StatusFailed, jobs.StatusCancelled, jobs.StatusInterrupted:
+						d.DiagnosticsError = "Agent log request " + string(job.Status) + "."
+					default:
+						d.DiagnosticsMessage = "Agent log request is " + string(job.Status) + ". Waiting for the remote snapshot."
+					}
+				}
+			}
 		}
 		if err == nil {
 			if s.diagnostics == nil {

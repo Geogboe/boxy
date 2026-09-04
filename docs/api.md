@@ -44,16 +44,16 @@ API-key roles:
 |---|---|---|---|
 | GET | `/api/v1/pools` | auditor/admin | List configured pools and ready inventory. |
 | GET | `/api/v1/pools/{name}` | auditor/admin | Inspect one pool. |
-| POST | `/api/v1/pools/{name}/drain` | admin | Start a tracked job to drain unused ready inventory; returns `202 Accepted`. |
-| POST | `/api/v1/pools/{name}/fill` | admin | Start a tracked job to reconcile a pool to its configured target; returns `202 Accepted`. |
+| POST | `/api/v1/pools/{name}/drain` | admin | Start a tracked job to drain unused ready inventory. |
+| POST | `/api/v1/pools/{name}/fill` | admin | Start a tracked job to reconcile a pool to its configured target. |
 | POST | `/api/v1/pools/{name}/guest-credential` | admin | Set a pool's guest bootstrap credential from a request body; the raw value is never returned. |
 
 ### Jobs
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/api/v1/jobs/{id}` | auditor/admin | Inspect durable status and safe step progress. |
-| POST | `/api/v1/jobs/{id}/cancel` | admin | Request cancellation; the job enters cleanup before becoming cancelled. |
+| GET | `/api/v1/jobs/{id}` | auditor/admin | Inspect durable job status and step progress. |
+| POST | `/api/v1/jobs/{id}/cancel` | admin | Request cancellation; completion follows cleanup. |
 
 ### Resources
 
@@ -116,7 +116,7 @@ Sandbox creation returns `202 Accepted` and is fulfilled asynchronously by the d
 
 ## Sandbox execution
 
-`POST /api/v1/sandboxes/{id}/exec` accepts exactly one opaque input: a non-empty `command` array, a non-empty `command_text` string, or a `script` object. Positional command arguments and script-file arguments remain separate fields; the server never reconstructs command text by quoting or splitting argv. A script has base64-encoded `content`, a lowercase SHA-256 `digest`, `interpreter` (`auto`, `powershell`, or `sh`), and optional `args` array. Script content is limited to 4 MiB and the server recomputes the digest before dispatch. The sandbox must be ready; multi-resource sandboxes require `resource_id`. The request returns `202 Accepted` with an `exec_id` and does not wait for the guest command. The execution ID is also a generic job ID, so callers can use the job status and cancellation endpoints while stdout/stderr remains bounded in the sandbox execution record.
+`POST /api/v1/sandboxes/{id}/exec` accepts exactly one opaque input: a non-empty `command` array, a non-empty `command_text` string, or a `script` object. Positional command arguments and script-file arguments remain separate fields; the server never reconstructs command text by quoting or splitting argv. A script has base64-encoded `content`, a lowercase SHA-256 `digest`, `interpreter` (`auto`, `powershell`, or `sh`), and optional `args` array. Script content is limited to 4 MiB and the server recomputes the digest before dispatch. The sandbox must be ready; multi-resource sandboxes require `resource_id`. The request returns `202 Accepted` with an `exec_id` and does not wait for the guest command.
 
 `GET /api/v1/sandboxes/{id}/exec/{exec_id}` returns execution status plus bounded output chunks after the opaque `from` cursor. Each response includes a `next` cursor; resume with that cursor after a disconnect to avoid duplicate chunks. Cursors identify chunk boundaries and are not offsets into output bytes. Output is capped at 1 MiB per execution and chunked at 64 KiB. When the cap is reached, the response includes an explicit truncation marker and the terminal status remains inspectable. Terminal records are retained for 24 hours.
 

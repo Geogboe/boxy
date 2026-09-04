@@ -55,6 +55,7 @@ type AgentAdmin interface {
 	ListAgents() []pool.AgentSummary
 	Revoke(ctx context.Context, agentID, reason string, forceOrphanResources bool) error
 	RequestAgentLogs(ctx context.Context, agentID string, since time.Time, limit int) (string, error)
+	WaitForAgentLogs(ctx context.Context, requestID string) error
 }
 
 // SandboxExecutor is the application seam used by the REST exec endpoint.

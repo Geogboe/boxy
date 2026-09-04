@@ -67,9 +67,11 @@ type Server struct {
 	diagnostics diagnostics.Store
 	now         func() time.Time
 
-	mu           sync.Mutex
-	remoteAgents map[string]*agentsdk.RemoteAgent
-	forceStop    map[string]chan struct{}
+	mu             sync.Mutex
+	remoteAgents   map[string]*agentsdk.RemoteAgent
+	forceStop      map[string]chan struct{}
+	logPullWaiters map[string]chan error
+	logPullResults map[string]error
 }
 
 // SetGuestBootstrapResolver injects the server-owned credential lookup used by
@@ -103,6 +105,8 @@ func New(st store.Store, registry *pool.AgentRegistry, ca *pki.CA, heartbeatInte
 		now:                  time.Now,
 		remoteAgents:         make(map[string]*agentsdk.RemoteAgent),
 		forceStop:            make(map[string]chan struct{}),
+		logPullWaiters:       make(map[string]chan error),
+		logPullResults:       make(map[string]error),
 	}
 }
 
@@ -114,7 +118,12 @@ func (s *Server) SetDiagnosticsStore(logs diagnostics.Store) {
 	}
 }
 
-func (s *Server) storeAgentLogs(ctx context.Context, agentID string, events []diagnostics.Event) error {
+func (s *Server) storeAgentLogs(ctx context.Context, agentID, requestID string, events []diagnostics.Event) (result error) {
+	defer func() {
+		if requestID != "" {
+			s.completeAgentLogs(requestID, result)
+		}
+	}()
 	if s == nil || s.diagnostics == nil {
 		return nil
 	}
@@ -132,6 +141,47 @@ func (s *Server) storeAgentLogs(ctx context.Context, agentID string, events []di
 		}
 	}
 	return nil
+}
+
+func (s *Server) completeAgentLogs(requestID string, result error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if waiter, ok := s.logPullWaiters[requestID]; ok {
+		select {
+		case waiter <- result:
+		default:
+		}
+		return
+	}
+	s.logPullResults[requestID] = result
+}
+
+func (s *Server) WaitForAgentLogs(ctx context.Context, requestID string) error {
+	s.mu.Lock()
+	if result, ok := s.logPullResults[requestID]; ok {
+		delete(s.logPullResults, requestID)
+		s.mu.Unlock()
+		return result
+	}
+	waiter, ok := s.logPullWaiters[requestID]
+	if !ok {
+		waiter = make(chan error, 1)
+		s.logPullWaiters[requestID] = waiter
+	}
+	s.mu.Unlock()
+
+	select {
+	case result := <-waiter:
+		s.mu.Lock()
+		delete(s.logPullWaiters, requestID)
+		s.mu.Unlock()
+		return result
+	case <-ctx.Done():
+		s.mu.Lock()
+		delete(s.logPullWaiters, requestID)
+		s.mu.Unlock()
+		return ctx.Err()
+	}
 }
 
 // log returns s.logger, falling back to slog.Default() — same pattern as

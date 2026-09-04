@@ -243,7 +243,7 @@ func TestUI_DiagnosticsPullAgentLogs(t *testing.T) {
 	t.Parallel()
 
 	st := store.NewMemoryStore()
-	admin := &fakeAgentAdmin{}
+	admin := &fakeAgentAdmin{logPulled: make(chan string, 1)}
 	mux := server.NewTestMuxWithAgentAdminUI(st, sandbox.New(st, nil), admin, true)
 
 	get := httptest.NewRecorder()
@@ -262,8 +262,25 @@ func TestUI_DiagnosticsPullAgentLogs(t *testing.T) {
 	if post.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want redirect (body: %s)", post.Code, post.Body.String())
 	}
-	if !strings.Contains(post.Header().Get("Location"), "log_request=pull-1") || len(admin.logPulls) != 1 {
-		t.Fatalf("location=%q log pulls=%v, want request id and one pull", post.Header().Get("Location"), admin.logPulls)
+	if !strings.Contains(post.Header().Get("Location"), "log_job=") {
+		t.Fatalf("location=%q, want tracked log job", post.Header().Get("Location"))
+	}
+	select {
+	case <-admin.logPulled:
+	case <-time.After(time.Second):
+		t.Fatal("agent log job did not request logs")
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		status := httptest.NewRecorder()
+		mux.ServeHTTP(status, server.AuthedRequest(httptest.NewRequest(http.MethodGet, post.Header().Get("Location"), nil)))
+		if strings.Contains(status.Body.String(), "Agent log snapshot received") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("agent log job did not render completion: %s", status.Body.String())
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
