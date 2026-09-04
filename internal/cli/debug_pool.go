@@ -23,6 +23,24 @@ func newDebugPoolCommand() *cobra.Command {
 	return cmd
 }
 
+func newPoolListCommand(serverAddr func() string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List configured pools and ready inventory",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			pools, err := fetchJSON[[]model.Pool](cmd.Context(), maintenanceAPIClientForServer(serverAddr()), apiBaseURL(serverAddr())+"/api/v1/pools")
+			if err != nil {
+				return fmt.Errorf("list pools: %w", err)
+			}
+			for _, pool := range pools {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\t%d ready\n", pool.Name, len(pool.Inventory.Resources))
+			}
+			return nil
+		},
+	}
+}
+
 func newAdminPoolCommand(serverAddr func() string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pool",
@@ -31,6 +49,7 @@ func newAdminPoolCommand(serverAddr func() string) *cobra.Command {
 			return cmd.Help()
 		},
 	}
+	cmd.AddCommand(newPoolListCommand(serverAddr))
 	cmd.AddCommand(newPoolDrainCommand(serverAddr))
 	cmd.AddCommand(newPoolFillCommand(serverAddr))
 	return cmd

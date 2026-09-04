@@ -2,11 +2,34 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func TestAdminPoolList_success(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/pools", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `[{"name":"web","inventory":{"resources":[{},{}]}}]`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"admin", "pool", "--server", srv.URL, "list"})
+	output, err := captureSandboxStdout(t, func() error {
+		return cmd.ExecuteContext(context.Background())
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(output, "web\t2 ready") {
+		t.Fatalf("output = %q, want pool inventory", output)
+	}
+}
 
 func TestAdminResourcePurge_success(t *testing.T) {
 	mux := http.NewServeMux()
