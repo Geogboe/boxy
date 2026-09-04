@@ -267,6 +267,35 @@ func TestManager_DestroyResource_DestroysAndDeletesWithoutReturningToInventory(t
 	}
 }
 
+func TestManager_FailAdmissionDestroysVMAndKeepsFailureRecord(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	pool := model.Pool{Name: "windows", Inventory: model.ResourceCollection{}}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	res := model.Resource{ID: "vm-1", OriginPool: pool.Name, CurrentPool: pool.Name, State: model.ResourceStateProvisioning}
+	if err := st.PutResource(ctx, res); err != nil {
+		t.Fatalf("PutResource: %v", err)
+	}
+	provisioner := &fakeProvisioner{}
+	mgr := New(st, provisioner)
+	if err := mgr.FailAdmission(ctx, res, errors.New("packages failed after three attempts")); err != nil {
+		t.Fatalf("FailAdmission: %v", err)
+	}
+	if len(provisioner.destroyed) != 1 || provisioner.destroyed[0] != res.ID {
+		t.Fatalf("destroyed resources = %v, want [%s]", provisioner.destroyed, res.ID)
+	}
+	failed, err := st.GetResource(ctx, res.ID)
+	if err != nil {
+		t.Fatalf("GetResource: %v", err)
+	}
+	if failed.State != model.ResourceStateError {
+		t.Fatalf("resource state = %s, want error", failed.State)
+	}
+}
+
 func TestManager_DestroyResource_MarksDestroyingBeforeDestroy(t *testing.T) {
 	ctx := context.Background()
 	st := store.NewMemoryStore()

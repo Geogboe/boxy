@@ -171,14 +171,39 @@ func (m *Manager) FailAdmission(ctx context.Context, res model.Resource, cause e
 	if m == nil || m.store == nil {
 		return fmt.Errorf("pool manager store is required")
 	}
+	var cleanupErr error
+	if m.provisioner != nil && res.OriginPool != "" {
+		unlock := m.lockPool(res.OriginPool)
+		defer unlock()
+		pool, err := m.store.GetPool(ctx, res.OriginPool)
+		if err != nil {
+			cleanupErr = fmt.Errorf("load pool for admission cleanup: %w", err)
+		} else {
+			res.State = model.ResourceStateDestroying
+			res.UpdatedAt = m.clock.Now().UTC()
+			if err := m.store.PutResource(ctx, res); err != nil {
+				cleanupErr = fmt.Errorf("mark admission cleanup: %w", err)
+			} else if err := m.provisioner.Destroy(ctx, pool, res); err != nil {
+				cleanupErr = fmt.Errorf("destroy failed admission resource: %w", err)
+			} else {
+				m.deleteResourceGuestCredential(ctx, res.ID)
+			}
+		}
+	}
 	if res.Properties == nil {
 		res.Properties = make(map[string]any)
 	}
 	res.Properties["lifecycle_error"] = cause.Error()
+	if cleanupErr != nil {
+		res.Properties["cleanup_error"] = cleanupErr.Error()
+	}
 	res.State = model.ResourceStateError
 	res.UpdatedAt = m.clock.Now().UTC()
 	m.recordProvisionFailure(res.OriginPool, res.UpdatedAt)
-	return m.store.PutResource(ctx, res)
+	if err := m.store.PutResource(ctx, res); err != nil {
+		return errors.Join(cleanupErr, err)
+	}
+	return cleanupErr
 }
 
 // provisionBackoffActive reports whether pool provisioning is currently in
