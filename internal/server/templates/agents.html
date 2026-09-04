@@ -31,6 +31,7 @@
       <th scope="col">Connection / Scheduling</th>
       <th scope="col">Last heartbeat</th>
       <th scope="col">Providers and capacity</th>
+      <th scope="col">Diagnostics</th>
     </tr>
   </thead>
   <tbody>
@@ -70,6 +71,7 @@
         <span class="capacity-empty">No providers registered</span>
         {{end}}
       </td>
+      <td><a class="button-link secondary" href="{{.LogsURL}}">View logs</a></td>
     </tr>
     {{end}}
   </tbody>

@@ -186,6 +186,12 @@ func TestUI_DiagnosticsFiltersAgentAndExportsCurrentQuery(t *testing.T) {
 	if len(archive.Events) != 1 || archive.Events[0].Message != "agent a failure" {
 		t.Fatalf("archive events = %+v, want only agent-a event", archive.Events)
 	}
+
+	filtered := httptest.NewRecorder()
+	mux.ServeHTTP(filtered, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/diagnostics?component=agent", nil)))
+	if filtered.Code != http.StatusOK || !strings.Contains(filtered.Body.String(), "View all diagnostics") || strings.Contains(filtered.Body.String(), `href="/ui/diagnostics?component=agent`) {
+		t.Fatalf("agent-filtered page has non-functional navigation: status=%d body=%s", filtered.Code, filtered.Body.String())
+	}
 }
 
 func TestUI_DiagnosticsPullAgentLogs(t *testing.T) {
@@ -197,7 +203,7 @@ func TestUI_DiagnosticsPullAgentLogs(t *testing.T) {
 
 	get := httptest.NewRecorder()
 	mux.ServeHTTP(get, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/diagnostics?agent=agent-a", nil)))
-	if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), "Pull agent logs") {
+	if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), "Pull agent logs") || !strings.Contains(get.Body.String(), `action="/ui/diagnostics/agents/agent-a/logs"`) {
 		t.Fatalf("diagnostics page status=%d, missing pull action: %q", get.Code, get.Body.String())
 	}
 	csrf := csrfCookieFromResponse(t, get)

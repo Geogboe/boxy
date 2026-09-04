@@ -69,6 +69,7 @@ type pageData struct {
 	DiagnosticsExportURL string
 	DiagnosticsAgentURL  string
 	DiagnosticsPullURL   string
+	DiagnosticsViewAllURL string
 }
 
 // sandboxView is the dashboard's per-sandbox row, joining the sandbox record
@@ -129,6 +130,7 @@ type poolResourceView struct {
 type agentView struct {
 	ID        string
 	Name      string
+	LogsURL   string
 	Connected bool
 	Available bool
 	LastSeen  string
@@ -287,11 +289,16 @@ func (s *Server) diagnosticsHandler(tmpl *template.Template) http.HandlerFunc {
 			if query.Agent != "" {
 				d.DiagnosticsPullURL = "/ui/diagnostics/agents/" + url.PathEscape(query.Agent) + "/logs"
 			}
-			agentQuery := query
-			if agentQuery.Agent == "" {
+			if query.Component == "agent" || query.Agent != "" {
+				allQuery := query
+				allQuery.Component = ""
+				allQuery.Agent = ""
+				d.DiagnosticsViewAllURL = "/ui/diagnostics?" + diagnosticsQueryValues(allQuery).Encode()
+			} else {
+				agentQuery := query
 				agentQuery.Component = "agent"
+				d.DiagnosticsAgentURL = "/ui/diagnostics?" + diagnosticsQueryValues(agentQuery).Encode()
 			}
-			d.DiagnosticsAgentURL = "/ui/diagnostics?" + diagnosticsQueryValues(agentQuery).Encode()
 		}
 		if requestID := strings.TrimSpace(r.URL.Query().Get("log_request")); requestID != "" {
 			d.DiagnosticsMessage = "Requested agent logs (request ID: " + requestID + ")."
@@ -619,6 +626,7 @@ func (s *Server) agentsData(_ *http.Request) (pageData, error) {
 		agent := agentView{
 			ID:        summary.ID,
 			Name:      summary.Name,
+			LogsURL:   "/ui/diagnostics?" + url.Values{"agent": {summary.ID}}.Encode(),
 			Connected: summary.Connected,
 			Available: summary.Available,
 			LastSeen:  "No heartbeat sample",

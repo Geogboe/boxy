@@ -13,6 +13,7 @@
     <div class="table-card-actions">
       {{if .DiagnosticsExportURL}}<a class="button-link" href="{{.DiagnosticsExportURL}}">Export current query</a>{{end}}
       {{if .DiagnosticsAgentURL}}<a class="button-link secondary" href="{{.DiagnosticsAgentURL}}">View agent logs</a>{{end}}
+      {{if .DiagnosticsViewAllURL}}<a class="button-link secondary" href="{{.DiagnosticsViewAllURL}}">View all diagnostics</a>{{end}}
       {{if .DiagnosticsPullURL}}<form method="post" action="{{.DiagnosticsPullURL}}">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <input type="hidden" name="since" value="{{.DiagnosticsSince}}">

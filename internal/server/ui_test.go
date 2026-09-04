@@ -381,6 +381,7 @@ func TestUI_agents_rendersStatusesCapacityAndPolling(t *testing.T) {
 		"Agents", "Embedded Agent", "Lab Hypervisor", "remote-1", "Connected", "Disconnected",
 		"Available", "Unavailable", "hyperv", "4,096 MB free", "No heartbeat sample", "No capacity sample",
 		"2026-08-21 14:30:00 UTC", `hx-get="/ui/fragments/agents-table"`, `hx-trigger="every 5s"`,
+		`href="/ui/diagnostics?agent=embedded">View logs</a>`,
 		`href="/ui/agents" class="active" aria-current="page"`,
 	} {
 		if !strings.Contains(body, want) {

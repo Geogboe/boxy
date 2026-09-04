@@ -46,3 +46,7 @@ disabled unless explicitly configured, so this feature is a pull operation.
    and `--limit` before making an HTTP request.
 5. Agent and server stores apply 14-day default retention and continue to
    enforce the existing byte/event bounds.
+6. The Agents page provides a per-agent `View logs` link that opens the
+   selected diagnostic view and exposes the pull action. The diagnostics page
+   must not render `View agent logs` as a self-link when that view is already
+   active; it provides a route back to all diagnostics instead.
