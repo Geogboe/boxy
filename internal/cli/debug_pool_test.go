@@ -126,3 +126,21 @@ func TestDebugPoolFill_configDeclaredDrain(t *testing.T) {
 		t.Fatalf("error = %v, want configured drained message", err)
 	}
 }
+
+func TestAdminPoolDrain_success(t *testing.T) {
+	srv := newDebugPoolTestServer(t)
+	defer srv.Close()
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"admin", "pool", "--server", srv.URL, "drain", "web"})
+
+	output, err := captureSandboxStdout(t, func() error {
+		return cmd.ExecuteContext(context.Background())
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(output, "drained pool web") {
+		t.Fatalf("output = %q, want admin pool drain success", output)
+	}
+}

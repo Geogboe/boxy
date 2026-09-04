@@ -160,6 +160,14 @@ boxy
 │         password: <one-time generated password>
 │         This password will not be shown again.
 │
+│   ├── pool                                     Run administrator pool maintenance
+│   │   ├── drain <pool>                         Drain unused ready inventory
+│   │   │     $ boxy admin pool drain win-vm
+│   │   │       drained pool win-vm
+│   │   └── fill <pool>                          Reconcile to configured min_ready
+│   │         $ boxy admin pool fill win-vm
+│   │           filled pool win-vm
+│
 │
 ├── diagnostics                                Inspect safe administrator diagnostics
 │   ├── --server <url>                           Server URL (overrides env/global defaults)
