@@ -104,6 +104,12 @@ type Store interface {
 
 type Reporter interface {
 	Record(context.Context, Step) error
+
+	// JobID returns the ID of the job this reporter reports progress for.
+	// Purely generic identity -- it lets a domain handler correlate its own
+	// (domain-rich) observability calls to the job without pkg/jobs itself
+	// needing to know anything about pools, agents, or providers.
+	JobID() ID
 }
 
 type Handler interface {
@@ -392,6 +398,10 @@ func (r *Runner) currentTime() time.Time {
 type jobReporter struct {
 	runner *Runner
 	id     ID
+}
+
+func (r *jobReporter) JobID() ID {
+	return r.id
 }
 
 func (r *jobReporter) Record(ctx context.Context, step Step) error {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -15,6 +16,34 @@ import (
 	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
 	"github.com/Geogboe/boxy/pkg/store"
 )
+
+// logPoolJobStep emits a structured diagnostics event for one pool job step.
+// component/operation/job/pool/resource/step/status/attempt/error_code are
+// all attribute keys pkg/diagnostics/handler.go's safeField recognizes, so
+// this reaches the diagnostics store automatically through the process-wide
+// slog default boxy serve installs (see internal/cli/serve.go) -- no direct
+// dependency on pkg/diagnostics is needed here. kind is the job kind (e.g.
+// "pool.fill"); resourceID is empty for a pool-level job.
+func logPoolJobStep(kind string, jobID jobs.ID, poolName model.PoolName, resourceID model.ResourceID, step jobs.Step) {
+	level := slog.LevelInfo
+	if step.Status == jobs.StepFailed {
+		level = slog.LevelWarn
+	}
+	attrs := []any{
+		"component", "pool", "operation", kind, "job", string(jobID),
+		"pool", string(poolName), "step", step.Code, "status", string(step.Status),
+	}
+	if resourceID != "" {
+		attrs = append(attrs, "resource", string(resourceID))
+	}
+	if step.Attempt > 0 {
+		attrs = append(attrs, "attempt", step.Attempt)
+	}
+	if step.ErrorCode != "" {
+		attrs = append(attrs, "error_code", step.ErrorCode)
+	}
+	slog.Log(context.Background(), level, "pool job step", attrs...)
+}
 
 // registerAPIRoutes wires the JSON REST API endpoints into the mux.
 func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
@@ -202,6 +231,7 @@ func (s *Server) startPoolResourceJob(ctx context.Context, kind string, poolName
 			if err := reporter.Record(ctx, step); err != nil {
 				return err
 			}
+			logPoolJobStep(kind, reporter.JobID(), poolName, resourceID, step)
 			resource, err := s.store.GetResource(ctx, resourceID)
 			if err == nil && resource.OriginPool != poolName {
 				err = fmt.Errorf("resource does not belong to pool")
@@ -213,10 +243,13 @@ func (s *Server) startPoolResourceJob(ctx context.Context, kind string, poolName
 				step.Status = jobs.StepFailed
 				step.ErrorCode = "pool_resource_operation_failed"
 				_ = reporter.Record(context.Background(), step)
+				logPoolJobStep(kind, reporter.JobID(), poolName, resourceID, step)
 				return &jobs.Failure{Code: step.ErrorCode}
 			}
 			step.Status = jobs.StepSucceeded
-			return reporter.Record(ctx, step)
+			err = reporter.Record(ctx, step)
+			logPoolJobStep(kind, reporter.JobID(), poolName, resourceID, step)
+			return err
 		},
 		CleanupFunc: func(ctx context.Context, _ jobs.Reporter) error {
 			if reconciler, ok := s.poolMaintenance.(interface {
@@ -255,15 +288,19 @@ func (s *Server) startPoolMaintenanceJob(ctx context.Context, kind string, poolN
 			if err := reporter.Record(ctx, step); err != nil {
 				return err
 			}
+			logPoolJobStep(kind, reporter.JobID(), poolName, "", step)
 			_, err := operation(ctx, poolName)
 			if err != nil {
 				step.Status = jobs.StepFailed
 				step.ErrorCode = poolJobErrorCode(err)
 				_ = reporter.Record(context.Background(), step)
+				logPoolJobStep(kind, reporter.JobID(), poolName, "", step)
 				return &jobs.Failure{Code: step.ErrorCode}
 			}
 			step.Status = jobs.StepSucceeded
-			return reporter.Record(ctx, step)
+			err = reporter.Record(ctx, step)
+			logPoolJobStep(kind, reporter.JobID(), poolName, "", step)
+			return err
 		},
 		CleanupFunc: func(ctx context.Context, _ jobs.Reporter) error {
 			if reconciler, ok := s.poolMaintenance.(interface {

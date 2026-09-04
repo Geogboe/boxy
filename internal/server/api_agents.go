@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -183,17 +184,40 @@ func (s *Server) handleRequestAgentLogs(w http.ResponseWriter, r *http.Request) 
 	httpjson.Write(w, http.StatusAccepted, job)
 }
 
+// logAgentJobStep emits a structured diagnostics event for one agent-log job
+// step. See logPoolJobStep for why this alone is enough to reach the
+// diagnostics store.
+func logAgentJobStep(kind string, jobID jobs.ID, agentID string, step jobs.Step) {
+	level := slog.LevelInfo
+	if step.Status == jobs.StepFailed {
+		level = slog.LevelWarn
+	}
+	attrs := []any{
+		"component", "agent", "operation", kind, "job", string(jobID),
+		"agent", agentID, "step", step.Code, "status", string(step.Status),
+	}
+	if step.Attempt > 0 {
+		attrs = append(attrs, "attempt", step.Attempt)
+	}
+	if step.ErrorCode != "" {
+		attrs = append(attrs, "error_code", step.ErrorCode)
+	}
+	slog.Log(context.Background(), level, "agent job step", attrs...)
+}
+
 func (s *Server) startAgentLogJob(ctx context.Context, agentID string, since time.Time, limit int) (jobs.Job, error) {
 	runner, err := s.ensureJobRunner()
 	if err != nil {
 		return jobs.Job{}, err
 	}
-	return runner.Submit(ctx, jobs.Request{Kind: "agent.logs", Target: "agent:" + agentID}, jobs.HandlerFuncs{
+	const kind = "agent.logs"
+	return runner.Submit(ctx, jobs.Request{Kind: kind, Target: "agent:" + agentID}, jobs.HandlerFuncs{
 		RunFunc: func(ctx context.Context, reporter jobs.Reporter) error {
 			step := jobs.Step{Code: "agent.logs.request", Subject: agentID, Status: jobs.StepStarted, Attempt: 1}
 			if err := reporter.Record(ctx, step); err != nil {
 				return err
 			}
+			logAgentJobStep(kind, reporter.JobID(), agentID, step)
 			requestID, err := s.agentAdmin.RequestAgentLogs(ctx, agentID, since, limit)
 			if err == nil {
 				waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -204,10 +228,13 @@ func (s *Server) startAgentLogJob(ctx context.Context, agentID string, since tim
 				step.Status = jobs.StepFailed
 				step.ErrorCode = "agent.logs.failed"
 				_ = reporter.Record(context.Background(), step)
+				logAgentJobStep(kind, reporter.JobID(), agentID, step)
 				return &jobs.Failure{Code: step.ErrorCode}
 			}
 			step.Status = jobs.StepSucceeded
-			return reporter.Record(ctx, step)
+			err = reporter.Record(ctx, step)
+			logAgentJobStep(kind, reporter.JobID(), agentID, step)
+			return err
 		},
 	})
 }
