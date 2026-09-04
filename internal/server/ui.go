@@ -35,40 +35,40 @@ type pageData struct {
 	// by fragmentHandler (HTMX polling routes), whose fragment templates
 	// never reference .User — the sidebar itself is only ever rendered by
 	// a full-page response.
-	User                 string
-	Version              string
-	RepositoryURL        string
-	PoolCount            int
-	SandboxCount         int
-	ResourceCount        int
-	Pools                []model.Pool
-	PoolViews            []poolView
-	PoolDetail           *poolView
-	PoolHistory          bool
-	ResourceLimitHit     bool
-	CSRFToken            string
-	CanManagePools       bool
-	PoolResult           string
-	PoolError            string
-	Sandboxes            []sandboxView
-	Resources            []model.Resource
-	Agents               []agentView
-	Profile              profileData
-	Catalog              catalogPageData
-	CanManageServiceKeys bool
-	CanViewDiagnostics   bool
-	ServiceKeys          []apiKeySummary
-	ServiceKeyError      string
-	MintedServiceKey     string
-	MintedServiceKeyName string
-	Diagnostics          []diagnostics.Event
-	DiagnosticsError     string
-	DiagnosticsMessage   string
-	DiagnosticsQuery     diagnostics.Query
-	DiagnosticsSince     string
-	DiagnosticsExportURL string
-	DiagnosticsAgentURL  string
-	DiagnosticsPullURL   string
+	User                  string
+	Version               string
+	RepositoryURL         string
+	PoolCount             int
+	SandboxCount          int
+	ResourceCount         int
+	Pools                 []model.Pool
+	PoolViews             []poolView
+	PoolDetail            *poolView
+	PoolHistory           bool
+	ResourceLimitHit      bool
+	CSRFToken             string
+	CanManagePools        bool
+	PoolResult            string
+	PoolError             string
+	Sandboxes             []sandboxView
+	Resources             []model.Resource
+	Agents                []agentView
+	Profile               profileData
+	Catalog               catalogPageData
+	CanManageServiceKeys  bool
+	CanViewDiagnostics    bool
+	ServiceKeys           []apiKeySummary
+	ServiceKeyError       string
+	MintedServiceKey      string
+	MintedServiceKeyName  string
+	Diagnostics           []diagnostics.Event
+	DiagnosticsError      string
+	DiagnosticsMessage    string
+	DiagnosticsQuery      diagnostics.Query
+	DiagnosticsSince      string
+	DiagnosticsExportURL  string
+	DiagnosticsAgentURL   string
+	DiagnosticsPullURL    string
 	DiagnosticsViewAllURL string
 }
 
