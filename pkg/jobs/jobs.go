@@ -240,10 +240,15 @@ func (r *Runner) Submit(ctx context.Context, request Request, handler Handler) (
 	if err := r.store.Put(ctx, job); err != nil {
 		return Job{}, err
 	}
+	// context.Background() is deliberate, not a missed request-scoped ctx:
+	// a submitted job is durable and must outlive the HTTP request that
+	// created it (the caller's ctx cancels when the request ends, but the
+	// job keeps running / survives a restart via interruptPersisted). Its
+	// own lifecycle is governed by Cancel and process shutdown, not by ctx.
 	workerCtx, cancel := context.WithCancel(context.Background())
 	r.active[request.Target] = job.ID
 	r.workers[job.ID] = worker{cancel: cancel, handler: handler}
-	go r.run(workerCtx, job.ID)
+	go r.run(workerCtx, job.ID) //nolint:gosec // G118: workerCtx is intentionally independent of ctx, see comment above
 	return cloneJob(job), nil
 }
 

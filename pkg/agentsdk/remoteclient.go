@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sync"
 	"time"
 
@@ -280,7 +281,7 @@ func (s *clientSession) sendLogBatchRequest(ctx context.Context, events []diagno
 			Job:          event.Job,
 			Step:         event.Step,
 			Status:       event.Status,
-			Attempt:      int32(event.Attempt),
+			Attempt:      clampToInt32(event.Attempt),
 		})
 	}
 	if len(items) == 0 && requestID == "" {
@@ -741,4 +742,20 @@ func errorResult(commandID, msg string, err error) *boxyagentv1.CommandResult {
 		}
 	}
 	return &boxyagentv1.CommandResult{CommandId: commandID, Outcome: &boxyagentv1.CommandResult_Error{Error: ae}}
+}
+
+// clampToInt32 bounds a diagnostics.Event.Attempt (a plain int, in practice a
+// small retry counter) into the wire protocol's int32 field without an
+// unchecked narrowing conversion (gosec G115). A value outside int32's range
+// can't happen in practice, but clamping keeps the conversion provably safe
+// instead of relying on that assumption.
+func clampToInt32(v int) int32 {
+	switch {
+	case v > math.MaxInt32:
+		return math.MaxInt32
+	case v < math.MinInt32:
+		return math.MinInt32
+	default:
+		return int32(v)
+	}
 }

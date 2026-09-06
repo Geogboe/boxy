@@ -324,20 +324,3 @@ func poolJobErrorCode(err error) string {
 	}
 	return "pool_operation_failed"
 }
-
-func (s *Server) writePoolMaintenanceResult(w http.ResponseWriter, p model.Pool, err error, action string) {
-	if errors.Is(err, store.ErrNotFound) {
-		httpjson.Error(w, http.StatusNotFound, "pool not found")
-		return
-	}
-	var configDrainErr *pool.ConfigDeclaredDrainError
-	if errors.As(err, &configDrainErr) {
-		httpjson.Error(w, http.StatusConflict, configDrainErr.Error())
-		return
-	}
-	if err != nil {
-		httpjson.Error(w, http.StatusInternalServerError, "failed to "+action+" pool: "+err.Error())
-		return
-	}
-	httpjson.Write(w, http.StatusOK, p)
-}

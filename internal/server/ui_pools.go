@@ -181,17 +181,19 @@ func (s *Server) handleUpdatePoolConfigurationUI(w http.ResponseWriter, r *http.
 	maxTotal, maxErr := strconv.Atoi(r.FormValue("max_total"))
 	name := model.PoolName(r.PathValue("name"))
 	values := url.Values{}
-	if minErr != nil || maxErr != nil {
+	switch {
+	case minErr != nil || maxErr != nil:
 		values.Set("config_error", "min_ready and max_total must be whole numbers")
-	} else {
+	default:
 		updated, err := s.applyPoolConfiguration(r.Context(), name, updatePoolConfigurationRequest{
 			MinReady: minReady, MaxTotal: maxTotal, MaxAge: r.FormValue("max_age"),
 		})
-		if err != nil {
+		switch {
+		case err != nil:
 			values.Set("config_error", err.Error())
-		} else if updated.Configuration.Pending {
+		case updated.Configuration.Pending:
 			values.Set("result", "config_pending")
-		} else {
+		default:
 			values.Set("result", "config_saved")
 		}
 	}

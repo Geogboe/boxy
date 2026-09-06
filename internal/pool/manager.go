@@ -189,14 +189,15 @@ func (m *Manager) FailAdmission(ctx context.Context, res model.Resource, cause e
 		unlock := m.lockPool(res.OriginPool)
 		defer unlock()
 		pool, err := m.store.GetPool(ctx, res.OriginPool)
-		if err != nil {
+		switch {
+		case err != nil:
 			cleanupErr = fmt.Errorf("load pool for admission cleanup: %w", err)
-		} else if pool.Policies.Debug.RetainFailedResources {
+		case pool.Policies.Debug.RetainFailedResources:
 			// Operator opted into keeping failed resources alive for
 			// investigation instead of the default teardown: leave the VM
 			// running and its guest credential intact so a manual Retry can
 			// reuse both in place. See retryRetainedResource.
-		} else {
+		default:
 			res.State = model.ResourceStateDestroying
 			res.UpdatedAt = m.clock.Now().UTC()
 			if err := m.store.PutResource(ctx, res); err != nil {
