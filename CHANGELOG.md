@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.1.65](https://github.com/Geogboe/boxy/compare/v0.1.64...v0.1.65) (2026-09-06)
+
+
+### Features
+
+* **diagnostics:** add spec-required Provider field end-to-end ([a27ba11](https://github.com/Geogboe/boxy/commit/a27ba116cc64352802b00cdda827e7fdde2a2a8c))
+* **diagnostics:** add structured cached timelines ([28c4c59](https://github.com/Geogboe/boxy/commit/28c4c59c8040df260a5607ff2761e05db2b631fe))
+* **diagnostics:** bridge pool and agent job steps into diagnostics ([655c614](https://github.com/Geogboe/boxy/commit/655c614c162bf15102676067d3351925d8f93fba))
+* **diagnostics:** track remote agent log pulls ([97ad6fe](https://github.com/Geogboe/boxy/commit/97ad6fe1f59c677829f16d27a0ec9779161298f8))
+* **hyperv:** emit structured diagnostics for personalization/memory failures ([4ad2796](https://github.com/Geogboe/boxy/commit/4ad2796844195f5878ef18a9a74e2533f69d619e))
+* **hyperv:** enforce provider memory budget ([1beec7f](https://github.com/Geogboe/boxy/commit/1beec7f7614ddad715b61004893d6ce24ea3b8bc))
+* **jobs:** add durable public job runner ([d7b0dc2](https://github.com/Geogboe/boxy/commit/d7b0dc226d10c3f8348996b5120edd4b4dbb5ea1))
+* **pool:** add opt-in retain-for-debug retry, correct spec text ([37ea8c0](https://github.com/Geogboe/boxy/commit/37ea8c09c492e3a7c62f2ab7aca40dbbf729dfb3))
+* **pool:** add Save-and-Apply configuration API and UI ([e5e4cf8](https://github.com/Geogboe/boxy/commit/e5e4cf8423856062c64f1500b2b8b61113166259))
+* **pool:** run operations as durable jobs ([9c3e46b](https://github.com/Geogboe/boxy/commit/9c3e46bfd2aa2e615776a6ffbebdb60e25191d3c))
+* **store:** persist generic jobs ([0458288](https://github.com/Geogboe/boxy/commit/04582884e48ccd24db9318fb73d73132b4412ee2))
+
+
+### Bug Fixes
+
+* address Copilot review findings on PR [#338](https://github.com/Geogboe/boxy/issues/338) ([b812734](https://github.com/Geogboe/boxy/commit/b8127346c1e5d4f80a01541d211ee85b19f0aa36))
+* **diagnostics:** don't show routine step text as an error ([971fb06](https://github.com/Geogboe/boxy/commit/971fb06f2bcf2d44a1d31626ba18d74f4826c4fd))
+* **hyperv:** serialize PersonalizeGuest per resource ([60f7840](https://github.com/Geogboe/boxy/commit/60f784061193e9fe799c66b488f9e8a8ccbcd811))
+* **hyperv:** use scanner-safe placeholders for new test fixtures ([413ac57](https://github.com/Geogboe/boxy/commit/413ac572b5f1092681b58d9c3ac5914b2d48f6ba))
+* **lint:** resolve golangci-lint findings surfaced by this batch's own code ([6a47b99](https://github.com/Geogboe/boxy/commit/6a47b99a339d56554b4b0c4bca7d26b2067c620a))
+* **pool:** report exhausted failed capacity ([d61ae73](https://github.com/Geogboe/boxy/commit/d61ae739741e34cedf2448bb883785edb99aaf84))
+* **pool:** retry packages without rotating credentials ([e7c5b78](https://github.com/Geogboe/boxy/commit/e7c5b78cdeb47b3dda3b822fd507ebe90e4e4e72))
+* **serve:** don't fail startup over an unconfigured provider type ([d931188](https://github.com/Geogboe/boxy/commit/d931188485a4c24c3bea1a6dfd5a12797b27ce2b))
+* **server:** stop racing the shared execution struct in sandbox exec jobs ([fbf1904](https://github.com/Geogboe/boxy/commit/fbf19040b7a9c4bcb9cc42ed42d10c30700b0000))
+
+
+### Refactoring
+
+* **sandbox:** share durable job lifecycle ([08a8af6](https://github.com/Geogboe/boxy/commit/08a8af65951691fa2e709cea8253aa3f4220cc99))
+
+
+### Documentation
+
+* track next-release progress notes for session continuity ([57b832b](https://github.com/Geogboe/boxy/commit/57b832bfb2fef19a4402a2bda3f802331a81edec))
+* update progress notes after diagnostics bridge and [#336](https://github.com/Geogboe/boxy/issues/336) fix ([9eaceeb](https://github.com/Geogboe/boxy/commit/9eaceebff6a3e6580011362260d8fccb3de64170))
+
 ## [0.1.64](https://github.com/Geogboe/boxy/compare/v0.1.63...v0.1.64) (2026-09-04)
 
 
