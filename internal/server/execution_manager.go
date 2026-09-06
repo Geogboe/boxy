@@ -136,10 +136,17 @@ func (m *executionManager) submit(ctx context.Context, sb model.Sandbox, resourc
 		ID: jobs.ID(execution.ID), Kind: "sandbox.execute", Target: "resource:" + string(resource.ID),
 	}, jobs.HandlerFuncs{
 		RunFunc: func(jobCtx context.Context, reporter jobs.Reporter) error {
+			// Mutate a local copy, not the outer `execution` variable: submit()
+			// returns that variable to its caller immediately after Submit(),
+			// concurrently with this closure running in its own goroutine — see
+			// pkg/jobs.Runner.Submit's async dispatch. Writing through the
+			// closed-over variable raced with that read (found by -race in
+			// api_exec_test.go).
+			running := execution
 			now := time.Now().UTC()
-			execution.Status = model.ExecutionStatusRunning
-			execution.StartedAt = timePtr(now)
-			if err := m.store.PutExecution(context.Background(), execution); err != nil {
+			running.Status = model.ExecutionStatusRunning
+			running.StartedAt = timePtr(now)
+			if err := m.store.PutExecution(context.Background(), running); err != nil {
 				return &jobs.Failure{Code: "execution_state_persist_failed"}
 			}
 			step := jobs.Step{Code: "sandbox.execute", Subject: string(resource.ID), Status: jobs.StepStarted, Attempt: 1}
@@ -147,9 +154,9 @@ func (m *executionManager) submit(ctx context.Context, sb model.Sandbox, resourc
 				return err
 			}
 			execCtx, cancel := context.WithTimeout(jobCtx, timeout)
-			result, runErr := m.run(execCtx, execution, resource, cloneExecOperation(operation))
+			result, runErr := m.run(execCtx, running, resource, cloneExecOperation(operation))
 			cancel()
-			if err := m.finish(execution.ID, result, runErr); err != nil {
+			if err := m.finish(running.ID, result, runErr); err != nil {
 				step.Status = jobs.StepFailed
 				step.ErrorCode = "execution_state_persist_failed"
 				_ = reporter.Record(context.Background(), step)
