@@ -1,8 +1,10 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -10,6 +12,7 @@ import (
 	"github.com/Geogboe/boxy/internal/agentserver"
 	"github.com/Geogboe/boxy/pkg/diagnostics"
 	"github.com/Geogboe/boxy/pkg/httpjson"
+	"github.com/Geogboe/boxy/pkg/jobs"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/store"
 )
@@ -131,10 +134,6 @@ type requestAgentLogsRequest struct {
 	Limit int    `json:"limit,omitempty"`
 }
 
-type requestAgentLogsResponse struct {
-	RequestID string `json:"request_id"`
-}
-
 // handleRequestAgentLogs starts a bounded, administrator-only pull from a
 // connected agent. The response is deliberately asynchronous: the agent
 // sends its batch over the already-authenticated stream and the server stores
@@ -172,12 +171,72 @@ func (s *Server) handleRequestAgentLogs(w http.ResponseWriter, r *http.Request) 
 		httpjson.Error(w, http.StatusBadRequest, "limit must be between 1 and 1000")
 		return
 	}
-	requestID, err := s.agentAdmin.RequestAgentLogs(r.Context(), r.PathValue("id"), since, req.Limit)
+	job, err := s.startAgentLogJob(r.Context(), r.PathValue("id"), since, req.Limit)
 	if err != nil {
-		httpjson.Error(w, http.StatusServiceUnavailable, "agent is not connected")
+		var busy *jobs.TargetBusyError
+		if errors.As(err, &busy) {
+			httpjson.Error(w, http.StatusConflict, busy.Error())
+			return
+		}
+		httpjson.Error(w, http.StatusServiceUnavailable, "agent log request is unavailable")
 		return
 	}
-	httpjson.Write(w, http.StatusAccepted, requestAgentLogsResponse{RequestID: requestID})
+	httpjson.Write(w, http.StatusAccepted, job)
+}
+
+// logAgentJobStep emits a structured diagnostics event for one agent-log job
+// step. See logPoolJobStep for why this alone is enough to reach the
+// diagnostics store.
+func logAgentJobStep(kind string, jobID jobs.ID, agentID string, step jobs.Step) {
+	level := slog.LevelInfo
+	if step.Status == jobs.StepFailed {
+		level = slog.LevelWarn
+	}
+	attrs := []any{
+		"component", "agent", "operation", kind, "job", string(jobID),
+		"agent", agentID, "step", step.Code, "status", string(step.Status),
+	}
+	if step.Attempt > 0 {
+		attrs = append(attrs, "attempt", step.Attempt)
+	}
+	if step.ErrorCode != "" {
+		attrs = append(attrs, "error_code", step.ErrorCode)
+	}
+	slog.Log(context.Background(), level, "agent job step", attrs...)
+}
+
+func (s *Server) startAgentLogJob(ctx context.Context, agentID string, since time.Time, limit int) (jobs.Job, error) {
+	runner, err := s.ensureJobRunner()
+	if err != nil {
+		return jobs.Job{}, err
+	}
+	const kind = "agent.logs"
+	return runner.Submit(ctx, jobs.Request{Kind: kind, Target: "agent:" + agentID}, jobs.HandlerFuncs{
+		RunFunc: func(ctx context.Context, reporter jobs.Reporter) error {
+			step := jobs.Step{Code: "agent.logs.request", Subject: agentID, Status: jobs.StepStarted, Attempt: 1}
+			if err := reporter.Record(ctx, step); err != nil {
+				return err
+			}
+			logAgentJobStep(kind, reporter.JobID(), agentID, step)
+			requestID, err := s.agentAdmin.RequestAgentLogs(ctx, agentID, since, limit)
+			if err == nil {
+				waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				err = s.agentAdmin.WaitForAgentLogs(waitCtx, requestID)
+				cancel()
+			}
+			if err != nil {
+				step.Status = jobs.StepFailed
+				step.ErrorCode = "agent.logs.failed"
+				_ = reporter.Record(context.Background(), step)
+				logAgentJobStep(kind, reporter.JobID(), agentID, step)
+				return &jobs.Failure{Code: step.ErrorCode}
+			}
+			step.Status = jobs.StepSucceeded
+			err = reporter.Record(ctx, step)
+			logAgentJobStep(kind, reporter.JobID(), agentID, step)
+			return err
+		},
+	})
 }
 
 // revokeAgentRequest is the optional request body for

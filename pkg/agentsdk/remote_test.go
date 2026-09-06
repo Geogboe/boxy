@@ -34,17 +34,20 @@ func TestRemoteAgentReceivesLogBatchWithAuthenticatedIdentity(t *testing.T) {
 		sentCh: make(chan *boxyagentv1.ServerMessage, 1),
 	}
 	var gotAgent string
+	var gotRequest string
 	var got []diagnostics.Event
 	agent := NewRemoteAgent(AgentInfo{ID: "agent-authenticated"}, stream)
-	agent.SetLogSink(func(_ context.Context, agentID string, events []diagnostics.Event) error {
+	agent.SetLogSink(func(_ context.Context, agentID, requestID string, events []diagnostics.Event) error {
 		gotAgent = agentID
+		gotRequest = requestID
 		got = events
 		return nil
 	})
 	done := make(chan error, 1)
 	go func() { done <- agent.Serve() }()
 	stream.recvCh <- &boxyagentv1.AgentMessage{Payload: &boxyagentv1.AgentMessage_LogBatch{LogBatch: &boxyagentv1.LogBatch{
-		Events: []*boxyagentv1.LogEvent{{Message: "password=secret", Component: "agent"}},
+		RequestId: "request-a",
+		Events:    []*boxyagentv1.LogEvent{{Message: "password=secret", Component: "agent", Job: "job-a", Step: "vm.create", Status: "failed", Attempt: 2}},
 	}}}
 	stream.closeWith(io.EOF)
 	if err := <-done; !errors.Is(err, io.EOF) {
@@ -53,8 +56,14 @@ func TestRemoteAgentReceivesLogBatchWithAuthenticatedIdentity(t *testing.T) {
 	if gotAgent != "agent-authenticated" || len(got) != 1 || got[0].Agent != "" {
 		t.Fatalf("agent=%q events=%+v, want authenticated identity passed separately", gotAgent, got)
 	}
+	if gotRequest != "request-a" {
+		t.Fatalf("request = %q, want request-a", gotRequest)
+	}
 	if got[0].Message != "password=[REDACTED]" {
 		t.Fatalf("message = %q, want credential redaction", got[0].Message)
+	}
+	if got[0].Job != "job-a" || got[0].Step != "vm.create" || got[0].Status != "failed" || got[0].Attempt != 2 {
+		t.Fatalf("structured event = %+v, want job/step/status/attempt", got[0])
 	}
 }
 

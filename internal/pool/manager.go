@@ -30,6 +30,19 @@ type MaxTotalReachedError struct {
 	RequestedReady int
 }
 
+// BlockedPoolError reports that failed resources consume the pool's entire
+// max_total allowance while ready capacity remains below its target.
+type BlockedPoolError struct {
+	PoolName    model.PoolName
+	MaxTotal    int
+	ReadyCount  int
+	FailedCount int
+}
+
+func (e *BlockedPoolError) Error() string {
+	return fmt.Sprintf("pool %q is blocked: %d failed resource(s) consume max_total %d with only %d ready", e.PoolName, e.FailedCount, e.MaxTotal, e.ReadyCount)
+}
+
 func (e *MaxTotalReachedError) Error() string {
 	return fmt.Sprintf(
 		"pool %q is at max_total %d (%d total, %d ready), cannot satisfy requested ready count %d",
@@ -171,14 +184,45 @@ func (m *Manager) FailAdmission(ctx context.Context, res model.Resource, cause e
 	if m == nil || m.store == nil {
 		return fmt.Errorf("pool manager store is required")
 	}
+	var cleanupErr error
+	if m.provisioner != nil && res.OriginPool != "" {
+		unlock := m.lockPool(res.OriginPool)
+		defer unlock()
+		pool, err := m.store.GetPool(ctx, res.OriginPool)
+		switch {
+		case err != nil:
+			cleanupErr = fmt.Errorf("load pool for admission cleanup: %w", err)
+		case pool.Policies.Debug.RetainFailedResources:
+			// Operator opted into keeping failed resources alive for
+			// investigation instead of the default teardown: leave the VM
+			// running and its guest credential intact so a manual Retry can
+			// reuse both in place. See retryRetainedResource.
+		default:
+			res.State = model.ResourceStateDestroying
+			res.UpdatedAt = m.clock.Now().UTC()
+			if err := m.store.PutResource(ctx, res); err != nil {
+				cleanupErr = fmt.Errorf("mark admission cleanup: %w", err)
+			} else if err := m.provisioner.Destroy(ctx, pool, res); err != nil {
+				cleanupErr = fmt.Errorf("destroy failed admission resource: %w", err)
+			} else {
+				m.deleteResourceGuestCredential(ctx, res.ID)
+			}
+		}
+	}
 	if res.Properties == nil {
 		res.Properties = make(map[string]any)
 	}
 	res.Properties["lifecycle_error"] = cause.Error()
+	if cleanupErr != nil {
+		res.Properties["cleanup_error"] = cleanupErr.Error()
+	}
 	res.State = model.ResourceStateError
 	res.UpdatedAt = m.clock.Now().UTC()
 	m.recordProvisionFailure(res.OriginPool, res.UpdatedAt)
-	return m.store.PutResource(ctx, res)
+	if err := m.store.PutResource(ctx, res); err != nil {
+		return errors.Join(cleanupErr, err)
+	}
+	return cleanupErr
 }
 
 // provisionBackoffActive reports whether pool provisioning is currently in
@@ -251,7 +295,20 @@ func (m *Manager) Reconcile(ctx context.Context, poolName model.PoolName) error 
 			return fmt.Errorf("promote resource into pool %q: %w", poolName, err)
 		}
 	}
-	return m.reconcileLocked(ctx, poolName, 0, false)
+	if err := m.reconcileLocked(ctx, poolName, 0, false); err != nil {
+		return err
+	}
+	configured, err := m.store.GetPool(ctx, poolName)
+	if err != nil {
+		return err
+	}
+	if configured.Configuration.Pending {
+		configured.Configuration.Pending = false
+		if err := m.store.PutPool(ctx, configured); err != nil {
+			return fmt.Errorf("clear pending pool configuration %q: %w", poolName, err)
+		}
+	}
+	return nil
 }
 
 // EnsureReady ensures the pool has at least minReady resources available,
@@ -388,6 +445,60 @@ func (m *Manager) DestroyResource(ctx context.Context, res model.Resource) error
 	}
 	m.deleteResourceGuestCredential(ctx, res.ID)
 	return nil
+}
+
+// RetryResource clears one quarantined resource through the provider and then
+// reconciles its pool. The replacement is provisioned from the pool template;
+// a failed VM is never silently reused after admission cleanup.
+func (m *Manager) RetryResource(ctx context.Context, res model.Resource) error {
+	if m == nil || m.store == nil || m.provisioner == nil {
+		return fmt.Errorf("pool retry dependencies are not configured")
+	}
+	if res.ID == "" || res.OriginPool == "" {
+		return fmt.Errorf("failed resource id and origin pool are required")
+	}
+	if res.State != model.ResourceStateError {
+		return fmt.Errorf("resource %q is %s, want error state", res.ID, res.State)
+	}
+	unlock := m.lockPool(res.OriginPool)
+	defer unlock()
+	pool, err := m.store.GetPool(ctx, res.OriginPool)
+	if err != nil {
+		return fmt.Errorf("get origin pool %q: %w", res.OriginPool, err)
+	}
+	if pool.Policies.Debug.RetainFailedResources {
+		return m.retryRetainedResource(ctx, pool, res)
+	}
+	if err := m.destroyAndMark(ctx, pool, res, model.ResourceStateRecycling, m.clock.Now()); err != nil {
+		return err
+	}
+	return m.reconcileLocked(ctx, pool.Name, 0, false)
+}
+
+// retryRetainedResource re-admits a resource that FailAdmission left running
+// (see PoolPolicies.Debug.RetainFailedResources) instead of destroying it.
+// It clears the recorded failure and moves the resource back to
+// Provisioning; Reconcile's observer already republishes a fresh
+// resource.provisioned admission event for any resource in that state (see
+// the Observer func below). AdmissionHandler finds the still-stored guest
+// credential and skips personalization, so the retry reuses the same VM and
+// credential rather than destroying and recreating it from the template.
+// Requires an admission publisher: without one, nothing would ever pick the
+// resource back up out of Provisioning.
+func (m *Manager) retryRetainedResource(ctx context.Context, pool model.Pool, res model.Resource) error {
+	if m.admission == nil {
+		return fmt.Errorf("resource %q: retaining failed resources for retry requires an admission publisher", res.ID)
+	}
+	if res.Properties != nil {
+		delete(res.Properties, "lifecycle_error")
+		delete(res.Properties, "cleanup_error")
+	}
+	res.State = model.ResourceStateProvisioning
+	res.UpdatedAt = m.clock.Now().UTC()
+	if err := m.store.PutResource(ctx, res); err != nil {
+		return fmt.Errorf("reset retained resource %q for retry: %w", res.ID, err)
+	}
+	return m.reconcileLocked(ctx, pool.Name, 0, false)
 }
 
 // ForceOrphanResource detaches res from Boxy's bookkeeping (pool inventory +
@@ -661,6 +772,7 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 				return policycontroller.Decision[plan]{}, err
 			}
 			stale = append(stale, orphans...)
+			blockedTotal := countTrackedResources(p.Name, obs.resources, p.Inventory.Resources, nil)
 			stale = append(stale, quarantined...)
 			p.Inventory.Resources = kept
 
@@ -684,6 +796,12 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 			// configured min_ready. It must only ever feed
 			// computeToProvision below, never the admission check above.
 			effectiveMinReady := max(minReadyOverride, p.Policies.Preheat.MinReady)
+			if effectiveMinReady > readyCount && p.Policies.Preheat.MaxTotal > 0 && blockedTotal >= p.Policies.Preheat.MaxTotal && len(quarantined) > 0 {
+				return policycontroller.Decision[plan]{}, &BlockedPoolError{
+					PoolName: p.Name, MaxTotal: p.Policies.Preheat.MaxTotal,
+					ReadyCount: readyCount, FailedCount: len(quarantined),
+				}
+			}
 			toProv := computeToProvision(p, effectiveMinReady, totalCount)
 
 			// requiredToProv is how many of toProv's provisions are needed

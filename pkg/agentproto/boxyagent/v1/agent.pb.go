@@ -769,6 +769,10 @@ type LogEvent struct {
 	Pool          string                 `protobuf:"bytes,8,opt,name=pool,proto3" json:"pool,omitempty"`
 	Resource      string                 `protobuf:"bytes,9,opt,name=resource,proto3" json:"resource,omitempty"`
 	Request       string                 `protobuf:"bytes,10,opt,name=request,proto3" json:"request,omitempty"`
+	Job           string                 `protobuf:"bytes,11,opt,name=job,proto3" json:"job,omitempty"`
+	Step          string                 `protobuf:"bytes,12,opt,name=step,proto3" json:"step,omitempty"`
+	Status        string                 `protobuf:"bytes,13,opt,name=status,proto3" json:"status,omitempty"`
+	Attempt       int32                  `protobuf:"varint,14,opt,name=attempt,proto3" json:"attempt,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -871,6 +875,34 @@ func (x *LogEvent) GetRequest() string {
 		return x.Request
 	}
 	return ""
+}
+
+func (x *LogEvent) GetJob() string {
+	if x != nil {
+		return x.Job
+	}
+	return ""
+}
+
+func (x *LogEvent) GetStep() string {
+	if x != nil {
+		return x.Step
+	}
+	return ""
+}
+
+func (x *LogEvent) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *LogEvent) GetAttempt() int32 {
+	if x != nil {
+		return x.Attempt
+	}
+	return 0
 }
 
 type ServerMessage struct {
@@ -2056,7 +2088,7 @@ const file_boxyagent_v1_agent_proto_rawDesc = "" +
 	"\bLogBatch\x12.\n" +
 	"\x06events\x18\x01 \x03(\v2\x16.boxyagent.v1.LogEventR\x06events\x12\x1d\n" +
 	"\n" +
-	"request_id\x18\x02 \x01(\tR\trequestId\"\xa1\x02\n" +
+	"request_id\x18\x02 \x01(\tR\trequestId\"\xf9\x02\n" +
 	"\bLogEvent\x12\x1b\n" +
 	"\tunix_nano\x18\x01 \x01(\x03R\bunixNano\x12\x14\n" +
 	"\x05level\x18\x02 \x01(\tR\x05level\x12\x1c\n" +
@@ -2069,7 +2101,11 @@ const file_boxyagent_v1_agent_proto_rawDesc = "" +
 	"\x04pool\x18\b \x01(\tR\x04pool\x12\x1a\n" +
 	"\bresource\x18\t \x01(\tR\bresource\x12\x18\n" +
 	"\arequest\x18\n" +
-	" \x01(\tR\arequest\"\xcc\x01\n" +
+	" \x01(\tR\arequest\x12\x10\n" +
+	"\x03job\x18\v \x01(\tR\x03job\x12\x12\n" +
+	"\x04step\x18\f \x01(\tR\x04step\x12\x16\n" +
+	"\x06status\x18\r \x01(\tR\x06status\x12\x18\n" +
+	"\aattempt\x18\x0e \x01(\x05R\aattempt\"\xcc\x01\n" +
 	"\rServerMessage\x12@\n" +
 	"\n" +
 	"registered\x18\x01 \x01(\v2\x1e.boxyagent.v1.RegisterResponseH\x00R\n" +

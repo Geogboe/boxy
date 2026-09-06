@@ -2,6 +2,7 @@ package diagnostics
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -9,6 +10,71 @@ import (
 	"testing"
 	"time"
 )
+
+func TestFileStoreCachesOrderedEventsAndInvalidatesOnExternalChange(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "diagnostics.jsonl")
+	store, err := NewFileStore(path, 1<<20, 14*24*time.Hour)
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+	first := Event{ID: "one", Timestamp: time.Now().Add(-time.Minute), Operation: "pool.fill", Job: "job-1", Step: "vm.create", Status: "started"}
+	if err := store.Append(ctx, first); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	page, err := store.Query(ctx, Query{Job: "job-1", Status: "started"})
+	if err != nil || len(page.Events) != 1 {
+		t.Fatalf("first Query = (%+v, %v)", page, err)
+	}
+	if !store.cacheOK || len(store.cache) != 1 {
+		t.Fatalf("cache state = ok:%t len:%d", store.cacheOK, len(store.cache))
+	}
+
+	second := normalizeEvent(Event{ID: "two", Timestamp: time.Now(), Operation: "password.rotate", Status: "succeeded"}, time.Now())
+	line, err := json.Marshal(second)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	if _, err := file.Write(append(line, '\n')); err != nil {
+		_ = file.Close()
+		t.Fatalf("external append: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	page, err = store.Query(ctx, Query{})
+	if err != nil || len(page.Events) != 2 || page.Events[0].ID != "two" {
+		t.Fatalf("Query after external change = (%+v, %v)", page, err)
+	}
+}
+
+func TestFileStoreFiltersAndPersistsProvider(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "diagnostics.jsonl")
+	store, err := NewFileStore(path, 1<<20, 14*24*time.Hour)
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+	if err := store.Append(ctx, Event{ID: "hyperv-1", Timestamp: time.Now(), Provider: "hyperv", Component: "hyperv"}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if err := store.Append(ctx, Event{ID: "docker-1", Timestamp: time.Now(), Provider: "docker", Component: "docker"}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	page, err := store.Query(ctx, Query{Provider: "hyperv"})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(page.Events) != 1 || page.Events[0].Provider != "hyperv" {
+		t.Fatalf("filtered page = %+v, want only the hyperv event", page.Events)
+	}
+}
 
 func TestNewFileStore_DefaultRetentionIsFourteenDays(t *testing.T) {
 	store, err := NewFileStore(filepath.Join(t.TempDir(), "diagnostics.jsonl"), 0, 0)

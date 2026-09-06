@@ -21,7 +21,7 @@ import (
 // LogSink receives sanitized agent events with the authenticated agent ID.
 // Implementations should be bounded and best effort; a logging failure must
 // not terminate the agent transport.
-type LogSink func(context.Context, string, []diagnostics.Event) error
+type LogSink func(context.Context, string, string, []diagnostics.Event) error
 
 // RemoteAgent is the server-side proxy for one connected remote agent. It
 // implements Agent by sending Commands down the agent's gRPC stream and
@@ -245,7 +245,7 @@ func (a *RemoteAgent) Serve() error {
 }
 
 func (a *RemoteAgent) receiveLogBatch(ctx context.Context, batch *boxyagentv1.LogBatch) {
-	if a == nil || a.logSink == nil || batch == nil || len(batch.GetEvents()) == 0 {
+	if a == nil || a.logSink == nil || batch == nil {
 		return
 	}
 	events := make([]diagnostics.Event, 0, len(batch.GetEvents()))
@@ -268,12 +268,14 @@ func (a *RemoteAgent) receiveLogBatch(ctx context.Context, batch *boxyagentv1.Lo
 			Pool:         item.GetPool(),
 			Resource:     item.GetResource(),
 			Request:      item.GetRequest(),
+			Job:          item.GetJob(),
+			Step:         item.GetStep(),
+			Status:       item.GetStatus(),
+			Attempt:      int(item.GetAttempt()),
 		}
 		events = append(events, event)
 	}
-	if len(events) != 0 {
-		_ = a.logSink(ctx, a.info.ID, events)
-	}
+	_ = a.logSink(ctx, a.info.ID, batch.GetRequestId(), events)
 }
 
 // Close tears down this agent's view of the connection: every call

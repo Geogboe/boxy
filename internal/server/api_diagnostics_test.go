@@ -37,7 +37,7 @@ func TestAPI_DiagnosticsLogsFiltersAndAudits(t *testing.T) {
 	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
 	for _, event := range []diagnostics.Event{
 		{ID: "log-1", Timestamp: now.Add(-time.Minute), Level: "WARN", Component: "reconcile", Message: "pool warning", Pool: "pool-a"},
-		{ID: "log-2", Timestamp: now, Level: "ERROR", Component: "reconcile", Message: "agent failure", Pool: "pool-a", Agent: "agent-a"},
+		{ID: "log-2", Timestamp: now, Level: "ERROR", Component: "reconcile", Message: "agent failure", Pool: "pool-a", Agent: "agent-a", Job: "job-a", Status: "failed"},
 	} {
 		if err := logs.Append(context.Background(), event); err != nil {
 			t.Fatalf("Append: %v", err)
@@ -46,7 +46,7 @@ func TestAPI_DiagnosticsLogsFiltersAndAudits(t *testing.T) {
 
 	mux := server.NewTestMuxWithDiagnostics(st, sandbox.New(st, nil), logs, audit, false, false)
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/diagnostics/logs?level=ERROR&pool=pool-a&limit=1", nil)
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/diagnostics/logs?level=ERROR&pool=pool-a&job=job-a&status=failed&limit=1", nil)
 	mux.ServeHTTP(w, r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -63,6 +63,39 @@ func TestAPI_DiagnosticsLogsFiltersAndAudits(t *testing.T) {
 	}
 	if len(audit.queries) != 1 || audit.queries[0].ResultCount != 1 {
 		t.Fatalf("audit = %+v, want one query with result count 1", audit.queries)
+	}
+	if audit.queries[0].Job != "job-a" || audit.queries[0].Status != "failed" {
+		t.Fatalf("audit filters = %+v, want job and status", audit.queries[0])
+	}
+}
+
+func TestAPI_DiagnosticsLogsFiltersByProvider(t *testing.T) {
+	st := store.NewMemoryStore()
+	logs := diagnostics.NewMemoryStore()
+	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
+	for _, event := range []diagnostics.Event{
+		{ID: "hyperv-1", Timestamp: now, Provider: "hyperv"},
+		{ID: "docker-1", Timestamp: now, Provider: "docker"},
+	} {
+		if err := logs.Append(context.Background(), event); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+
+	mux := server.NewTestMuxWithDiagnostics(st, sandbox.New(st, nil), logs, &captureDiagnosticsAudit{}, false, false)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/diagnostics/logs?provider=hyperv", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var page struct {
+		Events []diagnostics.Event `json:"events"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(page.Events) != 1 || page.Events[0].ID != "hyperv-1" {
+		t.Fatalf("page = %+v, want only hyperv-1", page)
 	}
 }
 
@@ -142,7 +175,8 @@ func TestUI_DiagnosticsRendersRedactedEvents(t *testing.T) {
 	st := store.NewMemoryStore()
 	logs := diagnostics.NewMemoryStore()
 	if err := logs.Append(context.Background(), diagnostics.Event{
-		ID: "log-ui", Timestamp: time.Now().UTC(), Level: "WARN", Component: "reconcile", Message: "safe warning", Pool: "pool-a",
+		ID: "log-ui", Timestamp: time.Now().UTC(), Level: "WARN", Component: "reconcile", Message: "safe warning",
+		Operation: "pool.fill", Job: "job-ui", Step: "vm.create", Status: "failed", Attempt: 2, Pool: "pool-a", Resource: "vm-a",
 	}); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
@@ -153,8 +187,37 @@ func TestUI_DiagnosticsRendersRedactedEvents(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
-	if body := w.Body.String(); !containsAll(body, "Diagnostics", "safe warning", "pool-a", "Export current query", "View agent logs", "/ui/diagnostics/export?limit=100", "component=agent") {
+	if body := w.Body.String(); !containsAll(body, "Diagnostics", "safe warning", "pool-a", "Export current query", "View agent logs", "/ui/diagnostics/export?limit=100", "component=agent", "diagnostics-timeline", "pool.fill", "vm-a", "vm.create", "attempt 2", "Structured event table") {
 		t.Fatalf("diagnostics page missing expected content: %s", body)
+	}
+}
+
+func TestUI_DiagnosticsFlatTableHidesMessageForSucceededEvent(t *testing.T) {
+	st := store.NewMemoryStore()
+	logs := diagnostics.NewMemoryStore()
+	if err := logs.Append(context.Background(), diagnostics.Event{
+		ID: "log-ok", Timestamp: time.Now().UTC(), Level: "INFO", Component: "pool", Message: "pool job step",
+		Operation: "pool.fill", Job: "job-ok", Step: "pool.fill", Status: "succeeded", Pool: "pool-a",
+	}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	mux := server.NewTestMuxWithDiagnostics(st, sandbox.New(st, nil), logs, nil, true, false)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/diagnostics", nil)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	// The routine step message must not surface under the flat table's
+	// Error column for a succeeded event -- it reads as a failure even
+	// though nothing failed. It's fine for the timeline story (not labeled
+	// "Error") to still show it as step detail.
+	body := w.Body.String()
+	tableStart := strings.Index(body, "Structured event table")
+	if tableStart < 0 {
+		t.Fatalf("diagnostics page missing structured event table: %s", body)
+	}
+	if strings.Contains(body[tableStart:], "pool job step") {
+		t.Fatalf("flat table shows routine message as an error: %s", body[tableStart:])
 	}
 }
 
@@ -239,7 +302,7 @@ func TestUI_DiagnosticsPullAgentLogs(t *testing.T) {
 	t.Parallel()
 
 	st := store.NewMemoryStore()
-	admin := &fakeAgentAdmin{}
+	admin := &fakeAgentAdmin{logPulled: make(chan string, 1)}
 	mux := server.NewTestMuxWithAgentAdminUI(st, sandbox.New(st, nil), admin, true)
 
 	get := httptest.NewRecorder()
@@ -258,8 +321,25 @@ func TestUI_DiagnosticsPullAgentLogs(t *testing.T) {
 	if post.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want redirect (body: %s)", post.Code, post.Body.String())
 	}
-	if !strings.Contains(post.Header().Get("Location"), "log_request=pull-1") || len(admin.logPulls) != 1 {
-		t.Fatalf("location=%q log pulls=%v, want request id and one pull", post.Header().Get("Location"), admin.logPulls)
+	if !strings.Contains(post.Header().Get("Location"), "log_job=") {
+		t.Fatalf("location=%q, want tracked log job", post.Header().Get("Location"))
+	}
+	select {
+	case <-admin.logPulled:
+	case <-time.After(time.Second):
+		t.Fatal("agent log job did not request logs")
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		status := httptest.NewRecorder()
+		mux.ServeHTTP(status, server.AuthedRequest(httptest.NewRequest(http.MethodGet, post.Header().Get("Location"), nil)))
+		if strings.Contains(status.Body.String(), "Agent log snapshot received") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("agent log job did not render completion: %s", status.Body.String())
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 

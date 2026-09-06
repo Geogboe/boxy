@@ -70,6 +70,7 @@ func (p PoolSpec) PoliciesSet() bool {
 type PoolPolicySpec struct {
 	Preheat PreheatPolicySpec `json:"preheat,omitempty" yaml:"preheat,omitempty"`
 	Recycle RecyclePolicySpec `json:"recycle,omitempty" yaml:"recycle,omitempty"`
+	Debug   DebugPolicySpec   `json:"debug,omitempty" yaml:"debug,omitempty"`
 }
 
 func (p PoolPolicySpec) hasValues() bool {
@@ -77,7 +78,8 @@ func (p PoolPolicySpec) hasValues() bool {
 		p.Preheat.MaxTotal != 0 ||
 		p.Preheat.MinReadySet() ||
 		p.Preheat.MaxTotalSet() ||
-		p.Recycle.MaxAge != ""
+		p.Recycle.MaxAge != "" ||
+		p.Debug.RetainFailedResources
 }
 
 type PreheatPolicySpec struct {
@@ -104,6 +106,50 @@ type RecyclePolicySpec struct {
 	MaxAge string `json:"max_age,omitempty" yaml:"max_age,omitempty"`
 }
 
+// DebugPolicySpec is the config-file surface for troubleshooting-only pool
+// behavior. Unlike Preheat/Recycle it is local-config owned only and never
+// exposed through the pool Save-and-Apply web/API surface.
+type DebugPolicySpec struct {
+	RetainFailedResources bool `json:"retain_failed_resources,omitempty" yaml:"retain_failed_resources,omitempty"`
+}
+
+func (p *DebugPolicySpec) UnmarshalJSON(b []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(b, &fields); err != nil {
+		return err
+	}
+	for key, raw := range fields {
+		switch key {
+		case "retain_failed_resources":
+			if err := json.Unmarshal(raw, &p.RetainFailedResources); err != nil {
+				return fmt.Errorf("retain_failed_resources: %w", err)
+			}
+		default:
+			return fmt.Errorf("json: unknown field %q", key)
+		}
+	}
+	return nil
+}
+
+func (p *DebugPolicySpec) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.MappingNode {
+		return fmt.Errorf("debug policy must be a mapping")
+	}
+	for i := 0; i < len(value.Content); i += 2 {
+		key := value.Content[i].Value
+		val := value.Content[i+1]
+		switch key {
+		case "retain_failed_resources":
+			if err := val.Decode(&p.RetainFailedResources); err != nil {
+				return fmt.Errorf("retain_failed_resources: %w", err)
+			}
+		default:
+			return fmt.Errorf("field %s not found in type config.DebugPolicySpec", key)
+		}
+	}
+	return nil
+}
+
 func (p *PoolPolicySpec) UnmarshalJSON(b []byte) error {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(b, &fields); err != nil {
@@ -118,6 +164,10 @@ func (p *PoolPolicySpec) UnmarshalJSON(b []byte) error {
 		case "recycle":
 			if err := json.Unmarshal(raw, &p.Recycle); err != nil {
 				return fmt.Errorf("recycle: %w", err)
+			}
+		case "debug":
+			if err := json.Unmarshal(raw, &p.Debug); err != nil {
+				return fmt.Errorf("debug: %w", err)
 			}
 		default:
 			return fmt.Errorf("json: unknown field %q", key)
@@ -141,6 +191,10 @@ func (p *PoolPolicySpec) UnmarshalYAML(value *yaml.Node) error {
 		case "recycle":
 			if err := val.Decode(&p.Recycle); err != nil {
 				return fmt.Errorf("recycle: %w", err)
+			}
+		case "debug":
+			if err := val.Decode(&p.Debug); err != nil {
+				return fmt.Errorf("debug: %w", err)
 			}
 		default:
 			return fmt.Errorf("field %s not found in type config.PoolPolicySpec", key)

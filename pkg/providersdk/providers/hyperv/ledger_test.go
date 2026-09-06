@@ -80,7 +80,7 @@ func TestIPv4UsableBounds_TooSmallRangeRejected(t *testing.T) {
 // lazy ephemeral fallback).
 func newTestLedgerDriver(t *testing.T) *Driver {
 	t.Helper()
-	d, err := New(&Config{DataDir: t.TempDir()})
+	d, err := New(&Config{DataDir: t.TempDir(), MemoryBudgetMB: int64Ptr(8192)})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -245,7 +245,7 @@ func TestDriver_ReserveAddress_ExhaustedRangeReturnsClearError(t *testing.T) {
 
 func TestDriver_Ledger_PersistsAcrossFreshDriverInstances(t *testing.T) {
 	dir := t.TempDir()
-	d1, err := New(&Config{DataDir: dir})
+	d1, err := New(&Config{DataDir: dir, MemoryBudgetMB: int64Ptr(8192)})
 	if err != nil {
 		t.Fatalf("New (1st): %v", err)
 	}
@@ -261,7 +261,7 @@ func TestDriver_Ledger_PersistsAcrossFreshDriverInstances(t *testing.T) {
 	// A fresh Driver over the same DataDir (simulating a daemon/agent
 	// restart) must see the same assignment — it's what makes the ledger
 	// restart-safe.
-	d2, err := New(&Config{DataDir: dir})
+	d2, err := New(&Config{DataDir: dir, MemoryBudgetMB: int64Ptr(8192)})
 	if err != nil {
 		t.Fatalf("New (2nd): %v", err)
 	}
@@ -289,7 +289,7 @@ func TestDriver_Ledger_PersistsAcrossFreshDriverInstances(t *testing.T) {
 
 func TestNew_DataDirDefaultsAndResolves(t *testing.T) {
 	base := t.TempDir()
-	d, err := New(&Config{DataDir: filepath.Join(base, "custom")})
+	d, err := New(&Config{DataDir: filepath.Join(base, "custom"), MemoryBudgetMB: int64Ptr(8192)})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

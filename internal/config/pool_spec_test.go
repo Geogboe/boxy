@@ -41,6 +41,24 @@ func TestPoolSpecUnmarshalJSONTracksPolicyAliasesAndExplicitDrain(t *testing.T) 
 	}
 }
 
+func TestPoolSpecUnmarshalTracksDebugRetainFailedResources(t *testing.T) {
+	var jsonSpec PoolSpec
+	if err := json.Unmarshal([]byte(`{"name":"web","policy":{"debug":{"retain_failed_resources":true}}}`), &jsonSpec); err != nil {
+		t.Fatalf("unmarshal json: %v", err)
+	}
+	if !jsonSpec.EffectivePolicy().Debug.RetainFailedResources {
+		t.Fatalf("debug = %+v, want retain_failed_resources true", jsonSpec.EffectivePolicy().Debug)
+	}
+
+	var yamlSpec PoolSpec
+	if err := yaml.Unmarshal([]byte("name: web\npolicy:\n  debug:\n    retain_failed_resources: true\n"), &yamlSpec); err != nil {
+		t.Fatalf("unmarshal yaml: %v", err)
+	}
+	if !yamlSpec.EffectivePolicy().Debug.RetainFailedResources {
+		t.Fatalf("debug = %+v, want retain_failed_resources true", yamlSpec.EffectivePolicy().Debug)
+	}
+}
+
 func TestPoolSpecUnmarshalTracksAgentPinning(t *testing.T) {
 	var jsonSpec PoolSpec
 	if err := json.Unmarshal([]byte(`{"name":"win-pool","type":"hyperv","agent":"lab-hypervisor-1"}`), &jsonSpec); err != nil {
@@ -106,6 +124,7 @@ func TestPoolSpecUnmarshalRejectsUnknownFields(t *testing.T) {
 		{name: "policy field", body: `{"name":"web","policy":{"unknown":true}}`, want: `unknown field "unknown"`},
 		{name: "preheat field", body: `{"name":"web","policy":{"preheat":{"unknown":true}}}`, want: `unknown field "unknown"`},
 		{name: "recycle field", body: `{"name":"web","policy":{"recycle":{"unknown":true}}}`, want: `unknown field "unknown"`},
+		{name: "debug field", body: `{"name":"web","policy":{"debug":{"unknown":true}}}`, want: `unknown field "unknown"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

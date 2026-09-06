@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Geogboe/boxy/pkg/jobs"
 	"github.com/Geogboe/boxy/pkg/lifecycle"
 	"github.com/Geogboe/boxy/pkg/model"
 )
@@ -19,6 +20,7 @@ type MemoryStore struct {
 	resources              map[model.ResourceID]model.Resource
 	sandboxes              map[model.SandboxID]model.Sandbox
 	executions             map[model.ExecutionID]model.Execution
+	jobs                   map[jobs.ID]jobs.Job
 	agentTokens            map[model.AgentTokenID]model.AgentRegistrationToken
 	apiKeys                map[model.APIKeyID]model.APIKey
 	sessions               map[model.SessionID]model.Session
@@ -35,6 +37,7 @@ func NewMemoryStore() *MemoryStore {
 		resources:              make(map[model.ResourceID]model.Resource),
 		sandboxes:              make(map[model.SandboxID]model.Sandbox),
 		executions:             make(map[model.ExecutionID]model.Execution),
+		jobs:                   make(map[jobs.ID]jobs.Job),
 		agentTokens:            make(map[model.AgentTokenID]model.AgentRegistrationToken),
 		apiKeys:                make(map[model.APIKeyID]model.APIKey),
 		sessions:               make(map[model.SessionID]model.Session),
@@ -42,6 +45,51 @@ func NewMemoryStore() *MemoryStore {
 		agentIdentities:        make(map[string]model.AgentIdentity),
 		events:                 make(map[string]lifecycle.Record),
 	}
+}
+
+func (s *MemoryStore) Put(_ context.Context, job jobs.Job) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if job.ID == "" {
+		return fmt.Errorf("job id is required")
+	}
+	s.jobs[job.ID] = cloneJob(job)
+	return nil
+}
+
+func (s *MemoryStore) Get(_ context.Context, id jobs.ID) (jobs.Job, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	job, ok := s.jobs[id]
+	if !ok {
+		return jobs.Job{}, jobs.ErrNotFound
+	}
+	return cloneJob(job), nil
+}
+
+func (s *MemoryStore) List(_ context.Context) ([]jobs.Job, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]jobs.Job, 0, len(s.jobs))
+	for _, job := range s.jobs {
+		out = append(out, cloneJob(job))
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) Delete(_ context.Context, id jobs.ID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.jobs[id]; !ok {
+		return jobs.ErrNotFound
+	}
+	delete(s.jobs, id)
+	return nil
+}
+
+func cloneJob(job jobs.Job) jobs.Job {
+	job.Steps = append([]jobs.Step(nil), job.Steps...)
+	return job
 }
 
 func (s *MemoryStore) GetPool(ctx context.Context, name model.PoolName) (model.Pool, error) {

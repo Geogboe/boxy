@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Geogboe/boxy/pkg/eventstream"
+	"github.com/Geogboe/boxy/pkg/jobs"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/store"
@@ -117,6 +118,10 @@ func TestDurableExecSubmitReturns202AndReconnectsAtCursor(t *testing.T) {
 	}
 	id := model.ExecutionID(accepted["exec_id"].(string))
 	<-executor.firstSent
+	runningJob := getExecutionJob(t, mux, id)
+	if runningJob.ID != jobs.ID(id) || runningJob.Kind != "sandbox.execute" || runningJob.Status != jobs.StatusRunning {
+		t.Fatalf("execution job = %+v", runningJob)
+	}
 
 	first := getDurableExec(t, mux, "", id)
 	if len(first.Chunks) != 1 || first.Chunks[0].Data == "" {
@@ -135,6 +140,28 @@ func TestDurableExecSubmitReturns202AndReconnectsAtCursor(t *testing.T) {
 	if finished.RequestFingerprint == "" || len(finished.Chunks) != 2 {
 		t.Fatalf("finished execution = %+v, want safe fingerprint and two chunks", finished)
 	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if job := getExecutionJob(t, mux, id); job.Status == jobs.StatusSucceeded {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("generic execution job did not succeed")
+}
+
+func getExecutionJob(t *testing.T, mux http.Handler, id model.ExecutionID) jobs.Job {
+	t.Helper()
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/jobs/"+string(id), nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("job status = %d; body: %s", response.Code, response.Body.String())
+	}
+	var job jobs.Job
+	if err := json.Unmarshal(response.Body.Bytes(), &job); err != nil {
+		t.Fatalf("decode job: %v", err)
+	}
+	return job
 }
 
 func TestDurableExecReturnsResourceBusyWithActiveID(t *testing.T) {
@@ -271,40 +298,31 @@ func TestDurableExecTruncationStoresExplicitMarker(t *testing.T) {
 	}
 }
 
-func TestDurableExecTerminalWriteFailureRetainsResourceGuard(t *testing.T) {
+func TestDurableExecTerminalWriteFailureFailsLifecycleJob(t *testing.T) {
 	base := store.NewMemoryStore()
 	st := &terminalWriteFailStore{Store: base}
-	id := model.ExecutionID("exec-terminal-write-failure")
-	if err := st.PutExecution(context.Background(), model.Execution{
-		ID: id, SandboxID: "sb-1", ResourceID: "res-1", Status: model.ExecutionStatusRunning,
-	}); err != nil {
-		t.Fatal(err)
+	manager := newExecutionManager(st, nil)
+	execution, err := manager.submit(context.Background(), model.Sandbox{ID: "sb-1"}, model.Resource{ID: "res-1"}, providersdk.ExecOperation{}, model.ExecutionInputCommandText, "actor-1", time.Second)
+	if err != nil {
+		t.Fatalf("submit: %v", err)
 	}
-	manager := &executionManager{
-		store:      st,
-		active:     map[model.ResourceID]model.ExecutionID{"res-1": id},
-		cancel:     map[model.ExecutionID]context.CancelFunc{id: func() {}},
-		operations: map[model.ExecutionID]providersdk.ExecOperation{id: {}},
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		job, getErr := manager.runner.Get(context.Background(), jobs.ID(execution.ID))
+		if getErr == nil && job.Status.IsTerminal() {
+			if job.Status != jobs.StatusFailed || job.ErrorCode != "execution_state_persist_failed" {
+				t.Fatalf("job = %+v", job)
+			}
+			return
+		}
+		time.Sleep(time.Millisecond)
 	}
-
-	manager.finish(id, nil, nil)
-	if manager.active["res-1"] != id {
-		t.Fatalf("active guard = %q, want failed terminal write to retain %q", manager.active["res-1"], id)
-	}
-	if _, ok := manager.cancel[id]; !ok {
-		t.Fatal("cancel function was discarded after failed terminal write")
-	}
-	if _, ok := manager.operations[id]; !ok {
-		t.Fatal("operation was discarded after failed terminal write")
-	}
-	if _, err := manager.submit(context.Background(), model.Sandbox{ID: "sb-1"}, model.Resource{ID: "res-1"}, providersdk.ExecOperation{}, model.ExecutionInputCommandText, "actor-1", time.Second); !errors.Is(err, ErrResourceBusy) {
-		t.Fatalf("new execution error = %v, want resource busy", err)
-	}
+	t.Fatal("execution lifecycle job did not finish")
 }
 
 func TestDurableExecPersistsOnlySafeMetadata(t *testing.T) {
 	st := store.NewMemoryStore()
-	manager := &executionManager{store: st, active: make(map[model.ResourceID]model.ExecutionID), cancel: make(map[model.ExecutionID]context.CancelFunc), operations: make(map[model.ExecutionID]providersdk.ExecOperation)}
+	manager := newExecutionManager(st, nil)
 	operation := providersdk.ExecOperation{
 		Command:         []string{"echo", "credential-secret"},
 		CommandText:     "Write-Output 'script-secret'",

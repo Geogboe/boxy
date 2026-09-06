@@ -35,6 +35,22 @@ type fakeProvisioner struct {
 	onDestroy func(model.ResourceID)
 }
 
+func TestManagerReconcileClearsPendingPoolConfiguration(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	if err := st.PutPool(ctx, model.Pool{Name: "pending", Policies: model.PoolPolicies{Preheat: model.PreheatPolicy{MaxTotal: 2}}, Configuration: model.PoolConfigurationState{Provenance: "web", Pending: true}}); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	if err := New(st, &fakeProvisioner{}).Reconcile(ctx, "pending"); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	updated, _ := st.GetPool(ctx, "pending")
+	if updated.Configuration.Pending {
+		t.Fatalf("configuration = %+v, want pending cleared", updated.Configuration)
+	}
+}
+
 func (p *fakeProvisioner) Provision(ctx context.Context, pool model.Pool) (model.Resource, error) {
 	_ = ctx
 	p.provisionCalls++
@@ -264,6 +280,151 @@ func TestManager_DestroyResource_DestroysAndDeletesWithoutReturningToInventory(t
 	}
 	if len(p.Inventory.Resources) != 0 {
 		t.Fatalf("inventory resources = %+v, want empty", p.Inventory.Resources)
+	}
+}
+
+func TestManager_FailAdmissionDestroysVMAndKeepsFailureRecord(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	pool := model.Pool{Name: "windows", Inventory: model.ResourceCollection{}}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	res := model.Resource{ID: "vm-1", OriginPool: pool.Name, CurrentPool: pool.Name, State: model.ResourceStateProvisioning}
+	if err := st.PutResource(ctx, res); err != nil {
+		t.Fatalf("PutResource: %v", err)
+	}
+	provisioner := &fakeProvisioner{}
+	mgr := New(st, provisioner)
+	if err := mgr.FailAdmission(ctx, res, errors.New("packages failed after three attempts")); err != nil {
+		t.Fatalf("FailAdmission: %v", err)
+	}
+	if len(provisioner.destroyed) != 1 || provisioner.destroyed[0] != res.ID {
+		t.Fatalf("destroyed resources = %v, want [%s]", provisioner.destroyed, res.ID)
+	}
+	failed, err := st.GetResource(ctx, res.ID)
+	if err != nil {
+		t.Fatalf("GetResource: %v", err)
+	}
+	if failed.State != model.ResourceStateError {
+		t.Fatalf("resource state = %s, want error", failed.State)
+	}
+}
+
+func TestManager_RetryResourceCleansQuarantine(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	pool := model.Pool{Name: "windows", Inventory: model.ResourceCollection{}}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	res := model.Resource{ID: "vm-1", OriginPool: pool.Name, CurrentPool: pool.Name, State: model.ResourceStateError}
+	if err := st.PutResource(ctx, res); err != nil {
+		t.Fatalf("PutResource: %v", err)
+	}
+	provisioner := &fakeProvisioner{}
+	if err := New(st, provisioner).RetryResource(ctx, res); err != nil {
+		t.Fatalf("RetryResource: %v", err)
+	}
+	if len(provisioner.destroyed) != 1 || provisioner.destroyed[0] != res.ID {
+		t.Fatalf("destroyed resources = %v, want [%s]", provisioner.destroyed, res.ID)
+	}
+	cleaned, err := st.GetResource(ctx, res.ID)
+	if err != nil {
+		t.Fatalf("GetResource: %v", err)
+	}
+	if cleaned.State != model.ResourceStateDestroyed {
+		t.Fatalf("resource state = %s, want destroyed", cleaned.State)
+	}
+}
+
+func TestManager_FailAdmissionRetainsResourceWhenDebugPolicyEnabled(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	pool := model.Pool{Name: "windows", Policies: model.PoolPolicies{Debug: model.PoolDebugPolicy{RetainFailedResources: true}}}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	res := model.Resource{ID: "vm-1", OriginPool: pool.Name, CurrentPool: pool.Name, State: model.ResourceStateProvisioning}
+	if err := st.PutResource(ctx, res); err != nil {
+		t.Fatalf("PutResource: %v", err)
+	}
+	provisioner := &fakeProvisioner{}
+	if err := New(st, provisioner).FailAdmission(ctx, res, errors.New("packages failed after three attempts")); err != nil {
+		t.Fatalf("FailAdmission: %v", err)
+	}
+	if len(provisioner.destroyed) != 0 {
+		t.Fatalf("destroyed resources = %v, want none retained for debug", provisioner.destroyed)
+	}
+	failed, err := st.GetResource(ctx, res.ID)
+	if err != nil {
+		t.Fatalf("GetResource: %v", err)
+	}
+	if failed.State != model.ResourceStateError {
+		t.Fatalf("resource state = %s, want error", failed.State)
+	}
+	if failed.Properties["lifecycle_error"] == nil {
+		t.Fatalf("resource properties = %+v, want recorded lifecycle_error", failed.Properties)
+	}
+}
+
+func TestManager_RetryResourceReusesRetainedVMAndCredential(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	pool := model.Pool{Name: "windows", Policies: model.PoolPolicies{Debug: model.PoolDebugPolicy{RetainFailedResources: true}}}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	res := model.Resource{
+		ID: "vm-1", OriginPool: pool.Name, CurrentPool: pool.Name, State: model.ResourceStateError,
+		Properties: map[string]any{"lifecycle_error": "packages failed after three attempts"},
+	}
+	if err := st.PutResource(ctx, res); err != nil {
+		t.Fatalf("PutResource: %v", err)
+	}
+	provisioner := &fakeProvisioner{}
+	mgr := New(st, provisioner)
+	publisher := &fakeAdmissionPublisher{}
+	mgr.SetAdmissionPublisher(publisher)
+	if err := mgr.RetryResource(ctx, res); err != nil {
+		t.Fatalf("RetryResource: %v", err)
+	}
+	if len(provisioner.destroyed) != 0 {
+		t.Fatalf("destroyed resources = %v, want the VM never destroyed", provisioner.destroyed)
+	}
+	if publisher.calls == 0 {
+		t.Fatalf("admission publisher calls = %d, want at least one re-admission", publisher.calls)
+	}
+	retried, err := st.GetResource(ctx, res.ID)
+	if err != nil {
+		t.Fatalf("GetResource: %v", err)
+	}
+	if retried.State != model.ResourceStateProvisioning {
+		t.Fatalf("resource state = %s, want provisioning (re-admitted in place)", retried.State)
+	}
+	if retried.Properties["lifecycle_error"] != nil {
+		t.Fatalf("resource properties = %+v, want lifecycle_error cleared", retried.Properties)
+	}
+}
+
+func TestManager_RetryResourceWithoutAdmissionPublisherFailsRetainedResource(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	pool := model.Pool{Name: "windows", Policies: model.PoolPolicies{Debug: model.PoolDebugPolicy{RetainFailedResources: true}}}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	res := model.Resource{ID: "vm-1", OriginPool: pool.Name, CurrentPool: pool.Name, State: model.ResourceStateError}
+	if err := st.PutResource(ctx, res); err != nil {
+		t.Fatalf("PutResource: %v", err)
+	}
+	if err := New(st, &fakeProvisioner{}).RetryResource(ctx, res); err == nil {
+		t.Fatalf("RetryResource: want error without an admission publisher configured")
 	}
 }
 
@@ -2262,5 +2423,35 @@ func TestManager_Reconcile_PersistentQuarantineDestroyFailureBlocksProvisioning(
 	}
 	if prov.provisionCalls != 0 {
 		t.Fatalf("provisionCalls = %d, want 0 — the pool should not fill while the quarantined resource blocks the stale-destroy loop", prov.provisionCalls)
+	}
+}
+
+func TestManager_FillReportsBlockedWhenFailuresExhaustMaxTotal(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	pool := model.Pool{
+		Name: "p1", Policies: model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 1, MaxTotal: 2}},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeVM, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	for _, id := range []model.ResourceID{"failed-1", "failed-2"} {
+		if err := st.PutResource(ctx, model.Resource{ID: id, OriginPool: pool.Name, CurrentPool: pool.Name, State: model.ResourceStateError}); err != nil {
+			t.Fatalf("PutResource(%s): %v", id, err)
+		}
+	}
+	provisioner := &fakeProvisioner{}
+	_, err := New(st, provisioner).Fill(ctx, pool.Name)
+	var blocked *BlockedPoolError
+	if !errors.As(err, &blocked) {
+		t.Fatalf("Fill error = %v, want BlockedPoolError", err)
+	}
+	if blocked.FailedCount != 2 || blocked.MaxTotal != 2 || blocked.ReadyCount != 0 {
+		t.Fatalf("blocked details = %+v", blocked)
+	}
+	if len(provisioner.destroyed) != 0 || provisioner.provisionCalls != 0 {
+		t.Fatalf("provider calls: destroyed=%v provisioned=%d, want none", provisioner.destroyed, provisioner.provisionCalls)
 	}
 }

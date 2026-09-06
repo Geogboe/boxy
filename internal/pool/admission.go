@@ -18,6 +18,8 @@ import (
 
 const ResourceProvisionedEventType = "resource.provisioned"
 
+const maxPackageAdmissionAttempts = 3
+
 type resourceProvisionedPayload struct {
 	ResourceID model.ResourceID `json:"resource_id"`
 	PoolName   model.PoolName   `json:"pool_name"`
@@ -132,14 +134,14 @@ func (h *AdmissionHandler) Handle(ctx context.Context, event lifecycle.Event) (l
 			if strings.TrimSpace(string(credential.Data)) == "" {
 				return h.fail(ctx, res, fmt.Errorf("validate stored resource credential: empty credential data"))
 			}
-			return h.markReadyWithPackages(ctx, res, nil, resourcepack.EventProvision)
+			return h.markReadyWithPackages(ctx, res, nil, resourcepack.EventProvision, event.Attempt)
 		} else if !errors.Is(getErr, boxysecrets.ErrNotFound) {
 			return lifecycle.OutcomeRetry, fmt.Errorf("get resource credential: %w", getErr)
 		}
 	}
 
 	if h.Personalizer == nil {
-		return h.markReadyWithPackages(ctx, res, nil, resourcepack.EventProvision)
+		return h.markReadyWithPackages(ctx, res, nil, resourcepack.EventProvision, event.Attempt)
 	}
 	supports, err := h.Personalizer.SupportsGuestPersonalization(ctx, pool, res)
 	if err != nil {
@@ -153,7 +155,7 @@ func (h *AdmissionHandler) Handle(ctx context.Context, event lifecycle.Event) (l
 		// GuestPersonalizer would produce. Requiring h.Secrets unconditionally
 		// would demand a secret backend for every pool in the server, not
 		// just ones that need one. See #181's design spec follow-ups.
-		return h.markReadyWithPackages(ctx, res, nil, resourcepack.EventProvision)
+		return h.markReadyWithPackages(ctx, res, nil, resourcepack.EventProvision, event.Attempt)
 	}
 	if h.Secrets == nil {
 		// Checked here, before PersonalizeGuestForPool is ever called: that
@@ -173,7 +175,7 @@ func (h *AdmissionHandler) Handle(ctx context.Context, event lifecycle.Event) (l
 		// raced against a driver capability that changed in between, or the
 		// driver legitimately has nothing to rotate this time) — fall back
 		// to the routine no-op path rather than treating it as an error.
-		return h.markReadyWithPackages(ctx, res, nil, resourcepack.EventProvision)
+		return h.markReadyWithPackages(ctx, res, nil, resourcepack.EventProvision, event.Attempt)
 	}
 	if result.EphemeralCredential == nil || len(result.EphemeralCredential.Data) == 0 {
 		return h.fail(ctx, res, fmt.Errorf("personalization returned no credential for resource %q", res.ID))
@@ -185,10 +187,10 @@ func (h *AdmissionHandler) Handle(ctx context.Context, event lifecycle.Event) (l
 	if err := h.Secrets.Put(ctx, boxysecrets.ResourceCredentialKey(string(res.ID)), credentialJSON); err != nil {
 		return h.fail(ctx, res, fmt.Errorf("store resource credential: %w", err))
 	}
-	return h.markReadyWithPackages(ctx, res, result.AccessDetails.ToProperties(), resourcepack.EventProvision)
+	return h.markReadyWithPackages(ctx, res, result.AccessDetails.ToProperties(), resourcepack.EventProvision, event.Attempt)
 }
 
-func (h *AdmissionHandler) markReadyWithPackages(ctx context.Context, res model.Resource, properties map[string]any, event resourcepack.Event) (lifecycle.Outcome, error) {
+func (h *AdmissionHandler) markReadyWithPackages(ctx context.Context, res model.Resource, properties map[string]any, event resourcepack.Event, attempt int) (lifecycle.Outcome, error) {
 	if h.Packages != nil {
 		pool, err := h.Store.GetPool(ctx, res.OriginPool)
 		if err != nil {
@@ -196,7 +198,11 @@ func (h *AdmissionHandler) markReadyWithPackages(ctx context.Context, res model.
 		}
 		applied, err := h.Packages.ApplyResourcePackages(ctx, pool, res, event)
 		if err != nil {
-			return h.fail(ctx, res, fmt.Errorf("apply resource packages for %q: %w", res.ID, err))
+			cause := fmt.Errorf("apply resource packages for %q: %w", res.ID, err)
+			if max(attempt, 1) < maxPackageAdmissionAttempts {
+				return lifecycle.OutcomeRetry, cause
+			}
+			return h.fail(ctx, res, cause)
 		}
 		res.AppliedPackages = append(res.AppliedPackages, applied...)
 	}

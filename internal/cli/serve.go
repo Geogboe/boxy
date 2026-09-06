@@ -2,8 +2,10 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -609,6 +611,11 @@ func seedConfiguredPools(ctx context.Context, st store.Store, specs []boxyconfig
 		if err != nil {
 			return nil, fmt.Errorf("create pool model for %q: %w", spec.Name, err)
 		}
+		localRevision, err := configuredPoolRevision(p)
+		if err != nil {
+			return nil, fmt.Errorf("revision pool %q: %w", spec.Name, err)
+		}
+		p.Configuration = model.PoolConfigurationState{Provenance: "local", LocalRevision: localRevision}
 
 		var fallback []model.Resource
 		existing, err := st.GetPool(ctx, p.Name)
@@ -618,6 +625,11 @@ func seedConfiguredPools(ctx context.Context, st store.Store, specs []boxyconfig
 		if err == nil {
 			fallback = existing.Inventory.Resources
 			p.Drain.Operator = existing.Drain.Operator
+			if existing.Configuration.Provenance == "web" && existing.Configuration.LocalRevision == localRevision {
+				p.Policies = existing.Policies
+				p.Drain.ConfigDeclared = existing.Drain.ConfigDeclared
+				p.Configuration = existing.Configuration
+			}
 		}
 
 		rebuilt, report, err := pool.RebuildReadyInventory(p, resources, fallback)
@@ -639,6 +651,17 @@ func seedConfiguredPools(ctx context.Context, st store.Store, specs []boxyconfig
 	}
 
 	return poolNames, nil
+}
+
+func configuredPoolRevision(pool model.Pool) (string, error) {
+	pool.Configuration = model.PoolConfigurationState{}
+	pool.Drain.Operator = false
+	pool.Inventory.Resources = nil
+	encoded, err := json.Marshal(pool)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("sha256:%x", sha256.Sum256(encoded)), nil
 }
 
 // resolveListenAddr picks the listen address with precedence:
@@ -927,6 +950,9 @@ func poolSpecToModel(spec boxyconfig.PoolSpec) (model.Pool, error) {
 			Recycle: model.RecyclePolicy{
 				MaxAge: policy.Recycle.MaxAge,
 			},
+			Debug: model.PoolDebugPolicy{
+				RetainFailedResources: policy.Debug.RetainFailedResources,
+			},
 		},
 		Drain: model.PoolDrainState{
 			ConfigDeclared: policy.Preheat.ConfiguresDrain(),
@@ -1014,10 +1040,27 @@ func buildDrivers(reg *providersdk.Registry, instances []providersdk.Instance, c
 		}
 
 		// Get config for this type, or use zero-value proto if not configured.
-		instance := configByType[t]
+		explicitInstance, explicit := configByType[t]
+		instance := explicitInstance
 		instance.Type = t
 		driver, err := reg.NewDriverFromInstance(instance, baseDir)
 		if err != nil {
+			if !explicit {
+				// No provider instance was configured for this type. Every
+				// registered type is still attempted here so a pool can
+				// reference a type with sane zero-value defaults (e.g.
+				// docker) without an explicit provider: block. Not every
+				// driver has usable zero-value defaults, though -- hyperv
+				// requires an explicit memory_budget_mb, which would
+				// otherwise fail every non-Hyper-V deployment's boxy serve
+				// at startup. Skip a type that fails with
+				// defaults instead of failing the whole daemon over a
+				// provider this deployment never asked to use; a pool that
+				// actually needs it fails normally at resolution time later,
+				// same as if the type weren't registered at all. An
+				// explicitly configured instance still fails loudly below.
+				continue
+			}
 			return nil, err
 		}
 

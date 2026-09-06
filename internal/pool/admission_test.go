@@ -10,6 +10,7 @@ import (
 	"github.com/Geogboe/boxy/pkg/lifecycle"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
+	"github.com/Geogboe/boxy/pkg/resourcepack"
 	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
 	"github.com/Geogboe/boxy/pkg/store"
 )
@@ -67,6 +68,16 @@ func (p *admissionPersonalizer) PersonalizeGuestForPool(context.Context, model.P
 type admissionFailureRecorder struct {
 	resource model.Resource
 	cause    error
+}
+
+type admissionPackageApplier struct {
+	calls int
+	err   error
+}
+
+func (p *admissionPackageApplier) ApplyResourcePackages(context.Context, model.Pool, model.Resource, resourcepack.Event) ([]resourcepack.AppliedPackage, error) {
+	p.calls++
+	return nil, p.err
 }
 
 func (r *admissionFailureRecorder) FailAdmission(_ context.Context, resource model.Resource, cause error) error {
@@ -194,6 +205,42 @@ func TestAdmissionHandlerFailureQuarantinesWithoutRetryingSameResource(t *testin
 	}
 	if failures.resource.ID != "res-1" || failures.cause == nil {
 		t.Fatalf("failure recorder = %+v, want resource and cause", failures)
+	}
+}
+
+func TestAdmissionHandlerRetriesPackagesThreeTimesWithoutRotatingAgain(t *testing.T) {
+	ctx := context.Background()
+	st := newTestStoreWithAdmissionResource(t)
+	secrets := &admissionSecretStore{}
+	personalizer := &admissionPersonalizer{supports: true, result: &providersdk.GuestPersonalizationResult{
+		EphemeralCredential: &providersdk.GuestCredential{Kind: "password", Data: json.RawMessage(`{"username":"Administrator","password":"${BOXY_TEST_PASSWORD}"}`)},
+	}}
+	packages := &admissionPackageApplier{err: errors.New("package manager unavailable")}
+	failures := &admissionFailureRecorder{}
+	handler := &AdmissionHandler{Store: st, Secrets: secrets, Personalizer: personalizer, Packages: packages, Failures: failures}
+	payload, _ := json.Marshal(resourceProvisionedPayload{ResourceID: "res-1", PoolName: "win-vm"})
+
+	for attempt := 1; attempt <= maxPackageAdmissionAttempts; attempt++ {
+		outcome, err := handler.Handle(ctx, lifecycle.Event{ID: "event-1", Type: ResourceProvisionedEventType, Subject: "res-1", Payload: payload, Attempt: attempt})
+		if err == nil {
+			t.Fatalf("attempt %d error = nil, want package failure", attempt)
+		}
+		want := lifecycle.OutcomeRetry
+		if attempt == maxPackageAdmissionAttempts {
+			want = lifecycle.OutcomeTerminal
+		}
+		if outcome != want {
+			t.Fatalf("attempt %d outcome = %s, want %s", attempt, outcome, want)
+		}
+	}
+	if personalizer.calls != 1 {
+		t.Fatalf("personalizer calls = %d, want one password rotation", personalizer.calls)
+	}
+	if packages.calls != maxPackageAdmissionAttempts {
+		t.Fatalf("package calls = %d, want %d", packages.calls, maxPackageAdmissionAttempts)
+	}
+	if failures.resource.ID != "res-1" {
+		t.Fatalf("failed resource = %q, want res-1", failures.resource.ID)
 	}
 }
 

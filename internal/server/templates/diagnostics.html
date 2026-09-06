@@ -1,6 +1,7 @@
 {{define "title"}}Boxy — Diagnostics{{end}}
 
 {{define "content"}}
+{{if .DiagnosticsRefresh}}<script>window.setTimeout(function () { window.location.reload(); }, 1500);</script>{{end}}
 <div class="page-header">
   <h1 class="page-title">Diagnostics</h1>
 </div>
@@ -22,7 +23,7 @@
       </form>{{end}}
     </div>
   </div>
-  {{if .DiagnosticsMessage}}<div class="result-banner">{{.DiagnosticsMessage}}</div>{{end}}
+  {{if .DiagnosticsMessage}}<div class="result-banner">{{.DiagnosticsMessage}}{{if .DiagnosticsJob}} <span class="badge badge-{{.DiagnosticsJob.Status}}">{{.DiagnosticsJob.Status}}</span>{{end}}</div>{{end}}
   <form class="diagnostics-filters" method="get" action="/ui/diagnostics">
     <label>Level
       <select name="level">
@@ -34,9 +35,12 @@
       </select>
     </label>
     <label>Component <input name="component" value="{{.DiagnosticsQuery.Component}}" placeholder="agent or control-plane"></label>
+	<label>Job <input name="job" value="{{.DiagnosticsQuery.Job}}" placeholder="job ID"></label>
+	<label>Status <input name="status" value="{{.DiagnosticsQuery.Status}}" placeholder="started or failed"></label>
     <label>Pool <input name="pool" value="{{.DiagnosticsQuery.Pool}}"></label>
     <label>Agent <input name="agent" value="{{.DiagnosticsQuery.Agent}}" placeholder="agent ID"></label>
     <label>Resource <input name="resource" value="{{.DiagnosticsQuery.Resource}}"></label>
+    <label>Provider <input name="provider" value="{{.DiagnosticsQuery.Provider}}" placeholder="hyperv or docker"></label>
     <label>Since <input name="since" value="{{.DiagnosticsSince}}" placeholder="RFC3339"></label>
     <label>Limit <input name="limit" type="number" min="1" max="1000" value="{{.DiagnosticsQuery.Limit}}"></label>
     <button type="submit">Apply filters</button>
@@ -45,11 +49,25 @@
   {{if .DiagnosticsError}}
   <div class="error-banner">{{.DiagnosticsError}}</div>
   {{else if .Diagnostics}}
+  <section class="diagnostics-timeline" aria-labelledby="diagnostics-timeline-title">
+    <div class="diagnostics-section-heading">
+      <div><h2 id="diagnostics-timeline-title">Operations timeline</h2><p>Each pool operation is one story, with its VM steps nested underneath.</p></div>
+    </div>
+    {{range .DiagnosticsTimeline}}
+    <article class="diagnostics-story">
+      <header><div><strong>{{if .Operation}}{{.Operation}}{{else}}diagnostic.event{{end}}</strong>{{if .Pool}}<span>pool {{.Pool}}</span>{{end}}</div><div><span class="badge badge-unknown">{{.Status}}</span><time>{{.Timestamp}}</time></div></header>
+      {{if .Job}}<div class="diagnostics-job">job <code>{{.Job}}</code></div>{{end}}
+      {{range .Events}}<div class="diagnostics-step"><span class="diagnostics-step-dot"></span><div><strong>{{if .Step}}{{.Step}}{{else}}{{.Component}}{{end}}</strong> <span>{{.Status}}</span>{{if .Attempt}}<small>attempt {{.Attempt}}</small>{{end}}{{if .Provider}}<small>{{.Provider}}</small>{{end}}{{if .Message}}<p>{{.Message}}</p>{{end}}{{if .ErrorCode}}<p class="diagnostics-error"><code>{{.ErrorCode}}</code> {{.ErrorSummary}}</p>{{end}}</div></div>{{end}}
+      {{range .Resources}}<details class="diagnostics-resource" open><summary><span>VM</span> <code>{{.ID}}</code> <small>{{len .Events}} steps</small></summary><div class="diagnostics-resource-steps">{{range .Events}}<div class="diagnostics-step"><span class="diagnostics-step-dot"></span><div><strong>{{if .Step}}{{.Step}}{{else}}{{.Component}}{{end}}</strong> <span>{{.Status}}</span>{{if .Attempt}}<small>attempt {{.Attempt}}</small>{{end}}{{if .Provider}}<small>{{.Provider}}</small>{{end}}{{if .Message}}<p>{{.Message}}</p>{{end}}{{if .ErrorCode}}<p class="diagnostics-error"><code>{{.ErrorCode}}</code> {{.ErrorSummary}}</p>{{end}}</div></div>{{end}}</div></details>{{end}}
+    </article>
+    {{end}}
+  </section>
+  <div class="diagnostics-section-heading diagnostics-table-heading"><div><h2>Structured event table</h2><p>Searchable fields and export-ready event details.</p></div></div>
   <div class="table-scroll">
   <table>
-    <thead><tr><th scope="col">Time</th><th scope="col">Level</th><th scope="col">Component</th><th scope="col">Operation</th><th scope="col">Message</th><th scope="col">Error</th><th scope="col">Correlation</th></tr></thead>
+	<thead><tr><th scope="col">Time</th><th scope="col">Operation</th><th scope="col">Step</th><th scope="col">Status</th><th scope="col">Attempt</th><th scope="col">Pool / VM</th><th scope="col">Provider</th><th scope="col">Agent</th><th scope="col">Error</th></tr></thead>
     <tbody>{{range .Diagnostics}}
-    <tr><td class="timestamp">{{.Timestamp}}</td><td><span class="badge badge-unknown">{{.Level}}</span></td><td>{{if .Component}}{{.Component}}{{else}}—{{end}}</td><td>{{if .Operation}}{{.Operation}}{{else}}—{{end}}</td><td>{{.Message}}</td><td>{{if .ErrorCode}}<code>{{.ErrorCode}}</code>: {{.ErrorSummary}}{{else}}—{{end}}</td><td>{{if .Pool}}pool={{.Pool}} {{end}}{{if .Agent}}agent={{.Agent}} {{end}}{{if .Resource}}resource={{.Resource}}{{end}}</td></tr>
+	<tr><td class="timestamp">{{.Timestamp}}</td><td>{{if .Operation}}<code>{{.Operation}}</code>{{else}}—{{end}}</td><td>{{if .Step}}{{.Step}}{{else}}{{.Component}}{{end}}</td><td><span class="badge badge-unknown">{{if .Status}}{{.Status}}{{else}}{{.Level}}{{end}}</span></td><td>{{if .Attempt}}{{.Attempt}}{{else}}—{{end}}</td><td>{{if .Pool}}<div>{{.Pool}}</div>{{end}}{{if .Resource}}<code>{{.Resource}}</code>{{end}}{{if not .Pool}}{{if not .Resource}}—{{end}}{{end}}</td><td>{{if .Provider}}{{.Provider}}{{else}}—{{end}}</td><td>{{if .Agent}}{{.Agent}}{{else}}—{{end}}</td><td>{{if .ErrorCode}}<code>{{.ErrorCode}}</code>: {{.ErrorSummary}}{{else if and .Message (ne .Status "succeeded") (ne .Status "started")}}{{.Message}}{{else}}—{{end}}</td></tr>
     {{end}}</tbody>
   </table>
   </div>

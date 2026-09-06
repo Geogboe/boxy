@@ -2,15 +2,18 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/internal/sandbox"
 	"github.com/Geogboe/boxy/internal/server"
+	"github.com/Geogboe/boxy/pkg/jobs"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/store"
 )
@@ -60,7 +63,7 @@ func TestUI_poolsShowsCapacityDrainStateAndResourceRows(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d", response.Code)
 	}
-	for _, want := range []string{"1 ready / 2 total", "Drained", "ready-1", "allocated-1", "docker", "View diagnostics", "Force cleanup"} {
+	for _, want := range []string{"1 ready / 2 active", "draining", "ready-1", "allocated-1", "docker", "View diagnostics", "Force cleanup", "Logs", "Copy ID", "Inspect", "Destroy"} {
 		if !strings.Contains(response.Body.String(), want) {
 			t.Fatalf("Pools page missing %q; body = %q", want, response.Body.String())
 		}
@@ -81,10 +84,11 @@ func TestUI_poolDetailShowsPolicyDrainResourcesProviderAndCapacity(t *testing.T)
 	st := store.NewMemoryStore()
 	if err := st.PutPool(ctx, model.Pool{
 		Name: "pool-detail", Template: "windows-2025", Source: "golden-image",
-		Packages:  []string{"go", "git"},
-		Policies:  model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 2, MaxTotal: 5}},
-		Drain:     model.PoolDrainState{ConfigDeclared: true, Operator: true},
-		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeVM, ExpectedProfile: model.ResourceProfileDefault},
+		Packages:      []string{"go", "git"},
+		Policies:      model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 2, MaxTotal: 5}, Recycle: model.RecyclePolicy{MaxAge: "24h"}},
+		Drain:         model.PoolDrainState{ConfigDeclared: true, Operator: true},
+		Configuration: model.PoolConfigurationState{Provenance: "local", Pending: true},
+		Inventory:     model.ResourceCollection{ExpectedType: model.ResourceTypeVM, ExpectedProfile: model.ResourceProfileDefault},
 	}); err != nil {
 		t.Fatalf("PutPool: %v", err)
 	}
@@ -111,7 +115,8 @@ func TestUI_poolDetailShowsPolicyDrainResourcesProviderAndCapacity(t *testing.T)
 	for _, want := range []string{
 		"pool-detail", "windows-2025", "golden-image", "go", "git",
 		"min_ready=2", "max_total=5", "Config drain", "Operator drain",
-		"1 ready / 1 total", "detail-resource", "hyperv", "Back to pools",
+		"1 ready / 1 active", "detail-resource", "hyperv", "Back to pools", "Logs", "Copy ID", "Inspect", "Destroy",
+		"Pool settings", "Save and apply", "Local config remains authoritative", "future local-config deployment will overwrite", "value=\"24h\"", "pending apply",
 	} {
 		if !strings.Contains(detail.Body.String(), want) {
 			t.Fatalf("pool detail missing %q: %q", want, detail.Body.String())
@@ -122,6 +127,99 @@ func TestUI_poolDetailShowsPolicyDrainResourcesProviderAndCapacity(t *testing.T)
 	mux.ServeHTTP(missing, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/pools/does-not-exist", nil)))
 	if missing.Code != http.StatusNotFound {
 		t.Fatalf("missing pool status = %d, want 404", missing.Code)
+	}
+}
+
+func TestUI_poolConfigurationSavesAndApplies(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	if err := st.PutPool(ctx, model.Pool{Name: "pool-config", Policies: model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 1, MaxTotal: 2}}}); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	mux := server.NewTestMuxWithPoolAdmin(st, sandbox.New(st, nil), &poolConfigurationMaintenance{}, nil)
+	get := httptest.NewRecorder()
+	mux.ServeHTTP(get, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/pools/pool-config", nil)))
+	csrf := csrfCookieFromResponse(t, get)
+	form := url.Values{"csrf_token": {csrf.Value}, "min_ready": {"2"}, "max_total": {"3"}, "max_age": {"12h"}}
+	post := httptest.NewRecorder()
+	r := server.AuthedRequest(httptest.NewRequest(http.MethodPost, "/ui/pools/pool-config/configuration", strings.NewReader(form.Encode())))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(csrf)
+	mux.ServeHTTP(post, r)
+	if post.Code != http.StatusSeeOther || !strings.Contains(post.Header().Get("Location"), "result=config_saved") {
+		t.Fatalf("status=%d location=%q body=%q", post.Code, post.Header().Get("Location"), post.Body.String())
+	}
+	updated, _ := st.GetPool(ctx, "pool-config")
+	if updated.Policies.Preheat.MinReady != 2 || updated.Policies.Preheat.MaxTotal != 3 || updated.Policies.Recycle.MaxAge != "12h0m0s" || updated.Configuration.Provenance != "web" || updated.Configuration.Pending {
+		t.Fatalf("updated pool = %+v", updated)
+	}
+}
+
+func TestUI_poolShowsBlockedStatusAndFailedResourceRetry(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	if err := st.PutPool(ctx, model.Pool{Name: "blocked", Policies: model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 1, MaxTotal: 1}}}); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	if err := st.PutResource(ctx, model.Resource{ID: "failed-1", OriginPool: "blocked", State: model.ResourceStateError}); err != nil {
+		t.Fatalf("PutResource: %v", err)
+	}
+	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/pools/blocked", nil)))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d", response.Code)
+	}
+	for _, want := range []string{"badge-blocked", "blocked", "1 failed", ">Retry<", ">Logs<", ">Inspect<"} {
+		if !strings.Contains(response.Body.String(), want) {
+			t.Fatalf("blocked pool page missing %q", want)
+		}
+	}
+}
+
+func TestUI_activePoolJobLeavesOnlyCancelMutation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	if err := st.PutPool(ctx, model.Pool{Name: "pool-a", Policies: model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 1, MaxTotal: 2}}}); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	if err := st.PutResource(ctx, model.Resource{ID: "failed-1", OriginPool: "pool-a", State: model.ResourceStateError}); err != nil {
+		t.Fatalf("PutResource: %v", err)
+	}
+	maintenance := &blockingPoolMaintenance{started: make(chan struct{})}
+	mux := server.NewTestMuxWithPoolAdmin(st, sandbox.New(st, nil), maintenance, nil)
+	fill := httptest.NewRecorder()
+	mux.ServeHTTP(fill, httptest.NewRequest(http.MethodPost, "/api/v1/pools/pool-a/fill", nil))
+	var submitted jobs.Job
+	if err := json.Unmarshal(fill.Body.Bytes(), &submitted); err != nil {
+		t.Fatalf("unmarshal job: %v", err)
+	}
+	select {
+	case <-maintenance.started:
+	case <-time.After(time.Second):
+		t.Fatal("fill job did not start")
+	}
+
+	page := httptest.NewRecorder()
+	mux.ServeHTTP(page, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/pools/pool-a", nil)))
+	body := page.Body.String()
+	for _, want := range []string{"badge-filling", ">Cancel<", ">Logs<", ">Inspect<"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("active-job page missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{`action="/ui/pools/pool-a/fill"`, `action="/ui/pools/pool-a/drain"`, `/resources/failed-1/retry`, `/resources/failed-1/destroy`} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("active-job page contains forbidden mutation %q", forbidden)
+		}
+	}
+	cancel := httptest.NewRecorder()
+	mux.ServeHTTP(cancel, httptest.NewRequest(http.MethodPost, "/api/v1/jobs/"+string(submitted.ID)+"/cancel", nil))
+	if completed := waitForAPIJob(t, mux, submitted.ID); completed.Status != jobs.StatusCancelled {
+		t.Fatalf("job status = %s", completed.Status)
 	}
 }
 
@@ -188,11 +286,19 @@ func TestUI_poolMutationsRequireCSRFAndRedirectWithBanner(t *testing.T) {
 	}
 
 	drain := post("/ui/pools/pool-a/drain", url.Values{})
-	if drain.Code != http.StatusSeeOther || len(maintenance.drained) != 1 || maintenance.drained[0] != "pool-a" {
-		t.Fatalf("drain status=%d calls=%v location=%q", drain.Code, maintenance.drained, drain.Header().Get("Location"))
+	if drain.Code != http.StatusSeeOther {
+		t.Fatalf("drain status=%d location=%q", drain.Code, drain.Header().Get("Location"))
 	}
-	if !strings.Contains(drain.Header().Get("Location"), "result=drain") {
+	location, err := url.Parse(drain.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse drain redirect: %v", err)
+	}
+	if location.Query().Get("result") != "started" || location.Query().Get("job") == "" {
 		t.Fatalf("drain redirect = %q", drain.Header().Get("Location"))
+	}
+	completed := waitForAPIJob(t, mux, jobs.ID(location.Query().Get("job")))
+	if completed.Status != jobs.StatusSucceeded || len(maintenance.drained) != 1 || maintenance.drained[0] != "pool-a" {
+		t.Fatalf("drain job=%+v calls=%v", completed, maintenance.drained)
 	}
 
 	preview := post("/ui/resources/purge", url.Values{"action": {"preview"}})

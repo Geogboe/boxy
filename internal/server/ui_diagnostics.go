@@ -48,12 +48,12 @@ func (s *Server) handleRequestAgentLogsUI(w http.ResponseWriter, r *http.Request
 		}
 		limit = parsed
 	}
-	requestID, err := s.agentAdmin.RequestAgentLogs(r.Context(), agentID, since, limit)
+	job, err := s.startAgentLogJob(r.Context(), agentID, since, limit)
 	if err != nil {
-		http.Error(w, "agent is not connected", http.StatusServiceUnavailable)
+		http.Error(w, "agent log request is unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	values := url.Values{"agent": {agentID}, "log_request": {requestID}}
+	values := url.Values{"agent": {agentID}, "log_job": {string(job.ID)}}
 	if rawSince != "" {
 		values.Set("since", rawSince)
 	}

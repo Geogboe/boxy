@@ -33,6 +33,10 @@ func TestClientSessionSendsLogBatchWithoutAgentIdentityLeak(t *testing.T) {
 		Level:     "ERROR",
 		Component: "agent",
 		Message:   "agent failed",
+		Job:       "job-a",
+		Step:      "vm.create",
+		Status:    "failed",
+		Attempt:   2,
 		Agent:     "[AGENT-1]",
 	}})
 	if err != nil {
@@ -45,6 +49,9 @@ func TestClientSessionSendsLogBatchWithoutAgentIdentityLeak(t *testing.T) {
 	}
 	if batch.GetEvents()[0].GetMessage() != "agent failed" || batch.GetEvents()[0].GetComponent() != "agent" {
 		t.Fatalf("event = %+v, want safe fields", batch.GetEvents()[0])
+	}
+	if event := batch.GetEvents()[0]; event.GetJob() != "job-a" || event.GetStep() != "vm.create" || event.GetStatus() != "failed" || event.GetAttempt() != 2 {
+		t.Fatalf("structured event = %+v, want job/step/status/attempt", event)
 	}
 }
 

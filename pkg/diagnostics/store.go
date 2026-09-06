@@ -34,13 +34,18 @@ type Event struct {
 	Timestamp    time.Time `json:"timestamp"`
 	Level        string    `json:"level"`
 	Component    string    `json:"component,omitempty"`
-	Message      string    `json:"message"`
+	Message      string    `json:"message,omitempty"`
 	Operation    string    `json:"operation,omitempty"`
+	Job          string    `json:"job,omitempty"`
+	Step         string    `json:"step,omitempty"`
+	Status       string    `json:"status,omitempty"`
+	Attempt      int       `json:"attempt,omitempty"`
 	ErrorCode    string    `json:"error_code,omitempty"`
 	ErrorSummary string    `json:"error_summary,omitempty"`
 	Pool         string    `json:"pool,omitempty"`
 	Agent        string    `json:"agent,omitempty"`
 	Resource     string    `json:"resource,omitempty"`
+	Provider     string    `json:"provider,omitempty"`
 	Request      string    `json:"request,omitempty"`
 }
 
@@ -53,6 +58,9 @@ type Query struct {
 	Pool      string
 	Agent     string
 	Resource  string
+	Provider  string
+	Job       string
+	Status    string
 	Limit     int
 	Cursor    string
 }
@@ -73,9 +81,12 @@ type QueryAudit struct {
 	Since       string
 	Level       string
 	Component   string
+	Job         string
+	Status      string
 	Pool        string
 	Agent       string
 	Resource    string
+	Provider    string
 	Limit       int
 	ResultCount int
 }
@@ -114,6 +125,14 @@ type FileStore struct {
 	maxBytes int64
 	maxAge   time.Duration
 	now      func() time.Time
+	cache    []Event
+	cacheKey fileCacheKey
+	cacheOK  bool
+}
+
+type fileCacheKey struct {
+	size    int64
+	modTime time.Time
 }
 
 func NewFileStore(path string, maxBytes int64, maxAge time.Duration) (*FileStore, error) {
@@ -172,15 +191,41 @@ func (s *FileStore) Query(_ context.Context, query Query) (Page, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	events, err := s.readLocked()
+	events, err := s.orderedEventsLocked()
 	if err != nil {
 		return Page{}, err
 	}
 	// Apply retention at read time as well as append time. This keeps an
 	// existing store fail-closed after a restart, before the next log write has
 	// had a chance to compact stale records on disk.
+	return pageForOrderedEvents(events, query)
+}
+
+func (s *FileStore) orderedEventsLocked() ([]Event, error) {
+	info, err := os.Stat(s.path)
+	if errors.Is(err, os.ErrNotExist) {
+		s.cache, s.cacheOK = []Event{}, true
+		s.cacheKey = fileCacheKey{}
+		return []Event{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("stat diagnostics store: %w", err)
+	}
+	key := fileCacheKey{size: info.Size(), modTime: info.ModTime()}
+	if s.cacheOK && s.cacheKey == key {
+		s.cache = retainEvents(s.cache, s.currentTime(), s.maxAge, s.maxBytes)
+		return append([]Event(nil), s.cache...), nil
+	}
+	events, err := s.readLocked()
+	if err != nil {
+		return nil, err
+	}
 	events = retainEvents(events, s.currentTime(), s.maxAge, s.maxBytes)
-	return pageForEvents(events, query)
+	sort.Slice(events, func(i, j int) bool { return newer(events[i], events[j]) })
+	s.cache = append([]Event(nil), events...)
+	s.cacheKey = key
+	s.cacheOK = true
+	return append([]Event(nil), events...), nil
 }
 
 func (s *FileStore) currentTime() time.Time {
@@ -255,6 +300,7 @@ func (s *FileStore) compactLocked() error {
 	if err := os.Rename(tmpName, s.path); err != nil {
 		return fmt.Errorf("replace diagnostics store: %w", err)
 	}
+	s.cacheOK = false
 	return nil
 }
 
@@ -333,14 +379,27 @@ func normalizeEvent(event Event, now time.Time) Event {
 	}
 	event.Component = truncate(redactText(strings.TrimSpace(event.Component)), maxFieldBytes)
 	event.Message = truncate(redactText(event.Message), maxMessageBytes)
+	event.Operation = truncate(redactText(strings.TrimSpace(event.Operation)), maxFieldBytes)
+	event.Job = truncate(redactText(strings.TrimSpace(event.Job)), maxFieldBytes)
+	event.Step = truncate(redactText(strings.TrimSpace(event.Step)), maxFieldBytes)
+	event.Status = truncate(redactText(strings.TrimSpace(event.Status)), maxFieldBytes)
+	event.ErrorCode = truncate(redactText(strings.TrimSpace(event.ErrorCode)), maxFieldBytes)
+	event.ErrorSummary = truncate(redactText(strings.TrimSpace(event.ErrorSummary)), maxMessageBytes)
 	event.Pool = truncate(redactText(strings.TrimSpace(event.Pool)), maxFieldBytes)
 	event.Agent = truncate(redactText(strings.TrimSpace(event.Agent)), maxFieldBytes)
 	event.Resource = truncate(redactText(strings.TrimSpace(event.Resource)), maxFieldBytes)
+	event.Provider = truncate(redactText(strings.TrimSpace(event.Provider)), maxFieldBytes)
 	event.Request = truncate(redactText(strings.TrimSpace(event.Request)), maxFieldBytes)
 	return event
 }
 
 func pageForEvents(events []Event, query Query) (Page, error) {
+	events = append([]Event(nil), events...)
+	sort.Slice(events, func(i, j int) bool { return newer(events[i], events[j]) })
+	return pageForOrderedEvents(events, query)
+}
+
+func pageForOrderedEvents(events []Event, query Query) (Page, error) {
 	limit := query.Limit
 	if limit == 0 {
 		limit = DefaultLimit
@@ -356,7 +415,6 @@ func pageForEvents(events []Event, query Query) (Page, error) {
 			return Page{}, err
 		}
 	}
-	sort.Slice(events, func(i, j int) bool { return newer(events[i], events[j]) })
 	filtered := make([]Event, 0, len(events))
 	for _, event := range events {
 		if !query.Since.IsZero() && event.Timestamp.Before(query.Since) {
@@ -375,6 +433,15 @@ func pageForEvents(events []Event, query Query) (Page, error) {
 			continue
 		}
 		if query.Resource != "" && event.Resource != query.Resource {
+			continue
+		}
+		if query.Provider != "" && event.Provider != query.Provider {
+			continue
+		}
+		if query.Job != "" && event.Job != query.Job {
+			continue
+		}
+		if query.Status != "" && event.Status != query.Status {
 			continue
 		}
 		if query.Cursor != "" && !afterCursor(event, cursor) {

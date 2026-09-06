@@ -16,6 +16,7 @@ import (
 	"github.com/Geogboe/boxy/internal/buildcfg"
 	"github.com/Geogboe/boxy/pkg/diagnostics"
 	"github.com/Geogboe/boxy/pkg/humanize"
+	"github.com/Geogboe/boxy/pkg/jobs"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/store"
 )
@@ -62,8 +63,11 @@ type pageData struct {
 	MintedServiceKey      string
 	MintedServiceKeyName  string
 	Diagnostics           []diagnostics.Event
+	DiagnosticsTimeline   []diagnosticsTimelineView
 	DiagnosticsError      string
 	DiagnosticsMessage    string
+	DiagnosticsJob        *jobs.Job
+	DiagnosticsRefresh    bool
 	DiagnosticsQuery      diagnostics.Query
 	DiagnosticsSince      string
 	DiagnosticsExportURL  string
@@ -109,8 +113,15 @@ type poolView struct {
 	Packages            []string
 	MinReady            int
 	MaxTotal            int
+	MaxAge              string
+	ConfigProvenance    string
+	ConfigPending       bool
 	ReadyCount          int
 	TotalCount          int
+	FailedCount         int
+	Status              string
+	ActiveJobID         jobs.ID
+	ActiveJobKind       string
 	EffectivelyDrained  bool
 	ConfigDrain         bool
 	OperatorDrain       bool
@@ -186,6 +197,10 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/service-keys/{id}/revoke", s.handleRevokeServiceKey)
 	mux.HandleFunc("POST /ui/pools/{name}/drain", s.handleDrainPoolUI)
 	mux.HandleFunc("POST /ui/pools/{name}/fill", s.handleFillPoolUI)
+	mux.HandleFunc("POST /ui/pools/{name}/configuration", s.handleUpdatePoolConfigurationUI)
+	mux.HandleFunc("POST /ui/pools/{name}/resources/{id}/retry", s.handleRetryPoolResourceUI)
+	mux.HandleFunc("POST /ui/pools/{name}/resources/{id}/destroy", s.handleDestroyPoolResourceUI)
+	mux.HandleFunc("POST /ui/jobs/{id}/cancel", s.handleCancelJobUI)
 	mux.HandleFunc("POST /ui/resources/purge", s.handlePurgeResourcesUI)
 	mux.HandleFunc("GET /ui/catalog", s.uiHandler(catalogTmpl, "catalog", s.catalogData))
 	mux.HandleFunc("GET /ui/help", s.uiHandler(helpTmpl, "help", func(*http.Request) (pageData, error) { return pageData{}, nil }))
@@ -301,8 +316,21 @@ func (s *Server) diagnosticsHandler(tmpl *template.Template) http.HandlerFunc {
 				d.DiagnosticsAgentURL = "/ui/diagnostics?" + diagnosticsQueryValues(agentQuery).Encode()
 			}
 		}
-		if requestID := strings.TrimSpace(r.URL.Query().Get("log_request")); requestID != "" {
-			d.DiagnosticsMessage = "Requested agent logs (request ID: " + requestID + ")."
+		if jobID := strings.TrimSpace(r.URL.Query().Get("log_job")); jobID != "" {
+			if runner, runnerErr := s.ensureJobRunner(); runnerErr == nil {
+				if job, jobErr := runner.Get(r.Context(), jobs.ID(jobID)); jobErr == nil && job.Kind == "agent.logs" {
+					d.DiagnosticsJob = &job
+					d.DiagnosticsRefresh = !job.Status.IsTerminal()
+					switch job.Status {
+					case jobs.StatusSucceeded:
+						d.DiagnosticsMessage = "Agent log snapshot received. The timeline now includes the returned events."
+					case jobs.StatusFailed, jobs.StatusCancelled, jobs.StatusInterrupted:
+						d.DiagnosticsError = "Agent log request " + string(job.Status) + "."
+					default:
+						d.DiagnosticsMessage = "Agent log request is " + string(job.Status) + ". Waiting for the remote snapshot."
+					}
+				}
+			}
 		}
 		if err == nil {
 			if s.diagnostics == nil {
@@ -314,6 +342,7 @@ func (s *Server) diagnosticsHandler(tmpl *template.Template) http.HandlerFunc {
 					d.DiagnosticsError = "Diagnostics are temporarily unavailable."
 				} else {
 					d.Diagnostics = page.Events
+					d.DiagnosticsTimeline = buildDiagnosticsTimeline(page.Events)
 					if page.NextCursor != "" {
 						nextQuery := query
 						nextQuery.Cursor = page.NextCursor
@@ -538,11 +567,16 @@ func (s *Server) poolsData(r *http.Request) (pageData, error) {
 	if resourceLimitHit {
 		resources = resources[:1000]
 	}
-	views := buildPoolViews(pools, resources)
+	poolJobs, err := s.store.List(r.Context())
+	if err != nil {
+		return pageData{}, err
+	}
+	views := buildPoolViews(pools, resources, poolJobs)
 	data := pageData{
 		Pools:            pools,
 		PoolViews:        views,
 		PoolResult:       poolResultFromQuery(r),
+		PoolError:        r.URL.Query().Get("config_error"),
 		PoolHistory:      r.URL.Query().Get("view") == "history",
 		ResourceLimitHit: resourceLimitHit,
 	}

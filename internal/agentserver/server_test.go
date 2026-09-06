@@ -94,7 +94,7 @@ func TestStoreAgentLogsBindsAuthenticatedIdentityAndRedactsCredentials(t *testin
 	defer cleanup()
 	logs := diagnostics.NewMemoryStore()
 	srv.SetDiagnosticsStore(logs)
-	if err := srv.storeAgentLogs(context.Background(), "agent-authenticated", []diagnostics.Event{{
+	if err := srv.storeAgentLogs(context.Background(), "agent-authenticated", "", []diagnostics.Event{{
 		Level:   "ERROR",
 		Message: "password=secret",
 	}}); err != nil {
@@ -106,6 +106,20 @@ func TestStoreAgentLogsBindsAuthenticatedIdentityAndRedactsCredentials(t *testin
 	}
 	if len(page.Events) != 1 || page.Events[0].Agent != "agent-authenticated" || page.Events[0].Message != "password=[REDACTED]" {
 		t.Fatalf("events = %+v, want authenticated identity and redacted credential", page.Events)
+	}
+}
+
+func TestStoreAgentLogsCompletesTrackedRequest(t *testing.T) {
+	t.Parallel()
+	srv, _, _, cleanup := newTestServer(t)
+	defer cleanup()
+	if err := srv.storeAgentLogs(context.Background(), "agent-a", "request-a", nil); err != nil {
+		t.Fatalf("storeAgentLogs: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := srv.WaitForAgentLogs(ctx, "request-a"); err != nil {
+		t.Fatalf("WaitForAgentLogs: %v", err)
 	}
 }
 

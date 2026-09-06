@@ -1,5 +1,7 @@
 package model
 
+import "time"
+
 // PoolName is the stable, user-facing handle for a pool (the thing typed in CLI/config).
 type PoolName string
 
@@ -21,8 +23,19 @@ type Pool struct {
 	// Drain records desired drain state for unused pool inventory.
 	Drain PoolDrainState `json:"drain,omitempty" yaml:"drain,omitempty"`
 
+	// Configuration records where editable policy values came from. Static
+	// provider, template, store, and secret definitions remain local-file owned.
+	Configuration PoolConfigurationState `json:"configuration,omitempty" yaml:"configuration,omitempty"`
+
 	// Inventory is the current contents of the pool.
 	Inventory ResourceCollection `json:"inventory" yaml:"inventory"`
+}
+
+type PoolConfigurationState struct {
+	Provenance    string    `json:"provenance,omitempty" yaml:"provenance,omitempty"`
+	LocalRevision string    `json:"local_revision,omitempty" yaml:"local_revision,omitempty"`
+	Pending       bool      `json:"pending,omitempty" yaml:"pending,omitempty"`
+	UpdatedAt     time.Time `json:"updated_at,omitempty" yaml:"updated_at,omitempty"`
 }
 
 // PoolPolicies captures pool-level behavior without prescribing a specific
@@ -36,6 +49,26 @@ type PoolPolicies struct {
 	// This does NOT mean resources are returned to the pool after sandbox use.
 	// Resources remain single-use; recycle applies only to unused inventory.
 	Recycle RecyclePolicy `json:"recycle,omitempty" yaml:"recycle,omitempty"`
+
+	// Debug controls operator-opt-in troubleshooting behavior that trades
+	// safety/cost for investigability. Debug settings are local-config-owned
+	// only, like provider/template/store/secret definitions -- they are not
+	// exposed through the pool Save-and-Apply web/API surface.
+	Debug PoolDebugPolicy `json:"debug,omitempty" yaml:"debug,omitempty"`
+}
+
+// PoolDebugPolicy controls operator-opt-in troubleshooting behavior for a pool.
+type PoolDebugPolicy struct {
+	// RetainFailedResources keeps a resource's VM and rotated guest
+	// credential running after admission (personalization or package
+	// application) fails, instead of the default power-down-and-remove
+	// teardown. A manual Retry against a retained resource re-admits it in
+	// place -- reusing the same VM and credential -- rather than destroying
+	// and recreating it from the template. Intended only for
+	// troubleshooting: a retained failed resource still consumes pool
+	// max_total capacity and can make the pool blocked exactly like any
+	// other failed resource.
+	RetainFailedResources bool `json:"retain_failed_resources,omitempty" yaml:"retain_failed_resources,omitempty"`
 }
 
 // PoolDrainState records whether a pool should destroy and avoid creating

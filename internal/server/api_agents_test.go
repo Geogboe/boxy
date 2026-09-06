@@ -23,6 +23,7 @@ type fakeAgentAdmin struct {
 	revoked              []string
 	forceOrphanResources []bool
 	logPulls             []string
+	logPulled            chan string
 }
 
 func (f *fakeAgentAdmin) ListAgents() []pool.AgentSummary { return f.agents }
@@ -35,14 +36,19 @@ func (f *fakeAgentAdmin) Revoke(_ context.Context, agentID, _ string, forceOrpha
 
 func (f *fakeAgentAdmin) RequestAgentLogs(_ context.Context, agentID string, _ time.Time, _ int) (string, error) {
 	f.logPulls = append(f.logPulls, agentID)
+	if f.logPulled != nil {
+		f.logPulled <- agentID
+	}
 	return "pull-1", nil
 }
+
+func (f *fakeAgentAdmin) WaitForAgentLogs(context.Context, string) error { return nil }
 
 func TestRequestAgentLogsEndpoint(t *testing.T) {
 	t.Parallel()
 
 	st := store.NewMemoryStore()
-	admin := &fakeAgentAdmin{}
+	admin := &fakeAgentAdmin{logPulled: make(chan string, 1)}
 	mux := server.NewTestMuxWithAgentAdmin(st, sandbox.New(st, nil), admin)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/agents/agent-a/logs", strings.NewReader(`{"since":"2026-09-03T18:30:00Z","limit":25}`))
@@ -50,11 +56,16 @@ func TestRequestAgentLogsEndpoint(t *testing.T) {
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want %d (body: %s)", w.Code, http.StatusAccepted, w.Body.String())
 	}
-	if len(admin.logPulls) != 1 || admin.logPulls[0] != "agent-a" {
-		t.Fatalf("log pulls = %v, want [agent-a]", admin.logPulls)
+	select {
+	case agentID := <-admin.logPulled:
+		if agentID != "agent-a" {
+			t.Fatalf("pulled agent = %q, want agent-a", agentID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("agent log job did not request logs")
 	}
-	if !strings.Contains(w.Body.String(), `"request_id":"pull-1"`) {
-		t.Fatalf("response = %s, missing request id", w.Body.String())
+	if !strings.Contains(w.Body.String(), `"kind":"agent.logs"`) || !strings.Contains(w.Body.String(), `"id":`) {
+		t.Fatalf("response = %s, missing tracked job", w.Body.String())
 	}
 }
 

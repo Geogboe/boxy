@@ -38,15 +38,19 @@ func TestHandlerStoresOnlySafeRedactedFields(t *testing.T) {
 	store := &captureStore{}
 	logger := slog.New(NewHandler(slog.NewTextHandler(io.Discard, nil), store))
 	logger.Error("request failed: Authorization: Bearer ${BOXY_TEST_API_KEY} https://boxy.example.test/?token=${BOXY_TEST_TOKEN}",
-		"component", "reconcile", "pool", "pool-a", "agent", "agent-a", "resource", "resource-a",
+		"component", "reconcile", "pool", "pool-a", "agent", "agent-a", "resource", "resource-a", "provider", "hyperv",
+		"operation", "pool.fill", "job_id", "job-1", "step", "packages.apply", "status", "failed", "attempt", 3,
 		"authorization", "${BOXY_TEST_API_KEY}", "command", "do-not-store")
 
 	if len(store.events) != 1 {
 		t.Fatalf("events = %+v, want one event", store.events)
 	}
 	event := store.events[0]
-	if event.Level != "ERROR" || event.Component != "reconcile" || event.Pool != "pool-a" || event.Agent != "agent-a" || event.Resource != "resource-a" {
+	if event.Level != "ERROR" || event.Component != "reconcile" || event.Pool != "pool-a" || event.Agent != "agent-a" || event.Resource != "resource-a" || event.Provider != "hyperv" {
 		t.Fatalf("event = %+v, missing safe fields", event)
+	}
+	if event.Operation != "pool.fill" || event.Job != "job-1" || event.Step != "packages.apply" || event.Status != "failed" || event.Attempt != 3 {
+		t.Fatalf("event = %+v, missing narrative fields", event)
 	}
 	if strings.Contains(event.Message, "${BOXY_TEST_API_KEY}") || strings.Contains(event.Message, "${BOXY_TEST_TOKEN}") {
 		t.Fatalf("message leaked secret: %q", event.Message)
