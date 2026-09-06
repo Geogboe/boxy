@@ -165,3 +165,79 @@ always produces a real story). Revisit as its own follow-up if wanted.
 - Ship-it workflow (merge/build/sign) — NOT STARTED; do only after the above
   is green and the user has explicitly signed off, per this repo's
   release-cadence conventions (AGENTS.md "Release cadence" section).
+
+## Session resumed 2026-09-06: closing out the checklist
+
+The user asked to resume and complete all outstanding work, then explicitly
+signed off on shipping: "double check and fix any issues, make sure all
+issues related to changes are closed and other tangential ones have context
+or consolidated, then ship it and sign it and make sure a release is minted
+with artifacts."
+
+**Bugs found and fixed by two prior manual-validation commits, discovered
+picking this back up**: `d931188` (serve refused to start without an
+explicit hyperv provider config) and `971fb06` (diagnostics table showed a
+routine step message as an error). Confirmed both fixes hold: full
+`e2e-serve.sh` (24/24 pass, both `--ui` and `--ui=false` modes) and the full
+Firefox Playwright suite (10/10, against the `tests/e2e/.tmp` empty-config
+fixture with a freshly bootstrapped admin password) pass clean.
+
+**UI validation**: completed via the above two automated suites rather than
+new manual screenshots — the e2e-serve.sh curl assertions already exercise
+every `/ui/*` route with real auth, and the two fixes above each shipped
+with a dedicated regression test.
+
+**Full validation gate (`task ci:validate`)**: found and fixed two more real
+issues along the way, neither previously known:
+
+1. **Data race** in `internal/server/execution_manager.go`'s
+   `executionManager.submit`: the `RunFunc` closure mutated the outer
+   `execution` variable (`Status`, `StartedAt`) from its own goroutine while
+   `submit()` returned that same variable to its HTTP-handler caller —
+   caught by `-race` in `api_exec_test.go` (four different tests). Fixed by
+   mutating a local copy; `finish()` already reloads fresh from the store by
+   ID so nothing downstream needed the racy copy. Commit `fbf1904`.
+2. **Five golangci-lint findings** in this batch's own prior commits (two
+   `gocritic` if-chains, one dead function left over from the jobs
+   refactor, one unchecked `int`→`int32` narrowing, one `gosec` false
+   positive on a deliberately independent job context) — see `6a47b99`.
+
+**A regression attempt, reverted**: tried closing #329's remaining gap (see
+below) by also calling `slog.SetDefault` in `internal/cli/agent_serve.go`,
+mirroring `boxy serve`'s own wiring, so a provider driver's package-level
+`slog.Log` calls (e.g. hyperv's `logHyperVEvent`) would reach a remote
+agent's own `diagnostics.jsonl`. This reproducibly broke
+`TestAgentServe_TokenRegistrationThenCertReconnect` (agent registration hung
+until timeout, with all normal startup logging vanishing too) — root cause
+not identified before the fix was reverted; something about installing that
+wrapped handler as the process default interferes with the agent's own
+mTLS registration path in a way that isn't just "logs look different".
+**Reverted in full** (`internal/cli/agent_serve.go` and its test are back to
+the committed state) rather than shipped half-understood. This is a real,
+still-open gap: worth a dedicated follow-up investigation, not a quick
+fix-and-forget.
+
+### Issue triage against this branch's actual commits
+
+Cross-checked the open-issue list against what this branch's commits (not
+yet merged to `main`) actually fixed, per AGENTS.md's standing "issues drift
+from reality" caution:
+
+- **#336** (BLOCKING: hyperv `PersonalizeGuest` lacks per-resource locking) —
+  fully fixed: the per-VM-ID lock (`60f7840`) plus per-sub-step failure
+  classification (`4ad2796`'s `personalizeFailureStep`) together cover both
+  halves of the issue's own "Expected behavior" section. Close once merged.
+- **#329** (hyperv personalization failures never logged agent-side) —
+  **partially** fixed: `4ad2796` gives the daemon side (`boxy serve`)
+  classified structured events, and the classification logic itself is
+  provider-side and correct. But the issue's actual reported scenario is a
+  **remote** Hyper-V agent's own `service.log`/`diagnostics.jsonl`, and (see
+  above) making that work safely is still unsolved — the naive fix breaks
+  agent registration. **Left open**, with a comment explaining the partial
+  state and pointing at this note plus the reverted attempt, rather than
+  closed.
+- **#328, #337, #333, #334, #332, #335, #327** and the `research`/`blocked`
+  backlog — genuinely untouched by this branch, each already has enough of
+  its own context (reproduction, mechanism, suggested fix) to stand alone;
+  no consolidation needed (#328 vs #337 already explicitly distinguish
+  themselves in their own text).

@@ -1221,7 +1221,7 @@ func TestDriver_Allocate_Linux(t *testing.T) {
 	})
 
 	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
-		return providersdk.GuestBootstrapCredential{Username: "ubuntu", Password: "bootstrap"}, nil
+		return providersdk.GuestBootstrapCredential{Username: "ubuntu", Password: "${BOXY_TEST_PASSWORD}"}, nil
 	}
 	d.guestExecFactory = func(_, _, _, _, _ string) vmsdk.GuestExec {
 		return &fakeGuestExec{exitCode: 0}
@@ -1258,7 +1258,7 @@ func TestDriver_PersonalizeGuest_Linux(t *testing.T) {
 	})
 
 	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
-		return providersdk.GuestBootstrapCredential{Username: "ubuntu", Password: "bootstrap"}, nil
+		return providersdk.GuestBootstrapCredential{Username: "ubuntu", Password: "${BOXY_TEST_PASSWORD}"}, nil
 	}
 	d.guestExecFactory = func(_, _, _, _, _ string) vmsdk.GuestExec {
 		return &fakeGuestExec{exitCode: 0}
@@ -1287,7 +1287,7 @@ func TestDriver_PersonalizeGuest_RotatesAndReturnsCredential(t *testing.T) {
 			}
 		},
 		resolveBootstrap: func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
-			return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "bootstrap"}, nil
+			return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "${BOXY_TEST_PASSWORD}"}, nil
 		},
 		guestExecFactory: func(vmGUID, guestOS, guestUser, guestPassword, sshHost string) vmsdk.GuestExec {
 			exec := &recordingGuestExec{password: guestPassword}
@@ -1303,7 +1303,7 @@ func TestDriver_PersonalizeGuest_RotatesAndReturnsCredential(t *testing.T) {
 	if len(guestExecs) != 2 {
 		t.Fatalf("guest exec sessions = %d, want bootstrap and verification sessions", len(guestExecs))
 	}
-	if guestExecs[0].password != "bootstrap" {
+	if guestExecs[0].password != "${BOXY_TEST_PASSWORD}" {
 		t.Fatalf("bootstrap password = %q, want bootstrap", guestExecs[0].password)
 	}
 	if guestExecs[1].password == "" || guestExecs[1].password == guestExecs[0].password {
@@ -1362,7 +1362,7 @@ func TestDriver_PersonalizeGuest_SerializesConcurrentInvocations(t *testing.T) {
 			mu.Lock()
 			active--
 			mu.Unlock()
-			return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "bootstrap"}, nil
+			return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "${BOXY_TEST_PASSWORD}"}, nil
 		},
 		guestExecFactory: func(vmGUID, guestOS, guestUser, guestPassword, sshHost string) vmsdk.GuestExec {
 			return &recordingGuestExec{password: guestPassword}
@@ -1402,7 +1402,7 @@ func TestDriver_PersonalizeGuest_EmitsSucceededDiagnosticsEvent(t *testing.T) {
 			}
 		},
 		resolveBootstrap: func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
-			return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "bootstrap"}, nil
+			return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "${BOXY_TEST_PASSWORD}"}, nil
 		},
 		guestExecFactory: func(vmGUID, guestOS, guestUser, guestPassword, sshHost string) vmsdk.GuestExec {
 			return &recordingGuestExec{password: guestPassword}
@@ -1434,7 +1434,7 @@ func TestDriver_PersonalizeGuest_EmitsClassifiedFailureDiagnosticsEvent(t *testi
 			}
 		},
 		resolveBootstrap: func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
-			return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "bootstrap"}, nil
+			return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "${BOXY_TEST_PASSWORD}"}, nil
 		},
 		guestExecFactory: func(vmGUID, guestOS, guestUser, guestPassword, sshHost string) vmsdk.GuestExec {
 			return &recordingGuestExec{password: guestPassword, execErr: errors.New("simulated rotation transport failure")}
@@ -1485,7 +1485,7 @@ func TestDriver_Allocate_Windows(t *testing.T) {
 	})
 
 	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
-		return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "bootstrap"}, nil
+		return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "${BOXY_TEST_PASSWORD}"}, nil
 	}
 	d.guestExecFactory = func(_, _, _, _, _ string) vmsdk.GuestExec {
 		return &fakeGuestExec{exitCode: 0}

@@ -356,3 +356,26 @@ b1a18db76a214250a69bea864a099f3aba50a239:examples/oidc-keycloak/compose.yaml:gen
 b1a18db76a214250a69bea864a099f3aba50a239:examples/oidc-keycloak/realm-export.json:boxy-pii-username:79
 b1a18db76a214250a69bea864a099f3aba50a239:examples/oidc-keycloak/realm-export.json:boxy-pii-username:98
 b1a18db76a214250a69bea864a099f3aba50a239:examples/oidc-keycloak/realm-export.json:boxy-pii-username:117
+
+# Reviewed on 2026-09-06. pkg/providersdk/providers/hyperv/driver_test.go
+# used the literal "bootstrap" as a GuestBootstrapCredential.Password test
+# fixture in a few spots this branch's own not-yet-merged commits added,
+# inconsistent with the file's own established
+# "${BOXY_TEST_PASSWORD}" placeholder convention used everywhere else in
+# the same file. Fixed at the source in a later commit on this branch, but
+# the two commits below (still local/unmerged when reviewed) already carry
+# the literal in their patch content, so the fingerprint stays here rather
+# than rewriting that branch history.
+60f784061193e9fe799c66b488f9e8a8ccbcd811:pkg/providersdk/providers/hyperv/driver_test.go:generic-password:1349
+4ad2796844195f5878ef18a9a74e2533f69d619e:pkg/providersdk/providers/hyperv/driver_test.go:generic-password:1405
+4ad2796844195f5878ef18a9a74e2533f69d619e:pkg/providersdk/providers/hyperv/driver_test.go:generic-password:1437
+
+# Same review, same file: a fake Get-VMNetworkAdapter private-range IP
+# fixture (not spelled out here to avoid re-triggering this same scanner
+# rule on this comment), matching the already-ignored precedent at line
+# ~40 above (505c5398...:pkg/providersdk/providers/hyperv/driver_test.go:
+# boxy-pii-private-ipv4:1153) from this file's existing test-fixture
+# convention.
+60f784061193e9fe799c66b488f9e8a8ccbcd811:pkg/providersdk/providers/hyperv/driver_test.go:boxy-pii-private-ipv4:1331
+4ad2796844195f5878ef18a9a74e2533f69d619e:pkg/providersdk/providers/hyperv/driver_test.go:boxy-pii-private-ipv4:1397
+4ad2796844195f5878ef18a9a74e2533f69d619e:pkg/providersdk/providers/hyperv/driver_test.go:boxy-pii-private-ipv4:1429
