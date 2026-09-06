@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"fmt"
 	"sync"
 )
 
@@ -15,6 +16,9 @@ func NewMemoryStore() *MemoryStore {
 }
 
 func (s *MemoryStore) Put(_ context.Context, job Job) error {
+	if job.ID == "" {
+		return fmt.Errorf("%w: job id is required", ErrInvalidRequest)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.jobs == nil {

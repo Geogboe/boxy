@@ -315,12 +315,17 @@ tbody tr:hover {
 .badge-draining { background: rgba(251, 146, 60, 0.15); color: var(--orange); }
 .badge-filling { background: rgba(56, 189, 248, 0.15); color: var(--cyan); }
 .badge-blocked { background: rgba(248, 113, 113, 0.15); color: var(--red); }
-.badge-unknown { background: rgba(148, 163, 184, 0.15); color: var(--muted); }
 .badge-unknown { background: rgba(139, 143, 163, 0.15); color: var(--text-muted); }
 /* Sandbox-status-specific badges (SandboxStatus, distinct from ResourceState above). */
 .badge-pending { background: rgba(139, 143, 163, 0.15); color: var(--text-muted); }
 .badge-deleting { background: rgba(251, 146, 60, 0.15); color: var(--orange); }
 .badge-failed { background: rgba(248, 113, 113, 0.15); color: var(--red); }
+/* pkg/jobs.Status badges (pool jobs, agent-log-pull jobs, sandbox exec jobs). */
+.badge-running { background: rgba(56, 189, 248, 0.15); color: var(--cyan); }
+.badge-succeeded { background: rgba(74, 222, 128, 0.15); color: var(--green); }
+.badge-cancelling { background: rgba(251, 191, 36, 0.15); color: var(--yellow); }
+.badge-cancelled { background: rgba(139, 143, 163, 0.15); color: var(--text-muted); }
+.badge-interrupted { background: rgba(251, 146, 60, 0.15); color: var(--orange); }
 
 /* Agent status pairs deliberately use distinct labels in addition to color. */
 .agent-status-cluster {

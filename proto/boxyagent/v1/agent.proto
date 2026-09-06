@@ -117,10 +117,10 @@ message LogEvent {
   string pool = 8;
   string resource = 9;
   string request = 10;
-	string job = 11;
-	string step = 12;
-	string status = 13;
-	int32 attempt = 14;
+  string job = 11;
+  string step = 12;
+  string status = 13;
+  int32 attempt = 14;
 }
 
 // ---- Server -> Agent ----
