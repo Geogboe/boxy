@@ -778,7 +778,7 @@ it's no longer needed. See #100.
   hostname. `.betterleaks-pii.toml`'s `boxy-pii-hostname` rule only matches a
   `host:`/`server:`-style key paired with a dotted FQDN
   (`host: foo.example.com`); a bare, dot-less label used in prose (e.g.
-  `` `wks01` ``) is structurally outside that pattern and will not be
+  `` `hostlabel` ``) is structurally outside that pattern and will not be
   flagged, so this is not a case the scanner catches for you. Use a
   descriptive phrase instead — "the local Hyper-V test host" — the same way
   the rest of this file avoids naming this project's actual dev machines.

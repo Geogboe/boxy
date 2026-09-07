@@ -155,7 +155,8 @@ always produces a real story). Revisit as its own follow-up if wanted.
 - Full validation gate (`task fmt/generate/test/lint/ci:validate`, WSL race
   script, Firefox E2E, PII/secrets) — NOT STARTED yet this session (only
   focused package tests have been run so far, after each slice).
-- Manual Hyper-V validation on the local Hyper-V test host — NOT STARTED yet this session.
+- Manual Hyper-V validation on the local Hyper-V test host — NOT STARTED yet
+  this session.
 - PR #330: confirmed its Windows failure
   (`TestRemoteAgent_Availability_LaterHeartbeatWhollyReplacesSnapshot` in
   `pkg/agentsdk`) is pre-existing/unrelated (also failing on recent `main`
