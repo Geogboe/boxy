@@ -111,6 +111,7 @@ password reuse, package retries, memory budgets, template mutation,
 configuration precedence, diagnostics redaction, agent-log completion, and
 cache invalidation. Browser validation uses Firefox.
 
-The Hyper-V smoke test uses `wks01`, one VM maximum, 2 GB RAM, and the existing
-Server Core 2025 template. The throwaway administrator credential is supplied
+The Hyper-V smoke test uses the local Hyper-V test host, one VM maximum,
+2 GB RAM, and the existing Server Core 2025 template. The throwaway
+administrator credential is supplied
 only at runtime and must never enter source, command output, or diagnostics.

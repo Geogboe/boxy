@@ -773,6 +773,17 @@ it's no longer needed. See #100.
   `foo`/`bar`; those can be valid credentials and should remain visible to
   Betterleaks. Historical secret or PII fixture findings may be recorded only
   as narrow fingerprint-only `.betterleaksignore` entries after review.
+- **Don't name your own real local infrastructure in checked-in docs**,
+  including working/progress notes — e.g. a real Hyper-V test workstation's
+  hostname. `.betterleaks-pii.toml`'s `boxy-pii-hostname` rule only matches a
+  `host:`/`server:`-style key paired with a dotted FQDN
+  (`host: foo.example.com`); a bare, dot-less label used in prose (e.g.
+  `` `hostlabel` ``) is structurally outside that pattern and will not be
+  flagged, so this is not a case the scanner catches for you. Use a
+  descriptive phrase instead — "the local Hyper-V test host" — the same way
+  the rest of this file avoids naming this project's actual dev machines.
+  Found and fixed 2026-09-06 (docs/superpowers/specs/2026-09-04-*.md had
+  named the author's real test workstation).
 
 ### GoReleaser Signing Notes
 
