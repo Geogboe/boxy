@@ -161,15 +161,21 @@ boxy
 │         This password will not be shown again.
 │
 │   ├── pool (or pools)                           Run administrator pool maintenance
-│   │   ├── list                                  List configured pools and ready inventory
+│   │   ├── list                                  List pools, ready/quarantined counts, max_total
 │   │   │     $ boxy admin pool list
-│   │   │       web\t2 ready
-│   │   ├── drain|down <pool>                    Drain unused ready inventory
+│   │   │       web\t2 ready\t0 quarantined\tmax_total=4
+│   │   │       stale-vm\t0 ready\t4 quarantined\tmax_total=4\tBLOCKED (quarantined resources consume max_total)
+│   │   ├── drain|down <pool>                    Drain unused ready inventory (waits for the async job)
 │   │   │     $ boxy admin pool drain win-vm       (also: admin pools down)
 │   │   │       drained pool win-vm
-│   │   └── fill|up <pool>                       Reconcile to configured min_ready
+│   │   └── fill|up <pool>                       Reconcile to configured min_ready (waits for the async job)
 │   │         $ boxy admin pool fill win-vm        (also: admin pools up)
 │   │           filled pool win-vm
+│   │         $ boxy admin pool fill stale-vm      (exit 1 when the job made no progress)
+│   │           Error: fill pool "stale-vm": blocked: quarantined resource(s) consume the
+│   │           pool's entire max_total allowance; no capacity was freed. Inspect with
+│   │           `boxy admin pool list`, fix the underlying failure (e.g. a stale guest
+│   │           bootstrap credential), then retry.
 │   │
 │   └── resource                                 Run administrator resource maintenance
 │       └── purge [--dry-run|--force]             Preview or force stale-resource cleanup
@@ -368,12 +374,15 @@ boxy
 ├── debug
 │   ├── pool                                   Run daemon-backed pool maintenance
 │   │   ├── --server <addr>                      Server address (overrides env/global defaults)
-│   │   ├── drain <pool>                         Drain unused ready inventory
+│   │   ├── drain <pool>                         Drain unused ready inventory (waits for the async job)
 │   │   │   $ boxy debug pool drain win-vm
 │   │   │     drained pool win-vm
-│   │   └── fill <pool>                          Reconcile to configured min_ready
+│   │   └── fill <pool>                          Reconcile to configured min_ready (waits for the async job)
 │   │       $ boxy debug pool fill win-vm
 │   │         filled pool win-vm
+│   │       $ boxy debug pool fill stale-vm        (exit 1: quarantined resources exhausted max_total, see #328)
+│   │         Error: fill pool "stale-vm": blocked: quarantined resource(s) consume the
+│   │         pool's entire max_total allowance; no capacity was freed...
 │   │
 │   ├── resource                               Run resource maintenance
 │   │   ├── --server <addr>                      Server address (overrides env/global defaults)

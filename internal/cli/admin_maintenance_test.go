@@ -15,6 +15,10 @@ func TestAdminPoolList_success(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprint(w, `[{"name":"web","inventory":{"resources":[{},{}]}}]`)
 	})
+	mux.HandleFunc("GET /api/v1/resources", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `[]`)
+	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -26,7 +30,7 @@ func TestAdminPoolList_success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !strings.Contains(output, "web\t2 ready") {
+	if !strings.Contains(output, "web\t2 ready\t0 quarantined\tmax_total=-") {
 		t.Fatalf("output = %q, want pool inventory", output)
 	}
 }
@@ -36,6 +40,10 @@ func TestAdminPools_pluralAlias(t *testing.T) {
 	mux.HandleFunc("GET /api/v1/pools", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprint(w, `[{"name":"web","inventory":{"resources":[{}]}}]`)
+	})
+	mux.HandleFunc("GET /api/v1/resources", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `[]`)
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -48,8 +56,41 @@ func TestAdminPools_pluralAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !strings.Contains(output, "web\t1 ready") {
+	if !strings.Contains(output, "web\t1 ready\t0 quarantined\tmax_total=-") {
 		t.Fatalf("output = %q, want plural pool alias success", output)
+	}
+}
+
+// TestAdminPoolList_reportsQuarantinedAndBlocked covers #328: a pool whose
+// quarantined (ResourceStateError) resources alone reach max_total must be
+// visibly distinguishable from a converged idle pool -- "0 ready" alone
+// looked identical for both cases before this fix.
+func TestAdminPoolList_reportsQuarantinedAndBlocked(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/pools", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `[{"name":"web","inventory":{"resources":[]},"policies":{"preheat":{"min_ready":2,"max_total":2}}}]`)
+	})
+	mux.HandleFunc("GET /api/v1/resources", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `[{"id":"r1","origin_pool":"web","state":"error"},{"id":"r2","origin_pool":"web","state":"error"}]`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"admin", "pool", "--server", srv.URL, "list"})
+	output, err := captureSandboxStdout(t, func() error {
+		return cmd.ExecuteContext(context.Background())
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(output, "web\t0 ready\t2 quarantined\tmax_total=2") {
+		t.Fatalf("output = %q, want quarantined count and max_total", output)
+	}
+	if !strings.Contains(output, "BLOCKED") {
+		t.Fatalf("output = %q, want a BLOCKED marker when quarantined resources exhaust max_total", output)
 	}
 }
 

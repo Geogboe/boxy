@@ -2678,3 +2678,85 @@ func TestManager_FillReportsBlockedWhenFailuresExhaustMaxTotal(t *testing.T) {
 		t.Fatalf("provider calls: destroyed=%v provisioned=%d, want none", provisioner.destroyed, provisioner.provisionCalls)
 	}
 }
+
+// TestManager_ReconcileReportsBlockedWhenFailuresExhaustMaxTotal is the #328
+// repro shape run through the periodic background path (Reconcile, i.e.
+// requireMinReady=false — what boxy serve's reconcile loop calls every tick,
+// see internal/cli/serve.go's serveReconcilePass) rather than through an
+// explicit Fill call. It exists to pin down that the wedge the issue
+// describes reproduces on this branch (it does: BlockedPoolError's early
+// return in the Evaluator, above the stale-destroy loop, prevents the
+// quarantined resources from ever being cleaned up — see
+// TestManager_Reconcile_PersistentQuarantineDestroyFailureBlocksProvisioning's
+// doc comment for the same tradeoff on the destroy-failure path) before any
+// visibility fix is layered on top of it.
+func TestManager_ReconcileReportsBlockedWhenFailuresExhaustMaxTotal(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	pool := model.Pool{
+		Name: "p1", Policies: model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 2, MaxTotal: 4}},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeVM, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	for _, id := range []model.ResourceID{"failed-1", "failed-2", "failed-3", "failed-4"} {
+		if err := st.PutResource(ctx, model.Resource{ID: id, OriginPool: pool.Name, CurrentPool: pool.Name, State: model.ResourceStateError}); err != nil {
+			t.Fatalf("PutResource(%s): %v", id, err)
+		}
+	}
+	provisioner := &fakeProvisioner{}
+	mgr := New(st, provisioner)
+
+	err := mgr.Reconcile(ctx, pool.Name)
+	var blocked *BlockedPoolError
+	if !errors.As(err, &blocked) {
+		t.Fatalf("Reconcile error = %v, want BlockedPoolError", err)
+	}
+	if blocked.FailedCount != 4 || blocked.MaxTotal != 4 || blocked.ReadyCount != 0 {
+		t.Fatalf("blocked details = %+v", blocked)
+	}
+	if len(provisioner.destroyed) != 0 || provisioner.provisionCalls != 0 {
+		t.Fatalf("provider calls: destroyed=%v provisioned=%d, want none — the ceiling is never cleared by a background tick either", provisioner.destroyed, provisioner.provisionCalls)
+	}
+
+	// The wedge is truly permanent, not just present on the first tick: a
+	// second reconcile must reproduce identically, matching the issue's
+	// "the fourth failure was the last event the pool ever emitted."
+	err = mgr.Reconcile(ctx, pool.Name)
+	if !errors.As(err, &blocked) {
+		t.Fatalf("second Reconcile error = %v, want BlockedPoolError again", err)
+	}
+}
+
+func TestDescribeJobError(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		err      error
+		wantCode string
+	}{
+		{"nil", nil, ""},
+		{"generic", errors.New("boom"), ""},
+		{"blocked", &BlockedPoolError{PoolName: "p1", MaxTotal: 4, ReadyCount: 0, FailedCount: 4}, "quarantine_exhausted"},
+		{"config drained", &ConfigDeclaredDrainError{PoolName: "p1"}, "pool_config_drained"},
+		{"max total", &MaxTotalReachedError{PoolName: "p1", MaxTotal: 4, CurrentTotal: 4, ReadyCount: 0, RequestedReady: 1}, "pool_max_total_reached"},
+		{"drained", &DrainedPoolError{PoolName: "p1", RequestedReady: 1}, "pool_drained"},
+		{"wrapped blocked", fmt.Errorf("reconcile: %w", &BlockedPoolError{PoolName: "p1", MaxTotal: 4, FailedCount: 4}), "quarantine_exhausted"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			code, summary := DescribeJobError(tc.err)
+			if code != tc.wantCode {
+				t.Fatalf("code = %q, want %q", code, tc.wantCode)
+			}
+			if code != "" && summary == "" {
+				t.Fatalf("summary is empty for a matched error code %q", code)
+			}
+			if code == "" && summary != "" {
+				t.Fatalf("summary = %q, want empty alongside empty code", summary)
+			}
+		})
+	}
+}

@@ -314,13 +314,8 @@ func (s *Server) startPoolMaintenanceJob(ctx context.Context, kind string, poolN
 }
 
 func poolJobErrorCode(err error) string {
-	var blocked *pool.BlockedPoolError
-	if errors.As(err, &blocked) {
-		return "quarantine_exhausted"
-	}
-	var drained *pool.ConfigDeclaredDrainError
-	if errors.As(err, &drained) {
-		return "pool_config_drained"
+	if code, _ := pool.DescribeJobError(err); code != "" {
+		return code
 	}
 	return "pool_operation_failed"
 }
