@@ -2,15 +2,19 @@
 
 {{define "content"}}
 <h1 class="page-title">Resources</h1>
+<div class="filter-pills" aria-label="Resource view">
+  <a class="filter-pill {{if not .ResourceHistory}}active{{end}}" href="/ui/resources">Active</a>
+  <a class="filter-pill {{if .ResourceHistory}}active{{end}}" href="/ui/resources?view=history">History</a>
+</div>
 <div class="table-card">
   <div class="table-card-header">
-    <div>All Resources</div>
-    <button type="button" class="refresh-btn" hx-get="/ui/fragments/resources-table" hx-target="#resources-fragment" hx-swap="innerHTML" hx-sync="#resources-fragment:replace" aria-label="Refresh resources now" title="Refresh now">
+    <div>{{if .ResourceHistory}}Historical resources{{else}}Active resources{{end}}</div>
+    <button type="button" class="refresh-btn" hx-get="/ui/fragments/resources-table{{if .ResourceHistory}}?view=history{{end}}" hx-target="#resources-fragment" hx-swap="innerHTML" hx-sync="#resources-fragment:replace" aria-label="Refresh resources now" title="Refresh now">
       <span class="refresh-icon" aria-hidden="true">⟳</span> Refresh
     </button>
   </div>
   <div id="resources-fragment"
-       hx-get="/ui/fragments/resources-table"
+       hx-get="/ui/fragments/resources-table{{if .ResourceHistory}}?view=history{{end}}"
        hx-trigger="every 5s"
        hx-swap="innerHTML">
     {{template "resources_table_fragment" .}}
@@ -50,6 +54,6 @@
   </tbody>
 </table>
 {{else}}
-<div class="empty">No resources</div>
+<div class="empty">{{if .ResourceHistory}}No historical resources{{else}}No resources{{end}}</div>
 {{end}}
 {{end}}

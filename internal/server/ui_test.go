@@ -104,6 +104,13 @@ func TestUI_poolsHistoryFilterSeparatesTerminalResources(t *testing.T) {
 	if !strings.Contains(body, "history-id") || strings.Contains(body, "active-id") {
 		t.Fatalf("history filter body = %q", body)
 	}
+	// Same latent-poll-reversion guard as resources: the pools table's poll
+	// and refresh button hit /ui/fragments/pools-table directly, so the
+	// rendered hx-get URL must itself carry "?view=history" or the next 5s
+	// poll silently reverts the page back to the active-only bucket.
+	if !strings.Contains(body, `hx-get="/ui/fragments/pools-table?view=history"`) {
+		t.Fatalf("pools history view did not wire its hx-get to carry view=history; body = %q", body)
+	}
 }
 
 func TestUI_help_rendersPackageGuidanceAndNavbarLink(t *testing.T) {
@@ -353,6 +360,155 @@ func TestUI_resources_listsAcrossPoolsAndSandboxes(t *testing.T) {
 	}
 	if !strings.Contains(body, "<td><span class=\"timestamp\">—</span></td>") {
 		t.Fatalf("resources page did not render an em dash for a zero CreatedAt; body = %q", body)
+	}
+}
+
+// TestUI_resourcesHistoryFilterSeparatesTerminalResources closes #353: the
+// all-resources page previously listed every resource regardless of state,
+// so recycling policies that constantly destroy and replace resources
+// flooded the default view with terminal-state rows. This asserts the page
+// follows the same "?view=history" convention the pools page already
+// established: the default view shows only live resources, and an explicit
+// history view shows only terminal (destroyed/released) ones -- never both
+// at once.
+func TestUI_resourcesHistoryFilterSeparatesTerminalResources(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	for _, resource := range []model.Resource{
+		{ID: "active-id", OriginPool: "pool-a", State: model.ResourceStateReady},
+		{ID: "history-id", OriginPool: "pool-a", State: model.ResourceStateDestroyed},
+	} {
+		if err := st.PutResource(ctx, resource); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/resources", nil)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "active-id") || strings.Contains(body, "history-id") {
+		t.Fatalf("default resources view body = %q", body)
+	}
+
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/resources?view=history", nil)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	body = w.Body.String()
+	if !strings.Contains(body, "history-id") || strings.Contains(body, "active-id") {
+		t.Fatalf("history resources view body = %q", body)
+	}
+	// The poll and refresh button both hit /ui/fragments/resources-table
+	// directly with no page context of their own, so the rendered hx-get
+	// URL itself must carry "?view=history" -- otherwise the next 5s poll
+	// silently reverts this page back to the active-only bucket.
+	if !strings.Contains(body, `hx-get="/ui/fragments/resources-table?view=history"`) {
+		t.Fatalf("history resources view did not wire its hx-get to carry view=history; body = %q", body)
+	}
+}
+
+// TestUI_resourcesFragmentRespectsHistoryQuery guards against the 5s HTMX
+// poll silently reverting a "?view=history" page back to the active-only
+// bucket: the poll and the manual refresh button both hit
+// /ui/fragments/resources-table directly, so that route must honor the same
+// query parameter the full-page route does, not just default to "active".
+func TestUI_resourcesFragmentRespectsHistoryQuery(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	for _, resource := range []model.Resource{
+		{ID: "active-id", OriginPool: "pool-a", State: model.ResourceStateReady},
+		{ID: "history-id", OriginPool: "pool-a", State: model.ResourceStateDestroyed},
+	} {
+		if err := st.PutResource(ctx, resource); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/fragments/resources-table?view=history", nil)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "history-id") || strings.Contains(body, "active-id") {
+		t.Fatalf("resources fragment history query body = %q", body)
+	}
+}
+
+// TestUI_poolsFragmentRespectsHistoryQuery is the same guard as
+// TestUI_resourcesFragmentRespectsHistoryQuery, for the pools page's
+// pre-existing history toggle: the pools table's 5s poll and refresh button
+// also hit /ui/fragments/pools-table directly and must honor "?view=history"
+// too, or a viewer on the history view loses it to the next poll.
+func TestUI_poolsFragmentRespectsHistoryQuery(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	if err := st.PutPool(ctx, model.Pool{Name: "pool-a"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, resource := range []model.Resource{
+		{ID: "active-id", OriginPool: "pool-a", State: model.ResourceStateReady},
+		{ID: "history-id", OriginPool: "pool-a", State: model.ResourceStateDestroyed},
+	} {
+		if err := st.PutResource(ctx, resource); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/fragments/pools-table?view=history", nil)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "history-id") || strings.Contains(body, "active-id") {
+		t.Fatalf("pools fragment history query body = %q", body)
+	}
+}
+
+// TestUI_homeResourceCountExcludesHistoricalResources closes the "Counts"
+// part of #353: the overview page's "Resources" stat previously summed
+// every resource record regardless of state, so a recycling-heavy pool's
+// count grew unboundedly with terminal-state history instead of reflecting
+// what is actually live right now.
+func TestUI_homeResourceCountExcludesHistoricalResources(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	for _, resource := range []model.Resource{
+		{ID: "active-1", OriginPool: "pool-a", State: model.ResourceStateReady},
+		{ID: "active-2", OriginPool: "pool-a", State: model.ResourceStateAllocated},
+		{ID: "history-1", OriginPool: "pool-a", State: model.ResourceStateDestroyed},
+		{ID: "history-2", OriginPool: "pool-a", State: model.ResourceStateDestroyed},
+		{ID: "history-3", OriginPool: "pool-a", State: model.ResourceStateReleased},
+	} {
+		if err := st.PutResource(ctx, resource); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/", nil)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `<div class="stat-value">2</div>`) {
+		t.Fatalf("home resource count did not show 2 live resources; body = %q", body)
+	}
+	if strings.Contains(body, `<div class="stat-value">5</div>`) {
+		t.Fatalf("home resource count included historical resources; body = %q", body)
 	}
 }
 
