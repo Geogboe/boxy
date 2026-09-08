@@ -88,7 +88,7 @@ func TestNewFileStore_DefaultRetentionIsFourteenDays(t *testing.T) {
 
 func TestFileStorePersistsOrdersAndPaginates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "diagnostics.jsonl")
-	first := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
+	first := time.Now().UTC().Add(-time.Hour)
 	s, err := NewFileStore(path, 10<<20, 7*24*time.Hour)
 	if err != nil {
 		t.Fatalf("NewFileStore: %v", err)
