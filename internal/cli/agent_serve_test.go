@@ -20,6 +20,25 @@ import (
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
+// TestMain installs a concrete slog default before any test in this package
+// runs, mirroring what cobra's PersistentPreRunE (root.go's setupLogging)
+// always does before a command body executes in real usage. Without this,
+// whichever test happens to run first pays (or doesn't pay, depending on
+// unrelated ordering) the cost of slog.Default().Handler() still being the
+// stdlib's internal bridging *defaultHandler — and runAgentServe now calls
+// slog.SetDefault on a handler that wraps whatever it captured, which
+// deadlocks on the very next log call if that capture happened before this
+// file's package-level default was ever set (see TestRunAgentServe_
+// SetsDefaultLoggerSoPackageLevelLogsReachDiagnostics's doc comment, and
+// (*slog.Logger).SetDefault's own doc comment on the hazard). Every test in
+// this file calls runAgentServe directly, bypassing cobra entirely, so this
+// package-wide setup is the only thing that makes that safe regardless of
+// which test (or which -run filter) happens to execute first.
+func TestMain(m *testing.M) {
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	os.Exit(m.Run())
+}
+
 // startAgentTestDaemon stands up the real server side of the agent
 // transport — private CA, mTLS gRPC listener, AgentTransport service —
 // exactly as boxy serve wires it, on an ephemeral port.
@@ -57,7 +76,20 @@ func waitForAgent(t *testing.T, registry *pool.AgentRegistry) pool.AgentSummary 
 	}
 }
 
+// restoreSlogDefaultAfter saves the current slog default and restores it on
+// cleanup. runAgentServe now calls slog.SetDefault as a side effect (see
+// TestMain's doc comment), so every test that calls it directly must restore
+// the default afterward — otherwise it would leak a wrapped handler
+// referencing that test's own (by-then-removed) t.TempDir() diagnostics
+// store into whichever test runs next in this binary.
+func restoreSlogDefaultAfter(t *testing.T) {
+	t.Helper()
+	previous := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(previous) })
+}
+
 func TestAgentServe_TokenRegistrationThenCertReconnect(t *testing.T) {
+	restoreSlogDefaultAfter(t)
 	serverDir := t.TempDir()
 	agentDir := t.TempDir()
 
@@ -161,21 +193,12 @@ func TestAgentServe_TokenRegistrationThenCertReconnect(t *testing.T) {
 // binary, sharing slog's single process-wide default; asserting on it from
 // the agent side would be entangled with whatever the server side logs
 // concurrently.
+//
+// This relies on TestMain having already installed a concrete slog default
+// for the whole package's test binary — see its doc comment for why that's
+// required, not just a nicety, once runAgentServe calls slog.SetDefault.
 func TestRunAgentServe_SetsDefaultLoggerSoPackageLevelLogsReachDiagnostics(t *testing.T) {
-	previous := slog.Default()
-	t.Cleanup(func() { slog.SetDefault(previous) })
-
-	// Mirror root.go's setupLogging, which cobra's PersistentPreRunE always
-	// runs before runAgentServe in real usage: it installs a concrete
-	// handler as the default before any command body executes. Skipping
-	// this step (as a direct unit-test call to runAgentServe does) leaves
-	// slog.Default().Handler() as the stdlib's internal bridging
-	// *defaultHandler, and wrapping *that* in a custom handler before
-	// calling slog.SetDefault deadlocks on the next log call — see
-	// (*Logger).SetDefault's own doc comment on this exact hazard. That
-	// bridging handler is never reachable from real CLI usage, so
-	// replicate the real precondition here instead.
-	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	restoreSlogDefaultAfter(t)
 
 	dataDir := t.TempDir()
 	opts := agentServeOpts{
@@ -202,6 +225,7 @@ func TestRunAgentServe_SetsDefaultLoggerSoPackageLevelLogsReachDiagnostics(t *te
 }
 
 func TestAgentServe_RequiresTokenOrCredentials(t *testing.T) {
+	restoreSlogDefaultAfter(t)
 	opts := agentServeOpts{
 		server:    "127.0.0.1:1", // never dialed
 		providers: []string{"devfactory"},
@@ -213,6 +237,7 @@ func TestAgentServe_RequiresTokenOrCredentials(t *testing.T) {
 }
 
 func TestAgentServe_RequiresCACertForFirstConnection(t *testing.T) {
+	restoreSlogDefaultAfter(t)
 	opts := agentServeOpts{
 		server:    "127.0.0.1:1", // never dialed
 		providers: []string{"devfactory"},
