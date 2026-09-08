@@ -3,6 +3,7 @@ package cli
 import (
 	"log/slog"
 
+	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/pkg/diagnostics"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/pterm/pterm"
@@ -27,12 +28,22 @@ func (u *serveUI) step(label string) (done func(detail string), fail func(msg st
 	return step(label)
 }
 
-// reconcileError reports a pool reconciliation error.
-func (u *serveUI) reconcileError(pool model.PoolName, err error) {
-	code, summary := diagnostics.DescribeError(err)
-	slog.Error("reconcile pool", "pool", pool, "operation", "pool_reconcile", "error_code", code, "error_summary", summary)
+// reconcileError reports a pool reconciliation error. Known pool-specific
+// error types (BlockedPoolError, ConfigDeclaredDrainError, etc. — see
+// pool.DescribeJobError) get their own stable error_code, so a background
+// reconcile tick wedged on quarantined resources exhausting max_total is
+// logged as "quarantine_exhausted" instead of a generic "operation_failed"
+// (#328) and is no longer indistinguishable from a converged, idle pool.
+// Anything else falls back to diagnostics.DescribeError's existing
+// driver/transport-level classification.
+func (u *serveUI) reconcileError(poolName model.PoolName, err error) {
+	code, summary := pool.DescribeJobError(err)
+	if code == "" {
+		code, summary = diagnostics.DescribeError(err)
+	}
+	slog.Error("reconcile pool", "pool", poolName, "operation", "pool_reconcile", "error_code", code, "error_summary", summary)
 	if u.pretty {
-		pterm.Error.Printfln("[pool=%s] %v", pool, err)
+		pterm.Error.Printfln("[pool=%s] %v", poolName, err)
 	}
 }
 
