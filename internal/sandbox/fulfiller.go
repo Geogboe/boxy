@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/Geogboe/boxy/internal/pool"
+	"github.com/Geogboe/boxy/pkg/diagnostics"
 	"github.com/Geogboe/boxy/pkg/fulfillment"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/store"
@@ -21,6 +25,11 @@ type Fulfiller struct {
 	store      store.Store
 	pools      readyEnsurer
 	sandboxMgr *Manager
+	// sandboxTimeout bounds each individual reconcileSandbox call within
+	// Reconcile (#333, Part B): a stuck first sandbox must not block every
+	// other sandbox in the same pass. <= 0 means unbounded, preserving
+	// pre-#333 behavior for tests and any embedder that hasn't opted in.
+	sandboxTimeout time.Duration
 }
 
 type poolAllocation struct {
@@ -35,9 +44,11 @@ type allocationSnapshot struct {
 	resources map[model.ResourceID]model.Resource
 }
 
-// NewFulfiller creates a sandbox request fulfiller.
-func NewFulfiller(st store.Store, pools readyEnsurer, sandboxMgr *Manager) *Fulfiller {
-	return &Fulfiller{store: st, pools: pools, sandboxMgr: sandboxMgr}
+// NewFulfiller creates a sandbox request fulfiller. sandboxTimeout bounds
+// each individual sandbox's reconcile pass within Reconcile (#333); pass 0
+// for unbounded (pre-#333 behavior).
+func NewFulfiller(st store.Store, pools readyEnsurer, sandboxMgr *Manager, sandboxTimeout time.Duration) *Fulfiller {
+	return &Fulfiller{store: st, pools: pools, sandboxMgr: sandboxMgr, sandboxTimeout: sandboxTimeout}
 }
 
 // Reconcile processes all pending or provisioning sandbox requests.
@@ -68,12 +79,48 @@ func (f *Fulfiller) Reconcile(ctx context.Context) error {
 		if sb.Status != model.SandboxStatusPending && sb.Status != model.SandboxStatusProvisioning {
 			continue
 		}
-		if err := f.reconcileSandbox(ctx, sb.ID); err != nil {
+		// The pass's own outer context takes priority: if it's already
+		// cancelled/expired, bail cleanly instead of starting (and
+		// immediately failing) every remaining sandbox with a confusing
+		// per-sandbox timeout error.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		sandboxCtx, cancel := f.withSandboxTimeout(ctx)
+		err := f.reconcileSandbox(sandboxCtx, sb.ID)
+		cancel()
+		if err != nil {
+			// A per-sandbox timeout must not abort the pass for every other
+			// sandbox (#333) — log and move on, unless the outer ctx itself
+			// is what actually expired/was cancelled, in which case every
+			// remaining sandbox would fail identically and the pass should
+			// stop cleanly instead.
+			if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+				code, summary := diagnostics.DescribeError(err)
+				slog.Default().Warn("sandbox fulfillment pass timed out; continuing with next sandbox",
+					"operation", "sandbox_fulfill",
+					"sandbox_id", sb.ID,
+					"timeout", f.sandboxTimeout.String(),
+					"error_code", code,
+					"error_summary", summary,
+				)
+				continue
+			}
 			return err
 		}
 	}
 
 	return nil
+}
+
+// withSandboxTimeout wraps ctx with f.sandboxTimeout if positive, returning a
+// no-op cancel func otherwise so callers can defer/call it unconditionally.
+func (f *Fulfiller) withSandboxTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if f.sandboxTimeout <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, f.sandboxTimeout)
 }
 
 func (f *Fulfiller) reconcileSandbox(ctx context.Context, id model.SandboxID) error {
@@ -174,7 +221,7 @@ func (f *Fulfiller) reconcileSandbox(ctx context.Context, id model.SandboxID) er
 			return nil
 		},
 		Rollback: func(ctx context.Context, snapshot allocationSnapshot, cause error) error {
-			return f.rollbackAllocation(ctx, snapshot, cause.Error())
+			return f.rollbackAllocation(ctx, snapshot, cause)
 		},
 	}
 
@@ -236,7 +283,35 @@ func (f *Fulfiller) captureAllocationSnapshot(
 	return snapshot, nil
 }
 
-func (f *Fulfiller) rollbackAllocation(ctx context.Context, snapshot allocationSnapshot, msg string) error {
+// rollbackAllocation restores the pre-transaction snapshot for every
+// resource/pool involved in this sandbox's fulfillment, with one exception
+// (#333): if cause is a *pool.GuestPersonalizationTimeoutError, the single
+// resource it names is quarantined instead of being restored to Ready —
+// per ADR-0010, a timed-out guest rotation leaves that resource's real
+// credential state unknown, so handing it back to the next caller as
+// ordinary Ready inventory would be unsafe. Every other resource/pool in the
+// snapshot is restored normally; this is a single-resource carve-out, not a
+// change to the rollback's overall all-or-nothing shape.
+func (f *Fulfiller) rollbackAllocation(ctx context.Context, snapshot allocationSnapshot, cause error) error {
+	msg := cause.Error()
+
+	var timeoutErr *pool.GuestPersonalizationTimeoutError
+	quarantineID := model.ResourceID("")
+	if errors.As(cause, &timeoutErr) {
+		quarantineID = timeoutErr.ResourceID
+		// Safety-grade log: every field an operator needs to diagnose a
+		// quarantine-on-timeout without digging further, per #333.
+		slog.Default().Error("allocation-time guest personalization timed out; quarantining resource instead of returning it to ready inventory",
+			"operation", "sandbox_allocation_personalize_timeout",
+			"resource_id", timeoutErr.ResourceID,
+			"pool", timeoutErr.PoolName,
+			"agent_id", timeoutErr.AgentID,
+			"elapsed", timeoutErr.Elapsed.String(),
+			"timeout", timeoutErr.Timeout.String(),
+			"credential_deleted", timeoutErr.CredentialDeleted,
+		)
+	}
+
 	resourceIDs := make([]string, 0, len(snapshot.resources))
 	for id := range snapshot.resources {
 		resourceIDs = append(resourceIDs, string(id))
@@ -244,6 +319,14 @@ func (f *Fulfiller) rollbackAllocation(ctx context.Context, snapshot allocationS
 	sort.Strings(resourceIDs)
 	for _, id := range resourceIDs {
 		res := snapshot.resources[model.ResourceID(id)]
+		if quarantineID != "" && res.ID == quarantineID {
+			res.State = model.ResourceStateError
+			res.UpdatedAt = time.Now().UTC()
+			if res.Properties == nil {
+				res.Properties = make(map[string]any)
+			}
+			res.Properties["lifecycle_error"] = msg
+		}
 		if err := f.store.PutResource(ctx, res); err != nil {
 			return fmt.Errorf("restore resource %q: %w", res.ID, err)
 		}
@@ -256,6 +339,9 @@ func (f *Fulfiller) rollbackAllocation(ctx context.Context, snapshot allocationS
 	sort.Strings(poolNames)
 	for _, name := range poolNames {
 		pl := snapshot.pools[model.PoolName(name)]
+		if quarantineID != "" {
+			pl.Inventory.Resources = excludeInventoryResource(pl.Inventory.Resources, quarantineID)
+		}
 		if err := f.store.PutPool(ctx, pl); err != nil {
 			return fmt.Errorf("restore pool %q: %w", pl.Name, err)
 		}
@@ -370,6 +456,20 @@ func matchPool(req model.ResourceRequest, pools []model.Pool) (model.PoolName, e
 		sort.Strings(names)
 		return "", fmt.Errorf("multiple pools match request type=%q profile=%q: %s", req.Type, req.Profile, strings.Join(names, ", "))
 	}
+}
+
+// excludeInventoryResource returns resources without id — used by
+// rollbackAllocation to keep a quarantined resource out of a restored pool's
+// inventory instead of handing it back out as Ready.
+func excludeInventoryResource(resources []model.Resource, id model.ResourceID) []model.Resource {
+	out := make([]model.Resource, 0, len(resources))
+	for _, res := range resources {
+		if res.ID == id {
+			continue
+		}
+		out = append(out, res)
+	}
+	return out
 }
 
 func readyCount(p model.Pool) int {

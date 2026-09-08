@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Geogboe/boxy/pkg/model"
+	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
@@ -2378,6 +2379,228 @@ func TestManager_Reconcile_SweepsQuarantinedOrphan(t *testing.T) {
 	}
 	if final.State != model.ResourceStateDestroyed {
 		t.Fatalf("final state = %q, want %q", final.State, model.ResourceStateDestroyed)
+	}
+}
+
+// TestManager_Reconcile_Watchdog_DestroysStuckProvisioningResourceAndReplaces
+// exercises #337: a resource stuck in ResourceStateProvisioning past the
+// configured watchdog threshold, with no other reconcile pipeline signal
+// (not Recycling/Destroying, not Error), must be destroyed — via the same
+// destroy-and-mark path used for stale/orphaned resources, which also
+// deletes its guest credential — and its replacement provisioned in the
+// same pass via the pool's ordinary min_ready gap logic.
+func TestManager_Reconcile_Watchdog_DestroysStuckProvisioningResourceAndReplaces(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	stuck := model.Resource{
+		ID:         "res_stuck",
+		OriginPool: "p1",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		Provider:   model.ProviderRef{Name: "prov_1"},
+		State:      model.ResourceStateProvisioning,
+		CreatedAt:  time.Unix(0, 0).UTC(),
+		UpdatedAt:  time.Unix(0, 0).UTC(),
+	}
+	pool := model.Pool{
+		Name:      "p1",
+		Policies:  model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 1, MaxTotal: 5}},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+	if err := st.PutResource(ctx, stuck); err != nil {
+		t.Fatalf("put resource: %v", err)
+	}
+
+	secrets := &admissionSecretStore{values: map[string][]byte{
+		boxysecrets.ResourceCredentialKey(string(stuck.ID)): []byte(`{"data":"c2VjcmV0"}`),
+	}}
+	prov := &fakeProvisioner{}
+	mgr := New(st, prov)
+	mgr.SetGuestSecretStore(secrets)
+	mgr.SetStuckProvisioningThreshold(15 * time.Minute)
+	mgr.SetClock(fixedClock{t: time.Unix(0, 0).Add(20 * time.Minute).UTC()})
+
+	if err := mgr.Reconcile(ctx, "p1"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if len(prov.destroyed) != 1 || prov.destroyed[0] != stuck.ID {
+		t.Fatalf("destroyed = %v, want stuck resource %q swept", prov.destroyed, stuck.ID)
+	}
+	final, err := st.GetResource(ctx, stuck.ID)
+	if err != nil {
+		t.Fatalf("get resource: %v", err)
+	}
+	if final.State != model.ResourceStateDestroyed {
+		t.Fatalf("final state = %q, want %q", final.State, model.ResourceStateDestroyed)
+	}
+	if _, getErr := secrets.Get(ctx, boxysecrets.ResourceCredentialKey(string(stuck.ID))); !errors.Is(getErr, boxysecrets.ErrNotFound) {
+		t.Fatalf("credential store Get after watchdog destroy = %v, want ErrNotFound (credential deleted)", getErr)
+	}
+
+	if prov.provisionCalls != 1 {
+		t.Fatalf("provisionCalls = %d, want 1 (replacement provisioned in the same pass)", prov.provisionCalls)
+	}
+	updated, err := st.GetPool(ctx, "p1")
+	if err != nil {
+		t.Fatalf("get pool: %v", err)
+	}
+	if len(updated.Inventory.Resources) != 1 {
+		t.Fatalf("pool inventory len = %d, want 1 replacement resource", len(updated.Inventory.Resources))
+	}
+}
+
+// TestManager_Reconcile_Watchdog_LeavesRecentlyUpdatedProvisioningResourceUntouched
+// is the anti-race counterpart: a resource still legitimately in flight
+// (UpdatedAt within the threshold) must not be touched by the watchdog.
+func TestManager_Reconcile_Watchdog_LeavesRecentlyUpdatedProvisioningResourceUntouched(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	now := time.Unix(0, 0).Add(20 * time.Minute).UTC()
+	inFlight := model.Resource{
+		ID:         "res_inflight",
+		OriginPool: "p1",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		Provider:   model.ProviderRef{Name: "prov_1"},
+		State:      model.ResourceStateProvisioning,
+		CreatedAt:  time.Unix(0, 0).UTC(),
+		UpdatedAt:  now.Add(-1 * time.Minute), // within the 15m threshold
+	}
+	pool := model.Pool{
+		Name:      "p1",
+		Policies:  model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 1, MaxTotal: 5}},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+	if err := st.PutResource(ctx, inFlight); err != nil {
+		t.Fatalf("put resource: %v", err)
+	}
+
+	prov := &fakeProvisioner{}
+	mgr := New(st, prov)
+	mgr.SetStuckProvisioningThreshold(15 * time.Minute)
+	mgr.SetClock(fixedClock{t: now})
+
+	if err := mgr.Reconcile(ctx, "p1"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if len(prov.destroyed) != 0 {
+		t.Fatalf("destroyed = %v, want none (resource is within threshold)", prov.destroyed)
+	}
+	final, err := st.GetResource(ctx, inFlight.ID)
+	if err != nil {
+		t.Fatalf("get resource: %v", err)
+	}
+	if final.State != model.ResourceStateProvisioning {
+		t.Fatalf("state = %q, want unchanged %q", final.State, model.ResourceStateProvisioning)
+	}
+}
+
+// TestManager_Reconcile_Watchdog_SkipsPoolWithRetainFailedResources confirms
+// the watchdog does not fight the Debug.RetainFailedResources policy: a pool
+// that opts into keeping failed/stuck resources alive for manual
+// investigation must not have the watchdog destroy them out from under it.
+func TestManager_Reconcile_Watchdog_SkipsPoolWithRetainFailedResources(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	stuck := model.Resource{
+		ID:         "res_stuck",
+		OriginPool: "p1",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		Provider:   model.ProviderRef{Name: "prov_1"},
+		State:      model.ResourceStateProvisioning,
+		CreatedAt:  time.Unix(0, 0).UTC(),
+		UpdatedAt:  time.Unix(0, 0).UTC(),
+	}
+	pool := model.Pool{
+		Name: "p1",
+		Policies: model.PoolPolicies{
+			Preheat: model.PreheatPolicy{MinReady: 0, MaxTotal: 5},
+			Debug:   model.PoolDebugPolicy{RetainFailedResources: true},
+		},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+	if err := st.PutResource(ctx, stuck); err != nil {
+		t.Fatalf("put resource: %v", err)
+	}
+
+	prov := &fakeProvisioner{}
+	mgr := New(st, prov)
+	mgr.SetStuckProvisioningThreshold(15 * time.Minute)
+	mgr.SetClock(fixedClock{t: time.Unix(0, 0).Add(24 * time.Hour).UTC()})
+
+	if err := mgr.Reconcile(ctx, "p1"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if len(prov.destroyed) != 0 {
+		t.Fatalf("destroyed = %v, want none (RetainFailedResources exempts this pool from the watchdog)", prov.destroyed)
+	}
+	final, err := st.GetResource(ctx, stuck.ID)
+	if err != nil {
+		t.Fatalf("get resource: %v", err)
+	}
+	if final.State != model.ResourceStateProvisioning {
+		t.Fatalf("state = %q, want unchanged %q", final.State, model.ResourceStateProvisioning)
+	}
+}
+
+// TestManager_Reconcile_Watchdog_DisabledByDefault confirms the watchdog is
+// opt-in: a Manager with no configured threshold must never touch a
+// long-stuck Provisioning resource, matching every pre-#337 embedder/test.
+func TestManager_Reconcile_Watchdog_DisabledByDefault(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	stuck := model.Resource{
+		ID:         "res_stuck",
+		OriginPool: "p1",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		Provider:   model.ProviderRef{Name: "prov_1"},
+		State:      model.ResourceStateProvisioning,
+		CreatedAt:  time.Unix(0, 0).UTC(),
+		UpdatedAt:  time.Unix(0, 0).UTC(),
+	}
+	pool := model.Pool{
+		Name:      "p1",
+		Policies:  model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 0, MaxTotal: 5}},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+	if err := st.PutResource(ctx, stuck); err != nil {
+		t.Fatalf("put resource: %v", err)
+	}
+
+	prov := &fakeProvisioner{}
+	mgr := New(st, prov)
+	mgr.SetClock(fixedClock{t: time.Unix(0, 0).Add(24 * time.Hour).UTC()})
+
+	if err := mgr.Reconcile(ctx, "p1"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if len(prov.destroyed) != 0 {
+		t.Fatalf("destroyed = %v, want none (watchdog disabled by default)", prov.destroyed)
+	}
+	final, err := st.GetResource(ctx, stuck.ID)
+	if err != nil {
+		t.Fatalf("get resource: %v", err)
+	}
+	if final.State != model.ResourceStateProvisioning {
+		t.Fatalf("state = %q, want unchanged %q", final.State, model.ResourceStateProvisioning)
 	}
 }
 
