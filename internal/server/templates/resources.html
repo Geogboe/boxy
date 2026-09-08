@@ -1,0 +1,55 @@
+{{define "title"}}Boxy — Resources{{end}}
+
+{{define "content"}}
+<h1 class="page-title">Resources</h1>
+<div class="table-card">
+  <div class="table-card-header">
+    <div>All Resources</div>
+    <button type="button" class="refresh-btn" hx-get="/ui/fragments/resources-table" hx-target="#resources-fragment" hx-swap="innerHTML" hx-sync="#resources-fragment:replace" aria-label="Refresh resources now" title="Refresh now">
+      <span class="refresh-icon" aria-hidden="true">⟳</span> Refresh
+    </button>
+  </div>
+  <div id="resources-fragment"
+       hx-get="/ui/fragments/resources-table"
+       hx-trigger="every 5s"
+       hx-swap="innerHTML">
+    {{template "resources_table_fragment" .}}
+  </div>
+</div>
+{{end}}
+
+{{define "resources_table_fragment"}}
+{{if .ResourceLimitHit}}<div class="table-card-subtitle bounded-note">Showing the first 1,000 resources. Use filters or the API for larger inventories.</div>{{end}}
+{{if .Resources}}
+<table>
+  <thead>
+    <tr>
+      <th scope="col">ID</th>
+      <th scope="col">Type</th>
+      <th scope="col">Profile</th>
+      <th scope="col">State</th>
+      <th scope="col">Pool</th>
+      <th scope="col">Provider</th>
+      <th scope="col">Sandbox</th>
+      <th scope="col">Created</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Resources}}
+    <tr>
+      <td><code>{{.ID}}</code></td>
+      <td>{{.Type}}</td>
+      <td>{{.Profile}}</td>
+      <td><span class="badge badge-{{.State}}">{{.State}}</span></td>
+      <td>{{if .Pool}}{{.Pool}}{{else}}—{{end}}</td>
+      <td>{{if .Provider}}{{.Provider}}{{else}}—{{end}}</td>
+      <td>{{if .SandboxID}}<a href="/ui/sandboxes">{{.SandboxID}}</a>{{else}}—{{end}}</td>
+      <td><span class="timestamp">{{.CreatedAt}}</span></td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<div class="empty">No resources</div>
+{{end}}
+{{end}}

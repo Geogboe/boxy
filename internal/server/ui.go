@@ -52,7 +52,7 @@ type pageData struct {
 	PoolResult            string
 	PoolError             string
 	Sandboxes             []sandboxView
-	Resources             []model.Resource
+	Resources             []resourceListView
 	Agents                []agentView
 	Profile               profileData
 	Catalog               catalogPageData
@@ -101,6 +101,22 @@ type resourceView struct {
 	State      model.ResourceState
 	OriginPool string
 	Provider   string
+}
+
+// resourceListView is one row of the all-resources page (#335): unlike
+// sandboxView.Resources (scoped to one sandbox) or poolResourceView (scoped
+// to one pool), this spans every resource the daemon tracks regardless of
+// pool or sandbox membership, so an operator can see everything Boxy is
+// managing in one place.
+type resourceListView struct {
+	ID        string
+	Type      model.ResourceType
+	Profile   model.ResourceProfile
+	State     model.ResourceState
+	Pool      model.PoolName
+	Provider  string
+	SandboxID string
+	CreatedAt string
 }
 
 type poolView struct {
@@ -178,6 +194,7 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	homeTmpl := pageTemplate("index.html")
 	poolsTmpl := pageTemplate("pools.html")
 	sandboxesTmpl := pageTemplate("sandboxes.html")
+	resourcesTmpl := pageTemplate("resources.html")
 	agentsTmpl := pageTemplate("agents.html")
 	profileTmpl := pageTemplate("profile.html")
 	catalogTmpl := pageTemplate("catalog.html")
@@ -190,6 +207,7 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ui/pools", s.uiHandler(poolsTmpl, "pools", s.poolsData))
 	mux.HandleFunc("GET /ui/pools/{name}", s.uiHandler(poolsTmpl, "pools", s.poolsData))
 	mux.HandleFunc("GET /ui/sandboxes", s.uiHandler(sandboxesTmpl, "sandboxes", s.sandboxesData))
+	mux.HandleFunc("GET /ui/resources", s.uiHandler(resourcesTmpl, "resources", s.resourcesData))
 	mux.HandleFunc("GET /ui/agents", s.uiHandler(agentsTmpl, "agents", s.agentsData))
 	mux.HandleFunc("GET /ui/profile", s.uiHandler(profileTmpl, "profile", s.profileData))
 	mux.HandleFunc("GET /ui/service-keys", s.serviceKeysHandler(serviceKeysTmpl))
@@ -213,6 +231,7 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ui/fragments/stats", s.fragmentHandler(homeTmpl, "stats_fragment", s.homeData))
 	mux.HandleFunc("GET /ui/fragments/pools-table", s.fragmentHandler(poolsTmpl, "pools_table_fragment", s.poolsData))
 	mux.HandleFunc("GET /ui/fragments/sandboxes-table", s.fragmentHandler(sandboxesTmpl, "sandboxes_table_fragment", s.sandboxesData))
+	mux.HandleFunc("GET /ui/fragments/resources-table", s.fragmentHandler(resourcesTmpl, "resources_table_fragment", s.resourcesData))
 	mux.HandleFunc("GET /ui/fragments/agents-table", s.fragmentHandler(agentsTmpl, "agents_table_fragment", s.agentsData))
 }
 
@@ -654,6 +673,56 @@ func (s *Server) sandboxesData(r *http.Request) (pageData, error) {
 		views = append(views, view)
 	}
 	return pageData{Sandboxes: views}, nil
+}
+
+// resourcesData backs the all-resources page (#335): every resource the
+// daemon tracks, regardless of which pool or sandbox currently owns it (or
+// whether it is quarantined/orphaned and owns neither). This is the one
+// place an operator can see everything Boxy is managing, rather than having
+// to check each pool's detail page and each sandbox's expanded row in turn.
+func (s *Server) resourcesData(r *http.Request) (pageData, error) {
+	ctx := r.Context()
+	resources, err := s.store.ListResources(ctx)
+	if err != nil {
+		return pageData{}, err
+	}
+	sandboxes, err := s.store.ListSandboxes(ctx)
+	if err != nil {
+		return pageData{}, err
+	}
+	sandboxByResource := make(map[model.ResourceID]model.SandboxID, len(resources))
+	for _, sb := range sandboxes {
+		for _, id := range sb.Resources {
+			sandboxByResource[id] = sb.ID
+		}
+	}
+
+	// Cap and flag like poolsData does: an unbounded table here would be an
+	// unbounded render/polling cost (this page HTMX-polls every 5s) for a
+	// daemon tracking a very large resource count.
+	resourceLimitHit := len(resources) > 1000
+	if resourceLimitHit {
+		resources = resources[:1000]
+	}
+
+	views := make([]resourceListView, 0, len(resources))
+	for _, res := range resources {
+		createdAt := "—"
+		if !res.CreatedAt.IsZero() {
+			createdAt = dashboardTime(res.CreatedAt)
+		}
+		views = append(views, resourceListView{
+			ID:        string(res.ID),
+			Type:      res.Type,
+			Profile:   res.Profile,
+			State:     res.State,
+			Pool:      res.EffectivePool(),
+			Provider:  res.Provider.Name,
+			SandboxID: string(sandboxByResource[res.ID]),
+			CreatedAt: createdAt,
+		})
+	}
+	return pageData{Resources: views, ResourceLimitHit: resourceLimitHit}, nil
 }
 
 func (s *Server) agentsData(_ *http.Request) (pageData, error) {
