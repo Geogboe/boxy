@@ -46,6 +46,7 @@ type pageData struct {
 	PoolViews             []poolView
 	PoolDetail            *poolView
 	PoolHistory           bool
+	ResourceHistory       bool
 	ResourceLimitHit      bool
 	CSRFToken             string
 	CanManagePools        bool
@@ -566,10 +567,21 @@ func (s *Server) homeData(r *http.Request) (pageData, error) {
 	if err != nil {
 		return pageData{}, err
 	}
+	// Recycling policies constantly destroy and replace resources (#353),
+	// so the live count must exclude terminal-state (destroyed/released)
+	// records the same way buildPoolViews' TotalCount already does --
+	// otherwise this number grows with history instead of reflecting what
+	// is actually live right now.
+	liveResources := 0
+	for _, res := range resources {
+		if !isHistoricalResource(res) {
+			liveResources++
+		}
+	}
 	return pageData{
 		PoolCount:     len(pools),
 		SandboxCount:  len(sandboxes),
-		ResourceCount: len(resources),
+		ResourceCount: liveResources,
 	}, nil
 }
 
@@ -697,9 +709,31 @@ func (s *Server) resourcesData(r *http.Request) (pageData, error) {
 		}
 	}
 
+	// Recycling policies constantly destroy and replace resources (#353),
+	// so a default view mixing terminal-state (destroyed/released) rows
+	// into the live list gets swamped by history. Follow the same
+	// "?view=history" convention the pools page already established:
+	// the default view shows only live resources, and an explicit history
+	// view shows only terminal ones -- never both in the same render.
+	history := r.URL.Query().Get("view") == "history"
+	filtered := make([]model.Resource, 0, len(resources))
+	for _, res := range resources {
+		if isHistoricalResource(res) == history {
+			filtered = append(filtered, res)
+		}
+	}
+	resources = filtered
+
 	// Cap and flag like poolsData does: an unbounded table here would be an
 	// unbounded render/polling cost (this page HTMX-polls every 5s) for a
-	// daemon tracking a very large resource count.
+	// daemon tracking a very large resource count. Unlike buildPoolViews
+	// (which must keep both the active and historical buckets available in
+	// the same render and so caps before splitting), this page renders
+	// exactly one bucket per request -- filter by the requested bucket
+	// first, then cap, so the 1,000-row bound reflects what a viewer of
+	// *this* bucket actually sees. Capping first here could leave the
+	// default active view empty while hundreds of live resources exist,
+	// if history dominates the store's natural ordering.
 	resourceLimitHit := len(resources) > 1000
 	if resourceLimitHit {
 		resources = resources[:1000]
@@ -722,7 +756,7 @@ func (s *Server) resourcesData(r *http.Request) (pageData, error) {
 			CreatedAt: createdAt,
 		})
 	}
-	return pageData{Resources: views, ResourceLimitHit: resourceLimitHit}, nil
+	return pageData{Resources: views, ResourceLimitHit: resourceLimitHit, ResourceHistory: history}, nil
 }
 
 func (s *Server) agentsData(_ *http.Request) (pageData, error) {
