@@ -272,6 +272,7 @@ func (a *RemoteAgent) receiveLogBatch(ctx context.Context, batch *boxyagentv1.Lo
 			Step:         item.GetStep(),
 			Status:       item.GetStatus(),
 			Attempt:      int(item.GetAttempt()),
+			DurationMS:   item.GetDurationMs(),
 		}
 		events = append(events, event)
 	}

@@ -75,6 +75,7 @@ func eventFromSlog(record slog.Record, attrs []slog.Attr, groups []string) Event
 		return true
 	})
 	attempt, _ := strconv.Atoi(values["attempt"])
+	durationMS, _ := strconv.ParseInt(values["duration_ms"], 10, 64)
 	return Event{
 		Timestamp:    record.Time,
 		Level:        record.Level.String(),
@@ -87,6 +88,7 @@ func eventFromSlog(record slog.Record, attrs []slog.Attr, groups []string) Event
 		Attempt:      attempt,
 		ErrorCode:    values["error_code"],
 		ErrorSummary: values["error_summary"],
+		DurationMS:   durationMS,
 		Pool:         values["pool"],
 		Agent:        values["agent"],
 		Resource:     values["resource"],
@@ -123,6 +125,8 @@ func safeField(key string) (string, bool) {
 		return "error_code", true
 	case "error_summary":
 		return "error_summary", true
+	case "duration_ms", "elapsed_ms":
+		return "duration_ms", true
 	default:
 		return "", false
 	}

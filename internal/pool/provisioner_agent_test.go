@@ -610,7 +610,7 @@ func TestAgentProvisioner_Allocate_LogsPersonalizeGuestElapsedOnSuccess(t *testi
 	if !strings.Contains(out, "allocation-time guest personalization succeeded") {
 		t.Fatalf("log output missing success message; got:\n%s", out)
 	}
-	for _, want := range []string{"resource_id=vm-1", "pool=vm-pool", "agent_id=" + mockAgent.info.ID, "elapsed="} {
+	for _, want := range []string{"resource_id=vm-1", "pool=vm-pool", "agent_id=" + mockAgent.info.ID, "elapsed=", "elapsed_ms="} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("log output missing %q; got:\n%s", want, out)
 		}

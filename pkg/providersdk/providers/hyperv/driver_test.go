@@ -1370,17 +1370,30 @@ func TestDriver_PersonalizeGuest_LogsStepTiming(t *testing.T) {
 	}
 
 	out := buf.String()
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	for _, step := range []string{"read_notes", "resolve_bootstrap_credential", "resolve_vm_name", "apply_network", "rotate_credential", "verify_credential"} {
-		if !strings.Contains(out, "step="+step) {
-			t.Fatalf("log output missing step timing for %q; got:\n%s", step, out)
+		line := findLine(t, lines, "step="+step)
+		if !strings.Contains(line, "elapsed_ms=") || !strings.Contains(line, "total_elapsed_ms=") {
+			t.Fatalf("step %q line missing elapsed_ms/total_elapsed_ms; got:\n%s", step, line)
 		}
 	}
-	if !strings.Contains(out, "elapsed_ms=") || !strings.Contains(out, "total_elapsed_ms=") {
-		t.Fatalf("log output missing elapsed_ms/total_elapsed_ms fields; got:\n%s", out)
+	successLine := findLine(t, lines, "hyperv guest personalization succeeded")
+	if !strings.Contains(successLine, "elapsed_ms=") {
+		t.Fatalf("top-level succeeded line missing elapsed_ms; got:\n%s", successLine)
 	}
-	if !strings.Contains(out, "hyperv guest personalization succeeded") || !strings.Contains(out, "elapsed_ms=") {
-		t.Fatalf("log output missing top-level succeeded elapsed_ms; got:\n%s", out)
+}
+
+// findLine returns the first line in lines containing substr, failing the
+// test if none matches.
+func findLine(t *testing.T, lines []string, substr string) string {
+	t.Helper()
+	for _, line := range lines {
+		if strings.Contains(line, substr) {
+			return line
+		}
 	}
+	t.Fatalf("no log line contains %q; lines:\n%s", substr, strings.Join(lines, "\n"))
+	return ""
 }
 
 // TestDriver_PersonalizeGuest_SerializesConcurrentInvocations guards against

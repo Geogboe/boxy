@@ -29,15 +29,16 @@ func TestClientSessionSendsLogBatchWithoutAgentIdentityLeak(t *testing.T) {
 	}
 	session := &clientSession{stream: stream}
 	err := session.sendLogBatch(context.Background(), []diagnostics.Event{{
-		Timestamp: time.Unix(1, 2),
-		Level:     "ERROR",
-		Component: "agent",
-		Message:   "agent failed",
-		Job:       "job-a",
-		Step:      "vm.create",
-		Status:    "failed",
-		Attempt:   2,
-		Agent:     "[AGENT-1]",
+		Timestamp:  time.Unix(1, 2),
+		Level:      "ERROR",
+		Component:  "agent",
+		Message:    "agent failed",
+		Job:        "job-a",
+		Step:       "vm.create",
+		Status:     "failed",
+		Attempt:    2,
+		Agent:      "[AGENT-1]",
+		DurationMS: 4200,
 	}})
 	if err != nil {
 		t.Fatalf("sendLogBatch: %v", err)
@@ -52,6 +53,12 @@ func TestClientSessionSendsLogBatchWithoutAgentIdentityLeak(t *testing.T) {
 	}
 	if event := batch.GetEvents()[0]; event.GetJob() != "job-a" || event.GetStep() != "vm.create" || event.GetStatus() != "failed" || event.GetAttempt() != 2 {
 		t.Fatalf("structured event = %+v, want job/step/status/attempt", event)
+	}
+	// Guards #355: an agent-local timing log's duration must cross the
+	// wire to the daemon so `boxy diagnostics logs` shows it for a remote
+	// (non-embedded) agent, matching the same field on a local hyperv log.
+	if event := batch.GetEvents()[0]; event.GetDurationMs() != 4200 {
+		t.Fatalf("DurationMs = %d, want 4200", event.GetDurationMs())
 	}
 }
 

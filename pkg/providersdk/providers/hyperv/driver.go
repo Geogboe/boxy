@@ -1127,14 +1127,14 @@ func (d *Driver) PersonalizeGuest(ctx context.Context, id string) (*providersdk.
 	elapsed := time.Since(start)
 	if err != nil {
 		step := personalizeFailureStep(err)
-		slog.Warn("hyperv guest personalization failed",
+		slog.Warn(fmt.Sprintf("hyperv guest personalization failed after %s (step=%s)", elapsed, step),
 			"component", "hyperv", "provider", "hyperv",
 			"operation", "personalize", "step", step, "status", "failed",
 			"resource", id, "error_code", step+"_failed",
 			"elapsed_ms", elapsed.Milliseconds())
 		return nil, err
 	}
-	slog.Info("hyperv guest personalization succeeded",
+	slog.Info(fmt.Sprintf("hyperv guest personalization succeeded in %s", elapsed),
 		"component", "hyperv", "provider", "hyperv",
 		"operation", "personalize", "step", "guest_personalize", "status", "succeeded",
 		"resource", id, "elapsed_ms", elapsed.Milliseconds())
@@ -1166,12 +1166,18 @@ func newPersonalizeStepTimer(id string) *personalizeStepTimer {
 // next step.
 func (t *personalizeStepTimer) step(name string) {
 	now := time.Now()
-	slog.Debug("hyperv guest personalization step timing",
+	stepElapsed := now.Sub(t.stepFrom)
+	totalElapsed := now.Sub(t.total)
+	// The elapsed values are also embedded in the message text (not just
+	// the structured attrs) so they remain visible in `boxy diagnostics
+	// logs`'s default table view, which prints only timestamp/level/
+	// component/message and not arbitrary attrs (#355).
+	slog.Debug(fmt.Sprintf("hyperv guest personalization step %q took %s (%s elapsed total)", name, stepElapsed, totalElapsed),
 		"component", "hyperv", "provider", "hyperv",
 		"operation", "personalize", "step", name,
 		"resource", t.id,
-		"elapsed_ms", now.Sub(t.stepFrom).Milliseconds(),
-		"total_elapsed_ms", now.Sub(t.total).Milliseconds())
+		"elapsed_ms", stepElapsed.Milliseconds(),
+		"total_elapsed_ms", totalElapsed.Milliseconds())
 	t.stepFrom = now
 }
 
