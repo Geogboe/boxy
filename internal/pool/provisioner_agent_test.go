@@ -1,10 +1,12 @@
 package pool
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -568,6 +570,50 @@ func TestAgentProvisioner_Allocate_PrefersTypedGuestPersonalization(t *testing.T
 	}
 	if _, ok := got.Properties["legacy"]; ok {
 		t.Fatal("expected typed guest personalization to bypass legacy allocate result")
+	}
+}
+
+// TestAgentProvisioner_Allocate_LogsPersonalizeGuestElapsedOnSuccess guards
+// the #355 diagnosability fix: a successful (non-timeout) allocation-time
+// PersonalizeGuest call must log its own elapsed duration tagged with
+// resource/pool/agent, since previously only the timeout path logged
+// anything and pool-reconcile's unrelated "policy decision is noop" line was
+// the only thing an operator saw during a normal, slow allocation. Asserts
+// on the log line's presence and fields, not on wall-clock duration.
+func TestAgentProvisioner_Allocate_LogsPersonalizeGuestElapsedOnSuccess(t *testing.T) {
+	var buf bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	mockAgent := newMockAgent(providersdk.Type("hyperv"))
+	mockAgent.personalized = &providersdk.GuestPersonalizationResult{
+		AccessDetails: providersdk.GuestAccessDetails{
+			Properties: map[string]string{"access": "winrm", "host": "192.0.2.5"},
+		},
+	}
+
+	provisioner := &AgentProvisioner{
+		Registry: registryWith(t, mockAgent),
+		Specs: map[model.PoolName]boxyconfig.PoolSpec{
+			"vm-pool": {Name: "vm-pool", Type: "hyperv"},
+		},
+		Providers: map[string]providersdk.Instance{},
+	}
+
+	res := model.Resource{ID: "vm-1", Provider: model.ProviderRef{AgentID: mockAgent.info.ID}}
+	if _, err := provisioner.Allocate(context.Background(), model.Pool{Name: "vm-pool"}, res); err != nil {
+		t.Fatalf("Allocate: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "allocation-time guest personalization succeeded") {
+		t.Fatalf("log output missing success message; got:\n%s", out)
+	}
+	for _, want := range []string{"resource_id=vm-1", "pool=vm-pool", "agent_id=" + mockAgent.info.ID, "elapsed="} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("log output missing %q; got:\n%s", want, out)
+		}
 	}
 }
 

@@ -218,6 +218,20 @@ func (ap *AgentProvisioner) Allocate(ctx context.Context, pool model.Pool, res m
 			return providersdk.AllocationResult{}, err
 		}
 		if result != nil {
+			// Elapsed time for a successful guest personalization call,
+			// tagged with resource/pool/agent, so an operator watching an
+			// allocation that is slow-but-not-timing-out (#355) has
+			// something to look at beyond the unrelated pool-reconcile
+			// PolicyController's "policy decision is noop" log line, which
+			// reflects a separate periodic loop and carries no information
+			// about this call.
+			slog.Default().Info("allocation-time guest personalization succeeded",
+				"operation", "agent_personalize_guest",
+				"resource_id", res.ID,
+				"pool", pool.Name,
+				"agent_id", agent.Info().ID,
+				"elapsed", ap.now().Sub(start).String(),
+			)
 			if ap.GuestSecrets != nil {
 				if err := ap.GuestSecrets.Delete(ctx, boxysecrets.ResourceCredentialKey(string(res.ID))); err != nil && !errors.Is(err, boxysecrets.ErrNotFound) {
 					slog.Default().Warn("could not remove consumed resource credential", "resource_id", res.ID, "error", err)

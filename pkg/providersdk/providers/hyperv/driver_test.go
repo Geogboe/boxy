@@ -1,6 +1,7 @@
 package hyperv
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1328,6 +1329,57 @@ func TestDriver_PersonalizeGuest_RotatesAndReturnsCredential(t *testing.T) {
 	}
 	if payload.Username != "Administrator" || payload.Password != guestExecs[1].password {
 		t.Fatalf("returned payload = %+v, want Administrator/%q", payload, guestExecs[1].password)
+	}
+}
+
+// TestDriver_PersonalizeGuest_LogsStepTiming guards the diagnosability fix
+// for #355: a preheated (already-Ready) resource's allocation-time
+// PersonalizeGuest call was reported taking ~30s with no useful diagnostics
+// beyond the unrelated pool-reconcile PolicyController's "policy decision is
+// noop" line. Each major phase must now log its own elapsed duration so an
+// operator can see where the time actually goes, without asserting on
+// wall-clock duration itself (this host cannot exercise a real guest round
+// trip).
+func TestDriver_PersonalizeGuest_LogsStepTiming(t *testing.T) {
+	var buf bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	d := &Driver{
+		psExec: func(_ context.Context, script string) (string, error) {
+			switch {
+			case strings.Contains(script, "Get-VMNetworkAdapter"):
+				return "10.0.0.5\n", nil
+			case strings.Contains(script, "(Get-VM -Id") && strings.Contains(script, ").Name"):
+				return "boxy-abc123\n", nil
+			default:
+				return "boxy_guest_os=windows;boxy_guest_user=Administrator\n", nil
+			}
+		},
+		resolveBootstrap: func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
+			return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "${BOXY_TEST_PASSWORD}"}, nil
+		},
+		guestExecFactory: func(vmGUID, guestOS, guestUser, guestPassword, sshHost string) vmsdk.GuestExec {
+			return &recordingGuestExec{password: guestPassword}
+		},
+	}
+
+	if _, err := d.PersonalizeGuest(context.Background(), fakeGUID); err != nil {
+		t.Fatalf("PersonalizeGuest: %v", err)
+	}
+
+	out := buf.String()
+	for _, step := range []string{"read_notes", "resolve_bootstrap_credential", "resolve_vm_name", "apply_network", "rotate_credential", "verify_credential"} {
+		if !strings.Contains(out, "step="+step) {
+			t.Fatalf("log output missing step timing for %q; got:\n%s", step, out)
+		}
+	}
+	if !strings.Contains(out, "elapsed_ms=") || !strings.Contains(out, "total_elapsed_ms=") {
+		t.Fatalf("log output missing elapsed_ms/total_elapsed_ms fields; got:\n%s", out)
+	}
+	if !strings.Contains(out, "hyperv guest personalization succeeded") || !strings.Contains(out, "elapsed_ms=") {
+		t.Fatalf("log output missing top-level succeeded elapsed_ms; got:\n%s", out)
 	}
 }
 
