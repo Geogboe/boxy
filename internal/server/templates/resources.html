@@ -19,6 +19,7 @@
 {{end}}
 
 {{define "resources_table_fragment"}}
+{{if .ResourceLimitHit}}<div class="table-card-subtitle bounded-note">Showing the first 1,000 resources. Use filters or the API for larger inventories.</div>{{end}}
 {{if .Resources}}
 <table>
   <thead>

@@ -345,6 +345,15 @@ func TestUI_resources_listsAcrossPoolsAndSandboxes(t *testing.T) {
 			t.Fatalf("resources page missing %q; body = %q", want, body)
 		}
 	}
+	// Neither PutResource call above set CreatedAt, so both rows carry a
+	// zero time.Time -- must render as an em dash, not the misleading
+	// "0001-01-01" a naive unconditional format would produce.
+	if strings.Contains(body, "0001-01-01") {
+		t.Fatalf("resources page rendered a zero CreatedAt as a real date; body = %q", body)
+	}
+	if !strings.Contains(body, "<td><span class=\"timestamp\">—</span></td>") {
+		t.Fatalf("resources page did not render an em dash for a zero CreatedAt; body = %q", body)
+	}
 }
 
 func TestUI_sandboxes_pendingStatusGetsTransientBadge(t *testing.T) {

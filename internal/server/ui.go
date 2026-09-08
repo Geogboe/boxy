@@ -697,8 +697,20 @@ func (s *Server) resourcesData(r *http.Request) (pageData, error) {
 		}
 	}
 
+	// Cap and flag like poolsData does: an unbounded table here would be an
+	// unbounded render/polling cost (this page HTMX-polls every 5s) for a
+	// daemon tracking a very large resource count.
+	resourceLimitHit := len(resources) > 1000
+	if resourceLimitHit {
+		resources = resources[:1000]
+	}
+
 	views := make([]resourceListView, 0, len(resources))
 	for _, res := range resources {
+		createdAt := "—"
+		if !res.CreatedAt.IsZero() {
+			createdAt = dashboardTime(res.CreatedAt)
+		}
 		views = append(views, resourceListView{
 			ID:        string(res.ID),
 			Type:      res.Type,
@@ -707,10 +719,10 @@ func (s *Server) resourcesData(r *http.Request) (pageData, error) {
 			Pool:      res.EffectivePool(),
 			Provider:  res.Provider.Name,
 			SandboxID: string(sandboxByResource[res.ID]),
-			CreatedAt: dashboardTime(res.CreatedAt),
+			CreatedAt: createdAt,
 		})
 	}
-	return pageData{Resources: views}, nil
+	return pageData{Resources: views, ResourceLimitHit: resourceLimitHit}, nil
 }
 
 func (s *Server) agentsData(_ *http.Request) (pageData, error) {
