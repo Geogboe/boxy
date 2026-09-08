@@ -2,11 +2,14 @@ package cli
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -138,6 +141,63 @@ func TestAgentServe_TokenRegistrationThenCertReconnect(t *testing.T) {
 	case <-done2:
 	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for the second agent session to stop")
+	}
+}
+
+// TestRunAgentServe_SetsDefaultLoggerSoPackageLevelLogsReachDiagnostics
+// guards #334: runAgentServe used to construct its diagnostics-wrapping
+// logger without ever calling slog.SetDefault, unlike the daemon's
+// equivalent wiring in serve.go. Provider code that logs via package-level
+// slog calls (e.g. hyperv's logHyperVEvent, which calls slog.Log directly
+// rather than through an injected *slog.Logger) was invisible to the
+// agent's diagnostics.jsonl store even while actively personalizing guests.
+//
+// This deliberately exercises the fast "no credentials" error return
+// (TestAgentServe_RequiresTokenOrCredentials's opts) rather than a full
+// registered-agent flow: runAgentServe still constructs agentDiagnostics
+// and agentLog, and (with the fix) installs it as the default, before
+// returning that error — no network dial needed. A full end-to-end test
+// would run the in-process "server" side and the agent in the same test
+// binary, sharing slog's single process-wide default; asserting on it from
+// the agent side would be entangled with whatever the server side logs
+// concurrently.
+func TestRunAgentServe_SetsDefaultLoggerSoPackageLevelLogsReachDiagnostics(t *testing.T) {
+	previous := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	// Mirror root.go's setupLogging, which cobra's PersistentPreRunE always
+	// runs before runAgentServe in real usage: it installs a concrete
+	// handler as the default before any command body executes. Skipping
+	// this step (as a direct unit-test call to runAgentServe does) leaves
+	// slog.Default().Handler() as the stdlib's internal bridging
+	// *defaultHandler, and wrapping *that* in a custom handler before
+	// calling slog.SetDefault deadlocks on the next log call — see
+	// (*Logger).SetDefault's own doc comment on this exact hazard. That
+	// bridging handler is never reachable from real CLI usage, so
+	// replicate the real precondition here instead.
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	dataDir := t.TempDir()
+	opts := agentServeOpts{
+		server:    "127.0.0.1:1", // never dialed
+		providers: []string{"devfactory"},
+		dataDir:   dataDir,
+	}
+	if err := runAgentServe(context.Background(), opts); err == nil {
+		t.Fatal("expected an error with no token and no persisted credentials")
+	}
+
+	// Simulate the exact pattern provider drivers use (e.g. hyperv's
+	// logHyperVEvent): a package-level slog call against slog.Default(),
+	// not an explicitly-passed *slog.Logger.
+	slog.Info("simulated provider-side event", "component", "hyperv", "operation", "personalize", "status", "succeeded")
+
+	data, err := os.ReadFile(filepath.Join(dataDir, "diagnostics.jsonl"))
+	if err != nil {
+		t.Fatalf("read diagnostics.jsonl: %v", err)
+	}
+	if !strings.Contains(string(data), "simulated provider-side event") {
+		t.Fatalf("package-level slog record never reached diagnostics.jsonl, got %q", data)
 	}
 }
 
