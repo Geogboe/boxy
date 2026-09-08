@@ -2,11 +2,14 @@ package cli
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +19,25 @@ import (
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/store"
 )
+
+// TestMain installs a concrete slog default before any test in this package
+// runs, mirroring what cobra's PersistentPreRunE (root.go's setupLogging)
+// always does before a command body executes in real usage. Without this,
+// whichever test happens to run first pays (or doesn't pay, depending on
+// unrelated ordering) the cost of slog.Default().Handler() still being the
+// stdlib's internal bridging *defaultHandler — and runAgentServe now calls
+// slog.SetDefault on a handler that wraps whatever it captured, which
+// deadlocks on the very next log call if that capture happened before this
+// file's package-level default was ever set (see TestRunAgentServe_
+// SetsDefaultLoggerSoPackageLevelLogsReachDiagnostics's doc comment, and
+// (*slog.Logger).SetDefault's own doc comment on the hazard). Every test in
+// this file calls runAgentServe directly, bypassing cobra entirely, so this
+// package-wide setup is the only thing that makes that safe regardless of
+// which test (or which -run filter) happens to execute first.
+func TestMain(m *testing.M) {
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	os.Exit(m.Run())
+}
 
 // startAgentTestDaemon stands up the real server side of the agent
 // transport — private CA, mTLS gRPC listener, AgentTransport service —
@@ -54,7 +76,20 @@ func waitForAgent(t *testing.T, registry *pool.AgentRegistry) pool.AgentSummary 
 	}
 }
 
+// restoreSlogDefaultAfter saves the current slog default and restores it on
+// cleanup. runAgentServe now calls slog.SetDefault as a side effect (see
+// TestMain's doc comment), so every test that calls it directly must restore
+// the default afterward — otherwise it would leak a wrapped handler
+// referencing that test's own (by-then-removed) t.TempDir() diagnostics
+// store into whichever test runs next in this binary.
+func restoreSlogDefaultAfter(t *testing.T) {
+	t.Helper()
+	previous := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(previous) })
+}
+
 func TestAgentServe_TokenRegistrationThenCertReconnect(t *testing.T) {
+	restoreSlogDefaultAfter(t)
 	serverDir := t.TempDir()
 	agentDir := t.TempDir()
 
@@ -141,7 +176,56 @@ func TestAgentServe_TokenRegistrationThenCertReconnect(t *testing.T) {
 	}
 }
 
+// TestRunAgentServe_SetsDefaultLoggerSoPackageLevelLogsReachDiagnostics
+// guards #334: runAgentServe used to construct its diagnostics-wrapping
+// logger without ever calling slog.SetDefault, unlike the daemon's
+// equivalent wiring in serve.go. Provider code that logs via package-level
+// slog calls (e.g. hyperv's logHyperVEvent, which calls slog.Log directly
+// rather than through an injected *slog.Logger) was invisible to the
+// agent's diagnostics.jsonl store even while actively personalizing guests.
+//
+// This deliberately exercises the fast "no credentials" error return
+// (TestAgentServe_RequiresTokenOrCredentials's opts) rather than a full
+// registered-agent flow: runAgentServe still constructs agentDiagnostics
+// and agentLog, and (with the fix) installs it as the default, before
+// returning that error — no network dial needed. A full end-to-end test
+// would run the in-process "server" side and the agent in the same test
+// binary, sharing slog's single process-wide default; asserting on it from
+// the agent side would be entangled with whatever the server side logs
+// concurrently.
+//
+// This relies on TestMain having already installed a concrete slog default
+// for the whole package's test binary — see its doc comment for why that's
+// required, not just a nicety, once runAgentServe calls slog.SetDefault.
+func TestRunAgentServe_SetsDefaultLoggerSoPackageLevelLogsReachDiagnostics(t *testing.T) {
+	restoreSlogDefaultAfter(t)
+
+	dataDir := t.TempDir()
+	opts := agentServeOpts{
+		server:    "127.0.0.1:1", // never dialed
+		providers: []string{"devfactory"},
+		dataDir:   dataDir,
+	}
+	if err := runAgentServe(context.Background(), opts); err == nil {
+		t.Fatal("expected an error with no token and no persisted credentials")
+	}
+
+	// Simulate the exact pattern provider drivers use (e.g. hyperv's
+	// logHyperVEvent): a package-level slog call against slog.Default(),
+	// not an explicitly-passed *slog.Logger.
+	slog.Info("simulated provider-side event", "component", "hyperv", "operation", "personalize", "status", "succeeded")
+
+	data, err := os.ReadFile(filepath.Join(dataDir, "diagnostics.jsonl"))
+	if err != nil {
+		t.Fatalf("read diagnostics.jsonl: %v", err)
+	}
+	if !strings.Contains(string(data), "simulated provider-side event") {
+		t.Fatalf("package-level slog record never reached diagnostics.jsonl, got %q", data)
+	}
+}
+
 func TestAgentServe_RequiresTokenOrCredentials(t *testing.T) {
+	restoreSlogDefaultAfter(t)
 	opts := agentServeOpts{
 		server:    "127.0.0.1:1", // never dialed
 		providers: []string{"devfactory"},
@@ -153,6 +237,7 @@ func TestAgentServe_RequiresTokenOrCredentials(t *testing.T) {
 }
 
 func TestAgentServe_RequiresCACertForFirstConnection(t *testing.T) {
+	restoreSlogDefaultAfter(t)
 	opts := agentServeOpts{
 		server:    "127.0.0.1:1", // never dialed
 		providers: []string{"devfactory"},

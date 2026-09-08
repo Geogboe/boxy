@@ -252,7 +252,15 @@ func runAgentServe(ctx context.Context, opts agentServeOpts) error {
 	}
 	// Keep the configured stderr/service log destination while also retaining
 	// a bounded, redacted local history for explicit server-side pulls.
+	// Install this as the process-wide default (mirroring the daemon's
+	// equivalent wrapping in serve.go) so that package-level slog calls made
+	// by drivers and other provider code (e.g. hyperv's logHyperVEvent) are
+	// captured into agentDiagnostics too, not just the handful of explicit
+	// agentLog.* calls in this function. Without this, provider-side
+	// activity between "starting" and "registered" never reached
+	// diagnostics.jsonl (#334).
 	agentLog := slog.New(diagnostics.NewHandler(slog.Default().Handler(), agentDiagnostics))
+	slog.SetDefault(agentLog)
 
 	name := opts.name
 	if name == "" {
