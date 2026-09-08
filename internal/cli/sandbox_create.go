@@ -41,7 +41,11 @@ func sandboxCreate(ctx context.Context, opts sandboxCreateOpts) error {
 	base := apiBaseURL(opts.server)
 
 	donePools, failPools := step("Loading pool catalog")
-	pools, err := fetchJSON[[]model.Pool](ctx, client, base+"/api/v1/pools")
+	// Use the safe user-accessible summary endpoint rather than the
+	// admin/auditor-only /api/v1/pools -- sandbox creation must work for a
+	// least-privilege `user`-role key, which is all compileSandboxRequests
+	// actually needs (name/type/profile). See #359.
+	pools, err := fetchJSON[[]model.PoolSummary](ctx, client, base+"/api/v1/pools/summary")
 	if err != nil {
 		failPools(err.Error())
 		return fmt.Errorf("load pool catalog: %w", err)
@@ -138,8 +142,8 @@ func loadSandboxSpec(path string) (boxyconfig.SandboxSpec, error) {
 	return spec, nil
 }
 
-func compileSandboxRequests(spec boxyconfig.SandboxSpec, pools []model.Pool) ([]model.ResourceRequest, error) {
-	poolByName := make(map[model.PoolName]model.Pool, len(pools))
+func compileSandboxRequests(spec boxyconfig.SandboxSpec, pools []model.PoolSummary) ([]model.ResourceRequest, error) {
+	poolByName := make(map[model.PoolName]model.PoolSummary, len(pools))
 	for _, pool := range pools {
 		poolByName[pool.Name] = pool
 	}
@@ -152,16 +156,16 @@ func compileSandboxRequests(spec boxyconfig.SandboxSpec, pools []model.Pool) ([]
 		if !ok {
 			return nil, fmt.Errorf("resources[%d].pool %q not found on server", i, res.Pool)
 		}
-		if pool.Inventory.ExpectedType == "" || pool.Inventory.ExpectedType == model.ResourceTypeUnknown {
+		if pool.Type == "" || pool.Type == model.ResourceTypeUnknown {
 			return nil, fmt.Errorf("pool %q is missing expected resource type", pool.Name)
 		}
-		if strings.TrimSpace(string(pool.Inventory.ExpectedProfile)) == "" {
+		if strings.TrimSpace(string(pool.Profile)) == "" {
 			return nil, fmt.Errorf("pool %q is missing expected resource profile", pool.Name)
 		}
 
 		requests = append(requests, model.ResourceRequest{
-			Type:     pool.Inventory.ExpectedType,
-			Profile:  pool.Inventory.ExpectedProfile,
+			Type:     pool.Type,
+			Profile:  pool.Profile,
 			Count:    res.Count,
 			Packages: append([]string(nil), res.Packages...),
 		})

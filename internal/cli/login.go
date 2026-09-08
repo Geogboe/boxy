@@ -10,11 +10,19 @@ import (
 	"strings"
 
 	"github.com/Geogboe/boxy/internal/credentials"
-	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
+
+// identityResponse mirrors server.identityResponse -- the role-neutral
+// GET /api/v1/identity payload used to verify a supplied API key at login
+// (#359). Only the fields runLogin needs to confirm the request succeeded
+// are decoded; extra server-side fields are ignored.
+type identityResponse struct {
+	KeyID string `json:"key_id"`
+	Role  string `json:"role"`
+}
 
 type loginOptions struct {
 	server       string
@@ -153,7 +161,10 @@ func runLogin(ctx context.Context, opts loginOptions, out, errOut io.Writer) err
 	}
 
 	client := apiClientWithMaterial(base, opts.apiKey, caPEM, opts.insecure)
-	if _, err := fetchJSON[[]model.Pool](ctx, client, base+"/api/v1/pools"); err != nil {
+	// /api/v1/identity is role-neutral: unlike /api/v1/pools, every valid
+	// role -- including `user` -- can call it, so login verification works
+	// for least-privilege keys too (#359).
+	if _, err := fetchJSON[identityResponse](ctx, client, base+"/api/v1/identity"); err != nil {
 		return fmt.Errorf("verify API key: %w", err)
 	}
 
