@@ -38,11 +38,18 @@ API-key roles:
 | DELETE | `/api/v1/api-keys/{id}` | admin | Revoke a service key; repeated revocation is idempotent. |
 | POST | `/api/v1/api-keys/oidc-exchange` | id_token | Exchange a verified OIDC ID token (from `boxy login --oidc`) for a self-service personal API key; raw value is returned once. |
 
+### Identity
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/api/v1/identity` | user/auditor/admin | Return the authenticated caller's own key ID, role, kind, and subject; the role-neutral check `boxy login` verifies a key against. |
+
 ### Pools
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/api/v1/pools` | auditor/admin | List configured pools and ready inventory. |
+| GET | `/api/v1/pools/summary` | user/auditor/admin | List pool name/type/profile only -- the safe discovery view a user-role caller needs to construct a sandbox request. |
 | GET | `/api/v1/pools/{name}` | auditor/admin | Inspect one pool. |
 | PUT | `/api/v1/pools/{name}/configuration` | admin | Validate, persist, and apply editable pool policy settings. |
 | POST | `/api/v1/pools/{name}/drain` | admin | Start a tracked job to drain unused ready inventory. |

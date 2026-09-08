@@ -63,8 +63,13 @@ func TestRunLoginStoresCredentialAfterVerification(t *testing.T) {
 		if got, want := r.Header.Get("Authorization"), "Bearer ${BOXY_TEST_API_KEY}"; got != want {
 			t.Fatalf("Authorization = %q, want %q", got, want)
 		}
+		// Login must verify against the role-neutral identity endpoint, not
+		// a privileged one like /api/v1/pools -- see #359.
+		if got, want := r.URL.Path, "/api/v1/identity"; got != want {
+			t.Fatalf("verification path = %q, want %q", got, want)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode([]any{})
+		_ = json.NewEncoder(w).Encode(identityResponse{KeyID: "key-1", Role: "user"})
 	}))
 	defer server.Close()
 
