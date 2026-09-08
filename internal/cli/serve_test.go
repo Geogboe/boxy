@@ -313,16 +313,25 @@ func TestBuildDriversDecodesConfiguredInstancesAndDefaults(t *testing.T) {
 
 func TestEmbeddedProviderTypesExcludeRemotePinnedPools(t *testing.T) {
 	providers := map[string]providersdk.Instance{
-		"docker-local": {Name: "docker-local", Type: "docker"},
-		"hyperv-local": {Name: "hyperv-local", Type: "hyperv"},
+		"docker-local":     {Name: "docker-local", Type: "docker"},
+		"hyperv-local":     {Name: "hyperv-local", Type: "hyperv"},
+		"devfactory-local": {Name: "devfactory-local", Type: "devfactory"},
 	}
 	specs := []boxyconfig.PoolSpec{
 		{Name: "docker", Type: "container", Provider: "docker-local"},
 		{Name: "windows", Type: "vm", Provider: "hyperv-local", Agent: "remote-windows"},
+		// PoolSpec.Agent's doc comment says it accepts "embedded or remote" —
+		// an explicit pin to the embedded agent's own ID must still build
+		// that provider, unlike a pin to a remote agent above. See #346's
+		// Copilot review: an earlier version of this function treated any
+		// non-empty Agent as "someone else will serve this" and would have
+		// made this pool unschedulable.
+		{Name: "sim", Type: "vm", Provider: "devfactory-local", Agent: "embedded"},
 	}
 	got := embeddedProviderTypes(specs, providers, []providersdk.Type{"docker", "hyperv", "devfactory"})
-	if len(got) != 1 || got[0] != "docker" {
-		t.Fatalf("embedded provider types = %v, want [docker]", got)
+	want := []providersdk.Type{"docker", "devfactory"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("embedded provider types = %v, want %v", got, want)
 	}
 }
 

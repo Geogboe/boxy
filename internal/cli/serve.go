@@ -263,7 +263,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		return fmt.Errorf("build drivers: %w", err)
 	}
 	configureEmbeddedGuestBootstrapResolvers(drivers, st, guestSecrets, specsMap)
-	embeddedAgent, err := agentsdk.NewEmbeddedAgent("embedded", "Embedded Agent", drivers...)
+	embeddedAgent, err := agentsdk.NewEmbeddedAgent(embeddedAgentID, "Embedded Agent", drivers...)
 	if err != nil {
 		failAgent(err.Error())
 		return fmt.Errorf("create embedded agent: %w", err)
@@ -1007,18 +1007,29 @@ func providerTypes(reg *providersdk.Registry) []string {
 	return out
 }
 
+// embeddedAgentID is the fixed ID boxy serve registers its in-process agent
+// under (see NewEmbeddedAgent below). PoolSpec.Agent can pin a pool to this
+// ID explicitly, not just to a remote agent's ID — embeddedProviderTypes
+// must recognize that case rather than treating any non-empty Agent as
+// "someone else will serve this".
+const embeddedAgentID = "embedded"
+
 // embeddedProviderTypes returns provider types needed by pools that are not
 // pinned to a remote agent. Remote-only providers must not be advertised by
 // the embedded agent, or its reconciliation loop will probe hosts it cannot
-// serve and obscure the actual remote-agent state.
+// serve and obscure the actual remote-agent state. A pool pinned to the
+// embedded agent itself (Agent == embeddedAgentID) still needs its provider
+// built here, same as an unpinned pool.
 func embeddedProviderTypes(specs []boxyconfig.PoolSpec, providers map[string]providersdk.Instance, registered []providersdk.Type) []providersdk.Type {
 	needed := make(map[providersdk.Type]struct{})
 	for _, spec := range specs {
-		if strings.TrimSpace(spec.Agent) != "" {
+		agent := strings.TrimSpace(spec.Agent)
+		if agent != "" && agent != embeddedAgentID {
 			continue
 		}
-		t := providersdk.Type(strings.TrimSpace(spec.Provider))
-		if instance, ok := providers[spec.Provider]; ok {
+		provider := strings.TrimSpace(spec.Provider)
+		t := providersdk.Type(provider)
+		if instance, ok := providers[provider]; ok {
 			t = instance.Type
 		}
 		if t == "" {
