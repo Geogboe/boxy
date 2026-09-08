@@ -371,6 +371,33 @@
           "description": "How often connected remote agents send heartbeats, as a Go duration string (e.g. \"15s\"). Empty means the default (15s).",
           "type": "string"
         },
+        "agent_timeouts": {
+          "additionalProperties": false,
+          "description": "Per-operation-class bounds on agent-backed operations (Create/PersonalizeGuest/Delete/Default), as Go duration strings. Empty fields fall back to their own documented default.",
+          "properties": {
+            "create": {
+              "description": "Bounds a driver's resource-creation call. Empty means the default (5m).",
+              "type": "string"
+            },
+            "default": {
+              "description": "Reserved fallback for a future agent-backed operation class with no more specific timeout of its own. Not currently consumed by anything (the sandbox fulfiller's own per-pass bound is derived from create+personalize_guest+delete, not this field). Empty means the default (30s).",
+              "type": "string"
+            },
+            "delete": {
+              "description": "Bounds a driver's resource-deletion call. Empty means the default (2m).",
+              "type": "string"
+            },
+            "personalize_guest": {
+              "description": "Bounds a guest-personalization call, both at pool admission time and at sandbox allocation time. Empty means the default (3m).",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "diagnostics_retention": {
+          "description": "How long the bounded server diagnostics store retains events, as a Go duration string. Empty means the default (14 days).",
+          "type": "string"
+        },
         "grpc_cert_sans": {
           "description": "Extra DNS names/IPs to include in the agent gRPC server certificate's SANs, on top of the always-included localhost/127.0.0.1/listen-host entries. Needed when remote agents connect through a passthrough route or load balancer using an external DNS name. Equivalent repeatable CLI flag: --grpc-cert-san (fully overrides this value when passed).",
           "items": {
@@ -384,6 +411,10 @@
         },
         "listen": {
           "description": "HTTP API listen address. Empty means the default (:9090).",
+          "type": "string"
+        },
+        "pool_provisioning_watchdog_threshold": {
+          "description": "How long a resource may sit in the provisioning state without progress before the reconciler destroys and replaces it, as a Go duration string. Empty means the default (15m). Must exceed every configured agent_timeouts value.",
           "type": "string"
         },
         "providers": {

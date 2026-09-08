@@ -132,6 +132,134 @@ server:
 	})
 }
 
+func TestAgentTimeoutsSpec_DefaultsAndRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	t.Run("defaults_apply_when_unset", func(t *testing.T) {
+		var spec AgentTimeoutsSpec
+		if d, err := spec.EffectiveCreateTimeout(); err != nil || d != DefaultAgentCreateTimeout {
+			t.Fatalf("EffectiveCreateTimeout = %v, %v, want %v, nil", d, err, DefaultAgentCreateTimeout)
+		}
+		if d, err := spec.EffectivePersonalizeGuestTimeout(); err != nil || d != DefaultAgentPersonalizeGuestTimeout {
+			t.Fatalf("EffectivePersonalizeGuestTimeout = %v, %v, want %v, nil", d, err, DefaultAgentPersonalizeGuestTimeout)
+		}
+		if d, err := spec.EffectiveDeleteTimeout(); err != nil || d != DefaultAgentDeleteTimeout {
+			t.Fatalf("EffectiveDeleteTimeout = %v, %v, want %v, nil", d, err, DefaultAgentDeleteTimeout)
+		}
+		if d, err := spec.EffectiveDefaultTimeout(); err != nil || d != DefaultAgentDefaultTimeout {
+			t.Fatalf("EffectiveDefaultTimeout = %v, %v, want %v, nil", d, err, DefaultAgentDefaultTimeout)
+		}
+	})
+
+	t.Run("round_trip_yaml", func(t *testing.T) {
+		dir := t.TempDir()
+		p := filepath.Join(dir, "boxy.yaml")
+		if err := os.WriteFile(p, []byte(`
+server:
+  agent_timeouts:
+    create: 10m
+    personalize_guest: 4m
+    delete: 3m
+    default: 45s
+  pool_provisioning_watchdog_threshold: 20m
+`), 0o644); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+		cfg, err := LoadFile(p)
+		if err != nil {
+			t.Fatalf("LoadFile: %v", err)
+		}
+		if d, err := cfg.Server.AgentTimeouts.EffectiveCreateTimeout(); err != nil || d != 10*time.Minute {
+			t.Fatalf("create = %v, %v, want 10m", d, err)
+		}
+		if d, err := cfg.Server.AgentTimeouts.EffectivePersonalizeGuestTimeout(); err != nil || d != 4*time.Minute {
+			t.Fatalf("personalize_guest = %v, %v, want 4m", d, err)
+		}
+		if d, err := cfg.Server.AgentTimeouts.EffectiveDeleteTimeout(); err != nil || d != 3*time.Minute {
+			t.Fatalf("delete = %v, %v, want 3m", d, err)
+		}
+		if d, err := cfg.Server.AgentTimeouts.EffectiveDefaultTimeout(); err != nil || d != 45*time.Second {
+			t.Fatalf("default = %v, %v, want 45s", d, err)
+		}
+		if d, err := cfg.Server.EffectivePoolProvisioningWatchdogThreshold(); err != nil || d != 20*time.Minute {
+			t.Fatalf("watchdog threshold = %v, %v, want 20m", d, err)
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate: unexpected error: %v", err)
+		}
+	})
+
+	t.Run("invalid_duration_rejected", func(t *testing.T) {
+		for _, cfg := range []Config{
+			{Server: ServerSpec{AgentTimeouts: AgentTimeoutsSpec{Create: "not-a-duration"}}},
+			{Server: ServerSpec{AgentTimeouts: AgentTimeoutsSpec{PersonalizeGuest: "-1s"}}},
+			{Server: ServerSpec{AgentTimeouts: AgentTimeoutsSpec{Delete: "0s"}}},
+			{Server: ServerSpec{PoolProvisioningWatchdogThreshold: "bogus"}},
+		} {
+			if err := cfg.Validate(); err == nil {
+				t.Fatalf("Validate: expected error for %+v", cfg.Server)
+			}
+		}
+	})
+
+	t.Run("watchdog_threshold_must_exceed_largest_agent_timeout", func(t *testing.T) {
+		cfg := Config{Server: ServerSpec{
+			AgentTimeouts:                     AgentTimeoutsSpec{Create: "20m"},
+			PoolProvisioningWatchdogThreshold: "15m",
+		}}
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("Validate: expected error when watchdog threshold does not exceed the largest agent timeout")
+		}
+		if !strings.Contains(err.Error(), "pool_provisioning_watchdog_threshold") {
+			t.Fatalf("error = %q, want mention of pool_provisioning_watchdog_threshold", err)
+		}
+	})
+
+	t.Run("sandbox_fulfill_timeout_is_the_sum_not_the_max", func(t *testing.T) {
+		spec := AgentTimeoutsSpec{Create: "5m", PersonalizeGuest: "3m", Delete: "2m"}
+		d, err := spec.EffectiveSandboxFulfillTimeout()
+		if err != nil {
+			t.Fatalf("EffectiveSandboxFulfillTimeout: %v", err)
+		}
+		if want := 10 * time.Minute; d != want {
+			t.Fatalf("EffectiveSandboxFulfillTimeout = %v, want %v (sum of create+personalize+delete)", d, want)
+		}
+	})
+
+	t.Run("watchdog_threshold_must_exceed_derived_sandbox_fulfill_timeout_not_just_individual_maxima", func(t *testing.T) {
+		// Regression guard: each individual agent timeout here is small, but
+		// their sum (the real worst case for one reconcileSandbox pass) is
+		// not — a watchdog threshold that only checked the per-field max
+		// would wrongly accept this.
+		cfg := Config{Server: ServerSpec{
+			AgentTimeouts:                     AgentTimeoutsSpec{Create: "6m", PersonalizeGuest: "6m", Delete: "6m"},
+			PoolProvisioningWatchdogThreshold: "10m", // exceeds each field (6m) but not their 18m sum
+		}}
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("Validate: expected error when watchdog threshold exceeds every individual timeout but not their sum")
+		}
+	})
+
+	t.Run("watchdog_threshold_equal_to_largest_agent_timeout_rejected", func(t *testing.T) {
+		// Strictly greater, not >=: a threshold equal to the timeout could
+		// fire while a legitimately in-flight bounded call is still running.
+		cfg := Config{Server: ServerSpec{
+			AgentTimeouts:                     AgentTimeoutsSpec{Create: "15m"},
+			PoolProvisioningWatchdogThreshold: "15m",
+		}}
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("Validate: expected error when watchdog threshold equals the largest agent timeout")
+		}
+	})
+
+	t.Run("default_watchdog_threshold_exceeds_default_agent_timeouts", func(t *testing.T) {
+		if err := (Config{}).Validate(); err != nil {
+			t.Fatalf("Validate: unexpected error with all-default agent timeouts/watchdog: %v", err)
+		}
+	})
+}
+
 func TestSecretSpec_RequiresExplicitValidBackend(t *testing.T) {
 	t.Parallel()
 
