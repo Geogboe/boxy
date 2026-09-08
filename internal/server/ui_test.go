@@ -288,6 +288,65 @@ func TestUI_sandboxes_resourceDetailHandlesMissingResourceRecord(t *testing.T) {
 	}
 }
 
+// TestUI_resources_listsAcrossPoolsAndSandboxes closes #335: the dashboard
+// previously had no single view of every resource Boxy tracks -- an
+// operator had to check each pool's detail page and each sandbox's
+// expanded row in turn. This asserts the new /ui/resources page surfaces a
+// resource regardless of pool/sandbox membership, and joins in which
+// sandbox (if any) currently holds it.
+func TestUI_resources_listsAcrossPoolsAndSandboxes(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+
+	if err := st.PutResource(ctx, model.Resource{
+		ID:         "res-in-sandbox",
+		Type:       model.ResourceTypeContainer,
+		Profile:    "ubuntu-2204",
+		OriginPool: "pool-a",
+		Provider:   model.ProviderRef{Name: "docker"},
+		State:      model.ResourceStateAllocated,
+	}); err != nil {
+		t.Fatalf("PutResource: %v", err)
+	}
+	if err := st.PutResource(ctx, model.Resource{
+		ID:         "res-in-pool",
+		Type:       model.ResourceTypeVM,
+		Profile:    "win-2022",
+		OriginPool: "pool-b",
+		Provider:   model.ProviderRef{Name: "hyperv"},
+		State:      model.ResourceStateReady,
+	}); err != nil {
+		t.Fatalf("PutResource: %v", err)
+	}
+	if err := st.CreateSandbox(ctx, model.Sandbox{
+		ID:        "sb-1",
+		Name:      "my-sandbox",
+		Status:    model.SandboxStatusReady,
+		Resources: []model.ResourceID{"res-in-sandbox"},
+	}); err != nil {
+		t.Fatalf("CreateSandbox: %v", err)
+	}
+
+	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
+	w := httptest.NewRecorder()
+	r := server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/resources", nil))
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	body := w.Body.String()
+	for _, want := range []string{
+		"res-in-sandbox", "res-in-pool", "pool-a", "pool-b", "docker", "hyperv",
+		"sb-1", `class="badge badge-allocated"`, `class="badge badge-ready"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("resources page missing %q; body = %q", want, body)
+		}
+	}
+}
+
 func TestUI_sandboxes_pendingStatusGetsTransientBadge(t *testing.T) {
 	t.Parallel()
 	st := store.NewMemoryStore()
@@ -321,6 +380,7 @@ func TestUI_refreshButtons_targetTheirFragment(t *testing.T) {
 		{"/", "stats-fragment", "/ui/fragments/stats"},
 		{"/ui/pools", "pools-fragment", "/ui/fragments/pools-table"},
 		{"/ui/sandboxes", "sandboxes-fragment", "/ui/fragments/sandboxes-table"},
+		{"/ui/resources", "resources-fragment", "/ui/fragments/resources-table"},
 		{"/ui/agents", "agents-fragment", "/ui/fragments/agents-table"},
 	}
 	for _, tc := range cases {
