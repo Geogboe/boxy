@@ -39,13 +39,13 @@ body contains "All Sandboxes"
 body contains "No sandboxes created"
 
 
-# ── Agents page ───────────────────────────────────────────────────────────
+# ── Hosts page ────────────────────────────────────────────────────────────
 
 GET {{base_url}}/ui/agents
 HTTP 200
 [Asserts]
 header "Content-Type" contains "text/html"
-body contains "Agents"
+body contains "Hosts"
 body contains "Embedded Agent"
 body contains "No heartbeat sample"
 body contains "hx-get=\"/ui/fragments/agents-table\""
@@ -129,8 +129,8 @@ HTTP 200
 [Asserts]
 body contains "<a href=\"/ui/sandboxes\" class=\"active\" aria-current=\"page\">Sandboxes</a>"
 
-# Agents page has active on Agents link
+# Hosts page has active on Hosts link
 GET {{base_url}}/ui/agents
 HTTP 200
 [Asserts]
-body contains "<a href=\"/ui/agents\" class=\"active\" aria-current=\"page\">Agents</a>"
+body contains "<a href=\"/ui/agents\" class=\"active\" aria-current=\"page\">Hosts</a>"

@@ -374,11 +374,11 @@ func (s *Server) diagnosticsHandler(tmpl *template.Template) http.HandlerFunc {
 					d.DiagnosticsRefresh = !job.Status.IsTerminal()
 					switch job.Status {
 					case jobs.StatusSucceeded:
-						d.DiagnosticsMessage = "Agent log snapshot received. The timeline now includes the returned events."
+						d.DiagnosticsMessage = "Host log snapshot received. The timeline now includes the returned events."
 					case jobs.StatusFailed, jobs.StatusCancelled, jobs.StatusInterrupted:
-						d.DiagnosticsError = "Agent log request " + string(job.Status) + "."
+						d.DiagnosticsError = "Host log request " + string(job.Status) + "."
 					default:
-						d.DiagnosticsMessage = "Agent log request is " + string(job.Status) + ". Waiting for the remote snapshot."
+						d.DiagnosticsMessage = "Host log request is " + string(job.Status) + ". Waiting for the remote snapshot."
 					}
 				}
 			}

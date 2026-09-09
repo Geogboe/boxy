@@ -698,7 +698,7 @@ func TestUI_agents_rendersStatusesCapacityAndPolling(t *testing.T) {
 	}
 	body := w.Body.String()
 	for _, want := range []string{
-		"Agents", "Embedded Agent", "Lab Hypervisor", "remote-1", "Connected", "Disconnected",
+		"Hosts", "Embedded Agent", "Lab Hypervisor", "remote-1", "Connected", "Disconnected",
 		"Available", "Unavailable", "hyperv", "4,096 MB free", "No heartbeat sample", "No capacity sample",
 		"2026-08-21 14:30:00 UTC", `hx-get="/ui/fragments/agents-table"`, `hx-trigger="every 5s"`,
 		`href="/ui/diagnostics?agent=embedded">View logs</a>`,
@@ -778,7 +778,7 @@ func TestUI_agents_emptyInventory(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/fragments/agents-table", nil)))
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "No agents registered") {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "No hosts registered") {
 		t.Fatalf("status = %d, body = %q", w.Code, w.Body.String())
 	}
 }
