@@ -520,7 +520,7 @@ tbody tr:hover {
 .pool-unassigned-name { color: var(--text-muted); font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-style: italic; }
 
 .pools-refreshed-at { color: var(--text-muted); font-size: 0.75rem; padding: 0.75rem 1.25rem 0; }
-.pools-summary-footer { align-items: center; border-top: 1px solid var(--border); color: var(--text-muted); display: flex; flex-wrap: wrap; font-size: 0.8rem; gap: 1rem; justify-content: space-between; padding: 0.85rem 1.25rem; }
+.pools-summary-footer { align-items: center; border-top: 1px solid var(--border); color: var(--text-muted); display: flex; flex-wrap: wrap; font-size: 0.8rem; gap: 1rem; justify-content: flex-start; padding: 0.85rem 1.25rem; }
 
 /* Persistent "⋯" per-row menu (#327): reveal the real actions on hover/focus
    without reflowing sibling columns. Both the toggle and the menu occupy

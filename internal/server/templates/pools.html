@@ -53,6 +53,7 @@
 {{if .PoolResult}}<div class="result-banner">{{.PoolResult}}</div>{{end}}
 {{if .PoolError}}<div class="error-banner">{{.PoolError}}</div>{{end}}
 {{end}}
+<script>(function(){var openIds=null;document.body.addEventListener("htmx:beforeSwap",function(e){if(e.detail.target&&e.detail.target.id==="pools-fragment"){openIds={};e.detail.target.querySelectorAll("details.pool-group[open]").forEach(function(d){if(d.id)openIds[d.id]=true;});}});document.body.addEventListener("htmx:afterSwap",function(e){if(e.detail.target&&e.detail.target.id==="pools-fragment"&&openIds){e.detail.target.querySelectorAll("details.pool-group").forEach(function(d){if(d.id&&openIds[d.id])d.open=true;});openIds=null;}});})();</script>
 <div class="table-card">
   <div class="table-card-header">
     <div>{{if .PoolHistory}}Historical resources{{else}}Active pools{{end}}</div>
@@ -77,7 +78,7 @@
 {{range .PoolViews}}
 {{$pool := .}}
 {{if eq .Name "unassigned"}}
-<details class="pool-group pool-group-unassigned">
+<details class="pool-group pool-group-unassigned" id="pool-group-unassigned">
   <summary class="pool-group-header">
     <div class="pool-group-primary">
       <span class="badge badge-unknown">unknown</span>
@@ -104,7 +105,7 @@
   {{template "pool_resource_table" (dict "Pool" $pool "Root" $ "AllowMutations" false)}}
 </details>
 {{else}}
-<details class="pool-group">
+<details class="pool-group" id="pool-group-{{.Name}}">
   <summary class="pool-group-header">
     <div class="pool-group-primary">
       <span class="badge badge-{{.Status}}">{{.Status}}</span>
@@ -113,8 +114,7 @@
     </div>
     <div class="pool-group-secondary">
       {{if lt .ReadyCount .MinReady}}<span class="pool-ready-warning">{{.ReadyCount}} of {{.MinReady}} ready</span>{{end}}
-      <span class="pool-total-muted">{{.TotalCount}} total · max {{.MaxTotal}}</span>
-      {{if .FailedCount}}<span class="badge badge-blocked">{{.FailedCount}} failed</span>{{end}}
+      <span class="pool-total-muted">{{.TotalCount}} total · max {{.MaxTotal}}{{if .FailedCount}} · {{.FailedCount}} failed{{end}}</span>
     </div>
     <div class="pool-group-actions" onclick="event.stopPropagation()">
       {{if $.CanManagePools}}
@@ -143,8 +143,7 @@
 {{end}}
 {{end}}
 <div class="pools-summary-footer">
-  <span>{{.PoolResourceCount}} resource{{if ne .PoolResourceCount 1}}s{{end}} across {{len .Pools}} pool{{if ne (len .Pools) 1}}s{{end}}</span>
-  <a href="/ui/diagnostics">View diagnostics</a>
+  <span>{{.PoolResourceCount}} resource{{if ne .PoolResourceCount 1}}s{{end}} across {{len .Pools}} pool{{if ne (len .Pools) 1}}s{{end}} · <a href="/ui/diagnostics">View diagnostics</a></span>
 </div>
 {{if .ResourceLimitHit}}<div class="table-card-subtitle bounded-note">Showing the first 1,000 resources. Use filters or the API for larger inventories.</div>{{end}}
 {{else}}

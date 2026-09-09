@@ -42,9 +42,28 @@ func TestUIDesignLanguageDocumentsStableSurface(t *testing.T) {
 		".button-link",
 		".badge",
 		".quick-link-card",
+		".pool-group-primary",
+		".pool-group-secondary",
+		".pool-total-muted",
+		".pool-ready-warning",
+		".row-actions-menu",
+		".row-actions-toggle",
+		".badge-promoting",
+		".badge-recycling",
 	} {
 		if !strings.Contains(string(css), selector) {
 			t.Errorf("stylesheet missing documented selector %q", selector)
+		}
+	}
+
+	for _, phrase := range []string{
+		".pool-group-primary",
+		".pool-group-secondary",
+		".row-actions-menu",
+		".row-actions-toggle",
+	} {
+		if !strings.Contains(string(design), phrase) {
+			t.Errorf("design language component vocabulary missing %q", phrase)
 		}
 	}
 }

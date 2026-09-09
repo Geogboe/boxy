@@ -236,7 +236,7 @@ func TestUI_poolsRowRemodel(t *testing.T) {
 		`action="/ui/pools/pool-a/drain"`,
 		`action="/ui/pools/pool-a/fill"`,
 		// The dimmed "unassigned" row carries the orphan and the cleanup actions.
-		`<details class="pool-group pool-group-unassigned">`,
+		`<details class="pool-group pool-group-unassigned" id="pool-group-unassigned">`,
 		"orphan-1",
 		"1 resource with no pool",
 		"Preview cleanup",
@@ -248,6 +248,99 @@ func TestUI_poolsRowRemodel(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("pools page missing %q; body = %q", want, body)
 		}
+	}
+}
+
+// TestUI_poolsRow_failedCountFoldedIntoMutedText closes a #327 UI-validation
+// finding: the mockup's "exactly one status pill" rule was being violated by
+// a second badge-blocked "N failed" badge rendered alongside the derived
+// status pill whenever a pool had quarantined (#328) resources. The count
+// still needs to be visible per #328's own goal, so it's folded into the
+// existing muted "N total · max M" text instead of dropped or kept as a
+// second badge.
+func TestUI_poolsRow_failedCountFoldedIntoMutedText(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	if err := st.PutPool(ctx, model.Pool{
+		Name:      "pool-a",
+		Policies:  model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 1, MaxTotal: 4}},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer},
+	}); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	for _, resource := range []model.Resource{
+		{ID: "ready-1", OriginPool: "pool-a", State: model.ResourceStateReady},
+		{ID: "failed-1", OriginPool: "pool-a", State: model.ResourceStateError},
+	} {
+		if err := st.PutResource(ctx, resource); err != nil {
+			t.Fatalf("PutResource: %v", err)
+		}
+	}
+	mux := server.NewTestMuxWithPoolAdmin(st, sandbox.New(st, nil), &fakePoolMaintenance{}, &poolAdminCleanup{})
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/pools", nil)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	body := w.Body.String()
+
+	if !strings.Contains(body, "2 total · max 4 · 1 failed") {
+		t.Fatalf("failed count should be folded into the muted total/max text; body = %q", body)
+	}
+	if strings.Contains(body, `<span class="badge badge-blocked">1 failed</span>`) {
+		t.Fatalf("failed count should not render as a second badge alongside the status pill; body = %q", body)
+	}
+}
+
+// TestUI_poolsRow_expandStatePreservedAcrossPoll guards a real bug found
+// during #327 UI validation: native <details open> is discarded whenever
+// htmx's 5s poll swaps #pools-fragment's innerHTML, because the replacement
+// nodes are brand new elements with no memory of the old open state. The fix
+// is a stable per-pool id plus an htmx:beforeSwap/afterSwap listener that
+// re-applies open by id; this test only asserts the pieces the fix depends
+// on are actually rendered (id present, closing markup for the listener
+// present) since the swap/reopen behavior itself is DOM/JS behavior that
+// only a real browser exercises — see the playwright-cli verification notes
+// in the #327 batch, not a Go unit test.
+func TestUI_poolsRow_expandStatePreservedAcrossPoll(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	if err := st.PutPool(ctx, model.Pool{
+		Name:      "pool-a",
+		Policies:  model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 1, MaxTotal: 2}},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer},
+	}); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+
+	mux := server.NewTestMuxWithPoolAdmin(st, sandbox.New(st, nil), &fakePoolMaintenance{}, &poolAdminCleanup{})
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/pools", nil)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	body := w.Body.String()
+
+	if !strings.Contains(body, `id="pool-group-pool-a"`) {
+		t.Fatalf("pool group missing stable id for cross-poll open-state tracking; body = %q", body)
+	}
+	if !strings.Contains(body, "htmx:beforeSwap") || !strings.Contains(body, "htmx:afterSwap") {
+		t.Fatalf("pools page missing the open-state-preservation listener; body = %q", body)
+	}
+
+	// The fragment endpoint (what the 5s poll and manual refresh actually
+	// hit) must render the same stable id — the listener re-applies open by
+	// matching ids in the freshly-swapped fragment content.
+	fragment := httptest.NewRecorder()
+	mux.ServeHTTP(fragment, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/fragments/pools-table", nil)))
+	if fragment.Code != http.StatusOK {
+		t.Fatalf("fragment status = %d", fragment.Code)
+	}
+	if !strings.Contains(fragment.Body.String(), `id="pool-group-pool-a"`) {
+		t.Fatalf("pools fragment missing stable id; body = %q", fragment.Body.String())
 	}
 }
 

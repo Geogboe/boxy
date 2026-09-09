@@ -49,6 +49,8 @@ Use these existing classes before adding a new one:
 | Empty state | `.empty` |
 | Long inventory | `.table-card` plus `.table-scroll` |
 | Background request | `.htmx-indicator` and the existing refresh styles |
+| Grouped summary/pool row | `.pool-group-primary` (identity + status) and `.pool-group-secondary` (counts, muted via `.pool-total-muted`, and an amber `.pool-ready-warning` when under `min_ready`) |
+| Row-level actions revealed on hover/focus | `.row-actions-menu` and `.row-actions-toggle`; keep the fixed-width actions column so reveal never reflows other columns, and drive visibility with `opacity` + `:focus-within` (never `visibility`/`display`) so keyboard tab focus still reaches the actions without a pointer |
 
 Pool and sandbox details are collapsed by default when they contain a list.
 Historical records belong behind an explicit filter, while active resources
