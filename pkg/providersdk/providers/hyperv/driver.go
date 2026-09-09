@@ -1283,6 +1283,17 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts pro
 	var ip string
 	switch {
 	case hasRangeEntry:
+		// The Linux-unsupported check runs unconditionally — not gated by
+		// opts.ApplyNetwork — because it does no guest-side network work
+		// (it's a pure guestOS check, same one applyRangeIP itself performs
+		// before reserving an address). Without this, a Linux+range-mode
+		// misconfiguration would pass admission silently after #358 (which
+		// gated the actual reservation/apply behind ApplyNetwork) and only
+		// surface, repeatedly, on every subsequent Allocate — a fail-fast
+		// regression relative to pre-#358 behavior.
+		if strings.EqualFold(guestOS, "linux") {
+			return nil, fmt.Errorf("apply range IP for VM %s: %w", id, guestIPUnsupportedOnLinux("range-based IP assignment"))
+		}
 		if opts.ApplyNetwork {
 			// Range mode trusts the address it just reserved and applied as
 			// authoritative — it does NOT re-read it back via vmIP below the
@@ -1297,6 +1308,10 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts pro
 			}
 		}
 	case strings.TrimSpace(notes["boxy_net_static_ip"]) != "":
+		// See the hasRangeEntry case above for why this runs unconditionally.
+		if strings.EqualFold(guestOS, "linux") {
+			return nil, fmt.Errorf("apply static IP for VM %s: %w", id, guestIPUnsupportedOnLinux("static IP"))
+		}
 		if opts.ApplyNetwork {
 			if err := d.applyStaticIP(ctx, id, guestOS, guestUser, bootstrap.Password, notes); err != nil {
 				return nil, fmt.Errorf("apply static IP for VM %s: %w", id, err)
