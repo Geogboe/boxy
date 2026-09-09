@@ -1745,9 +1745,12 @@ func TestDriver_PersonalizeGuest_AppliesStaticIP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PersonalizeGuest: %v", err)
 	}
-	// Expect 3 guest exec calls: applyStaticIP, rotation, verification
-	if len(execCalls) != 3 {
-		t.Fatalf("guest exec call count = %d, want 3 (applyStaticIP + rotation + verification)", len(execCalls))
+	// Expect 2 guest sessions (#361): applyStaticIP + rotation share one
+	// connection under the old (pre-rotation) credential, and verification
+	// opens a distinct second connection under the new credential. This is
+	// down from 3 in the pre-#361 per-call-connection behavior.
+	if len(execCalls) != 2 {
+		t.Fatalf("guest exec session count = %d, want 2 (applyStaticIP+rotation shared, verification separate)", len(execCalls))
 	}
 	if got := result.AccessDetails.Properties["host"]; got != "192.0.2.10" {
 		t.Errorf("host = %q, want 192.0.2.10", got)
@@ -2031,9 +2034,11 @@ func TestDriver_PersonalizeGuest_AppliesRangeIP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PersonalizeGuest: %v", err)
 	}
-	// Expect 3 guest exec calls: applyRangeIP + rotation + verification.
-	if len(execCalls) != 3 {
-		t.Fatalf("guest exec call count = %d, want 3 (applyRangeIP + rotation + verification)", len(execCalls))
+	// Expect 2 guest sessions (#361): applyRangeIP + rotation share one
+	// connection under the old (pre-rotation) credential, and verification
+	// opens a distinct second connection under the new credential.
+	if len(execCalls) != 2 {
+		t.Fatalf("guest exec session count = %d, want 2 (applyRangeIP+rotation shared, verification separate)", len(execCalls))
 	}
 
 	entry, ok, err := d.ledgerLookup(fakeGUID)
@@ -2167,8 +2172,14 @@ func TestDriver_AssignGuestIP_ScriptIsIdempotentAndVerifiesApply(t *testing.T) {
 	if _, err := d.PersonalizeGuest(context.Background(), fakeGUID, providersdk.GuestPersonalizationOptions{ApplyNetwork: true}); err != nil {
 		t.Fatalf("PersonalizeGuest: %v", err)
 	}
-	if len(execs) == 0 || len(execs[0].calls) != 1 {
-		t.Fatalf("assign-IP guest exec session calls = %+v, want exactly 1 call", execs)
+	// #361: the assign-IP call and the credential-rotation call now share
+	// one session (execs[0], opened under the old/pre-rotation credential),
+	// so execs[0] carries 2 calls (assign-IP script, then rotation) instead
+	// of being reopened per call; execs[1] is the separate new-credential
+	// session verify_credential opens. The assign-IP script is still
+	// execs[0]'s first call.
+	if len(execs) != 2 || len(execs[0].calls) != 2 {
+		t.Fatalf("assign-IP guest exec session calls = %+v, want exactly 2 sessions with the first carrying 2 calls (assign-IP + rotation)", execs)
 	}
 	script := strings.Join(execs[0].calls[0], " ")
 
@@ -2183,6 +2194,115 @@ func TestDriver_AssignGuestIP_ScriptIsIdempotentAndVerifiesApply(t *testing.T) {
 	}
 	if !strings.Contains(script, "no 0.0.0.0/0 route found") {
 		t.Errorf("assign script verifies the address but not the default route it came with, leaving the exact symptom #235 reported (route rejection) unverified:\n%s", script)
+	}
+}
+
+// TestDriver_PersonalizeGuest_ReusesSessionAcrossOldCredentialSteps is #361's
+// core hyperv-level claim: personalizeGuestLocked opens exactly one guest
+// session for its old-credential steps (apply_network + rotate_credential)
+// and a distinct second session, under the newly-rotated credential, for
+// verify_credential -- never three separate connections, and never a
+// connection shared across the credential-rotation boundary. It asserts this
+// via countingGuestSession's own Connect(-equivalent: one factory call per
+// session)/Close counts and per-session Exec counts, not wall-clock timing.
+func TestDriver_PersonalizeGuest_ReusesSessionAcrossOldCredentialSteps(t *testing.T) {
+	d := mockDriver(nil)
+	const oldCred = "old-cred"
+	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
+		return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: oldCred}, nil
+	}
+	var sessions []*countingGuestSession
+	d.guestExecFactory = func(_, _, _, guestPassword, _ string) vmsdk.GuestExec {
+		s := &countingGuestSession{password: guestPassword}
+		sessions = append(sessions, s)
+		return s
+	}
+	d.psExec = func(_ context.Context, script string) (string, error) {
+		switch {
+		case strings.Contains(script, "Get-VM -Id") && !strings.Contains(script, ".Name"):
+			// readNotes: static_ip mode, so apply_network runs a guest call.
+			return "boxy_guest_os=windows;boxy_guest_user=Administrator;boxy_net_static_ip=192.0.2.10;boxy_net_prefix=24\n", nil
+		case strings.Contains(script, ".Name"):
+			return "boxy-abc123\n", nil
+		case strings.Contains(script, "Get-VMNetworkAdapter"):
+			return "192.0.2.10\n", nil
+		default:
+			return "", fmt.Errorf("unexpected ps call: %s", script)
+		}
+	}
+
+	if _, err := d.PersonalizeGuest(context.Background(), fakeGUID, providersdk.GuestPersonalizationOptions{ApplyNetwork: true}); err != nil {
+		t.Fatalf("PersonalizeGuest: %v", err)
+	}
+
+	if len(sessions) != 2 {
+		t.Fatalf("opened %d guest sessions, want exactly 2 (one shared old-credential session, one new-credential session)", len(sessions))
+	}
+	oldSession, newSession := sessions[0], sessions[1]
+
+	if oldSession.password != oldCred {
+		t.Errorf("sessions[0].password = %q, want the old (pre-rotation) credential %q", oldSession.password, oldCred)
+	}
+	if newSession.password == oldCred || newSession.password == "" {
+		t.Errorf("sessions[1].password = %q, want the newly-rotated credential, distinct from %q", newSession.password, oldCred)
+	}
+
+	if oldSession.execCount != 2 {
+		t.Errorf("old-credential session Exec count = %d, want 2 (apply_network + rotate_credential sharing one connection)", oldSession.execCount)
+	}
+	if newSession.execCount != 1 {
+		t.Errorf("new-credential session Exec count = %d, want 1 (verify_credential)", newSession.execCount)
+	}
+
+	if oldSession.closeCount != 1 {
+		t.Errorf("old-credential session closeCount = %d, want exactly 1 (closed once after rotate_credential, not once per call)", oldSession.closeCount)
+	}
+	if newSession.closeCount != 1 {
+		t.Errorf("new-credential session closeCount = %d, want exactly 1", newSession.closeCount)
+	}
+}
+
+// TestDriver_PersonalizeGuest_ClosesOldSessionOnApplyNetworkFailure guards
+// against a connection leak on the old-credential session's own failure
+// path: an early return from within the apply_network switch (before
+// rotate_credential ever runs, so the explicit post-rotation Close is never
+// reached) must still close the connection openOld already established, via
+// the deferred fallback close. Registering that defer after the switch
+// instead of immediately after openOld is declared would leave exactly this
+// path unclosed -- caught during #361's implementation via code review, not
+// by a live guest.
+func TestDriver_PersonalizeGuest_ClosesOldSessionOnApplyNetworkFailure(t *testing.T) {
+	d := mockDriver(nil)
+	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
+		return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "old-cred"}, nil
+	}
+	var sessions []*countingGuestSession
+	d.guestExecFactory = func(_, _, _, guestPassword, _ string) vmsdk.GuestExec {
+		s := &countingGuestSession{password: guestPassword, execErr: fmt.Errorf("guest apply-network script failed")}
+		sessions = append(sessions, s)
+		return s
+	}
+	d.psExec = func(_ context.Context, script string) (string, error) {
+		switch {
+		case strings.Contains(script, "Get-VM -Id") && !strings.Contains(script, ".Name"):
+			return "boxy_guest_os=windows;boxy_guest_user=Administrator;boxy_net_static_ip=192.0.2.10;boxy_net_prefix=24\n", nil
+		case strings.Contains(script, ".Name"):
+			return "boxy-abc123\n", nil
+		default:
+			return "", fmt.Errorf("unexpected ps call: %s", script)
+		}
+	}
+
+	_, err := d.PersonalizeGuest(context.Background(), fakeGUID, providersdk.GuestPersonalizationOptions{ApplyNetwork: true})
+	if err == nil {
+		t.Fatal("expected PersonalizeGuest to fail when the apply-network guest script fails")
+	}
+
+	if len(sessions) != 1 {
+		t.Fatalf("opened %d guest sessions, want exactly 1 (apply_network failed before verify_credential could open a second)", len(sessions))
+	}
+	if sessions[0].closeCount != 1 {
+		t.Errorf("old-credential session closeCount = %d, want exactly 1 -- a failure inside apply_network must not strand the connection", sessions[0].closeCount)
 	}
 }
 
@@ -2327,6 +2447,34 @@ type recordingGuestExec struct {
 	password string
 	calls    [][]string
 	execErr  error
+}
+
+// countingGuestSession is a test double implementing vmsdk.GuestSession
+// (GuestExec + Close), so tests can assert #361's connect/close-count
+// contract: personalizeGuestLocked's openGuestSession type-asserts a
+// guestExecFactory-produced value against vmsdk.GuestSession and, when it
+// matches, uses that value's own Close directly instead of wrapping it in a
+// no-op -- letting a test observe exactly how many times a "connection"
+// (one factory call producing one countingGuestSession) was opened and
+// closed, distinct from how many Exec calls ran against it.
+type countingGuestSession struct {
+	password   string
+	execCount  int
+	closeCount int
+	execErr    error
+}
+
+func (s *countingGuestSession) Exec(_ context.Context, _ string, _ ...string) (*vmsdk.ExecResult, error) {
+	s.execCount++
+	if s.execErr != nil {
+		return nil, s.execErr
+	}
+	return &vmsdk.ExecResult{ExitCode: 0}, nil
+}
+
+func (s *countingGuestSession) Close(_ context.Context) error {
+	s.closeCount++
+	return nil
 }
 
 func (f *recordingGuestExec) Exec(_ context.Context, cmd string, args ...string) (*vmsdk.ExecResult, error) {

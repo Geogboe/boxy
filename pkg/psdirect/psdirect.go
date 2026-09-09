@@ -74,31 +74,52 @@ func New(vmID, username, password string) *Exec {
 
 // Exec runs cmd with args on the Windows guest via PowerShell Direct (HvSocket).
 // Stdout is captured via Out-String; $LASTEXITCODE is returned as the exit code.
+//
+// Exec connects, runs one command, and closes -- the full PSRP/WinRM session
+// negotiation cost is paid on every call. A caller making several calls
+// under the same credential back-to-back (e.g. hyperv's
+// personalizeGuestLocked, #361) should prefer OpenSession to pay that cost
+// once instead.
 func (e *Exec) Exec(ctx context.Context, cmd string, args ...string) (*vmsdk.ExecResult, error) {
-	executor, err := e.newExecutor(ctx)
+	executor, err := e.connectExecutor(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("psdirect: create client for VM %s: %w", e.VMID, err)
-	}
-
-	if err := executor.Connect(ctx); err != nil {
-		return nil, fmt.Errorf("psdirect: connect to VM %s: %w", e.VMID, err)
+		return nil, err
 	}
 	defer executor.Close(ctx) //nolint:errcheck
 
-	result, err := executor.ExecuteCommand(ctx, execScript, true, commandArgs(cmd, args)...)
-	if err != nil {
-		return nil, fmt.Errorf("psdirect: exec on VM %s: %w", e.VMID, wrapKnownTransportError(err))
-	}
-
-	stdout, exitCode := extractOutput(result.Output)
-	return &vmsdk.ExecResult{
-		Stdout:   stdout,
-		ExitCode: exitCode,
-	}, nil
+	return runCommand(ctx, executor, e.VMID, cmd, args)
 }
 
 // ExecText executes opaque PowerShell text without converting it to argv.
+// See Exec's doc comment for this method's per-call connection cost.
 func (e *Exec) ExecText(ctx context.Context, text string) (*vmsdk.ExecResult, error) {
+	executor, err := e.connectExecutor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer executor.Close(ctx) //nolint:errcheck
+
+	return runText(ctx, executor, e.VMID, text)
+}
+
+// OpenSession connects once and returns a vmsdk.GuestSession bound to that
+// connection, implementing vmsdk.GuestSessionOpener. The caller may run any
+// number of Exec/ExecText calls against the returned session before calling
+// its Close -- each call reuses the one underlying PSRP connection instead
+// of renegotiating a fresh session, closing exactly once when the caller is
+// done. Streaming (ExecStream/ExecStreamText) is not available on a
+// session; those keep their existing dedicated per-call connection.
+func (e *Exec) OpenSession(ctx context.Context) (vmsdk.GuestSession, error) {
+	executor, err := e.connectExecutor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &Session{vmID: e.VMID, executor: executor}, nil
+}
+
+// connectExecutor creates and connects a psrpExecutor, wrapping both error
+// paths identically for every caller (Exec, ExecText, OpenSession).
+func (e *Exec) connectExecutor(ctx context.Context) (psrpExecutor, error) {
 	executor, err := e.newExecutor(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("psdirect: create client for VM %s: %w", e.VMID, err)
@@ -106,12 +127,56 @@ func (e *Exec) ExecText(ctx context.Context, text string) (*vmsdk.ExecResult, er
 	if err := executor.Connect(ctx); err != nil {
 		return nil, fmt.Errorf("psdirect: connect to VM %s: %w", e.VMID, err)
 	}
-	defer executor.Close(ctx) //nolint:errcheck
+	return executor, nil
+}
 
+// Session is a vmsdk.GuestSession bound to one already-connected PSRP
+// executor, returned by Exec.OpenSession. It lets a caller run multiple
+// Exec/ExecText calls under one credential without paying a fresh
+// Connect/Close cost per call (#361) -- see personalizeGuestLocked in
+// pkg/providersdk/providers/hyperv for the motivating caller.
+type Session struct {
+	vmID     string
+	executor psrpExecutor
+}
+
+// Exec runs cmd with args over the session's already-open connection.
+func (s *Session) Exec(ctx context.Context, cmd string, args ...string) (*vmsdk.ExecResult, error) {
+	return runCommand(ctx, s.executor, s.vmID, cmd, args)
+}
+
+// ExecText executes opaque PowerShell text over the session's already-open
+// connection.
+func (s *Session) ExecText(ctx context.Context, text string) (*vmsdk.ExecResult, error) {
+	return runText(ctx, s.executor, s.vmID, text)
+}
+
+// Close ends the session's underlying connection. It is not valid to call
+// Exec/ExecText on a Session after Close.
+func (s *Session) Close(ctx context.Context) error {
+	return s.executor.Close(ctx)
+}
+
+// runCommand invokes execScript via ExecuteCommand on an already-connected
+// executor and extracts the result, shared by Exec.Exec and Session.Exec so
+// the two entry points cannot drift apart.
+func runCommand(ctx context.Context, executor psrpExecutor, vmID, cmd string, args []string) (*vmsdk.ExecResult, error) {
+	result, err := executor.ExecuteCommand(ctx, execScript, true, commandArgs(cmd, args)...)
+	if err != nil {
+		return nil, fmt.Errorf("psdirect: exec on VM %s: %w", vmID, wrapKnownTransportError(err))
+	}
+	stdout, exitCode := extractOutput(result.Output)
+	return &vmsdk.ExecResult{Stdout: stdout, ExitCode: exitCode}, nil
+}
+
+// runText executes opaque PowerShell text via Execute on an already-connected
+// executor and extracts the result, shared by Exec.ExecText and
+// Session.ExecText so the two entry points cannot drift apart.
+func runText(ctx context.Context, executor psrpExecutor, vmID, text string) (*vmsdk.ExecResult, error) {
 	script := text + "\n$LASTEXITCODE"
 	result, err := executor.Execute(ctx, script)
 	if err != nil {
-		return nil, fmt.Errorf("psdirect: exec text on VM %s: %w", e.VMID, wrapKnownTransportError(err))
+		return nil, fmt.Errorf("psdirect: exec text on VM %s: %w", vmID, wrapKnownTransportError(err))
 	}
 	stdout, exitCode := extractOutput(result.Output)
 	return &vmsdk.ExecResult{Stdout: stdout, ExitCode: exitCode}, nil

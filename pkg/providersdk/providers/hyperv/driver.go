@@ -1280,6 +1280,43 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts pro
 		return nil, fmt.Errorf("read IP ledger for %s: %w", id, err)
 	}
 
+	// oldSession holds one guest connection under the guest's current (old,
+	// pre-rotation) credential, shared by apply_network (when it runs) and
+	// rotate_credential -- both run under this same credential (see #361:
+	// each PSRP/WinRM session negotiation is a real multi-second guest-side
+	// round trip, and personalizeGuestLocked previously paid that cost once
+	// per step instead of once per credential). openOld is idempotent so
+	// whichever step needs the connection first opens it, and every
+	// subsequent step before the rotation boundary reuses the same one.
+	// verify_credential inherently needs a *new* connection under the
+	// just-rotated credential -- it is never merged into this session; see
+	// its own openGuestSession call below.
+	var oldSession vmsdk.GuestSession
+	openOld := func(sshHost string) error {
+		if oldSession != nil {
+			return nil
+		}
+		session, err := d.openGuestSession(ctx, id, guestOS, guestUser, bootstrap.Password, sshHost)
+		if err != nil {
+			return fmt.Errorf("open guest session for %s: %w", id, err)
+		}
+		oldSession = session
+		return nil
+	}
+	// Registered immediately after openOld is defined -- not after the
+	// switch below -- so a failure in apply_network itself (applyRangeIP,
+	// applyStaticIP, or the vmIP read-back that follows it), which returns
+	// before ever reaching the switch's own timer.step, does not strand the
+	// connection openOld already established. The `if oldSession != nil`
+	// guard makes this a no-op both before openOld's first call and again
+	// after the explicit Close + nil-out on the rotate_credential success
+	// path below, so it never double-closes.
+	defer func() {
+		if oldSession != nil {
+			oldSession.Close(ctx) //nolint:errcheck,gosec // best-effort fallback close on an early-return path; the success path closes explicitly and checks the error below.
+		}
+	}()
+
 	var ip string
 	switch {
 	case hasRangeEntry:
@@ -1302,7 +1339,10 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts pro
 			// New-NetIPAddress by several seconds, returning a stale
 			// pre-assignment address or an empty list; the ledger's own
 			// AssignedAddress has no such lag. See ADR-0012.
-			ip, err = d.applyRangeIP(ctx, id, guestOS, guestUser, bootstrap.Password, rangeEntry)
+			if err := openOld(""); err != nil {
+				return nil, err
+			}
+			ip, err = d.applyRangeIP(ctx, oldSession, id, guestOS, rangeEntry)
 			if err != nil {
 				return nil, fmt.Errorf("apply range IP for VM %s: %w", id, err)
 			}
@@ -1313,7 +1353,10 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts pro
 			return nil, fmt.Errorf("apply static IP for VM %s: %w", id, guestIPUnsupportedOnLinux("static IP"))
 		}
 		if opts.ApplyNetwork {
-			if err := d.applyStaticIP(ctx, id, guestOS, guestUser, bootstrap.Password, notes); err != nil {
+			if err := openOld(""); err != nil {
+				return nil, err
+			}
+			if err := d.applyStaticIP(ctx, oldSession, guestOS, notes); err != nil {
 				return nil, fmt.Errorf("apply static IP for VM %s: %w", id, err)
 			}
 			ip, err = d.vmIP(ctx, vmName)
@@ -1329,12 +1372,12 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts pro
 	}
 	timer.step("apply_network")
 
-	bootstrapExec, err := d.newGuestExec(ctx, id, guestOS, guestUser, bootstrap.Password, ip)
-	if err != nil {
+	if err := openOld(ip); err != nil {
 		return nil, err
 	}
+
 	rotationCmd, rotationArgs := rotationCommand(guestOS, guestUser, newPassword)
-	rotationResult, err := bootstrapExec.Exec(ctx, rotationCmd, rotationArgs...)
+	rotationResult, err := oldSession.Exec(ctx, rotationCmd, rotationArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("rotate guest credential for %s: %w", id, err)
 	}
@@ -1343,15 +1386,26 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts pro
 		return nil, fmt.Errorf("rotate guest credential for %s failed with exit code %d: %s", id, resultExitCode(rotationResult), resultOutput(rotationResult))
 	}
 
-	verificationExec, err := d.newGuestExec(ctx, id, guestOS, guestUser, newPassword, ip)
+	// rotate_credential was the last old-credential step; release the
+	// connection now instead of waiting for the deferred fallback so it
+	// isn't held open across verify_credential's separate, new-credential
+	// connection below.
+	closeErr := oldSession.Close(ctx)
+	oldSession = nil
+	if closeErr != nil {
+		slog.Warn("hyperv: close guest session after rotation", "resource_id", id, "error", closeErr)
+	}
+
+	verificationSession, err := d.openGuestSession(ctx, id, guestOS, guestUser, newPassword, ip)
 	if err != nil {
 		return nil, fmt.Errorf("reconnect with rotated guest credential for %s: %w", id, err)
 	}
+	defer verificationSession.Close(ctx) //nolint:errcheck,gosec // best-effort close; the verification result itself is what's checked below.
 	probeCommand := []string{"whoami"}
 	if strings.EqualFold(guestOS, "linux") {
 		probeCommand = []string{"id", "-u"}
 	}
-	verificationResult, err := verificationExec.Exec(ctx, probeCommand[0], probeCommand[1:]...)
+	verificationResult, err := verificationSession.Exec(ctx, probeCommand[0], probeCommand[1:]...)
 	if err != nil {
 		return nil, fmt.Errorf("verify rotated guest credential for %s: %w", id, err)
 	}
@@ -1458,6 +1512,65 @@ func decodeGuestPassword(credential *providersdk.GuestCredential, defaultUser st
 	return payload.Username, payload.Password, nil
 }
 
+// guestSession bundles a vmsdk.GuestExec with a Close, satisfying
+// vmsdk.GuestSession, so openGuestSession has one return shape regardless of
+// whether the underlying transport actually supports holding a connection
+// open. Wrapping close in a field (rather than requiring every branch to
+// return a *psdirect.Session concretely) lets non-session-capable paths
+// (Linux/SSH, and any guestExecFactory test double that doesn't itself
+// implement vmsdk.GuestSession) supply a no-op Close instead of forcing
+// openGuestSession's callers to type-switch.
+type guestSession struct {
+	vmsdk.GuestExec
+	closeFunc func(ctx context.Context) error
+}
+
+func (s *guestSession) Close(ctx context.Context) error {
+	if s.closeFunc == nil {
+		return nil
+	}
+	return s.closeFunc(ctx)
+}
+
+// openGuestSession returns a vmsdk.GuestSession for one guest-exec
+// credential, so a caller with several guest-exec calls to make under that
+// same credential (personalizeGuestLocked's apply_network + rotate_credential
+// pair, #361) can hold one connection open across them instead of paying a
+// fresh PSRP/WinRM session-establishment cost per call.
+//
+// Windows guests (the only OS personalizeGuestLocked ever runs a
+// boxy-managed network-apply step against -- range/static_ip modes are
+// rejected for Linux before this is called) use psdirect's native session
+// support. Linux/SSH and the guestExecFactory test seam fall back to a
+// plain per-call GuestExec wrapped in a no-op Close: SSH has no multi-step
+// sequence to merge here (network apply is never boxy-managed on Linux), and
+// a test double that wants its own Connect/Close accounting can implement
+// vmsdk.GuestSession itself and be used as-is.
+func (d *Driver) openGuestSession(ctx context.Context, id, guestOS, guestUser, guestPassword, sshHost string) (vmsdk.GuestSession, error) {
+	if d.guestExecFactory != nil {
+		exec := d.guestExecFactory(id, guestOS, guestUser, guestPassword, sshHost)
+		if session, ok := exec.(vmsdk.GuestSession); ok {
+			return session, nil
+		}
+		return &guestSession{GuestExec: exec}, nil
+	}
+
+	if !strings.EqualFold(guestOS, "linux") {
+		direct := psdirect.New(id, guestUser, guestPassword)
+		session, err := direct.OpenSession(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("open guest session for %s: %w", id, err)
+		}
+		return session, nil
+	}
+
+	exec, err := d.newGuestExec(ctx, id, guestOS, guestUser, guestPassword, sshHost)
+	if err != nil {
+		return nil, err
+	}
+	return &guestSession{GuestExec: exec}, nil
+}
+
 func (d *Driver) newGuestExec(ctx context.Context, id, guestOS, guestUser, guestPassword, sshHost string) (vmsdk.GuestExec, error) {
 	if d.guestExecFactory != nil {
 		if strings.EqualFold(guestOS, "linux") && sshHost == "" {
@@ -1556,9 +1669,11 @@ $ErrorActionPreference = 'Stop'
 }
 
 // applyStaticIP configures static_ip mode's fixed address inside the guest,
-// reading it out of the VM's Notes exactly as before. See assignGuestIP for
-// the shared mechanism.
-func (d *Driver) applyStaticIP(ctx context.Context, id, guestOS, guestUser, guestPassword string, notes map[string]string) error {
+// reading it out of the VM's Notes exactly as before, over exec -- an
+// already-connected guest session (#361) shared with the caller's other
+// old-credential steps rather than a connection this function opens itself.
+// See assignGuestIP for the shared mechanism.
+func (d *Driver) applyStaticIP(ctx context.Context, exec vmsdk.GuestExec, guestOS string, notes map[string]string) error {
 	staticIP := strings.TrimSpace(notes["boxy_net_static_ip"])
 	if staticIP == "" {
 		return nil
@@ -1566,15 +1681,16 @@ func (d *Driver) applyStaticIP(ctx context.Context, id, guestOS, guestUser, gues
 	prefix := notes["boxy_net_prefix"]
 	gateway := notes["boxy_net_gw"]
 	dns := notes["boxy_net_dns"]
-	return d.assignGuestIP(ctx, id, guestOS, guestUser, guestPassword, staticIP, prefix, gateway, dns)
+	return d.assignGuestIP(ctx, exec, guestOS, staticIP, prefix, gateway, dns)
 }
 
 // applyRangeIP reserves (if not already reserved — see reserveAddress's
-// idempotency) and applies entry's range-mode address inside the guest,
-// returning the reserved address. PersonalizeGuest trusts this return value
-// as authoritative for the guest's reachable IP rather than re-reading it
-// back via vmIP — see the call site's comment and ADR-0012 for why.
-func (d *Driver) applyRangeIP(ctx context.Context, id, guestOS, guestUser, guestPassword string, entry *ledgerEntry) (string, error) {
+// idempotency) and applies entry's range-mode address inside the guest over
+// exec (an already-connected guest session, #361), returning the reserved
+// address. PersonalizeGuest trusts this return value as authoritative for
+// the guest's reachable IP rather than re-reading it back via vmIP — see
+// the call site's comment and ADR-0012 for why.
+func (d *Driver) applyRangeIP(ctx context.Context, exec vmsdk.GuestExec, id, guestOS string, entry *ledgerEntry) (string, error) {
 	if strings.EqualFold(guestOS, "linux") {
 		// Checked before reserveAddress so an unsupported Linux guest
 		// doesn't burn a reservation it can never apply.
@@ -1585,7 +1701,7 @@ func (d *Driver) applyRangeIP(ctx context.Context, id, guestOS, guestUser, guest
 		return "", fmt.Errorf("reserve address for %s: %w", id, err)
 	}
 	dns := strings.Join(entry.DNSServers, ",")
-	if err := d.assignGuestIP(ctx, id, guestOS, guestUser, guestPassword, address, strconv.Itoa(entry.PrefixLength), entry.DefaultGateway, dns); err != nil {
+	if err := d.assignGuestIP(ctx, exec, guestOS, address, strconv.Itoa(entry.PrefixLength), entry.DefaultGateway, dns); err != nil {
 		return "", err
 	}
 	return address, nil
@@ -1630,7 +1746,7 @@ func guestIPUnsupportedOnLinux(mechanism string) error {
 // gateway was requested, the 0.0.0.0/0 route must exist too. A silent
 // in-guest failure of either kind now surfaces as a loud Allocate error
 // instead of a healthy-looking but unreachable ready resource.
-func (d *Driver) assignGuestIP(ctx context.Context, id, guestOS, guestUser, guestPassword, ip, prefix, gateway, dns string) error {
+func (d *Driver) assignGuestIP(ctx context.Context, exec vmsdk.GuestExec, guestOS, ip, prefix, gateway, dns string) error {
 	if strings.EqualFold(guestOS, "linux") {
 		return guestIPUnsupportedOnLinux("static IP")
 	}
@@ -1684,10 +1800,6 @@ $applied = Get-NetIPAddress -InterfaceIndex $adapter.InterfaceIndex -AddressFami
 if ($null -eq $applied) { throw "address '%s' did not apply in guest; New-NetIPAddress reported success but the interface shows no usable IPv4 address matching it (duplicate/invalid address state is treated as not applied)" }%s
 `, psq(ip), psq(prefix), gwBlock, dnsBlock, psq(ip), psq(ip), gwVerifyBlock)
 
-	exec, err := d.newGuestExec(ctx, id, guestOS, guestUser, guestPassword, "")
-	if err != nil {
-		return fmt.Errorf("create guest exec for static IP: %w", err)
-	}
 	result, err := exec.Exec(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
 	if err != nil {
 		return fmt.Errorf("run static IP script: %w", err)
