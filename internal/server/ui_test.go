@@ -71,9 +71,19 @@ func TestUI_layoutRendersBrandingVersionThemeAndAdminLinks(t *testing.T) {
 			t.Fatalf("GET %s status = %d", path, w.Code)
 		}
 		body := w.Body.String()
-		for _, want := range []string{"/static/favicon.svg", "Repository", "app-footer", "dev", "data-theme-toggle", `href="/ui/diagnostics"`, `href="/ui/service-keys"`} {
+		for _, want := range []string{"/static/favicon.svg", "Repository", "dev", "data-theme-toggle", `href="/ui/diagnostics"`, `href="/ui/service-keys"`, "sidebar-utility"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("GET %s missing %q", path, want)
+			}
+		}
+		// #327 moved the version/repository/theme utility bar into the
+		// sidebar and removed the content column's own duplicate renderings
+		// of it (the old top-right <header class="app-header"> and the old
+		// bottom <footer class="app-footer">) -- it now renders exactly once
+		// per page, in the sidebar.
+		for _, unwanted := range []string{`class="app-header"`, `class="app-footer"`} {
+			if strings.Contains(body, unwanted) {
+				t.Errorf("GET %s still renders the old duplicate %q", path, unwanted)
 			}
 		}
 	}
@@ -175,6 +185,69 @@ func TestUI_poolsCollapsesResourceGroupsByDefault(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), `<details class="pool-group" open>`) {
 		t.Fatal("active pool resource groups should be collapsed by default")
+	}
+}
+
+// TestUI_poolsRowRemodel closes #327: the pools list used to show a
+// standalone "Operator controls" card duplicating every pool name just to
+// hold Drain/Fill, plus a raw "N ready / M active" + history/Active-Drained
+// badge cluster per group. This asserts the remodeled one-row summary: a
+// single derived status pill, the folded total/max text, Drain/Fill living
+// in the row itself (no separate card), a dimmed "unassigned" row carrying
+// cleanup, and the new footer summary replacing the standalone bounded note.
+func TestUI_poolsRowRemodel(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	if err := st.PutPool(ctx, model.Pool{
+		Name:      "pool-a",
+		Policies:  model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 2, MaxTotal: 4}},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer},
+	}); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	for _, resource := range []model.Resource{
+		{ID: "ready-1", OriginPool: "pool-a", State: model.ResourceStateReady},
+		{ID: "orphan-1", State: model.ResourceStateReady},
+	} {
+		if err := st.PutResource(ctx, resource); err != nil {
+			t.Fatalf("PutResource: %v", err)
+		}
+	}
+	mux := server.NewTestMuxWithPoolAdmin(st, sandbox.New(st, nil), &fakePoolMaintenance{}, &poolAdminCleanup{})
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/pools", nil)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	body := w.Body.String()
+
+	if strings.Contains(body, "Operator controls") {
+		t.Fatalf("standalone operator-controls card should be gone: %q", body)
+	}
+	for _, want := range []string{
+		// One derived status pill plus the amber "N of M ready" shortfall,
+		// replacing the old raw "N ready / M active" + badge cluster.
+		`<span class="badge badge-unknown">unknown</span>`,
+		`<span class="pool-ready-warning">1 of 2 ready</span>`,
+		"1 total · max 4",
+		// Drain/Fill now live inside the row itself.
+		`action="/ui/pools/pool-a/drain"`,
+		`action="/ui/pools/pool-a/fill"`,
+		// The dimmed "unassigned" row carries the orphan and the cleanup actions.
+		`<details class="pool-group pool-group-unassigned">`,
+		"orphan-1",
+		"1 resource with no pool",
+		"Preview cleanup",
+		"Force cleanup",
+		// Footer summary replaces the old standalone bounded note.
+		`<div class="pools-summary-footer">`,
+		"2 resources across 1 pool",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("pools page missing %q; body = %q", want, body)
+		}
 	}
 }
 

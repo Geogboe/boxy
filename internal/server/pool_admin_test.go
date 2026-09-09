@@ -63,7 +63,7 @@ func TestUI_poolsShowsCapacityDrainStateAndResourceRows(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d", response.Code)
 	}
-	for _, want := range []string{"1 ready / 2 active", "draining", "ready-1", "allocated-1", "docker", "View diagnostics", "Force cleanup", "Logs", "Copy ID", "Inspect", "Destroy"} {
+	for _, want := range []string{"2 total · max 3", "draining", "ready-1", "allocated-1", "docker", "View diagnostics", "Force cleanup", "Logs", "Copy ID", "Inspect", "Destroy"} {
 		if !strings.Contains(response.Body.String(), want) {
 			t.Fatalf("Pools page missing %q; body = %q", want, response.Body.String())
 		}

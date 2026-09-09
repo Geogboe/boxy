@@ -54,8 +54,13 @@ func buildPoolViews(pools []model.Pool, resources []model.Resource, poolJobs []j
 		views = append(views, makePoolView(configured, entries, active, ok))
 	}
 	// Keep orphaned records visible even if their configured pool was removed.
+	// "unassigned" is handled separately below so it always renders last,
+	// regardless of alphabetical sort order among other orphaned names.
 	var extra []model.PoolName
 	for name := range buckets {
+		if name == "unassigned" {
+			continue
+		}
 		if _, ok := seen[name]; !ok {
 			extra = append(extra, name)
 		}
@@ -64,6 +69,16 @@ func buildPoolViews(pools []model.Pool, resources []model.Resource, poolJobs []j
 	for _, name := range extra {
 		active, ok := activeJobs["pool:"+string(name)]
 		views = append(views, makePoolView(model.Pool{Name: name}, buckets[name], active, ok))
+	}
+	// The "unassigned" row is not a configured pool; it renders last (dimmed,
+	// in the UI) as the home for resources with no pool at all, and it's also
+	// where cleanup lives — so it's added even with zero orphans as long as
+	// there is at least one real pool to manage cleanup alongside. When there
+	// is truly nothing (no pools, no resources of any kind), leave it out so
+	// the page's empty state ("No pools configured") still renders.
+	if len(views) > 0 || len(buckets["unassigned"]) > 0 {
+		unassignedActive, unassignedHasActive := activeJobs["pool:unassigned"]
+		views = append(views, makePoolView(model.Pool{Name: "unassigned"}, buckets["unassigned"], unassignedActive, unassignedHasActive))
 	}
 	return views
 }

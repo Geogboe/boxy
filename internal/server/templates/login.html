@@ -9,7 +9,7 @@
 <body>
   <div class="login-page">
     {{if not .HideLocalLogin}}<form class="login-form" method="post" action="/login">
-      <div class="sidebar-brand">Boxy</div>
+      <div class="login-brand">Boxy</div>
       {{if .Error}}<div class="error-banner">{{.Error}}</div>{{end}}
       <input type="hidden" name="next" value="{{.Next}}">
       <label for="username">Username</label>
@@ -22,7 +22,7 @@
       <a class="link-button login-sso-link" href="/auth/login?next={{.Next}}">{{if .OIDCIcon}}<img class="login-sso-icon" src="{{.OIDCIcon}}" alt="">{{end}}{{.OIDCLabel}}</a>
       {{end}}
     </form>{{else if .OIDCEnabled}}<div class="login-form">
-      <div class="sidebar-brand">Boxy</div>
+      <div class="login-brand">Boxy</div>
       <a class="link-button login-sso-link" href="/auth/login?next={{.Next}}">{{if .OIDCIcon}}<img class="login-sso-icon" src="{{.OIDCIcon}}" alt="">{{end}}{{.OIDCLabel}}</a>
     </div>{{end}}
   </div>
