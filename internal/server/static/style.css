@@ -153,7 +153,7 @@ a:hover {
    page's refresh button). .page-title's own margin-bottom does not extend a
    row flex container's box (verified live, not just assumed), so this needs
    its own explicit margin-bottom too — pages that don't use this wrapper
-   (pools/sandboxes/agents, whose refresh button lives in their
+   (pools/sandboxes/hosts, whose refresh button lives in their
    table-card-header instead) still get .page-title's own spacing directly. */
 .page-header {
   align-items: center;
@@ -333,8 +333,8 @@ tbody tr:hover {
 .badge-cancelled { background: rgba(139, 143, 163, 0.15); color: var(--text-muted); }
 .badge-interrupted { background: rgba(251, 146, 60, 0.15); color: var(--orange); }
 
-/* Agent status pairs deliberately use distinct labels in addition to color. */
-.agent-status-cluster {
+/* Host status pairs deliberately use distinct labels in addition to color. */
+.host-status-cluster {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
@@ -359,21 +359,21 @@ tbody tr:hover {
 .badge-disconnected,
 .badge-unavailable { background: rgba(139, 143, 163, 0.15); color: var(--text-muted); }
 
-.agent-name,
+.host-name,
 .provider-name { font-weight: 600; }
-.agent-id,
+.host-id,
 .timestamp,
 .capacity-empty {
   color: var(--text-muted);
   font-size: 0.8rem;
 }
 
-.agent-id { display: block; margin-top: 0.15rem; }
+.host-id { display: block; margin-top: 0.15rem; }
 .provider-list { display: grid; gap: 0.4rem; }
 .provider-row { display: grid; gap: 0.1rem; }
 .capacity { font-variant-numeric: tabular-nums; }
 .sample-time { font-size: 0.75rem; }
-.agents-table { min-width: 760px; }
+.hosts-table { min-width: 760px; }
 
 /* Sandbox row detail disclosure (#255) */
 .sandbox-detail summary {

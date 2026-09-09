@@ -1,14 +1,14 @@
-{{define "title"}}Boxy — Agents{{end}}
+{{define "title"}}Boxy — Hosts{{end}}
 
 {{define "content"}}
-<h1 class="page-title">Agents</h1>
+<h1 class="page-title">Hosts</h1>
 <div class="table-card">
   <div class="table-card-header">
     <div>
-      <div>Registered Agents</div>
+      <div>Registered Hosts</div>
       <div class="table-card-subtitle">Connection liveness and scheduling eligibility are reported separately.</div>
     </div>
-    <button type="button" class="refresh-btn" hx-get="/ui/fragments/agents-table" hx-target="#agents-fragment" hx-swap="innerHTML" hx-sync="#agents-fragment:replace" aria-label="Refresh agents now" title="Refresh now">
+    <button type="button" class="refresh-btn" hx-get="/ui/fragments/agents-table" hx-target="#agents-fragment" hx-swap="innerHTML" hx-sync="#agents-fragment:replace" aria-label="Refresh hosts now" title="Refresh now">
       <span class="refresh-icon" aria-hidden="true">⟳</span> Refresh
     </button>
   </div>
@@ -24,10 +24,10 @@
 {{define "agents_table_fragment"}}
 {{if .Agents}}
 <div class="table-scroll">
-<table class="agents-table">
+<table class="hosts-table">
   <thead>
     <tr>
-      <th scope="col">Agent</th>
+      <th scope="col">Host</th>
       <th scope="col">Connection / Scheduling</th>
       <th scope="col">Last heartbeat</th>
       <th scope="col">Providers and capacity</th>
@@ -38,11 +38,11 @@
     {{range .Agents}}
     <tr>
       <td>
-        <div class="agent-name">{{.Name}}</div>
-        <code class="agent-id">{{.ID}}</code>
+        <div class="host-name">{{.Name}}</div>
+        <code class="host-id">{{.ID}}</code>
       </td>
       <td>
-        <div class="agent-status-cluster" aria-label="Connection and scheduling status">
+        <div class="host-status-cluster" aria-label="Connection and scheduling status">
           <div class="status-pair">
             <span class="status-label">Connection</span>
             {{if .Connected}}<span class="badge badge-connected">Connected</span>{{else}}<span class="badge badge-disconnected">Disconnected</span>{{end}}
@@ -78,6 +78,6 @@
 </table>
 </div>
 {{else}}
-<div class="empty">No agents registered</div>
+<div class="empty">No hosts registered</div>
 {{end}}
 {{end}}

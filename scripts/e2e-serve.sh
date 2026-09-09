@@ -158,7 +158,7 @@ assert_status "GET /api/v1/diagnostics/logs" "$BASE/api/v1/diagnostics/logs?limi
 assert_html_contains "GET /"              "$BASE/"                   "Overview"
 assert_html_contains "GET /ui/pools"      "$BASE/ui/pools"           "Active pools"
 assert_html_contains "GET /ui/sandboxes"  "$BASE/ui/sandboxes"       "All Sandboxes"
-assert_html_contains "GET /ui/agents"     "$BASE/ui/agents"           "Agents"
+assert_html_contains "GET /ui/agents"     "$BASE/ui/agents"           "Hosts"
 assert_html_contains "GET /ui/diagnostics" "$BASE/ui/diagnostics"     "Diagnostics"
 assert_html_contains "GET /ui/catalog"   "$BASE/ui/catalog"           "Catalog"
 assert_html_contains "GET /ui/help"      "$BASE/ui/help"              "Boxy package help"
