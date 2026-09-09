@@ -387,3 +387,11 @@ b1a18db76a214250a69bea864a099f3aba50a239:examples/oidc-keycloak/realm-export.jso
 # below already carries the literal in its own patch content, so the
 # fingerprint stays here rather than rewriting that branch's history.
 b986f6b870df8cfe01b235eccb1f8edd3017ce96:pkg/providersdk/providers/hyperv/driver_test.go:generic-password:2277
+
+# Same file, same established Get-VMNetworkAdapter private-range IP fixture
+# convention already recorded above/on main (see 413ac572...'s own note on
+# this exact pattern -- not spelled out here to avoid re-triggering this
+# same scanner rule on this comment) -- #355's new step-timing test
+# followed the file's existing convention rather than introducing a new
+# one. Recorded per the same precedent, not a new decision.
+4de2810da65564c2259603e0f91abe0410874e4c:pkg/providersdk/providers/hyperv/driver_test.go:boxy-pii-private-ipv4:1353
