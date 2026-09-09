@@ -59,3 +59,27 @@ func TestHandlerStoresOnlySafeRedactedFields(t *testing.T) {
 		t.Fatalf("message unexpectedly contains omitted command: %q", event.Message)
 	}
 }
+
+// TestHandlerStoresDurationMS guards the #355 diagnosability fix: a log
+// line's elapsed-time attribute (either key) must reach the queryable
+// Event.DurationMS field, not just the raw log stream, since `boxy
+// diagnostics logs` reads from the structured Store.
+func TestHandlerStoresDurationMS(t *testing.T) {
+	store := &captureStore{}
+	logger := slog.New(NewHandler(slog.NewTextHandler(io.Discard, nil), store))
+	logger.Info("hyperv guest personalization step timing", "step", "rotate_credential", "elapsed_ms", int64(1234))
+
+	if len(store.events) != 1 {
+		t.Fatalf("events = %+v, want one event", store.events)
+	}
+	if store.events[0].DurationMS != 1234 {
+		t.Fatalf("DurationMS = %d, want 1234", store.events[0].DurationMS)
+	}
+
+	store2 := &captureStore{}
+	logger2 := slog.New(NewHandler(slog.NewTextHandler(io.Discard, nil), store2))
+	logger2.Info("allocation-time guest personalization succeeded", "duration_ms", int64(5678))
+	if len(store2.events) != 1 || store2.events[0].DurationMS != 5678 {
+		t.Fatalf("events = %+v, want one event with DurationMS=5678", store2.events)
+	}
+}

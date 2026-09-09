@@ -47,7 +47,7 @@ func TestRemoteAgentReceivesLogBatchWithAuthenticatedIdentity(t *testing.T) {
 	go func() { done <- agent.Serve() }()
 	stream.recvCh <- &boxyagentv1.AgentMessage{Payload: &boxyagentv1.AgentMessage_LogBatch{LogBatch: &boxyagentv1.LogBatch{
 		RequestId: "request-a",
-		Events:    []*boxyagentv1.LogEvent{{Message: "password=secret", Component: "agent", Job: "job-a", Step: "vm.create", Status: "failed", Attempt: 2}},
+		Events:    []*boxyagentv1.LogEvent{{Message: "password=secret", Component: "agent", Job: "job-a", Step: "vm.create", Status: "failed", Attempt: 2, DurationMs: 4200}},
 	}}}
 	stream.closeWith(io.EOF)
 	if err := <-done; !errors.Is(err, io.EOF) {
@@ -64,6 +64,13 @@ func TestRemoteAgentReceivesLogBatchWithAuthenticatedIdentity(t *testing.T) {
 	}
 	if got[0].Job != "job-a" || got[0].Step != "vm.create" || got[0].Status != "failed" || got[0].Attempt != 2 {
 		t.Fatalf("structured event = %+v, want job/step/status/attempt", got[0])
+	}
+	// Guards #355: a remote agent's timing log (e.g. hyperv's guest
+	// personalization step timing) must carry its duration across the
+	// agent->daemon wire, not just locally, so `boxy diagnostics logs`
+	// shows it for a remote (non-embedded) agent too.
+	if got[0].DurationMS != 4200 {
+		t.Fatalf("DurationMS = %d, want 4200", got[0].DurationMS)
 	}
 }
 

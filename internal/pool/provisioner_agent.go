@@ -218,6 +218,22 @@ func (ap *AgentProvisioner) Allocate(ctx context.Context, pool model.Pool, res m
 			return providersdk.AllocationResult{}, err
 		}
 		if result != nil {
+			// Elapsed time for a successful guest personalization call,
+			// tagged with resource/pool/agent, so an operator watching an
+			// allocation that is slow-but-not-timing-out (#355) has
+			// something to look at beyond the unrelated pool-reconcile
+			// PolicyController's "policy decision is noop" log line, which
+			// reflects a separate periodic loop and carries no information
+			// about this call.
+			personalizeElapsed := ap.now().Sub(start)
+			slog.Default().Info("allocation-time guest personalization succeeded",
+				"operation", "agent_personalize_guest",
+				"resource_id", res.ID,
+				"pool", pool.Name,
+				"agent_id", agent.Info().ID,
+				"elapsed", personalizeElapsed.String(),
+				"elapsed_ms", personalizeElapsed.Milliseconds(),
+			)
 			if ap.GuestSecrets != nil {
 				if err := ap.GuestSecrets.Delete(ctx, boxysecrets.ResourceCredentialKey(string(res.ID))); err != nil && !errors.Is(err, boxysecrets.ErrNotFound) {
 					slog.Default().Warn("could not remove consumed resource credential", "resource_id", res.ID, "error", err)
@@ -273,6 +289,7 @@ func (ap *AgentProvisioner) quarantineOnPersonalizeTimeout(ctx context.Context, 
 		"pool", poolName,
 		"agent_id", agentID,
 		"elapsed", elapsed.String(),
+		"elapsed_ms", elapsed.Milliseconds(),
 		"timeout", timeout.String(),
 		"credential_backend_configured", backendConfigured,
 		"credential_deleted", credentialDeleted,

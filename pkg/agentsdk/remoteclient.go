@@ -282,6 +282,7 @@ func (s *clientSession) sendLogBatchRequest(ctx context.Context, events []diagno
 			Step:         event.Step,
 			Status:       event.Status,
 			Attempt:      clampToInt32(event.Attempt),
+			DurationMs:   event.DurationMS,
 		})
 	}
 	if len(items) == 0 && requestID == "" {

@@ -121,6 +121,13 @@ message LogEvent {
   string step = 12;
   string status = 13;
   int32 attempt = 14;
+  // duration_ms is the elapsed time of the operation/step this log entry
+  // describes, in milliseconds. Zero means "not reported" — most log
+  // entries have no associated duration. Added for #355 so a slow
+  // allocation-time guest personalization step is visible through
+  // `boxy diagnostics logs` for a remote (non-embedded) agent, not just in
+  // the agent's own raw log output.
+  int64 duration_ms = 15;
 }
 
 // ---- Server -> Agent ----

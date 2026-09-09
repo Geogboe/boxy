@@ -1122,14 +1122,63 @@ func (d *Driver) Allocate(ctx context.Context, id string) (map[string]any, error
 func (d *Driver) PersonalizeGuest(ctx context.Context, id string) (*providersdk.GuestPersonalizationResult, error) {
 	unlock := d.lockPersonalize(id)
 	defer unlock()
+	start := time.Now()
 	result, err := d.personalizeGuestLocked(ctx, id)
+	elapsed := time.Since(start)
 	if err != nil {
 		step := personalizeFailureStep(err)
-		logHyperVEvent(slog.LevelWarn, "hyperv guest personalization failed", "personalize", step, "failed", id, step+"_failed")
+		slog.Warn(fmt.Sprintf("hyperv guest personalization failed after %s (step=%s)", elapsed, step),
+			"component", "hyperv", "provider", "hyperv",
+			"operation", "personalize", "step", step, "status", "failed",
+			"resource", id, "error_code", step+"_failed",
+			"elapsed_ms", elapsed.Milliseconds())
 		return nil, err
 	}
-	logHyperVEvent(slog.LevelInfo, "hyperv guest personalization succeeded", "personalize", "guest_personalize", "succeeded", id, "")
+	slog.Info(fmt.Sprintf("hyperv guest personalization succeeded in %s", elapsed),
+		"component", "hyperv", "provider", "hyperv",
+		"operation", "personalize", "step", "guest_personalize", "status", "succeeded",
+		"resource", id, "elapsed_ms", elapsed.Milliseconds())
 	return result, nil
+}
+
+// personalizeStepTimer logs each major phase of guest personalization at
+// debug level with its own elapsed duration, so an operator watching normal
+// (non-error, non-timeout) allocations can see exactly where time goes
+// instead of only learning about a step after it fails or times out (#355).
+// This is deliberately independent of the pool-reconcile PolicyController's
+// "policy decision is noop" logging (pkg/policycontroller/controller.go),
+// which reflects an entirely separate periodic loop and carries no
+// information about an in-flight allocation/personalize call — see #355's
+// investigation notes.
+type personalizeStepTimer struct {
+	id       string
+	total    time.Time
+	stepFrom time.Time
+}
+
+func newPersonalizeStepTimer(id string) *personalizeStepTimer {
+	now := time.Now()
+	return &personalizeStepTimer{id: id, total: now, stepFrom: now}
+}
+
+// step logs the elapsed time since the previous step (or the timer's
+// creation) attributed to the named phase, then resets the clock for the
+// next step.
+func (t *personalizeStepTimer) step(name string) {
+	now := time.Now()
+	stepElapsed := now.Sub(t.stepFrom)
+	totalElapsed := now.Sub(t.total)
+	// The elapsed values are also embedded in the message text (not just
+	// the structured attrs) so they remain visible in `boxy diagnostics
+	// logs`'s default table view, which prints only timestamp/level/
+	// component/message and not arbitrary attrs (#355).
+	slog.Debug(fmt.Sprintf("hyperv guest personalization step %q took %s (%s elapsed total)", name, stepElapsed, totalElapsed),
+		"component", "hyperv", "provider", "hyperv",
+		"operation", "personalize", "step", name,
+		"resource", t.id,
+		"elapsed_ms", stepElapsed.Milliseconds(),
+		"total_elapsed_ms", totalElapsed.Milliseconds())
+	t.stepFrom = now
 }
 
 // personalizeFailureStep classifies a personalizeGuestLocked failure by
@@ -1156,10 +1205,13 @@ func personalizeFailureStep(err error) string {
 // personalizeGuestLocked is PersonalizeGuest's implementation, run only
 // while the caller holds this VM's personalize lock.
 func (d *Driver) personalizeGuestLocked(ctx context.Context, id string) (*providersdk.GuestPersonalizationResult, error) {
+	timer := newPersonalizeStepTimer(id)
+
 	notes, err := d.readNotes(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("read VM notes for %s: %w", id, err)
 	}
+	timer.step("read_notes")
 
 	guestOS := notes["boxy_guest_os"]
 	if guestOS == "" {
@@ -1180,6 +1232,7 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string) (*provid
 	if strings.TrimSpace(bootstrap.Username) != "" {
 		guestUser = bootstrap.Username
 	}
+	timer.step("resolve_bootstrap_credential")
 
 	newPassword, err := guestcred.GenerateRandomPassword()
 	if err != nil {
@@ -1190,6 +1243,7 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string) (*provid
 	if err != nil {
 		return nil, fmt.Errorf("resolve VM name for %s: %w", id, err)
 	}
+	timer.step("resolve_vm_name")
 
 	// Apply network configuration inside the guest via PowerShell Direct
 	// (VMBus — no network required) before querying the IP. This is the
@@ -1226,6 +1280,7 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string) (*provid
 			return nil, fmt.Errorf("get IP for VM %q: %w", vmName, err)
 		}
 	}
+	timer.step("apply_network")
 
 	bootstrapExec, err := d.newGuestExec(ctx, id, guestOS, guestUser, bootstrap.Password, ip)
 	if err != nil {
@@ -1236,6 +1291,7 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string) (*provid
 	if err != nil {
 		return nil, fmt.Errorf("rotate guest credential for %s: %w", id, err)
 	}
+	timer.step("rotate_credential")
 	if rotationResult == nil || rotationResult.ExitCode != 0 {
 		return nil, fmt.Errorf("rotate guest credential for %s failed with exit code %d: %s", id, resultExitCode(rotationResult), resultOutput(rotationResult))
 	}
@@ -1252,6 +1308,7 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string) (*provid
 	if err != nil {
 		return nil, fmt.Errorf("verify rotated guest credential for %s: %w", id, err)
 	}
+	timer.step("verify_credential")
 	if verificationResult == nil || verificationResult.ExitCode != 0 {
 		return nil, fmt.Errorf("verify rotated guest credential for %s failed with exit code %d: %s", id, resultExitCode(verificationResult), resultOutput(verificationResult))
 	}
