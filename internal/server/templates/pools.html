@@ -52,15 +52,74 @@
 </div>
 {{if .PoolResult}}<div class="result-banner">{{.PoolResult}}</div>{{end}}
 {{if .PoolError}}<div class="error-banner">{{.PoolError}}</div>{{end}}
-{{if .CanManagePools}}
-<div class="table-card pool-controls">
-  <div class="table-card-header"><div>Operator controls</div><a href="/ui/diagnostics">View diagnostics</a></div>
-  <div class="pool-control-actions">
-    {{range .PoolViews}}
-    <div class="pool-control-row">
-      <strong>{{.Name}}</strong>
+{{end}}
+<script>(function(){var openIds=null;document.body.addEventListener("htmx:beforeSwap",function(e){if(e.detail.target&&e.detail.target.id==="pools-fragment"){openIds={};e.detail.target.querySelectorAll("details.pool-group[open]").forEach(function(d){if(d.id)openIds[d.id]=true;});}});document.body.addEventListener("htmx:afterSwap",function(e){if(e.detail.target&&e.detail.target.id==="pools-fragment"&&openIds){e.detail.target.querySelectorAll("details.pool-group").forEach(function(d){if(d.id&&openIds[d.id])d.open=true;});openIds=null;}});})();</script>
+<div class="table-card">
+  <div class="table-card-header">
+    <div>{{if .PoolHistory}}Historical resources{{else}}Active pools{{end}}</div>
+    <button type="button" class="refresh-btn" hx-get="/ui/fragments/pools-table{{if .PoolHistory}}?view=history{{end}}" hx-target="#pools-fragment" hx-swap="innerHTML" hx-sync="#pools-fragment:replace" aria-label="Refresh pools now" title="Refresh now">
+      <span class="refresh-icon" aria-hidden="true">⟳</span> Refresh
+    </button>
+  </div>
+  <div id="pools-fragment"
+       hx-get="/ui/fragments/pools-table{{if .PoolHistory}}?view=history{{end}}"
+       hx-trigger="every 5s"
+       hx-swap="innerHTML">
+    {{template "pools_table_fragment" .}}
+  </div>
+</div>
+{{end}}
+
+{{define "pools_table_fragment"}}
+{{if not .CanManagePools}}
+<div class="empty">Pool inventory is restricted to administrators.</div>
+{{else if .PoolViews}}
+<div class="pools-refreshed-at">Refreshed {{.PoolsRefreshedAt}}</div>
+{{range .PoolViews}}
+{{$pool := .}}
+{{if eq .Name "unassigned"}}
+<details class="pool-group pool-group-unassigned" id="pool-group-unassigned">
+  <summary class="pool-group-header">
+    <div class="pool-group-primary">
+      <span class="badge badge-unknown">unknown</span>
+      <span class="pool-unassigned-name">unassigned</span>
+    </div>
+    <div class="pool-group-secondary">
+      <span class="pool-total-muted">{{.TotalCount}} resource{{if ne .TotalCount 1}}s{{end}} with no pool</span>
+    </div>
+    <div class="pool-group-actions" onclick="event.stopPropagation()">
+      {{if $.CanManagePools}}
+      <form method="post" action="/ui/resources/purge">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <input type="hidden" name="action" value="preview">
+        <button type="submit" class="secondary-btn">Preview cleanup</button>
+      </form>
+      <form method="post" action="/ui/resources/purge">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <input type="hidden" name="action" value="force">
+        <button type="submit" class="danger-btn" onclick="return confirm('Force cleanup only resources explicitly eligible under the 30-minute safety rule?')">Force cleanup</button>
+      </form>
+      {{end}}
+    </div>
+  </summary>
+  {{template "pool_resource_table" (dict "Pool" $pool "Root" $ "AllowMutations" false)}}
+</details>
+{{else}}
+<details class="pool-group" id="pool-group-{{.Name}}">
+  <summary class="pool-group-header">
+    <div class="pool-group-primary">
+      <span class="badge badge-{{.Status}}">{{.Status}}</span>
+      <a class="pool-detail-link" href="{{.DetailPath}}"><strong>{{.Name}}</strong></a>
+      {{if .Type}}<span class="pool-type">{{.Type}}</span>{{end}}
+    </div>
+    <div class="pool-group-secondary">
+      {{if lt .ReadyCount .MinReady}}<span class="pool-ready-warning">{{.ReadyCount}} of {{.MinReady}} ready</span>{{end}}
+      <span class="pool-total-muted">{{.TotalCount}} total · max {{.MaxTotal}}{{if .FailedCount}} · {{.FailedCount}} failed{{end}}</span>
+    </div>
+    <div class="pool-group-actions" onclick="event.stopPropagation()">
+      {{if $.CanManagePools}}
       {{if .ActiveJobID}}
-      <span class="badge badge-{{.Status}}">{{.Status}} · {{.ActiveJobKind}}</span>
+      <span class="badge badge-{{.Status}}">{{.ActiveJobKind}}</span>
       <form method="post" action="/ui/jobs/{{.ActiveJobID}}/cancel">
         <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
         <input type="hidden" name="pool" value="{{.Name}}">
@@ -76,70 +135,39 @@
         <button type="submit" class="secondary-btn">Fill</button>
       </form>
       {{end}}
+      {{end}}
     </div>
-    {{end}}
-    <div class="pool-control-row pool-cleanup-row">
-      <strong>Resource cleanup</strong>
-      <form method="post" action="/ui/resources/purge">
-        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <input type="hidden" name="action" value="preview">
-        <button type="submit" class="secondary-btn">Preview cleanup</button>
-      </form>
-      <form method="post" action="/ui/resources/purge">
-        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <input type="hidden" name="action" value="force">
-        <button type="submit" class="danger-btn" onclick="return confirm('Force cleanup only resources explicitly eligible under the 30-minute safety rule?')">Force cleanup</button>
-      </form>
-    </div>
-  </div>
-</div>
-{{end}}
-{{end}}
-<div class="table-card">
-  <div class="table-card-header">
-    <div>{{if .PoolHistory}}Historical resources{{else}}Active pools{{end}}</div>
-    <button type="button" class="refresh-btn" hx-get="/ui/fragments/pools-table" hx-target="#pools-fragment" hx-swap="innerHTML" hx-sync="#pools-fragment:replace" aria-label="Refresh pools now" title="Refresh now">
-      <span class="refresh-icon" aria-hidden="true">⟳</span> Refresh
-    </button>
-  </div>
-  <div id="pools-fragment"
-       hx-get="/ui/fragments/pools-table"
-       hx-trigger="every 5s"
-       hx-swap="innerHTML">
-    {{template "pools_table_fragment" .}}
-  </div>
-  {{if .ResourceLimitHit}}<div class="table-card-subtitle bounded-note">Showing the first 1,000 resources. Use filters or the API for larger inventories.</div>{{end}}
-</div>
-{{end}}
-
-{{define "pools_table_fragment"}}
-{{if not .CanManagePools}}
-<div class="empty">Pool inventory is restricted to administrators.</div>
-{{else if .PoolViews}}
-{{range .PoolViews}}
-<details class="pool-group">
-  <summary class="pool-group-header">
-    <div><a class="pool-detail-link" href="{{.DetailPath}}"><strong>{{.Name}}</strong></a>{{if .Type}} <span class="pool-type">{{.Type}}</span>{{end}}</div>
-    <div class="pool-counts"><span>{{.ReadyCount}} ready / {{.TotalCount}} active</span>{{if .FailedCount}}<span class="badge badge-blocked">{{.FailedCount}} failed</span>{{end}}{{if .HistoricalCount}}<span class="badge badge-released">{{.HistoricalCount}} history</span>{{end}}<span class="badge badge-{{.Status}}">{{.Status}}</span></div>
   </summary>
-  <div class="pool-policy">min_ready={{.MinReady}} · max_total={{.MaxTotal}}</div>
-  {{$pool := .}}
-  {{if $.PoolHistory}}
-  {{if .HistoricalResources}}
-  <div class="table-scroll"><table>
-    <thead><tr><th scope="col">Resource</th><th scope="col">Type</th><th scope="col">Profile</th><th scope="col">State</th><th scope="col">Provider</th><th scope="col">Actions</th></tr></thead>
-    <tbody>{{range .HistoricalResources}}<tr><td><code>{{.ID}}</code></td><td>{{.Type}}</td><td>{{.Profile}}</td><td><span class="badge badge-{{.State}}">{{.State}}</span></td><td>{{if .Provider}}{{.Provider}}{{else}}—{{end}}</td><td class="row-actions"><a class="secondary-btn" href="/ui/diagnostics?pool={{$pool.Name}}&resource={{.ID}}">Logs</a><button type="button" class="secondary-btn" onclick="navigator.clipboard.writeText('{{.ID}}')">Copy ID</button><a class="secondary-btn" href="/api/v1/resources/{{.ID}}">Inspect</a></td></tr>{{end}}</tbody>
-  </table></div>
-  {{else}}<div class="empty">No historical resources in this pool</div>{{end}}
-  {{else if .Resources}}
-  <div class="table-scroll"><table>
-    <thead><tr><th scope="col">Resource</th><th scope="col">Type</th><th scope="col">Profile</th><th scope="col">State</th><th scope="col">Provider</th><th scope="col">Actions</th></tr></thead>
-    <tbody>{{range .Resources}}<tr><td><code>{{.ID}}</code></td><td>{{.Type}}</td><td>{{.Profile}}</td><td><span class="badge badge-{{.State}}">{{.State}}</span></td><td>{{if .Provider}}{{.Provider}}{{else}}—{{end}}</td><td class="row-actions">{{if not $pool.ActiveJobID}}{{if eq .State "error"}}<form method="post" action="/ui/pools/{{$pool.Name}}/resources/{{.ID}}/retry"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" class="secondary-btn">Retry</button></form>{{end}}<form method="post" action="/ui/pools/{{$pool.Name}}/resources/{{.ID}}/destroy"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" class="secondary-btn" onclick="return confirm('Destroy resource {{.ID}}? The pool may refill it.')">Destroy</button></form>{{end}}<a class="secondary-btn" href="/ui/diagnostics?pool={{$pool.Name}}&resource={{.ID}}">Logs</a><button type="button" class="secondary-btn" onclick="navigator.clipboard.writeText('{{.ID}}')">Copy ID</button><a class="secondary-btn" href="/api/v1/resources/{{.ID}}">Inspect</a></td></tr>{{end}}</tbody>
-  </table></div>
-  {{else}}<div class="empty">No resources in this pool</div>{{end}}
+  {{template "pool_resource_table" (dict "Pool" $pool "Root" $ "AllowMutations" true)}}
 </details>
 {{end}}
+{{end}}
+<div class="pools-summary-footer">
+  <span>{{.PoolResourceCount}} resource{{if ne .PoolResourceCount 1}}s{{end}} across {{len .Pools}} pool{{if ne (len .Pools) 1}}s{{end}} · <a href="/ui/diagnostics">View diagnostics</a></span>
+</div>
+{{if .ResourceLimitHit}}<div class="table-card-subtitle bounded-note">Showing the first 1,000 resources. Use filters or the API for larger inventories.</div>{{end}}
 {{else}}
 <div class="empty">No pools configured</div>
 {{end}}
+{{end}}
+
+{{define "pool_resource_table"}}
+{{$pool := .Pool}}
+{{$root := .Root}}
+{{$allowMutations := .AllowMutations}}
+{{if $root.PoolHistory}}
+{{if $pool.HistoricalResources}}
+<div class="pool-group-note">Showing {{len $pool.HistoricalResources}} historical resource{{if ne (len $pool.HistoricalResources) 1}}s{{end}}.</div>
+<div class="table-scroll"><table>
+  <thead><tr><th scope="col" class="row-id">Resource</th><th scope="col">Type</th><th scope="col">Profile</th><th scope="col">State</th><th scope="col">Provider</th><th scope="col" class="row-actions">Actions</th></tr></thead>
+  <tbody>{{range $pool.HistoricalResources}}<tr><td class="row-id"><code>{{.ID}}</code></td><td>{{.Type}}</td><td>{{.Profile}}</td><td><span class="badge badge-{{.State}}">{{.State}}</span></td><td>{{if .Provider}}{{.Provider}}{{else}}—{{end}}</td><td class="row-actions"><span class="row-actions-toggle" aria-hidden="true">⋯</span><span class="row-actions-menu"><a class="secondary-btn" href="/ui/diagnostics?pool={{$pool.Name}}&resource={{.ID}}">Logs</a><button type="button" class="secondary-btn" onclick="navigator.clipboard.writeText('{{.ID}}')">Copy ID</button><a class="secondary-btn" href="/api/v1/resources/{{.ID}}">Inspect</a></span></td></tr>{{end}}</tbody>
+</table></div>
+{{else}}<div class="empty">No historical resources in this pool</div>{{end}}
+{{else if $pool.Resources}}
+<div class="pool-group-note">Showing {{len $pool.Resources}} live resource{{if ne (len $pool.Resources) 1}}s{{end}}{{if $pool.HistoricalCount}} · {{$pool.HistoricalCount}} in <a href="/ui/pools?view=history">history</a>{{end}}.</div>
+<div class="table-scroll"><table>
+  <thead><tr><th scope="col" class="row-id">Resource</th><th scope="col">Type</th><th scope="col">Profile</th><th scope="col">State</th><th scope="col">Provider</th><th scope="col" class="row-actions">Actions</th></tr></thead>
+  <tbody>{{range $pool.Resources}}<tr><td class="row-id"><code>{{.ID}}</code></td><td>{{.Type}}</td><td>{{.Profile}}</td><td><span class="badge badge-{{.State}}">{{.State}}</span></td><td>{{if .Provider}}{{.Provider}}{{else}}—{{end}}</td><td class="row-actions"><span class="row-actions-toggle" aria-hidden="true">⋯</span><span class="row-actions-menu">{{if and $allowMutations (not $pool.ActiveJobID)}}{{if eq .State "error"}}<form method="post" action="/ui/pools/{{$pool.Name}}/resources/{{.ID}}/retry"><input type="hidden" name="csrf_token" value="{{$root.CSRFToken}}"><button type="submit" class="secondary-btn">Retry</button></form>{{end}}<form method="post" action="/ui/pools/{{$pool.Name}}/resources/{{.ID}}/destroy"><input type="hidden" name="csrf_token" value="{{$root.CSRFToken}}"><button type="submit" class="secondary-btn" onclick="return confirm('Destroy resource {{.ID}}? The pool may refill it.')">Destroy</button></form>{{end}}<a class="secondary-btn" href="/ui/diagnostics?pool={{$pool.Name}}&resource={{.ID}}">Logs</a><button type="button" class="secondary-btn" onclick="navigator.clipboard.writeText('{{.ID}}')">Copy ID</button><a class="secondary-btn" href="/api/v1/resources/{{.ID}}">Inspect</a></span></td></tr>{{end}}</tbody>
+</table></div>
+{{else}}<div class="empty">No resources in this pool</div>{{end}}
 {{end}}

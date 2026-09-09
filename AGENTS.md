@@ -303,6 +303,45 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   comment for that separate, still-open gap), base new work on the exact
   commit/tag boxy currently pins rather than either fork's own `main`, and
   update `go.mod`'s `replace` pseudo-version/tag together with a note here.
+- **2026-09-08 (#244): `go-psrp`'s fork now also carries `v0.2.2-boxy244`**,
+  adding `Client.ExecuteCommand`/`ExecuteCommandStream` — a client-level
+  entry point onto `go-psrpcore`'s existing
+  `runspace.Pool.CreatePipelineBuilder()` +
+  `pipeline.Pipeline.AddCommand`/`AddArgument`, which already existed on the
+  pinned `go-psrpcore` commit (`v0.0.0-20260828053523-50f4720fbe2b`,
+  unchanged — no `go-psrpcore` fork work was needed for this issue). The tag
+  is a single commit (`928fd31`) directly on top of the pinned
+  `v0.2.1-boxy242`, refactoring `Execute`/`ExecuteStream`'s internals
+  (`pipelinePrereqs`, `invokePipeline`, `acquireSemaphore`, `wireUpStream`,
+  `collectResult`) so the new command-based path reuses them rather than
+  duplicating the connect/semaphore/NTLM-retry/receive-loop wiring; the
+  existing script-based `Execute`/`ExecuteStream` behavior is unchanged —
+  confirmed via the fork's own `go test ./client/...`, all green except the
+  same pre-existing `TestConfig_Validate`/`TestSaveLoadState` failures this
+  Windows dev host already produces against the unmodified pinned tag (SSO
+  detection and file-permission-mode assertions that don't hold on Windows —
+  reproduced identically on `v0.2.1-boxy242` before trusting them as
+  pre-existing), and `./hvsock`'s pre-existing no-live-guest timeouts noted
+  above.
+
+  `pkg/psdirect` now calls `ExecuteCommand`/`ExecuteCommandStream` with a
+  **fixed** wrapper script (`execScript`/`execStreamScript` — containing no
+  caller data at all, so there is nothing left for PowerShell's own parser
+  to mis-tokenize) and delivers `cmd`/`args` as structured CLIXML argument
+  objects bound to the script's own `$args`, instead of building
+  `& 'cmd' 'arg1' ...` as parsed text. This closes #244 for real: `psQuote`
+  (the PowerShell-parser-level single-quote escaping #238 added) is deleted
+  entirely. `escapeNativeArg` is deliberately **kept** — see its updated doc
+  comment and [ADR-0008](docs/adr/0008-streaming-command-execution.md)'s
+  2026-09-08 entry for why: it patches Windows PowerShell 5.1's own native
+  command-line reconstruction when `&` spawns an external process, a hazard
+  that sits downstream of PSRP argument delivery and is unaffected by
+  whether the argument values arrived as parsed text or as `$args`/
+  `AddArgument` objects. `AddCommand`/`AddArgument` alone also doesn't
+  recover `$LASTEXITCODE` out of a single-command pipeline (`go-psrpcore`'s
+  `PowerShell` object has no `AddStatement` to chain a second command) —
+  hence the wrapper-script shape rather than passing `cmd` itself as the
+  PSRP command name.
 
 ### Guest Credentials
 
@@ -322,6 +361,15 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
 - Test this path with fake guest executors, injected keyring backends, agent
   wire tests, and the devfactory provider for control-plane orchestration. This
   host cannot perform live Hyper-V VM validation.
+- `hyperv.personalizeGuestLocked`'s guest-exec connection lifecycle is
+  credential-scoped (#361, 2026-09): `apply_network` and `rotate_credential`
+  share one `vmsdk.GuestSession` (via `psdirect.Exec.OpenSession`) under the
+  guest's old/pre-rotation credential, closed before `verify_credential` opens
+  a distinct session under the newly-rotated credential — never merged across
+  that rotation boundary. This only reduces sessions on the range/static_ip +
+  `ApplyNetwork: true` (allocation-time) path (3 → 2); admission-time and
+  DHCP-mode paths were already 2 and are unchanged. Verified via connect/close
+  counters on a fake executor, not live-guest timing — see the issue for why.
 
 ### Bundled Agent Skill
 

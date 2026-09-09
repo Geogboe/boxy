@@ -187,7 +187,7 @@ func TestUI_DiagnosticsRendersRedactedEvents(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
-	if body := w.Body.String(); !containsAll(body, "Diagnostics", "safe warning", "pool-a", "Export current query", "View agent logs", "/ui/diagnostics/export?limit=100", "component=agent", "diagnostics-timeline", "pool.fill", "vm-a", "vm.create", "attempt 2", "Structured event table") {
+	if body := w.Body.String(); !containsAll(body, "Diagnostics", "safe warning", "pool-a", "Export current query", "View host logs", "/ui/diagnostics/export?limit=100", "component=agent", "diagnostics-timeline", "pool.fill", "vm-a", "vm.create", "attempt 2", "Structured event table") {
 		t.Fatalf("diagnostics page missing expected content: %s", body)
 	}
 }
@@ -307,7 +307,7 @@ func TestUI_DiagnosticsPullAgentLogs(t *testing.T) {
 
 	get := httptest.NewRecorder()
 	mux.ServeHTTP(get, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/diagnostics?agent=agent-a", nil)))
-	if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), "Pull agent logs") || !strings.Contains(get.Body.String(), `action="/ui/diagnostics/agents/agent-a/logs"`) {
+	if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), "Pull host logs") || !strings.Contains(get.Body.String(), `action="/ui/diagnostics/agents/agent-a/logs"`) {
 		t.Fatalf("diagnostics page status=%d, missing pull action: %q", get.Code, get.Body.String())
 	}
 	csrf := csrfCookieFromResponse(t, get)
@@ -333,7 +333,7 @@ func TestUI_DiagnosticsPullAgentLogs(t *testing.T) {
 	for {
 		status := httptest.NewRecorder()
 		mux.ServeHTTP(status, server.AuthedRequest(httptest.NewRequest(http.MethodGet, post.Header().Get("Location"), nil)))
-		if strings.Contains(status.Body.String(), "Agent log snapshot received") {
+		if strings.Contains(status.Body.String(), "Host log snapshot received") {
 			break
 		}
 		if time.Now().After(deadline) {

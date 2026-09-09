@@ -1,10 +1,12 @@
 package pool
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +19,7 @@ import (
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/resourcepack"
+	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
 )
 
 var (
@@ -36,6 +39,10 @@ type mockAgent struct {
 	allocateResult map[string]any
 	personalized   *providersdk.GuestPersonalizationResult
 	personalizeErr error
+	// personalizeApplyNetworkCalls records opts.ApplyNetwork for every
+	// PersonalizeGuest call, in order, so tests can assert whether a given
+	// call site (allocation vs. admission) requested network application.
+	personalizeApplyNetworkCalls []bool
 
 	// createEntered and createGate let a test observe that Create has been
 	// called (createEntered closes) and hold it there until the test is
@@ -45,6 +52,16 @@ type mockAgent struct {
 	// every other test relies on.
 	createEntered chan struct{}
 	createGate    chan struct{}
+
+	// personalizeEntered/personalizeGate give tests the same blocking-call
+	// probe as createEntered/createGate above, but for PersonalizeGuest —
+	// used to exercise #333's allocation-time timeout handling. Unlike
+	// Create's gate (which the existing lock test intentionally never lets
+	// ctx interrupt), PersonalizeGuest here also selects on ctx.Done() so it
+	// behaves like a real bounded downstream call that honors the timeout
+	// AgentProvisioner.Allocate wraps around it.
+	personalizeEntered chan struct{}
+	personalizeGate    chan struct{}
 }
 
 type mockCreateCall struct {
@@ -96,7 +113,11 @@ func (m *mockAgent) Create(ctx context.Context, provider providersdk.Type, cfg a
 		close(m.createEntered)
 	}
 	if m.createGate != nil {
-		<-m.createGate
+		select {
+		case <-m.createGate:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 	if m.createErr != nil {
 		return nil, m.createErr
@@ -125,7 +146,18 @@ func (m *mockAgent) Allocate(ctx context.Context, provider providersdk.Type, id 
 	return m.allocateResult, nil
 }
 
-func (m *mockAgent) PersonalizeGuest(ctx context.Context, provider providersdk.Type, id string) (*providersdk.GuestPersonalizationResult, error) {
+func (m *mockAgent) PersonalizeGuest(ctx context.Context, provider providersdk.Type, id string, opts providersdk.GuestPersonalizationOptions) (*providersdk.GuestPersonalizationResult, error) {
+	m.personalizeApplyNetworkCalls = append(m.personalizeApplyNetworkCalls, opts.ApplyNetwork)
+	if m.personalizeEntered != nil {
+		close(m.personalizeEntered)
+	}
+	if m.personalizeGate != nil {
+		select {
+		case <-m.personalizeGate:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	if m.personalizeErr != nil {
 		return nil, m.personalizeErr
 	}
@@ -544,6 +576,84 @@ func TestAgentProvisioner_Allocate_PrefersTypedGuestPersonalization(t *testing.T
 	if _, ok := got.Properties["legacy"]; ok {
 		t.Fatal("expected typed guest personalization to bypass legacy allocate result")
 	}
+	if len(mockAgent.personalizeApplyNetworkCalls) != 1 || !mockAgent.personalizeApplyNetworkCalls[0] {
+		t.Fatalf("personalizeApplyNetworkCalls = %v, want [true] for allocation-time personalize", mockAgent.personalizeApplyNetworkCalls)
+	}
+}
+
+// TestAgentProvisioner_PersonalizeGuestForPool_NeverAppliesNetwork guards
+// #358: admission/promotion-time personalization must never apply the
+// guest's network configuration, only allocation-time personalization may.
+func TestAgentProvisioner_PersonalizeGuestForPool_NeverAppliesNetwork(t *testing.T) {
+	mockAgent := newMockAgent(providersdk.Type("hyperv"))
+	mockAgent.personalized = &providersdk.GuestPersonalizationResult{
+		AccessDetails:       providersdk.GuestAccessDetails{Properties: map[string]string{}},
+		EphemeralCredential: &providersdk.GuestCredential{Kind: "password", Data: []byte(`{"username":"a","password":"b"}`)},
+	}
+
+	provisioner := &AgentProvisioner{
+		Registry: registryWith(t, mockAgent),
+		Specs: map[model.PoolName]boxyconfig.PoolSpec{
+			"vm-pool": {Name: "vm-pool", Type: "hyperv"},
+		},
+		Providers: map[string]providersdk.Instance{},
+	}
+
+	res := model.Resource{ID: "vm-1", Provider: model.ProviderRef{AgentID: mockAgent.info.ID}}
+	result, err := provisioner.PersonalizeGuestForPool(context.Background(), model.Pool{Name: "vm-pool"}, res)
+	if err != nil {
+		t.Fatalf("PersonalizeGuestForPool: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected a non-nil GuestPersonalizationResult")
+	}
+	if len(mockAgent.personalizeApplyNetworkCalls) != 1 || mockAgent.personalizeApplyNetworkCalls[0] {
+		t.Fatalf("personalizeApplyNetworkCalls = %v, want [false] for admission-time personalize", mockAgent.personalizeApplyNetworkCalls)
+	}
+}
+
+// TestAgentProvisioner_Allocate_LogsPersonalizeGuestElapsedOnSuccess guards
+// the #355 diagnosability fix: a successful (non-timeout) allocation-time
+// PersonalizeGuest call must log its own elapsed duration tagged with
+// resource/pool/agent, since previously only the timeout path logged
+// anything and pool-reconcile's unrelated "policy decision is noop" line was
+// the only thing an operator saw during a normal, slow allocation. Asserts
+// on the log line's presence and fields, not on wall-clock duration.
+func TestAgentProvisioner_Allocate_LogsPersonalizeGuestElapsedOnSuccess(t *testing.T) {
+	var buf bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	mockAgent := newMockAgent(providersdk.Type("hyperv"))
+	mockAgent.personalized = &providersdk.GuestPersonalizationResult{
+		AccessDetails: providersdk.GuestAccessDetails{
+			Properties: map[string]string{"access": "winrm", "host": "192.0.2.5"},
+		},
+	}
+
+	provisioner := &AgentProvisioner{
+		Registry: registryWith(t, mockAgent),
+		Specs: map[model.PoolName]boxyconfig.PoolSpec{
+			"vm-pool": {Name: "vm-pool", Type: "hyperv"},
+		},
+		Providers: map[string]providersdk.Instance{},
+	}
+
+	res := model.Resource{ID: "vm-1", Provider: model.ProviderRef{AgentID: mockAgent.info.ID}}
+	if _, err := provisioner.Allocate(context.Background(), model.Pool{Name: "vm-pool"}, res); err != nil {
+		t.Fatalf("Allocate: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "allocation-time guest personalization succeeded") {
+		t.Fatalf("log output missing success message; got:\n%s", out)
+	}
+	for _, want := range []string{"resource_id=vm-1", "pool=vm-pool", "agent_id=" + mockAgent.info.ID, "elapsed=", "elapsed_ms="} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("log output missing %q; got:\n%s", want, out)
+		}
+	}
 }
 
 func TestAgentProvisioner_Allocate_FallsBackWhenPersonalizationReturnsNil(t *testing.T) {
@@ -942,6 +1052,150 @@ func TestAgentProvisioner_ProvisionLocked_HoldsLockThroughCreate(t *testing.T) {
 		// expected: unblocks once ProvisionLocked releases its lock
 	case <-time.After(time.Second):
 		t.Fatal("competing LockProvisioning(\"agent-1\") never acquired after ProvisionLocked finished")
+	}
+}
+
+// TestAgentProvisioner_ProvisionLocked_CreateTimeoutReturnsPromptlyAndReleasesLock
+// exercises #333: a blocked agent.Create call under a short configured
+// Timeouts.Create must not hang ProvisionLocked forever, and the per-agent
+// ProvisionLocker lock it holds must release immediately once the bounded
+// call returns — a regression test for the orphan-sweep head-of-line block
+// the issue describes.
+func TestAgentProvisioner_ProvisionLocked_CreateTimeoutReturnsPromptlyAndReleasesLock(t *testing.T) {
+	agent := &mockAgent{
+		info:          agentsdk.AgentInfo{ID: "agent-1", Providers: []providersdk.Type{"devfactory"}},
+		createEntered: make(chan struct{}),
+		createGate:    make(chan struct{}), // never closed: Create only unblocks via ctx timeout
+	}
+	registry := registryWith(t, agent)
+	provisioner := &AgentProvisioner{
+		Registry:  registry,
+		Specs:     map[model.PoolName]boxyconfig.PoolSpec{"vm-pool": {Name: "vm-pool", Type: "devfactory"}},
+		Providers: map[string]providersdk.Instance{},
+		Timeouts:  AgentOperationTimeouts{Create: 50 * time.Millisecond},
+	}
+	pl := model.Pool{Name: "vm-pool", Inventory: model.ResourceCollection{ExpectedType: "container", ExpectedProfile: "default"}}
+
+	start := time.Now()
+	_, _, err := provisioner.ProvisionLocked(context.Background(), pl, nil)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("ProvisionLocked: expected a timeout error, got nil")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("ProvisionLocked error = %v, want context.DeadlineExceeded", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("ProvisionLocked took %v, want it bounded near the 50ms configured timeout", elapsed)
+	}
+
+	// The lock must be immediately acquirable — it must not still be held
+	// by the timed-out call.
+	acquired := make(chan struct{})
+	go func() {
+		release := registry.LockProvisioning("agent-1")
+		close(acquired)
+		release()
+	}()
+	select {
+	case <-acquired:
+	case <-time.After(time.Second):
+		t.Fatal("LockProvisioning(\"agent-1\") never acquired after ProvisionLocked's Create timed out — the lock was left held")
+	}
+}
+
+// TestAgentProvisioner_Allocate_PersonalizeGuestTimeout_QuarantinesAndDeletesCredential
+// exercises #333's allocation-time timeout path: a blocked PersonalizeGuest
+// call under a short configured Timeouts.PersonalizeGuest must return
+// promptly with a *GuestPersonalizationTimeoutError (not a generic error),
+// and the stored guest credential must be deleted as part of handling it.
+func TestAgentProvisioner_Allocate_PersonalizeGuestTimeout_QuarantinesAndDeletesCredential(t *testing.T) {
+	agent := &mockAgent{
+		info:               agentsdk.AgentInfo{ID: "agent-1", Providers: []providersdk.Type{"devfactory"}},
+		personalizeEntered: make(chan struct{}),
+		personalizeGate:    make(chan struct{}), // never closed: unblocks only via ctx timeout
+	}
+	registry := registryWith(t, agent)
+	secrets := &admissionSecretStore{values: map[string][]byte{
+		boxysecrets.ResourceCredentialKey("res-1"): []byte(`{"data":"c2VjcmV0"}`),
+	}}
+	provisioner := &AgentProvisioner{
+		Registry:     registry,
+		Specs:        map[model.PoolName]boxyconfig.PoolSpec{"vm-pool": {Name: "vm-pool", Type: "devfactory"}},
+		Providers:    map[string]providersdk.Instance{},
+		GuestSecrets: secrets,
+		Timeouts:     AgentOperationTimeouts{PersonalizeGuest: 50 * time.Millisecond},
+	}
+	pl := model.Pool{Name: "vm-pool", Inventory: model.ResourceCollection{ExpectedType: "container", ExpectedProfile: "default"}}
+	res := model.Resource{ID: "res-1", Provider: model.ProviderRef{AgentID: "agent-1"}}
+
+	start := time.Now()
+	_, err := provisioner.Allocate(context.Background(), pl, res)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("Allocate: expected a timeout error, got nil")
+	}
+	var timeoutErr *GuestPersonalizationTimeoutError
+	if !errors.As(err, &timeoutErr) {
+		t.Fatalf("Allocate error = %v (%T), want *GuestPersonalizationTimeoutError", err, err)
+	}
+	if timeoutErr.ResourceID != "res-1" || timeoutErr.PoolName != "vm-pool" || timeoutErr.AgentID != "agent-1" {
+		t.Fatalf("timeoutErr = %+v, want resource/pool/agent identifying fields populated", timeoutErr)
+	}
+	if timeoutErr.Timeout != 50*time.Millisecond {
+		t.Fatalf("timeoutErr.Timeout = %v, want 50ms", timeoutErr.Timeout)
+	}
+	if !timeoutErr.CredentialDeleted {
+		t.Fatal("timeoutErr.CredentialDeleted = false, want true")
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("Allocate took %v, want it bounded near the 50ms configured timeout", elapsed)
+	}
+	if _, getErr := secrets.Get(context.Background(), boxysecrets.ResourceCredentialKey("res-1")); !errors.Is(getErr, boxysecrets.ErrNotFound) {
+		t.Fatalf("credential store Get after timeout = %v, want ErrNotFound (credential deleted)", getErr)
+	}
+}
+
+// TestAgentProvisioner_Allocate_PersonalizeGuestTimeout_AttributesShorterCallerDeadline
+// guards against misreporting: when the *caller's* context (e.g.
+// internal/sandbox.Fulfiller's own per-sandbox pass timeout) has a shorter
+// deadline than the configured PersonalizeGuest timeout, the timeout that
+// actually fires is the caller's — the resulting error must report that
+// real, shorter bound, not the longer configured value it never reached.
+func TestAgentProvisioner_Allocate_PersonalizeGuestTimeout_AttributesShorterCallerDeadline(t *testing.T) {
+	agent := &mockAgent{
+		info:               agentsdk.AgentInfo{ID: "agent-1", Providers: []providersdk.Type{"devfactory"}},
+		personalizeEntered: make(chan struct{}),
+		personalizeGate:    make(chan struct{}), // never closed: unblocks only via ctx timeout
+	}
+	registry := registryWith(t, agent)
+	provisioner := &AgentProvisioner{
+		Registry:  registry,
+		Specs:     map[model.PoolName]boxyconfig.PoolSpec{"vm-pool": {Name: "vm-pool", Type: "devfactory"}},
+		Providers: map[string]providersdk.Instance{},
+		// Configured much longer than the caller's own deadline below — the
+		// caller's shorter deadline must be what actually fires and gets
+		// reported, not this value.
+		Timeouts: AgentOperationTimeouts{PersonalizeGuest: time.Minute},
+	}
+	pl := model.Pool{Name: "vm-pool", Inventory: model.ResourceCollection{ExpectedType: "container", ExpectedProfile: "default"}}
+	res := model.Resource{ID: "res-1", Provider: model.ProviderRef{AgentID: "agent-1"}}
+
+	callerCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	_, err := provisioner.Allocate(callerCtx, pl, res)
+	var timeoutErr *GuestPersonalizationTimeoutError
+	if !errors.As(err, &timeoutErr) {
+		t.Fatalf("Allocate error = %v (%T), want *GuestPersonalizationTimeoutError", err, err)
+	}
+	if timeoutErr.Timeout >= time.Minute {
+		t.Fatalf("timeoutErr.Timeout = %v, want it to reflect the caller's shorter ~50ms deadline, not the configured 1m", timeoutErr.Timeout)
+	}
+	if timeoutErr.Timeout > 2*time.Second {
+		t.Fatalf("timeoutErr.Timeout = %v, want roughly 50ms (the caller's deadline)", timeoutErr.Timeout)
 	}
 }
 

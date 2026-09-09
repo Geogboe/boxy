@@ -91,6 +91,29 @@ func (p Pool) EffectivelyDrained() bool {
 	return p.Drain.Effective()
 }
 
+// PoolSummary is the safe, user-accessible view of a pool: just enough to
+// construct a sandbox request (see internal/cli/sandbox_create.go's
+// compileSandboxRequests). It deliberately omits everything Pool carries
+// beyond name/type/profile -- inventory, policies, drain state, and
+// configuration provenance are administrative detail a `user`-role caller
+// has no need to see. See docs/adr for the accompanying decision record.
+type PoolSummary struct {
+	Name    PoolName        `json:"name" yaml:"name"`
+	Type    ResourceType    `json:"type" yaml:"type"`
+	Profile ResourceProfile `json:"profile" yaml:"profile"`
+}
+
+// Summary reduces a Pool to its PoolSummary. Adding a field to Pool never
+// changes what Summary exposes -- callers who need to expose more must do so
+// explicitly here, not by relying on struct-copy-and-blank-fields.
+func (p Pool) Summary() PoolSummary {
+	return PoolSummary{
+		Name:    p.Name,
+		Type:    p.Inventory.ExpectedType,
+		Profile: p.Inventory.ExpectedProfile,
+	}
+}
+
 // PreheatPolicy is the pool policy for keeping resources ready ahead of time.
 type PreheatPolicy struct {
 	// MinReady is the number of ready units the pool should try to keep

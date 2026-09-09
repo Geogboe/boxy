@@ -13,6 +13,10 @@
   --yellow: #fbbf24;
   --red: #f87171;
   --orange: #fb923c;
+  /* Used by .badge-filling/.badge-running/.badge-promoting; was referenced
+     without a definition until #327 — every one of those badges rendered
+     with the browser's inherited text color instead of the intended cyan. */
+  --cyan: #38bdf8;
 }
 
 :root[data-theme="light"] {
@@ -28,6 +32,7 @@
   --yellow: #a36b00;
   --red: #bd3030;
   --orange: #b65d0b;
+  --cyan: #0369a1;
 }
 
 *,
@@ -76,19 +81,40 @@ a:hover {
   flex-shrink: 0;
 }
 
+/* Sidebar header: brand mark plus the version/repository/theme utility bar
+   that used to sit top-right of the content column (#327). */
+.sidebar-header {
+  border-bottom: 1px solid var(--border);
+  display: grid;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+  padding: 0 1.25rem 1rem;
+}
 .sidebar-brand {
 	align-items: center;
 	display: flex;
 	font-size: 1.25rem;
   font-weight: 700;
-  padding: 0 1.25rem 1.5rem;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 1rem;
 	letter-spacing: 0.05em;
 	color: var(--text);
 	text-decoration: none;
 }
 .sidebar-brand img { height: 1.5rem; width: 1.5rem; }
+.sidebar-utility { align-items: center; display: flex; gap: 0.6rem; }
+.icon-btn {
+  align-items: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 0.85rem;
+  height: 1.75rem;
+  justify-content: center;
+  width: 1.75rem;
+}
+.icon-btn:hover { border-color: var(--accent); color: var(--text); }
 
 .sidebar-nav {
   list-style: none;
@@ -115,29 +141,7 @@ a:hover {
   overflow-x: auto;
 }
 
-.app-header {
-  align-items: center;
-  display: flex;
-  gap: 1rem;
-  justify-content: flex-end;
-  margin-bottom: 1.25rem;
-  min-height: 1.75rem;
-}
-.app-header-meta { align-items: center; display: flex; gap: 0.8rem; }
 .version-label { color: var(--text-muted); font-size: 0.75rem; font-variant-numeric: tabular-nums; }
-.app-footer { align-items: center; border-top: 1px solid var(--border); color: var(--text-muted); display: flex; flex-wrap: wrap; font-size: 0.78rem; gap: 1rem; justify-content: space-between; margin-top: 2rem; padding: 1rem 0 0.25rem; }
-.app-footer a { align-items: center; display: inline-flex; gap: 0.3rem; }
-.repo-icon { font-size: 1rem; line-height: 1; }
-.theme-toggle {
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 0.75rem;
-  padding: 0.35rem 0.7rem;
-}
-.theme-toggle:hover { border-color: var(--accent); color: var(--text); }
 
 .page-title {
   font-size: 1.5rem;
@@ -149,7 +153,7 @@ a:hover {
    page's refresh button). .page-title's own margin-bottom does not extend a
    row flex container's box (verified live, not just assumed), so this needs
    its own explicit margin-bottom too — pages that don't use this wrapper
-   (pools/sandboxes/agents, whose refresh button lives in their
+   (pools/sandboxes/hosts, whose refresh button lives in their
    table-card-header instead) still get .page-title's own spacing directly. */
 .page-header {
   align-items: center;
@@ -316,6 +320,8 @@ tbody tr:hover {
 .badge-filling { background: rgba(56, 189, 248, 0.15); color: var(--cyan); }
 .badge-blocked { background: rgba(248, 113, 113, 0.15); color: var(--red); }
 .badge-unknown { background: rgba(139, 143, 163, 0.15); color: var(--text-muted); }
+.badge-promoting { background: rgba(56, 189, 248, 0.15); color: var(--cyan); }
+.badge-recycling { background: rgba(251, 146, 60, 0.15); color: var(--orange); }
 /* Sandbox-status-specific badges (SandboxStatus, distinct from ResourceState above). */
 .badge-pending { background: rgba(139, 143, 163, 0.15); color: var(--text-muted); }
 .badge-deleting { background: rgba(251, 146, 60, 0.15); color: var(--orange); }
@@ -327,8 +333,8 @@ tbody tr:hover {
 .badge-cancelled { background: rgba(139, 143, 163, 0.15); color: var(--text-muted); }
 .badge-interrupted { background: rgba(251, 146, 60, 0.15); color: var(--orange); }
 
-/* Agent status pairs deliberately use distinct labels in addition to color. */
-.agent-status-cluster {
+/* Host status pairs deliberately use distinct labels in addition to color. */
+.host-status-cluster {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
@@ -353,21 +359,21 @@ tbody tr:hover {
 .badge-disconnected,
 .badge-unavailable { background: rgba(139, 143, 163, 0.15); color: var(--text-muted); }
 
-.agent-name,
+.host-name,
 .provider-name { font-weight: 600; }
-.agent-id,
+.host-id,
 .timestamp,
 .capacity-empty {
   color: var(--text-muted);
   font-size: 0.8rem;
 }
 
-.agent-id { display: block; margin-top: 0.15rem; }
+.host-id { display: block; margin-top: 0.15rem; }
 .provider-list { display: grid; gap: 0.4rem; }
 .provider-row { display: grid; gap: 0.1rem; }
 .capacity { font-variant-numeric: tabular-nums; }
 .sample-time { font-size: 0.75rem; }
-.agents-table { min-width: 760px; }
+.hosts-table { min-width: 760px; }
 
 /* Sandbox row detail disclosure (#255) */
 .sandbox-detail summary {
@@ -478,17 +484,20 @@ tbody tr:hover {
   margin-bottom: 1rem;
 }
 
-.pool-controls { overflow: visible; }
 .filter-pills { display: flex; gap: 0.5rem; margin: -0.75rem 0 1.25rem; }
 .filter-pill { border: 1px solid var(--border); border-radius: 999px; color: var(--text-muted); font-size: 0.8rem; padding: 0.3rem 0.7rem; }
 .filter-pill.active, .filter-pill:hover { background: rgba(108, 140, 255, 0.12); border-color: var(--accent); color: var(--text); }
 .bounded-note { padding: 0.75rem 1.25rem 1rem; }
-.pool-control-actions { display: grid; gap: 0.75rem; padding: 1rem 1.25rem; }
+/* .pool-control-row is also used by the pool detail page's own active-job
+   Cancel row (pools.html "Pool details" card) — kept even though the list
+   page's per-pool controls now live in .pool-group-actions instead. */
 .pool-control-row { align-items: center; display: flex; flex-wrap: wrap; gap: 0.6rem; }
-.pool-control-row strong { min-width: 12rem; }
 .row-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .row-actions form { display: inline-flex; margin: 0; }
-.pool-cleanup-row { border-top: 1px solid var(--border); padding-top: 0.75rem; }
+
+/* Collapsed-by-default pool summary row (#327). Each row is three flex
+   groups inside <summary>: name/status, readiness/total, then actions —
+   spaced with justify-content so they read left/middle/right at a glance. */
 .pool-group { border-bottom: 1px solid var(--border); padding: 1rem 1.25rem; }
 .pool-group:last-child { border-bottom: none; }
 .pool-group > summary { cursor: pointer; list-style: none; }
@@ -496,11 +505,43 @@ tbody tr:hover {
 .pool-group > summary::before { color: var(--text-muted); content: "▸"; display: inline-block; margin-right: 0.5rem; transition: transform 150ms ease; }
 .pool-group[open] > summary::before { transform: rotate(90deg); }
 .pool-group-header { align-items: center; display: flex; flex-wrap: wrap; gap: 1rem; justify-content: space-between; }
-.pool-counts { align-items: center; color: var(--text-muted); display: flex; flex-wrap: wrap; gap: 0.5rem; font-size: 0.8rem; }
-.pool-type, .pool-policy { color: var(--text-muted); font-size: 0.8rem; }
-.pool-policy { margin: 0.25rem 0 0.75rem; }
-.pool-group table { min-width: 680px; }
+.pool-group-primary, .pool-group-secondary, .pool-group-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 0.6rem; }
+.pool-type { color: var(--text-muted); font-size: 0.8rem; }
+.pool-ready-warning { color: var(--yellow); font-size: 0.8rem; font-weight: 600; }
+.pool-total-muted { color: var(--text-muted); font-size: 0.8rem; }
+.pool-group table { min-width: 680px; table-layout: fixed; }
+.pool-group-note { color: var(--text-muted); font-size: 0.8rem; margin: 0.25rem 0 0.75rem; }
 .pool-detail-link { color: inherit; }
+
+/* "unassigned" is not a real pool — the row is visually recessive (dimmed
+   name, no status derivation of its own) and carries the orphan-cleanup
+   actions instead of Drain/Fill. See #327 and the #292 purge contract. */
+.pool-group-unassigned { opacity: 0.75; }
+.pool-unassigned-name { color: var(--text-muted); font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-style: italic; }
+
+.pools-refreshed-at { color: var(--text-muted); font-size: 0.75rem; padding: 0.75rem 1.25rem 0; }
+.pools-summary-footer { align-items: center; border-top: 1px solid var(--border); color: var(--text-muted); display: flex; flex-wrap: wrap; font-size: 0.8rem; gap: 1rem; justify-content: flex-start; padding: 0.85rem 1.25rem; }
+
+/* Persistent "⋯" per-row menu (#327): reveal the real actions on hover/focus
+   without reflowing sibling columns. Both the toggle and the menu occupy
+   their normal box always (visibility, not display), and the actions column
+   has a fixed width, so nothing shifts when the menu appears — the id
+   column truncates instead (.row-id). */
+th.row-actions, td.row-actions { width: 11rem; }
+td.row-actions { position: relative; white-space: nowrap; }
+/* opacity, not visibility: a visibility:hidden menu is also pulled out of
+   the tab order, so a keyboard user tabbing into a resource row could never
+   reach Retry/Destroy/Logs/Copy ID/Inspect, and :focus-within below would be
+   dead code (nothing inside could ever receive focus to trigger it). Opacity
+   keeps the box in the same place either way -- still no reflow -- while
+   staying focusable; a real pointer can only land on it while already
+   hovering the row, since that's what makes it opaque in the first place. */
+.row-actions-toggle { color: var(--text-muted); }
+.row-actions-menu { align-items: center; display: inline-flex; flex-wrap: nowrap; gap: 0.35rem; opacity: 0; }
+.row-actions-menu form { display: inline-flex; margin: 0; }
+tr:hover .row-actions-menu, tr:focus-within .row-actions-menu { opacity: 1; }
+tr:hover .row-actions-toggle, tr:focus-within .row-actions-toggle { opacity: 0; }
+.row-id code { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .page-back { margin-bottom: 0.75rem; }
 .pool-detail-card { overflow: visible; }
 .pool-detail-grid {
@@ -545,7 +586,20 @@ tbody tr:hover {
 .catalog-missing { color: var(--yellow); font-size: 0.8rem; margin-top: 0.2rem; }
 .catalog-ref { white-space: nowrap; }
 
-/* Login page (unauthenticated — no sidebar shell) */
+/* Login page (unauthenticated — no sidebar shell). login.html reuses the
+   brand wordmark but standalone, not beside the sidebar utility bar, so it
+   gets its own class rather than .sidebar-brand (which #327 stripped of its
+   own spacing/border now that .sidebar-header owns that in the real shell). */
+.login-brand {
+  align-items: center;
+  display: flex;
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--text);
+  padding-bottom: 0.5rem;
+}
+
 .login-page {
   min-height: 100vh;
   display: flex;

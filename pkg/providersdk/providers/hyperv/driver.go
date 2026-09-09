@@ -22,6 +22,11 @@ import (
 	"github.com/Geogboe/boxy/pkg/vmsdk"
 )
 
+var (
+	_ providersdk.Driver            = (*Driver)(nil)
+	_ providersdk.GuestPersonalizer = (*Driver)(nil)
+)
+
 // Driver implements providersdk.Driver for local Hyper-V.
 // VM lifecycle (New-VM, Start-VM, etc.) uses powershell.exe on the host.
 // Guest exec uses PowerShell Direct via go-psrp (Windows) or SSH (Linux).
@@ -1102,7 +1107,7 @@ if (Test-Path '%s') { Remove-Item '%s' -Force }
 // --- Allocate ---
 
 func (d *Driver) Allocate(ctx context.Context, id string) (map[string]any, error) {
-	result, err := d.PersonalizeGuest(ctx, id)
+	result, err := d.PersonalizeGuest(ctx, id, providersdk.GuestPersonalizationOptions{ApplyNetwork: true})
 	if err != nil {
 		return nil, err
 	}
@@ -1112,24 +1117,81 @@ func (d *Driver) Allocate(ctx context.Context, id string) (map[string]any, error
 	return result.AccessDetails.ToProperties(), nil
 }
 
-// PersonalizeGuest applies guest networking and rotates the guest's admin
-// credential for the VM identified by id. It holds a per-resource lock for
-// the duration (see lockPersonalize) so that overlapping invocations for the
-// same VM — preheat and allocation both call this, and either can retry —
-// cannot interleave their PowerShell Direct sessions against the same guest.
+// PersonalizeGuest rotates the guest's admin credential for the VM
+// identified by id and, when opts.ApplyNetwork is true, also applies its
+// static_ip/range-mode network configuration. It holds a per-resource lock
+// for the duration (see lockPersonalize) so that overlapping invocations for
+// the same VM — admission (opts.ApplyNetwork=false) and allocation
+// (opts.ApplyNetwork=true) both call this, and either can retry — cannot
+// interleave their PowerShell Direct sessions against the same guest.
 // Failures emit a structured event distinguishing which phase failed (see
 // personalizeFailureStep) rather than a single undifferentiated bucket.
-func (d *Driver) PersonalizeGuest(ctx context.Context, id string) (*providersdk.GuestPersonalizationResult, error) {
+//
+// Deferring network application to allocation time is deliberate (#358): a
+// preheated-but-unclaimed pool VM should not become network-reachable just
+// because it reached Ready. Credential rotation and verification always run
+// regardless of opts.ApplyNetwork — they use PowerShell Direct over VMBus,
+// which needs no network. See ADR-0012's 2026-09 change note.
+func (d *Driver) PersonalizeGuest(ctx context.Context, id string, opts providersdk.GuestPersonalizationOptions) (*providersdk.GuestPersonalizationResult, error) {
 	unlock := d.lockPersonalize(id)
 	defer unlock()
-	result, err := d.personalizeGuestLocked(ctx, id)
+	start := time.Now()
+	result, err := d.personalizeGuestLocked(ctx, id, opts)
+	elapsed := time.Since(start)
 	if err != nil {
 		step := personalizeFailureStep(err)
-		logHyperVEvent(slog.LevelWarn, "hyperv guest personalization failed", "personalize", step, "failed", id, step+"_failed")
+		slog.Warn(fmt.Sprintf("hyperv guest personalization failed after %s (step=%s)", elapsed, step),
+			"component", "hyperv", "provider", "hyperv",
+			"operation", "personalize", "step", step, "status", "failed",
+			"resource", id, "error_code", step+"_failed",
+			"elapsed_ms", elapsed.Milliseconds())
 		return nil, err
 	}
-	logHyperVEvent(slog.LevelInfo, "hyperv guest personalization succeeded", "personalize", "guest_personalize", "succeeded", id, "")
+	slog.Info(fmt.Sprintf("hyperv guest personalization succeeded in %s", elapsed),
+		"component", "hyperv", "provider", "hyperv",
+		"operation", "personalize", "step", "guest_personalize", "status", "succeeded",
+		"resource", id, "elapsed_ms", elapsed.Milliseconds())
 	return result, nil
+}
+
+// personalizeStepTimer logs each major phase of guest personalization at
+// debug level with its own elapsed duration, so an operator watching normal
+// (non-error, non-timeout) allocations can see exactly where time goes
+// instead of only learning about a step after it fails or times out (#355).
+// This is deliberately independent of the pool-reconcile PolicyController's
+// "policy decision is noop" logging (pkg/policycontroller/controller.go),
+// which reflects an entirely separate periodic loop and carries no
+// information about an in-flight allocation/personalize call — see #355's
+// investigation notes.
+type personalizeStepTimer struct {
+	id       string
+	total    time.Time
+	stepFrom time.Time
+}
+
+func newPersonalizeStepTimer(id string) *personalizeStepTimer {
+	now := time.Now()
+	return &personalizeStepTimer{id: id, total: now, stepFrom: now}
+}
+
+// step logs the elapsed time since the previous step (or the timer's
+// creation) attributed to the named phase, then resets the clock for the
+// next step.
+func (t *personalizeStepTimer) step(name string) {
+	now := time.Now()
+	stepElapsed := now.Sub(t.stepFrom)
+	totalElapsed := now.Sub(t.total)
+	// The elapsed values are also embedded in the message text (not just
+	// the structured attrs) so they remain visible in `boxy diagnostics
+	// logs`'s default table view, which prints only timestamp/level/
+	// component/message and not arbitrary attrs (#355).
+	slog.Debug(fmt.Sprintf("hyperv guest personalization step %q took %s (%s elapsed total)", name, stepElapsed, totalElapsed),
+		"component", "hyperv", "provider", "hyperv",
+		"operation", "personalize", "step", name,
+		"resource", t.id,
+		"elapsed_ms", stepElapsed.Milliseconds(),
+		"total_elapsed_ms", totalElapsed.Milliseconds())
+	t.stepFrom = now
 }
 
 // personalizeFailureStep classifies a personalizeGuestLocked failure by
@@ -1155,11 +1217,14 @@ func personalizeFailureStep(err error) string {
 
 // personalizeGuestLocked is PersonalizeGuest's implementation, run only
 // while the caller holds this VM's personalize lock.
-func (d *Driver) personalizeGuestLocked(ctx context.Context, id string) (*providersdk.GuestPersonalizationResult, error) {
+func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts providersdk.GuestPersonalizationOptions) (*providersdk.GuestPersonalizationResult, error) {
+	timer := newPersonalizeStepTimer(id)
+
 	notes, err := d.readNotes(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("read VM notes for %s: %w", id, err)
 	}
+	timer.step("read_notes")
 
 	guestOS := notes["boxy_guest_os"]
 	if guestOS == "" {
@@ -1180,6 +1245,7 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string) (*provid
 	if strings.TrimSpace(bootstrap.Username) != "" {
 		guestUser = bootstrap.Username
 	}
+	timer.step("resolve_bootstrap_credential")
 
 	newPassword, err := guestcred.GenerateRandomPassword()
 	if err != nil {
@@ -1190,6 +1256,7 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string) (*provid
 	if err != nil {
 		return nil, fmt.Errorf("resolve VM name for %s: %w", id, err)
 	}
+	timer.step("resolve_vm_name")
 
 	// Apply network configuration inside the guest via PowerShell Direct
 	// (VMBus — no network required) before querying the IP. This is the
@@ -1197,61 +1264,152 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string) (*provid
 	// The IP ledger's own presence for id is the mode discriminator: if a
 	// range-mode entry exists, it wins; otherwise fall back to today's
 	// static_ip Notes check, unchanged. See ADR-0012.
+	//
+	// opts.ApplyNetwork gates the two boxy-managed modes (range and
+	// static_ip) only (#358): a preheated-but-unclaimed resource must not
+	// have its network identity applied and become reachable. The ledger
+	// entry itself (reserveRangeEntry) is written at Create time, so
+	// hasRangeEntry — the mode discriminator — is unaffected by deferring
+	// the actual address reservation/apply to allocation time; it still
+	// selects the same branch on both calls. DHCP-mode resources (neither
+	// range nor static_ip configured) are unaffected either way: reading
+	// the address Hyper-V/DHCP already assigned via vmIP is not "applying"
+	// anything boxy-managed, so it always runs.
 	rangeEntry, hasRangeEntry, err := d.ledgerLookup(id)
 	if err != nil {
 		return nil, fmt.Errorf("read IP ledger for %s: %w", id, err)
 	}
 
-	var ip string
-	if hasRangeEntry {
-		// Range mode trusts the address it just reserved and applied as
-		// authoritative — it does NOT re-read it back via vmIP below the
-		// way static_ip mode does. Get-VMNetworkAdapter's IPAddresses is
-		// populated by guest integration services and can lag a fresh
-		// New-NetIPAddress by several seconds, returning a stale
-		// pre-assignment address or an empty list; the ledger's own
-		// AssignedAddress has no such lag. See ADR-0012.
-		ip, err = d.applyRangeIP(ctx, id, guestOS, guestUser, bootstrap.Password, rangeEntry)
-		if err != nil {
-			return nil, fmt.Errorf("apply range IP for VM %s: %w", id, err)
+	// oldSession holds one guest connection under the guest's current (old,
+	// pre-rotation) credential, shared by apply_network (when it runs) and
+	// rotate_credential -- both run under this same credential (see #361:
+	// each PSRP/WinRM session negotiation is a real multi-second guest-side
+	// round trip, and personalizeGuestLocked previously paid that cost once
+	// per step instead of once per credential). openOld is idempotent so
+	// whichever step needs the connection first opens it, and every
+	// subsequent step before the rotation boundary reuses the same one.
+	// verify_credential inherently needs a *new* connection under the
+	// just-rotated credential -- it is never merged into this session; see
+	// its own openGuestSession call below.
+	var oldSession vmsdk.GuestSession
+	openOld := func(sshHost string) error {
+		if oldSession != nil {
+			return nil
 		}
-	} else {
-		if strings.TrimSpace(notes["boxy_net_static_ip"]) != "" {
-			if err := d.applyStaticIP(ctx, id, guestOS, guestUser, bootstrap.Password, notes); err != nil {
-				return nil, fmt.Errorf("apply static IP for VM %s: %w", id, err)
+		session, err := d.openGuestSession(ctx, id, guestOS, guestUser, bootstrap.Password, sshHost)
+		if err != nil {
+			return fmt.Errorf("open guest session for %s: %w", id, err)
+		}
+		oldSession = session
+		return nil
+	}
+	// Registered immediately after openOld is defined -- not after the
+	// switch below -- so a failure in apply_network itself (applyRangeIP,
+	// applyStaticIP, or the vmIP read-back that follows it), which returns
+	// before ever reaching the switch's own timer.step, does not strand the
+	// connection openOld already established. The `if oldSession != nil`
+	// guard makes this a no-op both before openOld's first call and again
+	// after the explicit Close + nil-out on the rotate_credential success
+	// path below, so it never double-closes.
+	defer func() {
+		if oldSession != nil {
+			oldSession.Close(ctx) //nolint:errcheck,gosec // best-effort fallback close on an early-return path; the success path closes explicitly and checks the error below.
+		}
+	}()
+
+	var ip string
+	switch {
+	case hasRangeEntry:
+		// The Linux-unsupported check runs unconditionally — not gated by
+		// opts.ApplyNetwork — because it does no guest-side network work
+		// (it's a pure guestOS check, same one applyRangeIP itself performs
+		// before reserving an address). Without this, a Linux+range-mode
+		// misconfiguration would pass admission silently after #358 (which
+		// gated the actual reservation/apply behind ApplyNetwork) and only
+		// surface, repeatedly, on every subsequent Allocate — a fail-fast
+		// regression relative to pre-#358 behavior.
+		if strings.EqualFold(guestOS, "linux") {
+			return nil, fmt.Errorf("apply range IP for VM %s: %w", id, guestIPUnsupportedOnLinux("range-based IP assignment"))
+		}
+		if opts.ApplyNetwork {
+			// Range mode trusts the address it just reserved and applied as
+			// authoritative — it does NOT re-read it back via vmIP below the
+			// way static_ip mode does. Get-VMNetworkAdapter's IPAddresses is
+			// populated by guest integration services and can lag a fresh
+			// New-NetIPAddress by several seconds, returning a stale
+			// pre-assignment address or an empty list; the ledger's own
+			// AssignedAddress has no such lag. See ADR-0012.
+			if err := openOld(""); err != nil {
+				return nil, err
+			}
+			ip, err = d.applyRangeIP(ctx, oldSession, id, guestOS, rangeEntry)
+			if err != nil {
+				return nil, fmt.Errorf("apply range IP for VM %s: %w", id, err)
 			}
 		}
+	case strings.TrimSpace(notes["boxy_net_static_ip"]) != "":
+		// See the hasRangeEntry case above for why this runs unconditionally.
+		if strings.EqualFold(guestOS, "linux") {
+			return nil, fmt.Errorf("apply static IP for VM %s: %w", id, guestIPUnsupportedOnLinux("static IP"))
+		}
+		if opts.ApplyNetwork {
+			if err := openOld(""); err != nil {
+				return nil, err
+			}
+			if err := d.applyStaticIP(ctx, oldSession, guestOS, notes); err != nil {
+				return nil, fmt.Errorf("apply static IP for VM %s: %w", id, err)
+			}
+			ip, err = d.vmIP(ctx, vmName)
+			if err != nil {
+				return nil, fmt.Errorf("get IP for VM %q: %w", vmName, err)
+			}
+		}
+	default:
 		ip, err = d.vmIP(ctx, vmName)
 		if err != nil {
 			return nil, fmt.Errorf("get IP for VM %q: %w", vmName, err)
 		}
 	}
+	timer.step("apply_network")
 
-	bootstrapExec, err := d.newGuestExec(ctx, id, guestOS, guestUser, bootstrap.Password, ip)
-	if err != nil {
+	if err := openOld(ip); err != nil {
 		return nil, err
 	}
+
 	rotationCmd, rotationArgs := rotationCommand(guestOS, guestUser, newPassword)
-	rotationResult, err := bootstrapExec.Exec(ctx, rotationCmd, rotationArgs...)
+	rotationResult, err := oldSession.Exec(ctx, rotationCmd, rotationArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("rotate guest credential for %s: %w", id, err)
 	}
+	timer.step("rotate_credential")
 	if rotationResult == nil || rotationResult.ExitCode != 0 {
 		return nil, fmt.Errorf("rotate guest credential for %s failed with exit code %d: %s", id, resultExitCode(rotationResult), resultOutput(rotationResult))
 	}
 
-	verificationExec, err := d.newGuestExec(ctx, id, guestOS, guestUser, newPassword, ip)
+	// rotate_credential was the last old-credential step; release the
+	// connection now instead of waiting for the deferred fallback so it
+	// isn't held open across verify_credential's separate, new-credential
+	// connection below.
+	closeErr := oldSession.Close(ctx)
+	oldSession = nil
+	if closeErr != nil {
+		slog.Warn("hyperv: close guest session after rotation", "resource_id", id, "error", closeErr)
+	}
+
+	verificationSession, err := d.openGuestSession(ctx, id, guestOS, guestUser, newPassword, ip)
 	if err != nil {
 		return nil, fmt.Errorf("reconnect with rotated guest credential for %s: %w", id, err)
 	}
+	defer verificationSession.Close(ctx) //nolint:errcheck,gosec // best-effort close; the verification result itself is what's checked below.
 	probeCommand := []string{"whoami"}
 	if strings.EqualFold(guestOS, "linux") {
 		probeCommand = []string{"id", "-u"}
 	}
-	verificationResult, err := verificationExec.Exec(ctx, probeCommand[0], probeCommand[1:]...)
+	verificationResult, err := verificationSession.Exec(ctx, probeCommand[0], probeCommand[1:]...)
 	if err != nil {
 		return nil, fmt.Errorf("verify rotated guest credential for %s: %w", id, err)
 	}
+	timer.step("verify_credential")
 	if verificationResult == nil || verificationResult.ExitCode != 0 {
 		return nil, fmt.Errorf("verify rotated guest credential for %s failed with exit code %d: %s", id, resultExitCode(verificationResult), resultOutput(verificationResult))
 	}
@@ -1264,22 +1422,31 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string) (*provid
 		return nil, fmt.Errorf("encode guest credential for %s: %w", id, err)
 	}
 
+	// ip is empty when opts.ApplyNetwork was false and this resource uses a
+	// boxy-managed network mode (range or static_ip): no network-reachable
+	// address was applied, so none is reported here (#358) — advertising a
+	// blank "host"/"ssh_host" on a Ready-but-unclaimed resource would be
+	// worse than advertising nothing.
 	var access map[string]string
 
 	if strings.EqualFold(guestOS, "linux") {
 		access = map[string]string{
 			"access":   "ssh",
-			"ssh_host": ip,
 			"ssh_port": "22",
 			"ssh_user": guestUser,
-			"ssh_cmd":  fmt.Sprintf("ssh %s@%s", guestUser, ip),
+		}
+		if ip != "" {
+			access["ssh_host"] = ip
+			access["ssh_cmd"] = fmt.Sprintf("ssh %s@%s", guestUser, ip)
 		}
 	} else {
 		access = map[string]string{
 			"access":    "winrm",
-			"host":      ip,
 			"user":      guestUser,
 			"psrp_vmid": id,
+		}
+		if ip != "" {
+			access["host"] = ip
 		}
 	}
 
@@ -1343,6 +1510,65 @@ func decodeGuestPassword(credential *providersdk.GuestCredential, defaultUser st
 		payload.Username = defaultUser
 	}
 	return payload.Username, payload.Password, nil
+}
+
+// guestSession bundles a vmsdk.GuestExec with a Close, satisfying
+// vmsdk.GuestSession, so openGuestSession has one return shape regardless of
+// whether the underlying transport actually supports holding a connection
+// open. Wrapping close in a field (rather than requiring every branch to
+// return a *psdirect.Session concretely) lets non-session-capable paths
+// (Linux/SSH, and any guestExecFactory test double that doesn't itself
+// implement vmsdk.GuestSession) supply a no-op Close instead of forcing
+// openGuestSession's callers to type-switch.
+type guestSession struct {
+	vmsdk.GuestExec
+	closeFunc func(ctx context.Context) error
+}
+
+func (s *guestSession) Close(ctx context.Context) error {
+	if s.closeFunc == nil {
+		return nil
+	}
+	return s.closeFunc(ctx)
+}
+
+// openGuestSession returns a vmsdk.GuestSession for one guest-exec
+// credential, so a caller with several guest-exec calls to make under that
+// same credential (personalizeGuestLocked's apply_network + rotate_credential
+// pair, #361) can hold one connection open across them instead of paying a
+// fresh PSRP/WinRM session-establishment cost per call.
+//
+// Windows guests (the only OS personalizeGuestLocked ever runs a
+// boxy-managed network-apply step against -- range/static_ip modes are
+// rejected for Linux before this is called) use psdirect's native session
+// support. Linux/SSH and the guestExecFactory test seam fall back to a
+// plain per-call GuestExec wrapped in a no-op Close: SSH has no multi-step
+// sequence to merge here (network apply is never boxy-managed on Linux), and
+// a test double that wants its own Connect/Close accounting can implement
+// vmsdk.GuestSession itself and be used as-is.
+func (d *Driver) openGuestSession(ctx context.Context, id, guestOS, guestUser, guestPassword, sshHost string) (vmsdk.GuestSession, error) {
+	if d.guestExecFactory != nil {
+		exec := d.guestExecFactory(id, guestOS, guestUser, guestPassword, sshHost)
+		if session, ok := exec.(vmsdk.GuestSession); ok {
+			return session, nil
+		}
+		return &guestSession{GuestExec: exec}, nil
+	}
+
+	if !strings.EqualFold(guestOS, "linux") {
+		direct := psdirect.New(id, guestUser, guestPassword)
+		session, err := direct.OpenSession(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("open guest session for %s: %w", id, err)
+		}
+		return session, nil
+	}
+
+	exec, err := d.newGuestExec(ctx, id, guestOS, guestUser, guestPassword, sshHost)
+	if err != nil {
+		return nil, err
+	}
+	return &guestSession{GuestExec: exec}, nil
 }
 
 func (d *Driver) newGuestExec(ctx context.Context, id, guestOS, guestUser, guestPassword, sshHost string) (vmsdk.GuestExec, error) {
@@ -1443,9 +1669,11 @@ $ErrorActionPreference = 'Stop'
 }
 
 // applyStaticIP configures static_ip mode's fixed address inside the guest,
-// reading it out of the VM's Notes exactly as before. See assignGuestIP for
-// the shared mechanism.
-func (d *Driver) applyStaticIP(ctx context.Context, id, guestOS, guestUser, guestPassword string, notes map[string]string) error {
+// reading it out of the VM's Notes exactly as before, over exec -- an
+// already-connected guest session (#361) shared with the caller's other
+// old-credential steps rather than a connection this function opens itself.
+// See assignGuestIP for the shared mechanism.
+func (d *Driver) applyStaticIP(ctx context.Context, exec vmsdk.GuestExec, guestOS string, notes map[string]string) error {
 	staticIP := strings.TrimSpace(notes["boxy_net_static_ip"])
 	if staticIP == "" {
 		return nil
@@ -1453,15 +1681,16 @@ func (d *Driver) applyStaticIP(ctx context.Context, id, guestOS, guestUser, gues
 	prefix := notes["boxy_net_prefix"]
 	gateway := notes["boxy_net_gw"]
 	dns := notes["boxy_net_dns"]
-	return d.assignGuestIP(ctx, id, guestOS, guestUser, guestPassword, staticIP, prefix, gateway, dns)
+	return d.assignGuestIP(ctx, exec, guestOS, staticIP, prefix, gateway, dns)
 }
 
 // applyRangeIP reserves (if not already reserved — see reserveAddress's
-// idempotency) and applies entry's range-mode address inside the guest,
-// returning the reserved address. PersonalizeGuest trusts this return value
-// as authoritative for the guest's reachable IP rather than re-reading it
-// back via vmIP — see the call site's comment and ADR-0012 for why.
-func (d *Driver) applyRangeIP(ctx context.Context, id, guestOS, guestUser, guestPassword string, entry *ledgerEntry) (string, error) {
+// idempotency) and applies entry's range-mode address inside the guest over
+// exec (an already-connected guest session, #361), returning the reserved
+// address. PersonalizeGuest trusts this return value as authoritative for
+// the guest's reachable IP rather than re-reading it back via vmIP — see
+// the call site's comment and ADR-0012 for why.
+func (d *Driver) applyRangeIP(ctx context.Context, exec vmsdk.GuestExec, id, guestOS string, entry *ledgerEntry) (string, error) {
 	if strings.EqualFold(guestOS, "linux") {
 		// Checked before reserveAddress so an unsupported Linux guest
 		// doesn't burn a reservation it can never apply.
@@ -1472,7 +1701,7 @@ func (d *Driver) applyRangeIP(ctx context.Context, id, guestOS, guestUser, guest
 		return "", fmt.Errorf("reserve address for %s: %w", id, err)
 	}
 	dns := strings.Join(entry.DNSServers, ",")
-	if err := d.assignGuestIP(ctx, id, guestOS, guestUser, guestPassword, address, strconv.Itoa(entry.PrefixLength), entry.DefaultGateway, dns); err != nil {
+	if err := d.assignGuestIP(ctx, exec, guestOS, address, strconv.Itoa(entry.PrefixLength), entry.DefaultGateway, dns); err != nil {
 		return "", err
 	}
 	return address, nil
@@ -1493,10 +1722,16 @@ func guestIPUnsupportedOnLinux(mechanism string) error {
 // ip/prefix/gateway/dns is all either needs to source, from Notes or the
 // ledger respectively.
 //
-// The script is idempotent and self-verifying (#235, fixed 2026-08-26): a
-// preheated resource is always personalized a second time on its first
-// Allocate, so re-applying to an already-configured guest is the normal
-// path, not an edge case. The original script removed the guest's existing
+// The script is idempotent and self-verifying (#235, fixed 2026-08-26):
+// before #358 (2026-09-08), a preheated resource was always personalized a
+// second time on its first Allocate, making re-application to an
+// already-configured guest the normal path rather than an edge case. #358
+// deferred the actual apply to allocation time, so a resource's network
+// configuration is now normally applied exactly once — but a retry after a
+// crash or transient failure (or a second Allocate of the same resource,
+// e.g. after a rollback) still re-applies to an already-configured guest,
+// so idempotency remains required, not just historically motivated. The
+// original script removed the guest's existing
 // IPv4 address but left its default route in place; New-NetIPAddress's own
 // -DefaultGateway then rejected the reapply ("Instance DefaultGateway
 // already exists") *after* the working address was already torn out,
@@ -1511,7 +1746,7 @@ func guestIPUnsupportedOnLinux(mechanism string) error {
 // gateway was requested, the 0.0.0.0/0 route must exist too. A silent
 // in-guest failure of either kind now surfaces as a loud Allocate error
 // instead of a healthy-looking but unreachable ready resource.
-func (d *Driver) assignGuestIP(ctx context.Context, id, guestOS, guestUser, guestPassword, ip, prefix, gateway, dns string) error {
+func (d *Driver) assignGuestIP(ctx context.Context, exec vmsdk.GuestExec, guestOS, ip, prefix, gateway, dns string) error {
 	if strings.EqualFold(guestOS, "linux") {
 		return guestIPUnsupportedOnLinux("static IP")
 	}
@@ -1565,10 +1800,6 @@ $applied = Get-NetIPAddress -InterfaceIndex $adapter.InterfaceIndex -AddressFami
 if ($null -eq $applied) { throw "address '%s' did not apply in guest; New-NetIPAddress reported success but the interface shows no usable IPv4 address matching it (duplicate/invalid address state is treated as not applied)" }%s
 `, psq(ip), psq(prefix), gwBlock, dnsBlock, psq(ip), psq(ip), gwVerifyBlock)
 
-	exec, err := d.newGuestExec(ctx, id, guestOS, guestUser, guestPassword, "")
-	if err != nil {
-		return fmt.Errorf("create guest exec for static IP: %w", err)
-	}
 	result, err := exec.Exec(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
 	if err != nil {
 		return fmt.Errorf("run static IP script: %w", err)

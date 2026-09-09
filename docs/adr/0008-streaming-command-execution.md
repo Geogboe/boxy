@@ -190,3 +190,29 @@ bounded JSON convenience for scripts.
   `pkg/psdirect/psdirect.go`'s `newlineTracker`/`streamEmitter` and the
   coverage note above for how this also extended, but did not close, the
   `ExecStream` test-coverage gap.
+- **2026-09-08**: Closed #244, the long-term fix `escapeNativeArg`'s doc
+  comment above pointed to. `go-psrp`'s fork (`v0.2.2-boxy244`, see
+  AGENTS.md's "PSRP Transport Dependency Fork" section) adds
+  `Client.ExecuteCommand`/`ExecuteCommandStream`, a client-level entry point
+  onto `go-psrpcore`'s existing `pipeline.Pipeline.AddCommand`/`AddArgument`
+  — no `go-psrpcore` change was needed, that API already existed on the
+  pinned commit. `pkg/psdirect` now invokes a **fixed** wrapper script
+  (`execScript`/`execStreamScript`, containing no caller data at all) via
+  `ExecuteCommand`, with `cmd`/`args` delivered as structured CLIXML
+  argument objects bound to the script's own `$args`, instead of building
+  `& 'cmd' 'arg1' ...` as parsed text. `psQuote` (the PowerShell-parser-level
+  single-quote escaping) is gone entirely — there is no longer any caller
+  text embedded in a script for that parser to mis-tokenize.
+
+  `escapeNativeArg` was **not** removed, and this is a deliberate, non-
+  obvious result rather than leftover cruft: it patches a *different*
+  hazard than `psQuote` did — Windows PowerShell 5.1's own native
+  command-line reconstruction when the `&` operator spawns an external
+  process, which happens after PSRP has already delivered the argument
+  values correctly as distinct objects. That reconstruction bug is a
+  property of how `&` marshals an array of string values into one native
+  process command line, independent of whether those values arrived via
+  parsed script text or via `$args`/`AddArgument` — so structured delivery
+  eliminates the #238 parser-level bug class but not this one. See
+  `escapeNativeArg`'s updated doc comment in `pkg/psdirect/psdirect.go` for
+  the full reasoning.

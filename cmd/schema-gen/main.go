@@ -169,6 +169,37 @@ func buildServerSchema() map[string]any {
 				"type":        "string",
 				"description": "How often connected remote agents send heartbeats, as a Go duration string (e.g. \"15s\"). Empty means the default (15s).",
 			},
+			"diagnostics_retention": map[string]any{
+				"type":        "string",
+				"description": "How long the bounded server diagnostics store retains events, as a Go duration string. Empty means the default (14 days).",
+			},
+			"agent_timeouts": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"description":          "Per-operation-class bounds on agent-backed operations (Create/PersonalizeGuest/Delete/Default), as Go duration strings. Empty fields fall back to their own documented default.",
+				"properties": map[string]any{
+					"create": map[string]any{
+						"type":        "string",
+						"description": "Bounds a driver's resource-creation call. Empty means the default (5m).",
+					},
+					"personalize_guest": map[string]any{
+						"type":        "string",
+						"description": "Bounds a guest-personalization call, both at pool admission time and at sandbox allocation time. Empty means the default (3m).",
+					},
+					"delete": map[string]any{
+						"type":        "string",
+						"description": "Bounds a driver's resource-deletion call. Empty means the default (2m).",
+					},
+					"default": map[string]any{
+						"type":        "string",
+						"description": "Reserved fallback for a future agent-backed operation class with no more specific timeout of its own. Not currently consumed by anything (the sandbox fulfiller's own per-pass bound is derived from create+personalize_guest+delete, not this field). Empty means the default (30s).",
+					},
+				},
+			},
+			"pool_provisioning_watchdog_threshold": map[string]any{
+				"type":        "string",
+				"description": "How long a resource may sit in the provisioning state without progress before the reconciler destroys and replaces it, as a Go duration string. Empty means the default (15m). Must exceed every configured agent_timeouts value.",
+			},
 			"grpc_cert_sans": map[string]any{
 				"type":        "array",
 				"items":       map[string]any{"type": "string"},

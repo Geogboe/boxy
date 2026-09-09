@@ -52,7 +52,9 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/api-keys", s.handleCreateAPIKey)
 	mux.HandleFunc("GET /api/v1/api-keys", s.handleListAPIKeys)
 	mux.HandleFunc("DELETE /api/v1/api-keys/{id}", s.handleRevokeAPIKey)
+	mux.HandleFunc("GET /api/v1/identity", s.handleIdentity)
 	mux.HandleFunc("GET /api/v1/pools", s.handleListPools)
+	mux.HandleFunc("GET /api/v1/pools/summary", s.handleListPoolSummaries)
 	mux.HandleFunc("GET /api/v1/pools/{name}", s.handleGetPool)
 	mux.HandleFunc("PUT /api/v1/pools/{name}/configuration", s.handleUpdatePoolConfiguration)
 	mux.HandleFunc("POST /api/v1/pools/{name}/drain", s.handleDrainPool)
@@ -135,6 +137,27 @@ func (s *Server) handleListPools(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpjson.Write(w, http.StatusOK, pools)
+}
+
+// handleListPoolSummaries returns the safe, user-accessible pool discovery
+// view (see model.PoolSummary): enough for any authenticated role to
+// construct a sandbox request without exposing the full administrative pool
+// model (resource inventories, policies, provider/agent binding detail) that
+// GET /api/v1/pools carries. #359.
+func (s *Server) handleListPoolSummaries(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRole(w, r, model.APIKeyRoleUser, model.APIKeyRoleAuditor, model.APIKeyRoleAdmin) {
+		return
+	}
+	pools, err := s.store.ListPools(r.Context())
+	if err != nil {
+		httpjson.Error(w, http.StatusInternalServerError, "failed to list pools")
+		return
+	}
+	summaries := make([]model.PoolSummary, 0, len(pools))
+	for _, p := range pools {
+		summaries = append(summaries, p.Summary())
+	}
+	httpjson.Write(w, http.StatusOK, summaries)
 }
 
 // handleGetPool returns a single pool by name.
@@ -314,13 +337,8 @@ func (s *Server) startPoolMaintenanceJob(ctx context.Context, kind string, poolN
 }
 
 func poolJobErrorCode(err error) string {
-	var blocked *pool.BlockedPoolError
-	if errors.As(err, &blocked) {
-		return "quarantine_exhausted"
-	}
-	var drained *pool.ConfigDeclaredDrainError
-	if errors.As(err, &drained) {
-		return "pool_config_drained"
+	if code, _ := pool.DescribeJobError(err); code != "" {
+		return code
 	}
 	return "pool_operation_failed"
 }

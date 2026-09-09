@@ -758,21 +758,28 @@ func (x *LogBatch) GetRequestId() string {
 }
 
 type LogEvent struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	UnixNano      int64                  `protobuf:"varint,1,opt,name=unix_nano,json=unixNano,proto3" json:"unix_nano,omitempty"`
-	Level         string                 `protobuf:"bytes,2,opt,name=level,proto3" json:"level,omitempty"`
-	Component     string                 `protobuf:"bytes,3,opt,name=component,proto3" json:"component,omitempty"`
-	Message       string                 `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
-	Operation     string                 `protobuf:"bytes,5,opt,name=operation,proto3" json:"operation,omitempty"`
-	ErrorCode     string                 `protobuf:"bytes,6,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
-	ErrorSummary  string                 `protobuf:"bytes,7,opt,name=error_summary,json=errorSummary,proto3" json:"error_summary,omitempty"`
-	Pool          string                 `protobuf:"bytes,8,opt,name=pool,proto3" json:"pool,omitempty"`
-	Resource      string                 `protobuf:"bytes,9,opt,name=resource,proto3" json:"resource,omitempty"`
-	Request       string                 `protobuf:"bytes,10,opt,name=request,proto3" json:"request,omitempty"`
-	Job           string                 `protobuf:"bytes,11,opt,name=job,proto3" json:"job,omitempty"`
-	Step          string                 `protobuf:"bytes,12,opt,name=step,proto3" json:"step,omitempty"`
-	Status        string                 `protobuf:"bytes,13,opt,name=status,proto3" json:"status,omitempty"`
-	Attempt       int32                  `protobuf:"varint,14,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	UnixNano     int64                  `protobuf:"varint,1,opt,name=unix_nano,json=unixNano,proto3" json:"unix_nano,omitempty"`
+	Level        string                 `protobuf:"bytes,2,opt,name=level,proto3" json:"level,omitempty"`
+	Component    string                 `protobuf:"bytes,3,opt,name=component,proto3" json:"component,omitempty"`
+	Message      string                 `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
+	Operation    string                 `protobuf:"bytes,5,opt,name=operation,proto3" json:"operation,omitempty"`
+	ErrorCode    string                 `protobuf:"bytes,6,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
+	ErrorSummary string                 `protobuf:"bytes,7,opt,name=error_summary,json=errorSummary,proto3" json:"error_summary,omitempty"`
+	Pool         string                 `protobuf:"bytes,8,opt,name=pool,proto3" json:"pool,omitempty"`
+	Resource     string                 `protobuf:"bytes,9,opt,name=resource,proto3" json:"resource,omitempty"`
+	Request      string                 `protobuf:"bytes,10,opt,name=request,proto3" json:"request,omitempty"`
+	Job          string                 `protobuf:"bytes,11,opt,name=job,proto3" json:"job,omitempty"`
+	Step         string                 `protobuf:"bytes,12,opt,name=step,proto3" json:"step,omitempty"`
+	Status       string                 `protobuf:"bytes,13,opt,name=status,proto3" json:"status,omitempty"`
+	Attempt      int32                  `protobuf:"varint,14,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	// duration_ms is the elapsed time of the operation/step this log entry
+	// describes, in milliseconds. Zero means "not reported" — most log
+	// entries have no associated duration. Added for #355 so a slow
+	// allocation-time guest personalization step is visible through
+	// `boxy diagnostics logs` for a remote (non-embedded) agent, not just in
+	// the agent's own raw log output.
+	DurationMs    int64 `protobuf:"varint,15,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -901,6 +908,13 @@ func (x *LogEvent) GetStatus() string {
 func (x *LogEvent) GetAttempt() int32 {
 	if x != nil {
 		return x.Attempt
+	}
+	return 0
+}
+
+func (x *LogEvent) GetDurationMs() int64 {
+	if x != nil {
+		return x.DurationMs
 	}
 	return 0
 }
@@ -1604,9 +1618,19 @@ func (*ListCommand) Descriptor() ([]byte, []int) {
 	return file_boxyagent_v1_agent_proto_rawDescGZIP(), []int{19}
 }
 
+// apply_network gates whether PersonalizeGuest may configure the guest's
+// network identity (static_ip/range-mode IP assignment) in addition to
+// rotating its credential. It defaults to false (proto3 zero value) so a
+// stale caller — or any code path that forgets to set it explicitly — gets
+// the safe, network-deferred behavior rather than silently reintroducing
+// #358's premature network exposure of preheated-but-unclaimed inventory.
+// Only allocation-time personalization (a sandbox actually claiming the
+// resource) should set this true; admission/promotion-time personalization
+// must leave it false. See ADR-0012's 2026-09 change note.
 type PersonalizeGuestCommand struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ResourceId    string                 `protobuf:"bytes,1,opt,name=resource_id,json=resourceId,proto3" json:"resource_id,omitempty"`
+	ApplyNetwork  bool                   `protobuf:"varint,2,opt,name=apply_network,json=applyNetwork,proto3" json:"apply_network,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1646,6 +1670,13 @@ func (x *PersonalizeGuestCommand) GetResourceId() string {
 		return x.ResourceId
 	}
 	return ""
+}
+
+func (x *PersonalizeGuestCommand) GetApplyNetwork() bool {
+	if x != nil {
+		return x.ApplyNetwork
+	}
+	return false
 }
 
 type ResourceResult struct {
@@ -2088,7 +2119,7 @@ const file_boxyagent_v1_agent_proto_rawDesc = "" +
 	"\bLogBatch\x12.\n" +
 	"\x06events\x18\x01 \x03(\v2\x16.boxyagent.v1.LogEventR\x06events\x12\x1d\n" +
 	"\n" +
-	"request_id\x18\x02 \x01(\tR\trequestId\"\xf9\x02\n" +
+	"request_id\x18\x02 \x01(\tR\trequestId\"\x9a\x03\n" +
 	"\bLogEvent\x12\x1b\n" +
 	"\tunix_nano\x18\x01 \x01(\x03R\bunixNano\x12\x14\n" +
 	"\x05level\x18\x02 \x01(\tR\x05level\x12\x1c\n" +
@@ -2105,7 +2136,9 @@ const file_boxyagent_v1_agent_proto_rawDesc = "" +
 	"\x03job\x18\v \x01(\tR\x03job\x12\x12\n" +
 	"\x04step\x18\f \x01(\tR\x04step\x12\x16\n" +
 	"\x06status\x18\r \x01(\tR\x06status\x12\x18\n" +
-	"\aattempt\x18\x0e \x01(\x05R\aattempt\"\xcc\x01\n" +
+	"\aattempt\x18\x0e \x01(\x05R\aattempt\x12\x1f\n" +
+	"\vduration_ms\x18\x0f \x01(\x03R\n" +
+	"durationMs\"\xcc\x01\n" +
 	"\rServerMessage\x12@\n" +
 	"\n" +
 	"registered\x18\x01 \x01(\v2\x1e.boxyagent.v1.RegisterResponseH\x00R\n" +
@@ -2155,10 +2188,11 @@ const file_boxyagent_v1_agent_proto_rawDesc = "" +
 	"\x0fAllocateCommand\x12\x1f\n" +
 	"\vresource_id\x18\x01 \x01(\tR\n" +
 	"resourceId\"\r\n" +
-	"\vListCommand\":\n" +
+	"\vListCommand\"_\n" +
 	"\x17PersonalizeGuestCommand\x12\x1f\n" +
 	"\vresource_id\x18\x01 \x01(\tR\n" +
-	"resourceId\"\xc3\x02\n" +
+	"resourceId\x12#\n" +
+	"\rapply_network\x18\x02 \x01(\bR\fapplyNetwork\"\xc3\x02\n" +
 	"\x0eResourceResult\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12Y\n" +
 	"\x0fconnection_info\x18\x02 \x03(\v20.boxyagent.v1.ResourceResult.ConnectionInfoEntryR\x0econnectionInfo\x12F\n" +

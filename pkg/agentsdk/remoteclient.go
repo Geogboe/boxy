@@ -282,6 +282,7 @@ func (s *clientSession) sendLogBatchRequest(ctx context.Context, events []diagno
 			Step:         event.Step,
 			Status:       event.Status,
 			Attempt:      clampToInt32(event.Attempt),
+			DurationMs:   event.DurationMS,
 		})
 	}
 	if len(items) == 0 && requestID == "" {
@@ -677,7 +678,9 @@ func executeCommand(ctx context.Context, drivers DriverSet, cmd *boxyagentv1.Com
 				Outcome:   &boxyagentv1.CommandResult_PersonalizeGuest{PersonalizeGuest: &boxyagentv1.PersonalizeGuestResult{}},
 			}
 		}
-		result, err := gp.PersonalizeGuest(ctx, op.PersonalizeGuest.GetResourceId())
+		result, err := gp.PersonalizeGuest(ctx, op.PersonalizeGuest.GetResourceId(), providersdk.GuestPersonalizationOptions{
+			ApplyNetwork: op.PersonalizeGuest.GetApplyNetwork(),
+		})
 		if err != nil {
 			return errorResult(cmd.GetCommandId(), err.Error(), err)
 		}

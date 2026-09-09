@@ -121,6 +121,23 @@ type Manager struct {
 
 	backoffMu sync.Mutex
 	backoff   map[model.PoolName]*provisionBackoffState
+
+	// stuckProvisioningThreshold is the #337 watchdog bound: a resource
+	// sitting in ResourceStateProvisioning longer than this without a
+	// UpdatedAt bump is destroyed and replaced rather than left in limbo
+	// forever. Zero (the default, matching every pre-#337 embedder/test)
+	// disables the watchdog.
+	stuckProvisioningThreshold time.Duration
+}
+
+// SetStuckProvisioningThreshold enables the #337 stuck-provisioning
+// watchdog with the given threshold. Threshold <= 0 disables it (the
+// default). Following the SetClock/SetGuestSecretStore/etc. injection
+// pattern above rather than importing internal/config into internal/pool.
+func (m *Manager) SetStuckProvisioningThreshold(threshold time.Duration) {
+	if m != nil {
+		m.stuckProvisioningThreshold = threshold
+	}
 }
 
 // SetAdmissionPublisher enables asynchronous resource admission. It is
@@ -671,6 +688,7 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 	type plan struct {
 		pool           model.Pool
 		stale          []model.Resource
+		stuck          []model.Resource
 		drainResources []model.Resource
 		drain          bool
 		now            time.Time
@@ -741,6 +759,15 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 			inInventory := resourceIDSet(p.Inventory.Resources)
 			orphans := orphanedTransientResources(p.Name, obs.resources, inInventory, fallbackInventoryIDs)
 			quarantined := quarantinedOrphans(p.Name, obs.resources)
+			// A pool that opts into RetainFailedResources wants a stuck
+			// resource kept alive for manual investigation (see
+			// retryRetainedResource's doc comment) — the watchdog destroying
+			// it out from under that policy after threshold would defeat the
+			// whole point of setting it, so this pool is exempt.
+			var stuck []model.Resource
+			if !p.Policies.Debug.RetainFailedResources {
+				stuck = stuckProvisioningResources(p.Name, obs.resources, obs.now, m.stuckProvisioningThreshold)
+			}
 
 			if p.EffectivelyDrained() {
 				if requireMinReady {
@@ -752,11 +779,13 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 				toDrain := append([]model.Resource(nil), p.Inventory.Resources...)
 				toDrain = append(toDrain, orphans...)
 				toDrain = append(toDrain, quarantined...)
-				reason := fmt.Sprintf("drain inventory_rebuilt=%t ready=%d orphans=%d quarantined=%d", rebuildReport.Changed, len(p.Inventory.Resources), len(orphans), len(quarantined))
+				toDrain = append(toDrain, stuck...)
+				reason := fmt.Sprintf("drain inventory_rebuilt=%t ready=%d orphans=%d quarantined=%d stuck=%d", rebuildReport.Changed, len(p.Inventory.Resources), len(orphans), len(quarantined), len(stuck))
 				return policycontroller.Decision[plan]{
 					ShouldAct: rebuildReport.Changed || len(toDrain) > 0,
 					Plan: plan{
 						pool:             p,
+						stuck:            stuck,
 						drainResources:   toDrain,
 						drain:            true,
 						now:              obs.now,
@@ -774,6 +803,7 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 			stale = append(stale, orphans...)
 			blockedTotal := countTrackedResources(p.Name, obs.resources, p.Inventory.Resources, nil)
 			stale = append(stale, quarantined...)
+			stale = append(stale, stuck...)
 			p.Inventory.Resources = kept
 
 			readyCount := countReadyResources(p.Inventory.Resources)
@@ -843,6 +873,7 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 				Plan: plan{
 					pool:                p,
 					stale:               stale,
+					stuck:               stuck,
 					now:                 obs.now,
 					toProvision:         toProv,
 					requiredToProvision: requiredToProv,
@@ -858,7 +889,18 @@ func (m *Manager) reconcileLocked(ctx context.Context, poolName model.PoolName, 
 				return m.applyDrain(ctx, p, pl.drainResources, pl.now)
 			}
 
+			stuckIDs := resourceIDSet(pl.stuck)
 			for _, res := range pl.stale {
+				if _, isStuck := stuckIDs[res.ID]; isStuck {
+					slog.Warn("pool reconciler recovering stuck provisioning resource",
+						"operation", "pool_stuck_provisioning_recovery",
+						"resource_id", res.ID,
+						"pool", p.Name,
+						"state", res.State,
+						"updated_at", res.UpdatedAt,
+						"threshold", m.stuckProvisioningThreshold.String(),
+					)
+				}
 				if err := m.destroyAndMark(ctx, p, res, model.ResourceStateRecycling, pl.now); err != nil {
 					return err
 				}
@@ -1137,6 +1179,55 @@ func quarantinedOrphans(poolName model.PoolName, resources []model.Resource) []m
 		}
 	}
 	return quarantined
+}
+
+// stuckProvisioningResources finds resources originating from poolName that
+// are stuck in ResourceStateProvisioning past threshold without making
+// forward progress (#337) — distinct from orphanedTransientResources (which
+// covers Recycling/Destroying) and quarantinedOrphans (which covers
+// resources already marked Error). A resource can hang mid-personalization
+// forever without ever reaching either of those states, and nothing else in
+// this reconcile pipeline would notice or replace it. threshold <= 0
+// disables the watchdog (the default).
+//
+// Progress is judged purely by UpdatedAt, and today that measures
+// time-since-last-state-transition, not time-since-last-activity:
+// AdmissionHandler.Handle's PersonalizeGuest/package-apply path writes no
+// intermediate UpdatedAt bump while it runs — only markReady and
+// FailAdmission stamp it, at the start and end of the whole attempt. That is
+// exactly right for this watchdog's actual job (bound the worst case of a
+// stuck attempt), but it also means a resource legitimately still running a
+// long-but-healthy provisioning step (including an executePackage script
+// applied at this event, which is deliberately left unbounded — see
+// internal/config.ServerSpec.AgentTimeouts) will be destroyed mid-run if
+// that step alone exceeds threshold. Config.Validate's cross-field check
+// only guards against threshold being too small relative to the *agent*
+// timeouts; an unbounded package script's duration isn't a configured value
+// it can validate against. Callers must route the result through the same
+// destroy-and-mark path used for stale/orphaned resources (never
+// retryRetainedResource's reset-in-place path, which would bump UpdatedAt
+// and make the watchdog never re-fire for a resource that's still actually
+// stuck) — and must skip pools with Policies.Debug.RetainFailedResources
+// set, since that policy exists specifically to keep a stuck/failed
+// resource alive for manual investigation (see the call site).
+func stuckProvisioningResources(poolName model.PoolName, resources []model.Resource, now time.Time, threshold time.Duration) []model.Resource {
+	if threshold <= 0 {
+		return nil
+	}
+	var stuck []model.Resource
+	for _, res := range resources {
+		if res.State != model.ResourceStateProvisioning {
+			continue
+		}
+		if res.EffectivePool() != poolName {
+			continue
+		}
+		if now.Sub(res.UpdatedAt) <= threshold {
+			continue
+		}
+		stuck = append(stuck, res)
+	}
+	return stuck
 }
 
 func computeToProvision(p model.Pool, minReady int, totalCount int) int {

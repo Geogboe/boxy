@@ -42,11 +42,15 @@ type Event struct {
 	Attempt      int       `json:"attempt,omitempty"`
 	ErrorCode    string    `json:"error_code,omitempty"`
 	ErrorSummary string    `json:"error_summary,omitempty"`
-	Pool         string    `json:"pool,omitempty"`
-	Agent        string    `json:"agent,omitempty"`
-	Resource     string    `json:"resource,omitempty"`
-	Provider     string    `json:"provider,omitempty"`
-	Request      string    `json:"request,omitempty"`
+	// DurationMS is the elapsed time of the operation/step this event
+	// describes, in milliseconds. Zero means "not reported" — most events
+	// have no associated duration. See #355.
+	DurationMS int64  `json:"duration_ms,omitempty"`
+	Pool       string `json:"pool,omitempty"`
+	Agent      string `json:"agent,omitempty"`
+	Resource   string `json:"resource,omitempty"`
+	Provider   string `json:"provider,omitempty"`
+	Request    string `json:"request,omitempty"`
 }
 
 // Query selects a bounded page of diagnostic events. Cursor values are opaque

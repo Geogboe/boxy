@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Geogboe/boxy/pkg/model"
+	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
@@ -2381,6 +2382,228 @@ func TestManager_Reconcile_SweepsQuarantinedOrphan(t *testing.T) {
 	}
 }
 
+// TestManager_Reconcile_Watchdog_DestroysStuckProvisioningResourceAndReplaces
+// exercises #337: a resource stuck in ResourceStateProvisioning past the
+// configured watchdog threshold, with no other reconcile pipeline signal
+// (not Recycling/Destroying, not Error), must be destroyed — via the same
+// destroy-and-mark path used for stale/orphaned resources, which also
+// deletes its guest credential — and its replacement provisioned in the
+// same pass via the pool's ordinary min_ready gap logic.
+func TestManager_Reconcile_Watchdog_DestroysStuckProvisioningResourceAndReplaces(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	stuck := model.Resource{
+		ID:         "res_stuck",
+		OriginPool: "p1",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		Provider:   model.ProviderRef{Name: "prov_1"},
+		State:      model.ResourceStateProvisioning,
+		CreatedAt:  time.Unix(0, 0).UTC(),
+		UpdatedAt:  time.Unix(0, 0).UTC(),
+	}
+	pool := model.Pool{
+		Name:      "p1",
+		Policies:  model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 1, MaxTotal: 5}},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+	if err := st.PutResource(ctx, stuck); err != nil {
+		t.Fatalf("put resource: %v", err)
+	}
+
+	secrets := &admissionSecretStore{values: map[string][]byte{
+		boxysecrets.ResourceCredentialKey(string(stuck.ID)): []byte(`{"data":"c2VjcmV0"}`),
+	}}
+	prov := &fakeProvisioner{}
+	mgr := New(st, prov)
+	mgr.SetGuestSecretStore(secrets)
+	mgr.SetStuckProvisioningThreshold(15 * time.Minute)
+	mgr.SetClock(fixedClock{t: time.Unix(0, 0).Add(20 * time.Minute).UTC()})
+
+	if err := mgr.Reconcile(ctx, "p1"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if len(prov.destroyed) != 1 || prov.destroyed[0] != stuck.ID {
+		t.Fatalf("destroyed = %v, want stuck resource %q swept", prov.destroyed, stuck.ID)
+	}
+	final, err := st.GetResource(ctx, stuck.ID)
+	if err != nil {
+		t.Fatalf("get resource: %v", err)
+	}
+	if final.State != model.ResourceStateDestroyed {
+		t.Fatalf("final state = %q, want %q", final.State, model.ResourceStateDestroyed)
+	}
+	if _, getErr := secrets.Get(ctx, boxysecrets.ResourceCredentialKey(string(stuck.ID))); !errors.Is(getErr, boxysecrets.ErrNotFound) {
+		t.Fatalf("credential store Get after watchdog destroy = %v, want ErrNotFound (credential deleted)", getErr)
+	}
+
+	if prov.provisionCalls != 1 {
+		t.Fatalf("provisionCalls = %d, want 1 (replacement provisioned in the same pass)", prov.provisionCalls)
+	}
+	updated, err := st.GetPool(ctx, "p1")
+	if err != nil {
+		t.Fatalf("get pool: %v", err)
+	}
+	if len(updated.Inventory.Resources) != 1 {
+		t.Fatalf("pool inventory len = %d, want 1 replacement resource", len(updated.Inventory.Resources))
+	}
+}
+
+// TestManager_Reconcile_Watchdog_LeavesRecentlyUpdatedProvisioningResourceUntouched
+// is the anti-race counterpart: a resource still legitimately in flight
+// (UpdatedAt within the threshold) must not be touched by the watchdog.
+func TestManager_Reconcile_Watchdog_LeavesRecentlyUpdatedProvisioningResourceUntouched(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	now := time.Unix(0, 0).Add(20 * time.Minute).UTC()
+	inFlight := model.Resource{
+		ID:         "res_inflight",
+		OriginPool: "p1",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		Provider:   model.ProviderRef{Name: "prov_1"},
+		State:      model.ResourceStateProvisioning,
+		CreatedAt:  time.Unix(0, 0).UTC(),
+		UpdatedAt:  now.Add(-1 * time.Minute), // within the 15m threshold
+	}
+	pool := model.Pool{
+		Name:      "p1",
+		Policies:  model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 1, MaxTotal: 5}},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+	if err := st.PutResource(ctx, inFlight); err != nil {
+		t.Fatalf("put resource: %v", err)
+	}
+
+	prov := &fakeProvisioner{}
+	mgr := New(st, prov)
+	mgr.SetStuckProvisioningThreshold(15 * time.Minute)
+	mgr.SetClock(fixedClock{t: now})
+
+	if err := mgr.Reconcile(ctx, "p1"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if len(prov.destroyed) != 0 {
+		t.Fatalf("destroyed = %v, want none (resource is within threshold)", prov.destroyed)
+	}
+	final, err := st.GetResource(ctx, inFlight.ID)
+	if err != nil {
+		t.Fatalf("get resource: %v", err)
+	}
+	if final.State != model.ResourceStateProvisioning {
+		t.Fatalf("state = %q, want unchanged %q", final.State, model.ResourceStateProvisioning)
+	}
+}
+
+// TestManager_Reconcile_Watchdog_SkipsPoolWithRetainFailedResources confirms
+// the watchdog does not fight the Debug.RetainFailedResources policy: a pool
+// that opts into keeping failed/stuck resources alive for manual
+// investigation must not have the watchdog destroy them out from under it.
+func TestManager_Reconcile_Watchdog_SkipsPoolWithRetainFailedResources(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	stuck := model.Resource{
+		ID:         "res_stuck",
+		OriginPool: "p1",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		Provider:   model.ProviderRef{Name: "prov_1"},
+		State:      model.ResourceStateProvisioning,
+		CreatedAt:  time.Unix(0, 0).UTC(),
+		UpdatedAt:  time.Unix(0, 0).UTC(),
+	}
+	pool := model.Pool{
+		Name: "p1",
+		Policies: model.PoolPolicies{
+			Preheat: model.PreheatPolicy{MinReady: 0, MaxTotal: 5},
+			Debug:   model.PoolDebugPolicy{RetainFailedResources: true},
+		},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+	if err := st.PutResource(ctx, stuck); err != nil {
+		t.Fatalf("put resource: %v", err)
+	}
+
+	prov := &fakeProvisioner{}
+	mgr := New(st, prov)
+	mgr.SetStuckProvisioningThreshold(15 * time.Minute)
+	mgr.SetClock(fixedClock{t: time.Unix(0, 0).Add(24 * time.Hour).UTC()})
+
+	if err := mgr.Reconcile(ctx, "p1"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if len(prov.destroyed) != 0 {
+		t.Fatalf("destroyed = %v, want none (RetainFailedResources exempts this pool from the watchdog)", prov.destroyed)
+	}
+	final, err := st.GetResource(ctx, stuck.ID)
+	if err != nil {
+		t.Fatalf("get resource: %v", err)
+	}
+	if final.State != model.ResourceStateProvisioning {
+		t.Fatalf("state = %q, want unchanged %q", final.State, model.ResourceStateProvisioning)
+	}
+}
+
+// TestManager_Reconcile_Watchdog_DisabledByDefault confirms the watchdog is
+// opt-in: a Manager with no configured threshold must never touch a
+// long-stuck Provisioning resource, matching every pre-#337 embedder/test.
+func TestManager_Reconcile_Watchdog_DisabledByDefault(t *testing.T) {
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	stuck := model.Resource{
+		ID:         "res_stuck",
+		OriginPool: "p1",
+		Type:       model.ResourceTypeContainer,
+		Profile:    model.ResourceProfileDefault,
+		Provider:   model.ProviderRef{Name: "prov_1"},
+		State:      model.ResourceStateProvisioning,
+		CreatedAt:  time.Unix(0, 0).UTC(),
+		UpdatedAt:  time.Unix(0, 0).UTC(),
+	}
+	pool := model.Pool{
+		Name:      "p1",
+		Policies:  model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 0, MaxTotal: 5}},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("put pool: %v", err)
+	}
+	if err := st.PutResource(ctx, stuck); err != nil {
+		t.Fatalf("put resource: %v", err)
+	}
+
+	prov := &fakeProvisioner{}
+	mgr := New(st, prov)
+	mgr.SetClock(fixedClock{t: time.Unix(0, 0).Add(24 * time.Hour).UTC()})
+
+	if err := mgr.Reconcile(ctx, "p1"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if len(prov.destroyed) != 0 {
+		t.Fatalf("destroyed = %v, want none (watchdog disabled by default)", prov.destroyed)
+	}
+	final, err := st.GetResource(ctx, stuck.ID)
+	if err != nil {
+		t.Fatalf("get resource: %v", err)
+	}
+	if final.State != model.ResourceStateProvisioning {
+		t.Fatalf("state = %q, want unchanged %q", final.State, model.ResourceStateProvisioning)
+	}
+}
+
 // TestManager_Reconcile_PersistentQuarantineDestroyFailureBlocksProvisioning
 // documents a known tradeoff, not desired behavior: the actuator's stale-
 // destroy loop runs before its provision loop and returns on the first
@@ -2453,5 +2676,87 @@ func TestManager_FillReportsBlockedWhenFailuresExhaustMaxTotal(t *testing.T) {
 	}
 	if len(provisioner.destroyed) != 0 || provisioner.provisionCalls != 0 {
 		t.Fatalf("provider calls: destroyed=%v provisioned=%d, want none", provisioner.destroyed, provisioner.provisionCalls)
+	}
+}
+
+// TestManager_ReconcileReportsBlockedWhenFailuresExhaustMaxTotal is the #328
+// repro shape run through the periodic background path (Reconcile, i.e.
+// requireMinReady=false — what boxy serve's reconcile loop calls every tick,
+// see internal/cli/serve.go's serveReconcilePass) rather than through an
+// explicit Fill call. It exists to pin down that the wedge the issue
+// describes reproduces on this branch (it does: BlockedPoolError's early
+// return in the Evaluator, above the stale-destroy loop, prevents the
+// quarantined resources from ever being cleaned up — see
+// TestManager_Reconcile_PersistentQuarantineDestroyFailureBlocksProvisioning's
+// doc comment for the same tradeoff on the destroy-failure path) before any
+// visibility fix is layered on top of it.
+func TestManager_ReconcileReportsBlockedWhenFailuresExhaustMaxTotal(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	pool := model.Pool{
+		Name: "p1", Policies: model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 2, MaxTotal: 4}},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeVM, ExpectedProfile: model.ResourceProfileDefault},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	for _, id := range []model.ResourceID{"failed-1", "failed-2", "failed-3", "failed-4"} {
+		if err := st.PutResource(ctx, model.Resource{ID: id, OriginPool: pool.Name, CurrentPool: pool.Name, State: model.ResourceStateError}); err != nil {
+			t.Fatalf("PutResource(%s): %v", id, err)
+		}
+	}
+	provisioner := &fakeProvisioner{}
+	mgr := New(st, provisioner)
+
+	err := mgr.Reconcile(ctx, pool.Name)
+	var blocked *BlockedPoolError
+	if !errors.As(err, &blocked) {
+		t.Fatalf("Reconcile error = %v, want BlockedPoolError", err)
+	}
+	if blocked.FailedCount != 4 || blocked.MaxTotal != 4 || blocked.ReadyCount != 0 {
+		t.Fatalf("blocked details = %+v", blocked)
+	}
+	if len(provisioner.destroyed) != 0 || provisioner.provisionCalls != 0 {
+		t.Fatalf("provider calls: destroyed=%v provisioned=%d, want none — the ceiling is never cleared by a background tick either", provisioner.destroyed, provisioner.provisionCalls)
+	}
+
+	// The wedge is truly permanent, not just present on the first tick: a
+	// second reconcile must reproduce identically, matching the issue's
+	// "the fourth failure was the last event the pool ever emitted."
+	err = mgr.Reconcile(ctx, pool.Name)
+	if !errors.As(err, &blocked) {
+		t.Fatalf("second Reconcile error = %v, want BlockedPoolError again", err)
+	}
+}
+
+func TestDescribeJobError(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		err      error
+		wantCode string
+	}{
+		{"nil", nil, ""},
+		{"generic", errors.New("boom"), ""},
+		{"blocked", &BlockedPoolError{PoolName: "p1", MaxTotal: 4, ReadyCount: 0, FailedCount: 4}, "quarantine_exhausted"},
+		{"config drained", &ConfigDeclaredDrainError{PoolName: "p1"}, "pool_config_drained"},
+		{"max total", &MaxTotalReachedError{PoolName: "p1", MaxTotal: 4, CurrentTotal: 4, ReadyCount: 0, RequestedReady: 1}, "pool_max_total_reached"},
+		{"drained", &DrainedPoolError{PoolName: "p1", RequestedReady: 1}, "pool_drained"},
+		{"wrapped blocked", fmt.Errorf("reconcile: %w", &BlockedPoolError{PoolName: "p1", MaxTotal: 4, FailedCount: 4}), "quarantine_exhausted"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			code, summary := DescribeJobError(tc.err)
+			if code != tc.wantCode {
+				t.Fatalf("code = %q, want %q", code, tc.wantCode)
+			}
+			if code != "" && summary == "" {
+				t.Fatalf("summary is empty for a matched error code %q", code)
+			}
+			if code == "" && summary != "" {
+				t.Fatalf("summary = %q, want empty alongside empty code", summary)
+			}
+		})
 	}
 }

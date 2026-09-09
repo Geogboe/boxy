@@ -279,6 +279,39 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		return fmt.Errorf("register embedded agent: %w", err)
 	}
 
+	// Agent operation timeouts (#333): resolved here from config into
+	// pool.AgentOperationTimeouts, keeping internal/pool decoupled from
+	// internal/config.
+	agentCreateTimeout, err := cfg.Server.AgentTimeouts.EffectiveCreateTimeout()
+	if err != nil {
+		return err
+	}
+	agentPersonalizeTimeout, err := cfg.Server.AgentTimeouts.EffectivePersonalizeGuestTimeout()
+	if err != nil {
+		return err
+	}
+	agentDeleteTimeout, err := cfg.Server.AgentTimeouts.EffectiveDeleteTimeout()
+	if err != nil {
+		return err
+	}
+	agentDefaultTimeout, err := cfg.Server.AgentTimeouts.EffectiveDefaultTimeout()
+	if err != nil {
+		return err
+	}
+	// The fulfiller's per-sandbox bound must exceed anything a single
+	// reconcileSandbox pass can legitimately do serially (a fresh
+	// agent.Create followed by a PersonalizeGuest) — see
+	// AgentTimeoutsSpec.EffectiveSandboxFulfillTimeout's doc comment for why
+	// this is deliberately their sum, not AgentTimeouts.Default.
+	sandboxFulfillTimeout, err := cfg.Server.AgentTimeouts.EffectiveSandboxFulfillTimeout()
+	if err != nil {
+		return err
+	}
+	stuckProvisioningThreshold, err := cfg.Server.EffectivePoolProvisioningWatchdogThreshold()
+	if err != nil {
+		return err
+	}
+
 	// Use AgentProvisioner to route pool operations through the registry.
 	provisioner := &pool.AgentProvisioner{
 		Registry:         agentRegistry,
@@ -289,8 +322,15 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		ArtifactRegistry: packageRegistry,
 		SourceSigners:    sourceSigners,
 		SourceTTL:        15 * time.Minute,
+		Timeouts: pool.AgentOperationTimeouts{
+			Create:           agentCreateTimeout,
+			PersonalizeGuest: agentPersonalizeTimeout,
+			Delete:           agentDeleteTimeout,
+			Default:          agentDefaultTimeout,
+		},
 	}
 	poolMgr := pool.New(st, provisioner)
+	poolMgr.SetStuckProvisioningThreshold(stuckProvisioningThreshold)
 	cleanupService := &pool.ResourceCleanupService{Store: st, Manager: poolMgr, Audit: auditStore}
 	poolMgr.SetPromoter(&pool.PromotionService{
 		Store:           st,
@@ -321,7 +361,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	admissionDispatcher := lifecycle.NewDispatcher(eventStore, admissionHandler)
 	poolMgr.SetAdmissionPublisher(admissionPublisher)
 	sandboxMgr := sandbox.New(st, provisioner)
-	sandboxFulfiller := sandbox.NewFulfiller(st, poolMgr, sandboxMgr)
+	sandboxFulfiller := sandbox.NewFulfiller(st, poolMgr, sandboxMgr, sandboxFulfillTimeout)
 	sandboxDeleter := sandbox.NewDeletionReconciler(st, poolMgr)
 	sessionSweeper := server.NewSessionSweeper(st)
 

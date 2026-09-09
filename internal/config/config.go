@@ -58,6 +58,25 @@ type ServerSpec struct {
 	// store retains events. Empty means the 14-day default.
 	DiagnosticsRetention string `json:"diagnostics_retention,omitempty" yaml:"diagnostics_retention,omitempty"`
 
+	// AgentTimeouts bounds remote/embedded agent RPC operations so a single
+	// hung call (e.g. a stalled PersonalizeGuest against a guest that never
+	// answers) cannot freeze pool provisioning or sandbox fulfillment
+	// silently (#333). Per-operation-class, not one global knob, because
+	// Create/personalization/deletion have very different realistic
+	// durations. executePackage/resource-package Update calls are
+	// deliberately left unbounded here — a package script's own runtime is
+	// caller-controlled content, not a fixed-shape agent RPC, and bounding
+	// it is out of scope for this change.
+	AgentTimeouts AgentTimeoutsSpec `json:"agent_timeouts,omitzero" yaml:"agent_timeouts,omitempty"`
+
+	// PoolProvisioningWatchdogThreshold bounds how long a resource may sit in
+	// ResourceStateProvisioning without progress before the reconciler
+	// destroys and replaces it (#337). Empty means the 15m default. Must
+	// exceed every configured AgentTimeouts value (validated below) so the
+	// watchdog can never fire while a bounded agent operation is still
+	// legitimately in flight.
+	PoolProvisioningWatchdogThreshold string `json:"pool_provisioning_watchdog_threshold,omitempty" yaml:"pool_provisioning_watchdog_threshold,omitempty"`
+
 	// GRPCCertSANs are extra DNS names/IPs to include in the agent gRPC
 	// server certificate's Subject Alternative Names, on top of the
 	// always-included localhost/127.0.0.1/listen-host entries. Needed when
@@ -227,6 +246,31 @@ func (o OIDCSpec) Validate() error {
 	return nil
 }
 
+// AgentTimeoutsSpec bounds agent-backed operations, as Go duration strings,
+// per operation class. Empty fields fall back to their documented default
+// (see the Default* constants below) rather than one shared default, since
+// Create (provisioning a whole VM/container) and Delete/PersonalizeGuest
+// have very different realistic durations.
+type AgentTimeoutsSpec struct {
+	// Create bounds a driver's resource-creation call.
+	Create string `json:"create,omitempty" yaml:"create,omitempty"`
+	// PersonalizeGuest bounds a guest-personalization call, both at pool
+	// admission time and at sandbox allocation time.
+	PersonalizeGuest string `json:"personalize_guest,omitempty" yaml:"personalize_guest,omitempty"`
+	// Delete bounds a driver's resource-deletion call.
+	Delete string `json:"delete,omitempty" yaml:"delete,omitempty"`
+	// Default is a reserved fallback for any future agent-backed operation
+	// with no more specific timeout of its own. It has no consumer today:
+	// internal/sandbox.Fulfiller's per-sandbox pass bound is deliberately
+	// EffectiveSandboxFulfillTimeout (the sum of Create+PersonalizeGuest+
+	// Delete — what one reconcileSandbox pass can legitimately need
+	// serially), not this field, since a single small Default-sized bound
+	// would fire before a cold pool's own Create even completes. Kept
+	// (rather than removed) for forward compatibility with a future
+	// operation class that doesn't warrant its own dedicated field yet.
+	Default string `json:"default,omitempty" yaml:"default,omitempty"`
+}
+
 // SecretSpec configures the server-owned secret backend.
 type SecretSpec struct {
 	Backend string `json:"backend,omitempty" yaml:"backend,omitempty"`
@@ -283,6 +327,91 @@ const DefaultAgentHeartbeatInterval = 15 * time.Second
 
 // DefaultDiagnosticsRetention is used when diagnostics_retention is unset.
 const DefaultDiagnosticsRetention = 14 * 24 * time.Hour
+
+// Default agent operation timeouts, applied when the corresponding
+// AgentTimeoutsSpec field is unset. See #333.
+const (
+	DefaultAgentCreateTimeout           = 5 * time.Minute
+	DefaultAgentPersonalizeGuestTimeout = 3 * time.Minute
+	DefaultAgentDeleteTimeout           = 2 * time.Minute
+	DefaultAgentDefaultTimeout          = 30 * time.Second
+)
+
+// DefaultPoolProvisioningWatchdogThreshold is used when
+// pool_provisioning_watchdog_threshold is unset. See #337.
+const DefaultPoolProvisioningWatchdogThreshold = 15 * time.Minute
+
+func effectiveDuration(raw, field string, def time.Duration) (time.Duration, error) {
+	if strings.TrimSpace(raw) == "" {
+		return def, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s %q: %w", field, raw, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("%s %q must be positive", field, raw)
+	}
+	return d, nil
+}
+
+// EffectiveCreateTimeout parses AgentTimeouts.Create, applying the default
+// when unset.
+func (a AgentTimeoutsSpec) EffectiveCreateTimeout() (time.Duration, error) {
+	return effectiveDuration(a.Create, "server.agent_timeouts.create", DefaultAgentCreateTimeout)
+}
+
+// EffectivePersonalizeGuestTimeout parses AgentTimeouts.PersonalizeGuest,
+// applying the default when unset.
+func (a AgentTimeoutsSpec) EffectivePersonalizeGuestTimeout() (time.Duration, error) {
+	return effectiveDuration(a.PersonalizeGuest, "server.agent_timeouts.personalize_guest", DefaultAgentPersonalizeGuestTimeout)
+}
+
+// EffectiveDeleteTimeout parses AgentTimeouts.Delete, applying the default
+// when unset.
+func (a AgentTimeoutsSpec) EffectiveDeleteTimeout() (time.Duration, error) {
+	return effectiveDuration(a.Delete, "server.agent_timeouts.delete", DefaultAgentDeleteTimeout)
+}
+
+// EffectiveDefaultTimeout parses AgentTimeouts.Default, applying the default
+// when unset.
+func (a AgentTimeoutsSpec) EffectiveDefaultTimeout() (time.Duration, error) {
+	return effectiveDuration(a.Default, "server.agent_timeouts.default", DefaultAgentDefaultTimeout)
+}
+
+// EffectiveSandboxFulfillTimeout is the bound internal/sandbox.Fulfiller
+// applies around each individual sandbox's reconcile pass (#333, Part B).
+// It must exceed anything that pass can legitimately do serially inside one
+// call — EnsureReady can drive a fresh agent.Create, and the allocation step
+// that follows can drive a PersonalizeGuest — so it is deliberately the SUM
+// of Create + PersonalizeGuest + Delete, not their max or a separately
+// configurable "Default" value. A single Default-sized bound (30s) smaller
+// than Create's own 5m default would fire before a cold pool ever finishes
+// provisioning, permanently failing every sandbox against an empty pool, and
+// would misattribute a parent-context timeout as if PersonalizeGuest's own
+// (much longer) configured limit had fired. See Config.Validate's companion
+// invariant: PoolProvisioningWatchdogThreshold must exceed this value too.
+func (a AgentTimeoutsSpec) EffectiveSandboxFulfillTimeout() (time.Duration, error) {
+	create, err := a.EffectiveCreateTimeout()
+	if err != nil {
+		return 0, err
+	}
+	personalize, err := a.EffectivePersonalizeGuestTimeout()
+	if err != nil {
+		return 0, err
+	}
+	del, err := a.EffectiveDeleteTimeout()
+	if err != nil {
+		return 0, err
+	}
+	return create + personalize + del, nil
+}
+
+// EffectivePoolProvisioningWatchdogThreshold parses
+// PoolProvisioningWatchdogThreshold, applying the default when unset.
+func (s ServerSpec) EffectivePoolProvisioningWatchdogThreshold() (time.Duration, error) {
+	return effectiveDuration(s.PoolProvisioningWatchdogThreshold, "server.pool_provisioning_watchdog_threshold", DefaultPoolProvisioningWatchdogThreshold)
+}
 
 // EffectiveAgentHeartbeatInterval parses AgentHeartbeatInterval, applying
 // the default when unset. Invalid values error (Validate also rejects them
@@ -381,6 +510,42 @@ func (c Config) Validate() error {
 	if _, err := c.Server.EffectiveDiagnosticsRetention(); err != nil {
 		return fmt.Errorf("server: %w", err)
 	}
+	createTimeout, err := c.Server.AgentTimeouts.EffectiveCreateTimeout()
+	if err != nil {
+		return fmt.Errorf("server: %w", err)
+	}
+	personalizeTimeout, err := c.Server.AgentTimeouts.EffectivePersonalizeGuestTimeout()
+	if err != nil {
+		return fmt.Errorf("server: %w", err)
+	}
+	deleteTimeout, err := c.Server.AgentTimeouts.EffectiveDeleteTimeout()
+	if err != nil {
+		return fmt.Errorf("server: %w", err)
+	}
+	defaultTimeout, err := c.Server.AgentTimeouts.EffectiveDefaultTimeout()
+	if err != nil {
+		return fmt.Errorf("server: %w", err)
+	}
+	sandboxFulfillTimeout, err := c.Server.AgentTimeouts.EffectiveSandboxFulfillTimeout()
+	if err != nil {
+		return fmt.Errorf("server: %w", err)
+	}
+	watchdogThreshold, err := c.Server.EffectivePoolProvisioningWatchdogThreshold()
+	if err != nil {
+		return fmt.Errorf("server: %w", err)
+	}
+	// The bound must exceed sandboxFulfillTimeout specifically, not just the
+	// largest individual agent timeout: sandboxFulfillTimeout is itself their
+	// sum (Create+PersonalizeGuest+Delete can chain serially inside one
+	// reconcileSandbox pass — see its doc comment), so it is always >= every
+	// individual value and is the real worst case the watchdog must clear.
+	maxAgentTimeout := max(createTimeout, personalizeTimeout, deleteTimeout, defaultTimeout, sandboxFulfillTimeout)
+	if watchdogThreshold <= maxAgentTimeout {
+		return fmt.Errorf(
+			"server.pool_provisioning_watchdog_threshold (%s) must exceed the largest configured server.agent_timeouts value, including the derived sandbox-fulfillment bound (%s)",
+			watchdogThreshold, maxAgentTimeout,
+		)
+	}
 	if err := c.Server.Secrets.Validate(); err != nil {
 		return err
 	}
@@ -453,6 +618,16 @@ func (c Config) Validate() error {
 		}
 	}
 	for _, pool := range c.Pools {
+		// "unassigned" is a reserved sentinel: the pools UI renders a
+		// synthetic dimmed row under this exact name for resources with no
+		// pool at all (internal/server/ui_pools.go). A real pool configured
+		// with this name would collide with that row's bucket and be
+		// rendered as the orphan bucket instead of a manageable pool. Reject
+		// it at config validation rather than trying to make the UI-layer
+		// sentinel and a real pool name distinguishable from each other.
+		if strings.EqualFold(strings.TrimSpace(string(pool.Name)), "unassigned") {
+			return fmt.Errorf("pool %q: %q is a reserved name and cannot be used as a pool name", pool.Name, "unassigned")
+		}
 		var resolvedTemplate model.ResourceTemplate
 		if strings.TrimSpace(pool.Template) != "" {
 			resolved, err := c.ResolveTemplate(pool.Template)

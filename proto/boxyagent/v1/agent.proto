@@ -121,6 +121,13 @@ message LogEvent {
   string step = 12;
   string status = 13;
   int32 attempt = 14;
+  // duration_ms is the elapsed time of the operation/step this log entry
+  // describes, in milliseconds. Zero means "not reported" — most log
+  // entries have no associated duration. Added for #355 so a slow
+  // allocation-time guest personalization step is visible through
+  // `boxy diagnostics logs` for a remote (non-embedded) agent, not just in
+  // the agent's own raw log output.
+  int64 duration_ms = 15;
 }
 
 // ---- Server -> Agent ----
@@ -200,8 +207,18 @@ message AllocateCommand {
 // unconditional, unlike the other commands which target one resource_id.
 message ListCommand {}
 
+// apply_network gates whether PersonalizeGuest may configure the guest's
+// network identity (static_ip/range-mode IP assignment) in addition to
+// rotating its credential. It defaults to false (proto3 zero value) so a
+// stale caller — or any code path that forgets to set it explicitly — gets
+// the safe, network-deferred behavior rather than silently reintroducing
+// #358's premature network exposure of preheated-but-unclaimed inventory.
+// Only allocation-time personalization (a sandbox actually claiming the
+// resource) should set this true; admission/promotion-time personalization
+// must leave it false. See ADR-0012's 2026-09 change note.
 message PersonalizeGuestCommand {
   string resource_id = 1;
+  bool apply_network = 2;
 }
 
 message ResourceResult {

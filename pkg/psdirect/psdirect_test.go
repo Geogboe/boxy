@@ -12,18 +12,42 @@ import (
 	"github.com/smnsjas/go-psrpcore/serialization"
 
 	"github.com/Geogboe/boxy/pkg/eventstream"
+	"github.com/Geogboe/boxy/pkg/vmsdk"
 )
 
 // mockExecutor is a test double for psrpExecutor.
 type mockExecutor struct {
 	connectErr error
 	execFunc   func(ctx context.Context, script string) (*psrpclient.Result, error)
+	// execCommandFunc backs ExecuteCommand, used by Exec's cmd+args path
+	// (execScript, via commandArgs). If nil, ExecuteCommand delegates to
+	// execFunc so tests exercising only the script-text path (ExecText)
+	// don't need to set both.
+	execCommandFunc func(ctx context.Context, cmdName string, isScript bool, args ...interface{}) (*psrpclient.Result, error)
+
+	// connectCount/closeCount let session-reuse tests (#361) assert how many
+	// times a real connection was established/torn down, distinct from how
+	// many Exec/ExecText calls were made against it.
+	connectCount int
+	closeCount   int
 }
 
-func (m *mockExecutor) Connect(_ context.Context) error { return m.connectErr }
-func (m *mockExecutor) Close(_ context.Context) error   { return nil }
+func (m *mockExecutor) Connect(_ context.Context) error {
+	m.connectCount++
+	return m.connectErr
+}
+func (m *mockExecutor) Close(_ context.Context) error {
+	m.closeCount++
+	return nil
+}
 func (m *mockExecutor) Execute(ctx context.Context, script string) (*psrpclient.Result, error) {
 	return m.execFunc(ctx, script)
+}
+func (m *mockExecutor) ExecuteCommand(ctx context.Context, cmdName string, isScript bool, args ...interface{}) (*psrpclient.Result, error) {
+	if m.execCommandFunc != nil {
+		return m.execCommandFunc(ctx, cmdName, isScript, args...)
+	}
+	return m.execFunc(ctx, cmdName)
 }
 
 func makeExec(mock *mockExecutor) *Exec {
@@ -104,22 +128,101 @@ func TestExec_Exec_ExecuteError(t *testing.T) {
 	}
 }
 
-func TestExec_Exec_QuotesArgs(t *testing.T) {
-	var capturedScript string
+// TestExec_Exec_PassesStructuredArgs pins the #244 behavior change: Exec no
+// longer builds a quoted text script for cmd/args at all -- it invokes
+// execScript (a fixed constant) via ExecuteCommand and delivers cmd/args as
+// structured arguments. There is nothing here for a PowerShell parser to
+// mis-tokenize; the only escaping still applied is escapeNativeArg's
+// downstream native-argv-reconstruction fix (see its doc comment).
+func TestExec_Exec_PassesStructuredArgs(t *testing.T) {
+	var capturedCmd string
+	var capturedIsScript bool
+	var capturedArgs []interface{}
 	mock := &mockExecutor{
-		execFunc: func(_ context.Context, script string) (*psrpclient.Result, error) {
-			capturedScript = script
+		execCommandFunc: func(_ context.Context, cmdName string, isScript bool, args ...interface{}) (*psrpclient.Result, error) {
+			capturedCmd = cmdName
+			capturedIsScript = isScript
+			capturedArgs = args
 			return &psrpclient.Result{Output: []interface{}{int32(0)}}, nil
 		},
 	}
 
-	makeExec(mock).Exec(context.Background(), "cmd", "arg with spaces", "it's quoted") //nolint:errcheck
-
-	if !strings.Contains(capturedScript, "'arg with spaces'") {
-		t.Errorf("expected quoted arg in script: %s", capturedScript)
+	_, err := makeExec(mock).Exec(context.Background(), "cmd", "arg with spaces", "it's quoted")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(capturedScript, "'it''s quoted'") {
-		t.Errorf("expected escaped single quote in script: %s", capturedScript)
+
+	if capturedCmd != execScript {
+		t.Errorf("cmdName = %q, want the fixed execScript constant", capturedCmd)
+	}
+	if !capturedIsScript {
+		t.Error("expected isScript = true (execScript is a script block, not a cmdlet name)")
+	}
+	want := []interface{}{"cmd", "arg with spaces", "it's quoted"}
+	if len(capturedArgs) != len(want) {
+		t.Fatalf("args = %v, want %v", capturedArgs, want)
+	}
+	for i, w := range want {
+		if capturedArgs[i] != w {
+			t.Errorf("args[%d] = %v, want %v (no escaping needed for a plain value)", i, capturedArgs[i], w)
+		}
+	}
+}
+
+// TestExec_Exec_ArgvHazardsSurviveStructuredDelivery exercises the exact bug
+// class #238/#244 exist for: values that could never be correctly escaped
+// through a text command line -- embedded double quotes, embedded single
+// quotes, a trailing backslash before a quote, and an empty string -- now
+// arrive at ExecuteCommand as distinct, untouched values (after only
+// escapeNativeArg's native-argv-reconstruction pass, which is unrelated to
+// PowerShell-parser-level quoting). No parser-level escaping logic runs in
+// this package at all for these cases anymore.
+func TestExec_Exec_ArgvHazardsSurviveStructuredDelivery(t *testing.T) {
+	var capturedArgs []interface{}
+	mock := &mockExecutor{
+		execCommandFunc: func(_ context.Context, _ string, _ bool, args ...interface{}) (*psrpclient.Result, error) {
+			capturedArgs = args
+			return &psrpclient.Result{Output: []interface{}{int32(0)}}, nil
+		},
+	}
+
+	tests := []struct {
+		arg  string
+		want string
+	}{
+		// Embedded double quote: escapeNativeArg's native-argv fix still
+		// applies (downstream of PSRP delivery, see its doc comment); no
+		// PowerShell-parser-level escaping runs anymore.
+		{`say "hello"`, `say \"hello\"`},
+		// Embedded single quote: with psQuote removed, this needs -- and
+		// gets -- NO escaping at all. This is the case a text command line
+		// could never carry safely without doubling it for the PowerShell
+		// parser; here it survives completely untouched.
+		{`it's a test`, `it's a test`},
+		// Backslash immediately before a quote: the case that proves naive
+		// backslash-escaping is wrong (TestEscapeNativeArg_QuotePrecededByBackslash).
+		{`foo\"bar`, `foo\\\"bar`},
+		// Empty string: a valid argument value with nothing to escape.
+		{"", ""},
+	}
+
+	var tricky []string
+	for _, tt := range tests {
+		tricky = append(tricky, tt.arg)
+	}
+	_, err := makeExec(mock).Exec(context.Background(), "cmd", tricky...)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(capturedArgs) != 1+len(tests) {
+		t.Fatalf("args = %v, want %d entries", capturedArgs, 1+len(tests))
+	}
+	for i, tt := range tests {
+		got := capturedArgs[i+1]
+		if got != tt.want {
+			t.Errorf("args[%d] (from %q) = %v, want %v", i+1, tt.arg, got, tt.want)
+		}
 	}
 }
 
@@ -200,34 +303,54 @@ func TestExtractOutput_Int64ExitCode(t *testing.T) {
 	}
 }
 
-func TestBuildStreamScriptUsesExitMarkerWithoutBuffering(t *testing.T) {
-	script := buildStreamScript("myapp", []string{"arg1"})
-	if strings.Contains(script, "Out-String") {
-		t.Fatalf("stream script buffers output with Out-String: %s", script)
+func TestExecStreamScriptUsesExitMarkerWithoutBuffering(t *testing.T) {
+	if strings.Contains(execStreamScript, "Out-String") {
+		t.Fatalf("stream script buffers output with Out-String: %s", execStreamScript)
 	}
-	if !strings.Contains(script, "__BOXY_EXIT_CODE:") {
-		t.Fatalf("stream script lacks exit marker: %s", script)
+	if !strings.Contains(execStreamScript, "__BOXY_EXIT_CODE:") {
+		t.Fatalf("stream script lacks exit marker: %s", execStreamScript)
 	}
 	if code, ok := parseExitMarker("__BOXY_EXIT_CODE:17"); !ok || code != 17 {
 		t.Fatalf("parseExitMarker = %d, %v; want 17, true", code, ok)
 	}
 }
 
-// --- buildScript tests ---
+// --- execScript / commandArgs tests ---
 
-func TestBuildScript_QuotesAndJoins(t *testing.T) {
-	script := buildScript("myapp", []string{"arg1", "it's here"})
-	if !strings.Contains(script, "'myapp'") {
-		t.Errorf("expected quoted cmd in script: %s", script)
+// TestExecScript_IsFixedConstantWithNoCallerData pins the core #244
+// property: execScript never embeds cmd/args text, so there is no
+// PowerShell-parser-level tokenization hazard against caller-controlled
+// values -- they are delivered entirely out-of-band via commandArgs.
+func TestExecScript_IsFixedConstantWithNoCallerData(t *testing.T) {
+	if !strings.Contains(execScript, "$LASTEXITCODE") {
+		t.Errorf("expected $LASTEXITCODE in execScript: %s", execScript)
 	}
-	if !strings.Contains(script, "'it''s here'") {
-		t.Errorf("expected escaped quote in script: %s", script)
+	if !strings.Contains(execScript, "Out-String") {
+		t.Errorf("expected Out-String in execScript: %s", execScript)
 	}
-	if !strings.Contains(script, "$LASTEXITCODE") {
-		t.Errorf("expected $LASTEXITCODE in script: %s", script)
+	if !strings.Contains(execScript, "$args[0]") {
+		t.Errorf("expected execScript to read cmd from $args: %s", execScript)
 	}
-	if !strings.Contains(script, "Out-String") {
-		t.Errorf("expected Out-String in script: %s", script)
+}
+
+func TestCommandArgs_CmdFirstThenArgsInOrder(t *testing.T) {
+	got := commandArgs("myapp", []string{"arg1", "arg2"})
+	want := []interface{}{"myapp", "arg1", "arg2"}
+	if len(got) != len(want) {
+		t.Fatalf("commandArgs = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("commandArgs[%d] = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestCommandArgs_NoArgs(t *testing.T) {
+	got := commandArgs("myapp", nil)
+	want := []interface{}{"myapp"}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Errorf("commandArgs = %v, want %v", got, want)
 	}
 }
 
@@ -242,26 +365,13 @@ func TestBuildStreamTextScriptPreservesMultilineCRLFInput(t *testing.T) {
 	}
 }
 
-func TestBuildScript_QuotesEmbeddedDoubleQuotes(t *testing.T) {
-	script := buildScript("powershell", []string{"-Command", `Write-Output "MARK[a b]"`})
-	if !strings.Contains(script, `Write-Output \"MARK[a b]\"`) {
-		t.Errorf("expected native-argv-escaped embedded quotes in script: %s", script)
-	}
-}
-
-func TestBuildStreamScript_QuotesEmbeddedDoubleQuotes(t *testing.T) {
-	script := buildStreamScript("powershell", []string{"-Command", `Write-Output "MARK[a b]"`})
-	if !strings.Contains(script, `Write-Output \"MARK[a b]\"`) {
-		t.Errorf("expected native-argv-escaped embedded quotes in script: %s", script)
-	}
-}
-
-// --- escapeNativeArg / psQuote tests (#238) ---
+// --- escapeNativeArg tests (#238) ---
 //
-// These pin the native-command-line-reconstruction escaping that
-// psQuote applies on top of its own single-quote doubling. See #238 and
-// psQuote's doc comment for the mechanism. This is a documented stopgap
-// pending #244 (PSRP native AddCommand/AddArgument).
+// These pin the native-command-line-reconstruction escaping commandArgs
+// still applies to every argument. See #238 and escapeNativeArg's doc
+// comment (updated for #244) for why this hazard survives the move to
+// structured PSRP argument delivery: it lives downstream, at the guest's
+// own `&`-operator native-process invocation, not in PowerShell's parser.
 
 func TestEscapeNativeArg_EmbeddedQuote(t *testing.T) {
 	got := escapeNativeArg(`Write-Output "MARK[a b]"`)
@@ -324,16 +434,6 @@ func TestEscapeNativeArg_PlainArgsUnchanged(t *testing.T) {
 		if got := escapeNativeArg(s); got != s {
 			t.Errorf("escapeNativeArg(%q) = %q, want unchanged", s, got)
 		}
-	}
-}
-
-func TestPsQuote_EmbeddedQuoteAndSingleQuoteTogether(t *testing.T) {
-	got := psQuote(`it's "quoted"`)
-	if !strings.Contains(got, `it''s`) {
-		t.Errorf("expected doubled single quote in %q", got)
-	}
-	if !strings.Contains(got, `\"quoted\"`) {
-		t.Errorf("expected escaped double quotes in %q", got)
 	}
 }
 
@@ -678,5 +778,121 @@ func TestWrapKnownTransportError_PassesThroughOtherErrors(t *testing.T) {
 func TestWrapKnownTransportError_NilPassesThrough(t *testing.T) {
 	if got := wrapKnownTransportError(nil); got != nil {
 		t.Errorf("wrapKnownTransportError(nil) = %v, want nil", got)
+	}
+}
+
+// TestOpenSession_ReusesOneConnectionAcrossCalls is #361's core claim: two
+// guest-exec calls made through one OpenSession-returned Session connect
+// exactly once and close exactly once, not once per call -- the opposite of
+// Exec.Exec's documented per-call behavior (see
+// TestExec_TwoCalls_ConnectsAndClosesPerCall below for that contrast).
+func TestOpenSession_ReusesOneConnectionAcrossCalls(t *testing.T) {
+	mock := &mockExecutor{
+		execFunc: func(_ context.Context, _ string) (*psrpclient.Result, error) {
+			return &psrpclient.Result{Output: []interface{}{int32(0)}}, nil
+		},
+	}
+	e := makeExec(mock)
+
+	session, err := e.OpenSession(context.Background())
+	if err != nil {
+		t.Fatalf("OpenSession: unexpected error: %v", err)
+	}
+
+	if _, err := session.Exec(context.Background(), "cmd1"); err != nil {
+		t.Fatalf("first Exec on session: unexpected error: %v", err)
+	}
+	if _, err := session.Exec(context.Background(), "cmd2"); err != nil {
+		t.Fatalf("second Exec on session: unexpected error: %v", err)
+	}
+	if _, err := session.Exec(context.Background(), "cmd3"); err != nil {
+		t.Fatalf("third Exec on session: unexpected error: %v", err)
+	}
+
+	if mock.connectCount != 1 {
+		t.Errorf("connectCount = %d, want 1 (one connection reused across 3 calls)", mock.connectCount)
+	}
+	if mock.closeCount != 0 {
+		t.Errorf("closeCount = %d, want 0 before Close is called", mock.closeCount)
+	}
+
+	if err := session.Close(context.Background()); err != nil {
+		t.Fatalf("Close: unexpected error: %v", err)
+	}
+	if mock.closeCount != 1 {
+		t.Errorf("closeCount = %d, want 1 after Close", mock.closeCount)
+	}
+}
+
+// TestOpenSession_ExecTextSharesConnection confirms Session.ExecText also
+// reuses the same connection as Session.Exec rather than opening its own.
+func TestOpenSession_ExecTextSharesConnection(t *testing.T) {
+	mock := &mockExecutor{
+		execFunc: func(_ context.Context, _ string) (*psrpclient.Result, error) {
+			return &psrpclient.Result{Output: []interface{}{int32(0)}}, nil
+		},
+	}
+	e := makeExec(mock)
+
+	session, err := e.OpenSession(context.Background())
+	if err != nil {
+		t.Fatalf("OpenSession: unexpected error: %v", err)
+	}
+	defer session.Close(context.Background()) //nolint:errcheck
+
+	if _, err := session.Exec(context.Background(), "cmd1"); err != nil {
+		t.Fatalf("Exec: unexpected error: %v", err)
+	}
+	texter, ok := session.(vmsdk.GuestExecText)
+	if !ok {
+		t.Fatal("session should implement vmsdk.GuestExecText")
+	}
+	if _, err := texter.ExecText(context.Background(), "Get-Date"); err != nil {
+		t.Fatalf("ExecText: unexpected error: %v", err)
+	}
+
+	if mock.connectCount != 1 {
+		t.Errorf("connectCount = %d, want 1", mock.connectCount)
+	}
+}
+
+// TestOpenSession_ConnectError propagates a Connect failure the same way
+// Exec.Exec does.
+func TestOpenSession_ConnectError(t *testing.T) {
+	mock := &mockExecutor{connectErr: fmt.Errorf("vm not running")}
+	e := makeExec(mock)
+
+	_, err := e.OpenSession(context.Background())
+	if err == nil {
+		t.Fatal("expected error when Connect fails")
+	}
+	if !strings.Contains(err.Error(), "connect to VM") {
+		t.Errorf("error %q should mention connect to VM", err.Error())
+	}
+}
+
+// TestExec_TwoCalls_ConnectsAndClosesPerCall pins Exec.Exec's existing
+// per-call contract (unchanged by #361): every caller other than a
+// deliberate OpenSession user still pays Connect/Close on every call.
+func TestExec_TwoCalls_ConnectsAndClosesPerCall(t *testing.T) {
+	mock := &mockExecutor{
+		execFunc: func(_ context.Context, _ string) (*psrpclient.Result, error) {
+			return &psrpclient.Result{Output: []interface{}{int32(0)}}, nil
+		},
+	}
+	e := makeExec(mock)
+
+	if _, err := e.Exec(context.Background(), "cmd1"); err != nil {
+		t.Fatalf("first Exec: unexpected error: %v", err)
+	}
+	if _, err := e.Exec(context.Background(), "cmd2"); err != nil {
+		t.Fatalf("second Exec: unexpected error: %v", err)
+	}
+
+	if mock.connectCount != 2 {
+		t.Errorf("connectCount = %d, want 2 (one per Exec call)", mock.connectCount)
+	}
+	if mock.closeCount != 2 {
+		t.Errorf("closeCount = %d, want 2 (one per Exec call)", mock.closeCount)
 	}
 }

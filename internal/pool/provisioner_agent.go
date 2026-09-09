@@ -49,6 +49,10 @@ type AgentProvisioner struct {
 	ArtifactRegistry artifact.Registry
 	SourceSigners    map[string]artifact.SourceSigner
 	SourceTTL        time.Duration
+	// Timeouts bounds agent-backed operations (#333). A zero value in any
+	// field leaves that operation class unbounded, matching pre-#333
+	// behavior — safe for tests and any embedder that hasn't opted in.
+	Timeouts AgentOperationTimeouts
 }
 
 // Provision implements pool.Provisioner. It's a thin wrapper around
@@ -91,7 +95,9 @@ func (ap *AgentProvisioner) ProvisionLocked(ctx context.Context, pool model.Pool
 	if err != nil {
 		return model.Resource{}, false, fmt.Errorf("prepare source for pool %q: %w", pool.Name, err)
 	}
-	res, err := agent.Create(ctx, driverType, createConfig)
+	createCtx, cancel := withTimeout(ctx, ap.Timeouts.Create)
+	res, err := agent.Create(createCtx, driverType, createConfig)
+	cancel()
 	if err != nil {
 		wrapped := fmt.Errorf("agent create for pool %q: %w", pool.Name, err)
 		var orphanErr *providersdk.OrphanedResourceError
@@ -194,11 +200,40 @@ func (ap *AgentProvisioner) Allocate(ctx context.Context, pool model.Pool, res m
 		return providersdk.AllocationResult{}, err
 	}
 	if gp, ok := agent.(agentsdk.GuestPersonalizingAgent); ok {
-		result, err := gp.PersonalizeGuest(ctx, driverType, string(res.ID))
+		// effLimit is whichever bound will actually fire first: our own
+		// configured PersonalizeGuest timeout, or a shorter deadline already
+		// inherited from ctx (e.g. internal/sandbox.Fulfiller's per-sandbox
+		// pass timeout). Computed up front so a timeout log/error reports
+		// the real limit that fired, not always the (possibly much longer)
+		// configured value — see effectiveDeadlineBound's doc comment.
+		effLimit := effectiveDeadlineBound(ctx, ap.Timeouts.PersonalizeGuest)
+		personalizeCtx, cancel := withTimeout(ctx, ap.Timeouts.PersonalizeGuest)
+		start := ap.now()
+		result, err := gp.PersonalizeGuest(personalizeCtx, driverType, string(res.ID), providersdk.GuestPersonalizationOptions{ApplyNetwork: true})
+		cancel()
 		if err != nil {
+			if errors.Is(personalizeCtx.Err(), context.DeadlineExceeded) {
+				return providersdk.AllocationResult{}, ap.quarantineOnPersonalizeTimeout(ctx, pool.Name, agent.Info().ID, res.ID, effLimit, ap.now().Sub(start))
+			}
 			return providersdk.AllocationResult{}, err
 		}
 		if result != nil {
+			// Elapsed time for a successful guest personalization call,
+			// tagged with resource/pool/agent, so an operator watching an
+			// allocation that is slow-but-not-timing-out (#355) has
+			// something to look at beyond the unrelated pool-reconcile
+			// PolicyController's "policy decision is noop" log line, which
+			// reflects a separate periodic loop and carries no information
+			// about this call.
+			personalizeElapsed := ap.now().Sub(start)
+			slog.Default().Info("allocation-time guest personalization succeeded",
+				"operation", "agent_personalize_guest",
+				"resource_id", res.ID,
+				"pool", pool.Name,
+				"agent_id", agent.Info().ID,
+				"elapsed", personalizeElapsed.String(),
+				"elapsed_ms", personalizeElapsed.Milliseconds(),
+			)
 			if ap.GuestSecrets != nil {
 				if err := ap.GuestSecrets.Delete(ctx, boxysecrets.ResourceCredentialKey(string(res.ID))); err != nil && !errors.Is(err, boxysecrets.ErrNotFound) {
 					slog.Default().Warn("could not remove consumed resource credential", "resource_id", res.ID, "error", err)
@@ -212,6 +247,61 @@ func (ap *AgentProvisioner) Allocate(ctx context.Context, pool model.Pool, res m
 	}
 	properties, err := agent.Allocate(ctx, driverType, string(res.ID))
 	return providersdk.AllocationResult{Properties: properties}, err
+}
+
+// quarantineOnPersonalizeTimeout handles an allocation-time PersonalizeGuest
+// call that exceeded ap.Timeouts.PersonalizeGuest (#333). Per ADR-0010, a
+// timed-out guest rotation must never be treated like an ordinary allocation
+// failure: the guest's real credential state afterward is unknown, so the
+// resource must be quarantined (caller marks it ResourceStateError and never
+// returns it to Ready inventory) rather than rolled back to Ready. This
+// deletes the now-untrusted stored credential — the same credential-store
+// call the successful-allocation path above uses — and logs every field
+// required for safety-grade diagnosis: resource, pool, agent, how long the
+// call ran, the configured timeout, and an explicit credential-deleted
+// outcome. The caller (internal/sandbox.Fulfiller's rollback path) uses the
+// returned error's fields to finish the quarantine (mark ResourceStateError,
+// exclude the resource from restored pool inventory) since AgentProvisioner
+// has no store access of its own.
+func (ap *AgentProvisioner) quarantineOnPersonalizeTimeout(ctx context.Context, poolName model.PoolName, agentID string, resourceID model.ResourceID, timeout, elapsed time.Duration) error {
+	// credentialDeleted means "no untrusted credential was left behind" —
+	// true both when a stored credential was actually removed and when no
+	// backend is configured (there was nothing to leak in the first place).
+	// It is false only when a backend IS configured and the delete call
+	// itself failed, which is the one case an operator actually needs to
+	// act on. ctx may already be expired (it's what killed the timed-out
+	// call), so this uses a detached context derived from it — WithoutCancel
+	// keeps ctx's values but drops its deadline/cancellation — so the delete
+	// isn't itself defeated by the same expiry that triggered it.
+	credentialDeleted := true
+	backendConfigured := ap.GuestSecrets != nil
+	if backendConfigured {
+		deleteCtx := context.WithoutCancel(ctx)
+		if err := ap.GuestSecrets.Delete(deleteCtx, boxysecrets.ResourceCredentialKey(string(resourceID))); err != nil && !errors.Is(err, boxysecrets.ErrNotFound) {
+			credentialDeleted = false
+			slog.Default().Error("could not remove guest credential after personalize-guest timeout",
+				"resource_id", resourceID, "pool", poolName, "agent_id", agentID, "error", err)
+		}
+	}
+	slog.Default().Error("allocation-time guest personalization timed out; quarantining resource",
+		"operation", "agent_personalize_guest_timeout",
+		"resource_id", resourceID,
+		"pool", poolName,
+		"agent_id", agentID,
+		"elapsed", elapsed.String(),
+		"elapsed_ms", elapsed.Milliseconds(),
+		"timeout", timeout.String(),
+		"credential_backend_configured", backendConfigured,
+		"credential_deleted", credentialDeleted,
+	)
+	return &GuestPersonalizationTimeoutError{
+		ResourceID:        resourceID,
+		PoolName:          poolName,
+		AgentID:           agentID,
+		Timeout:           timeout,
+		Elapsed:           elapsed,
+		CredentialDeleted: credentialDeleted,
+	}
 }
 
 // AllocateWithPackages preserves the existing allocation behavior and then
@@ -388,7 +478,19 @@ func (ap *AgentProvisioner) PersonalizeGuestForPool(ctx context.Context, pool mo
 	if !ok {
 		return nil, nil
 	}
-	return gp.PersonalizeGuest(ctx, driverType, string(res.ID))
+	// Admission-time personalization: a timeout here surfaces as an
+	// ordinary error through AdmissionHandler.Handle -> h.fail ->
+	// FailAdmission -> ResourceStateError. No credential has been stored
+	// yet at this point (admission only stores it after this call
+	// succeeds), so there is nothing to quarantine/delete here — unlike
+	// Allocate's allocation-time personalize call above. See #333.
+	personalizeCtx, cancel := withTimeout(ctx, ap.Timeouts.PersonalizeGuest)
+	defer cancel()
+	// Admission-time personalization never applies network configuration —
+	// a preheated resource has not been claimed by any sandbox yet and
+	// should not become network-reachable. See #358 and
+	// providersdk.GuestPersonalizationOptions.
+	return gp.PersonalizeGuest(personalizeCtx, driverType, string(res.ID), providersdk.GuestPersonalizationOptions{ApplyNetwork: false})
 }
 
 // ExecuteSandbox routes a provider-neutral command to the exact agent that
@@ -429,7 +531,9 @@ func (ap *AgentProvisioner) Destroy(ctx context.Context, pool model.Pool, res mo
 		return err
 	}
 
-	if err := agent.Delete(ctx, driverType, id); err != nil {
+	deleteCtx, cancel := withTimeout(ctx, ap.Timeouts.Delete)
+	defer cancel()
+	if err := agent.Delete(deleteCtx, driverType, id); err != nil {
 		return fmt.Errorf("agent delete for pool %q: %w", pool.Name, err)
 	}
 	return nil

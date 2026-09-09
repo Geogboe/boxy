@@ -71,9 +71,19 @@ func TestUI_layoutRendersBrandingVersionThemeAndAdminLinks(t *testing.T) {
 			t.Fatalf("GET %s status = %d", path, w.Code)
 		}
 		body := w.Body.String()
-		for _, want := range []string{"/static/favicon.svg", "Repository", "app-footer", "dev", "data-theme-toggle", `href="/ui/diagnostics"`, `href="/ui/service-keys"`} {
+		for _, want := range []string{"/static/favicon.svg", "Repository", "dev", "data-theme-toggle", `href="/ui/diagnostics"`, `href="/ui/service-keys"`, "sidebar-utility"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("GET %s missing %q", path, want)
+			}
+		}
+		// #327 moved the version/repository/theme utility bar into the
+		// sidebar and removed the content column's own duplicate renderings
+		// of it (the old top-right <header class="app-header"> and the old
+		// bottom <footer class="app-footer">) -- it now renders exactly once
+		// per page, in the sidebar.
+		for _, unwanted := range []string{`class="app-header"`, `class="app-footer"`} {
+			if strings.Contains(body, unwanted) {
+				t.Errorf("GET %s still renders the old duplicate %q", path, unwanted)
 			}
 		}
 	}
@@ -103,6 +113,13 @@ func TestUI_poolsHistoryFilterSeparatesTerminalResources(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, "history-id") || strings.Contains(body, "active-id") {
 		t.Fatalf("history filter body = %q", body)
+	}
+	// Same latent-poll-reversion guard as resources: the pools table's poll
+	// and refresh button hit /ui/fragments/pools-table directly, so the
+	// rendered hx-get URL must itself carry "?view=history" or the next 5s
+	// poll silently reverts the page back to the active-only bucket.
+	if !strings.Contains(body, `hx-get="/ui/fragments/pools-table?view=history"`) {
+		t.Fatalf("pools history view did not wire its hx-get to carry view=history; body = %q", body)
 	}
 }
 
@@ -168,6 +185,162 @@ func TestUI_poolsCollapsesResourceGroupsByDefault(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), `<details class="pool-group" open>`) {
 		t.Fatal("active pool resource groups should be collapsed by default")
+	}
+}
+
+// TestUI_poolsRowRemodel closes #327: the pools list used to show a
+// standalone "Operator controls" card duplicating every pool name just to
+// hold Drain/Fill, plus a raw "N ready / M active" + history/Active-Drained
+// badge cluster per group. This asserts the remodeled one-row summary: a
+// single derived status pill, the folded total/max text, Drain/Fill living
+// in the row itself (no separate card), a dimmed "unassigned" row carrying
+// cleanup, and the new footer summary replacing the standalone bounded note.
+func TestUI_poolsRowRemodel(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	if err := st.PutPool(ctx, model.Pool{
+		Name:      "pool-a",
+		Policies:  model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 2, MaxTotal: 4}},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer},
+	}); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	for _, resource := range []model.Resource{
+		{ID: "ready-1", OriginPool: "pool-a", State: model.ResourceStateReady},
+		{ID: "orphan-1", State: model.ResourceStateReady},
+	} {
+		if err := st.PutResource(ctx, resource); err != nil {
+			t.Fatalf("PutResource: %v", err)
+		}
+	}
+	mux := server.NewTestMuxWithPoolAdmin(st, sandbox.New(st, nil), &fakePoolMaintenance{}, &poolAdminCleanup{})
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/pools", nil)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	body := w.Body.String()
+
+	if strings.Contains(body, "Operator controls") {
+		t.Fatalf("standalone operator-controls card should be gone: %q", body)
+	}
+	for _, want := range []string{
+		// One derived status pill plus the amber "N of M ready" shortfall,
+		// replacing the old raw "N ready / M active" + badge cluster.
+		`<span class="badge badge-unknown">unknown</span>`,
+		`<span class="pool-ready-warning">1 of 2 ready</span>`,
+		"1 total · max 4",
+		// Drain/Fill now live inside the row itself.
+		`action="/ui/pools/pool-a/drain"`,
+		`action="/ui/pools/pool-a/fill"`,
+		// The dimmed "unassigned" row carries the orphan and the cleanup actions.
+		`<details class="pool-group pool-group-unassigned" id="pool-group-unassigned">`,
+		"orphan-1",
+		"1 resource with no pool",
+		"Preview cleanup",
+		"Force cleanup",
+		// Footer summary replaces the old standalone bounded note.
+		`<div class="pools-summary-footer">`,
+		"2 resources across 1 pool",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("pools page missing %q; body = %q", want, body)
+		}
+	}
+}
+
+// TestUI_poolsRow_failedCountFoldedIntoMutedText closes a #327 UI-validation
+// finding: the mockup's "exactly one status pill" rule was being violated by
+// a second badge-blocked "N failed" badge rendered alongside the derived
+// status pill whenever a pool had quarantined (#328) resources. The count
+// still needs to be visible per #328's own goal, so it's folded into the
+// existing muted "N total · max M" text instead of dropped or kept as a
+// second badge.
+func TestUI_poolsRow_failedCountFoldedIntoMutedText(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	if err := st.PutPool(ctx, model.Pool{
+		Name:      "pool-a",
+		Policies:  model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 1, MaxTotal: 4}},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer},
+	}); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	for _, resource := range []model.Resource{
+		{ID: "ready-1", OriginPool: "pool-a", State: model.ResourceStateReady},
+		{ID: "failed-1", OriginPool: "pool-a", State: model.ResourceStateError},
+	} {
+		if err := st.PutResource(ctx, resource); err != nil {
+			t.Fatalf("PutResource: %v", err)
+		}
+	}
+	mux := server.NewTestMuxWithPoolAdmin(st, sandbox.New(st, nil), &fakePoolMaintenance{}, &poolAdminCleanup{})
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/pools", nil)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	body := w.Body.String()
+
+	if !strings.Contains(body, "2 total · max 4 · 1 failed") {
+		t.Fatalf("failed count should be folded into the muted total/max text; body = %q", body)
+	}
+	if strings.Contains(body, `<span class="badge badge-blocked">1 failed</span>`) {
+		t.Fatalf("failed count should not render as a second badge alongside the status pill; body = %q", body)
+	}
+}
+
+// TestUI_poolsRow_expandStatePreservedAcrossPoll guards a real bug found
+// during #327 UI validation: native <details open> is discarded whenever
+// htmx's 5s poll swaps #pools-fragment's innerHTML, because the replacement
+// nodes are brand new elements with no memory of the old open state. The fix
+// is a stable per-pool id plus an htmx:beforeSwap/afterSwap listener that
+// re-applies open by id; this test only asserts the pieces the fix depends
+// on are actually rendered (id present, closing markup for the listener
+// present) since the swap/reopen behavior itself is DOM/JS behavior that
+// only a real browser exercises — see the playwright-cli verification notes
+// in the #327 batch, not a Go unit test.
+func TestUI_poolsRow_expandStatePreservedAcrossPoll(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	if err := st.PutPool(ctx, model.Pool{
+		Name:      "pool-a",
+		Policies:  model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 1, MaxTotal: 2}},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer},
+	}); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+
+	mux := server.NewTestMuxWithPoolAdmin(st, sandbox.New(st, nil), &fakePoolMaintenance{}, &poolAdminCleanup{})
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/pools", nil)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	body := w.Body.String()
+
+	if !strings.Contains(body, `id="pool-group-pool-a"`) {
+		t.Fatalf("pool group missing stable id for cross-poll open-state tracking; body = %q", body)
+	}
+	if !strings.Contains(body, "htmx:beforeSwap") || !strings.Contains(body, "htmx:afterSwap") {
+		t.Fatalf("pools page missing the open-state-preservation listener; body = %q", body)
+	}
+
+	// The fragment endpoint (what the 5s poll and manual refresh actually
+	// hit) must render the same stable id — the listener re-applies open by
+	// matching ids in the freshly-swapped fragment content.
+	fragment := httptest.NewRecorder()
+	mux.ServeHTTP(fragment, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/fragments/pools-table", nil)))
+	if fragment.Code != http.StatusOK {
+		t.Fatalf("fragment status = %d", fragment.Code)
+	}
+	if !strings.Contains(fragment.Body.String(), `id="pool-group-pool-a"`) {
+		t.Fatalf("pools fragment missing stable id; body = %q", fragment.Body.String())
 	}
 }
 
@@ -356,6 +529,155 @@ func TestUI_resources_listsAcrossPoolsAndSandboxes(t *testing.T) {
 	}
 }
 
+// TestUI_resourcesHistoryFilterSeparatesTerminalResources closes #353: the
+// all-resources page previously listed every resource regardless of state,
+// so recycling policies that constantly destroy and replace resources
+// flooded the default view with terminal-state rows. This asserts the page
+// follows the same "?view=history" convention the pools page already
+// established: the default view shows only live resources, and an explicit
+// history view shows only terminal (destroyed/released) ones -- never both
+// at once.
+func TestUI_resourcesHistoryFilterSeparatesTerminalResources(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	for _, resource := range []model.Resource{
+		{ID: "active-id", OriginPool: "pool-a", State: model.ResourceStateReady},
+		{ID: "history-id", OriginPool: "pool-a", State: model.ResourceStateDestroyed},
+	} {
+		if err := st.PutResource(ctx, resource); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/resources", nil)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "active-id") || strings.Contains(body, "history-id") {
+		t.Fatalf("default resources view body = %q", body)
+	}
+
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/resources?view=history", nil)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	body = w.Body.String()
+	if !strings.Contains(body, "history-id") || strings.Contains(body, "active-id") {
+		t.Fatalf("history resources view body = %q", body)
+	}
+	// The poll and refresh button both hit /ui/fragments/resources-table
+	// directly with no page context of their own, so the rendered hx-get
+	// URL itself must carry "?view=history" -- otherwise the next 5s poll
+	// silently reverts this page back to the active-only bucket.
+	if !strings.Contains(body, `hx-get="/ui/fragments/resources-table?view=history"`) {
+		t.Fatalf("history resources view did not wire its hx-get to carry view=history; body = %q", body)
+	}
+}
+
+// TestUI_resourcesFragmentRespectsHistoryQuery guards against the 5s HTMX
+// poll silently reverting a "?view=history" page back to the active-only
+// bucket: the poll and the manual refresh button both hit
+// /ui/fragments/resources-table directly, so that route must honor the same
+// query parameter the full-page route does, not just default to "active".
+func TestUI_resourcesFragmentRespectsHistoryQuery(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	for _, resource := range []model.Resource{
+		{ID: "active-id", OriginPool: "pool-a", State: model.ResourceStateReady},
+		{ID: "history-id", OriginPool: "pool-a", State: model.ResourceStateDestroyed},
+	} {
+		if err := st.PutResource(ctx, resource); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/fragments/resources-table?view=history", nil)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "history-id") || strings.Contains(body, "active-id") {
+		t.Fatalf("resources fragment history query body = %q", body)
+	}
+}
+
+// TestUI_poolsFragmentRespectsHistoryQuery is the same guard as
+// TestUI_resourcesFragmentRespectsHistoryQuery, for the pools page's
+// pre-existing history toggle: the pools table's 5s poll and refresh button
+// also hit /ui/fragments/pools-table directly and must honor "?view=history"
+// too, or a viewer on the history view loses it to the next poll.
+func TestUI_poolsFragmentRespectsHistoryQuery(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	if err := st.PutPool(ctx, model.Pool{Name: "pool-a"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, resource := range []model.Resource{
+		{ID: "active-id", OriginPool: "pool-a", State: model.ResourceStateReady},
+		{ID: "history-id", OriginPool: "pool-a", State: model.ResourceStateDestroyed},
+	} {
+		if err := st.PutResource(ctx, resource); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/fragments/pools-table?view=history", nil)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "history-id") || strings.Contains(body, "active-id") {
+		t.Fatalf("pools fragment history query body = %q", body)
+	}
+}
+
+// TestUI_homeResourceCountExcludesHistoricalResources closes the "Counts"
+// part of #353: the overview page's "Resources" stat previously summed
+// every resource record regardless of state, so a recycling-heavy pool's
+// count grew unboundedly with terminal-state history instead of reflecting
+// what is actually live right now.
+func TestUI_homeResourceCountExcludesHistoricalResources(t *testing.T) {
+	t.Parallel()
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+	for _, resource := range []model.Resource{
+		{ID: "active-1", OriginPool: "pool-a", State: model.ResourceStateReady},
+		{ID: "active-2", OriginPool: "pool-a", State: model.ResourceStateAllocated},
+		{ID: "history-1", OriginPool: "pool-a", State: model.ResourceStateDestroyed},
+		{ID: "history-2", OriginPool: "pool-a", State: model.ResourceStateDestroyed},
+		{ID: "history-3", OriginPool: "pool-a", State: model.ResourceStateReleased},
+	} {
+		if err := st.PutResource(ctx, resource); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mux := server.NewTestMux(st, sandbox.New(st, nil), true)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/", nil)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `<div class="stat-value">2</div>`) {
+		t.Fatalf("home resource count did not show 2 live resources; body = %q", body)
+	}
+	if strings.Contains(body, `<div class="stat-value">5</div>`) {
+		t.Fatalf("home resource count included historical resources; body = %q", body)
+	}
+}
+
 func TestUI_sandboxes_pendingStatusGetsTransientBadge(t *testing.T) {
 	t.Parallel()
 	st := store.NewMemoryStore()
@@ -469,7 +791,7 @@ func TestUI_agents_rendersStatusesCapacityAndPolling(t *testing.T) {
 	}
 	body := w.Body.String()
 	for _, want := range []string{
-		"Agents", "Embedded Agent", "Lab Hypervisor", "remote-1", "Connected", "Disconnected",
+		"Hosts", "Embedded Agent", "Lab Hypervisor", "remote-1", "Connected", "Disconnected",
 		"Available", "Unavailable", "hyperv", "4,096 MB free", "No heartbeat sample", "No capacity sample",
 		"2026-08-21 14:30:00 UTC", `hx-get="/ui/fragments/agents-table"`, `hx-trigger="every 5s"`,
 		`href="/ui/diagnostics?agent=embedded">View logs</a>`,
@@ -549,7 +871,7 @@ func TestUI_agents_emptyInventory(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/fragments/agents-table", nil)))
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "No agents registered") {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "No hosts registered") {
 		t.Fatalf("status = %d, body = %q", w.Code, w.Body.String())
 	}
 }

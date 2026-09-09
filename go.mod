@@ -96,4 +96,11 @@ require (
 // upstream decision. Revisit if/when either fix lands upstream.
 replace github.com/smnsjas/go-psrpcore => github.com/Geogboe/go-psrpcore v0.0.0-20260828053523-50f4720fbe2b
 
-replace github.com/smnsjas/go-psrp => github.com/Geogboe/go-psrp v0.2.1-boxy242
+// go-psrp's fork also carries v0.2.2-boxy244 (#244): adds Client.
+// ExecuteCommand/ExecuteCommandStream, which build a pipeline via
+// go-psrpcore's existing pipeline.Pipeline.AddCommand/AddArgument instead of
+// a text script string, so pkg/psdirect no longer has to reconstruct a
+// quoted PowerShell command line at all. No go-psrpcore change was needed
+// for this one -- CreatePipelineBuilder/AddCommand/AddArgument already
+// existed on the pinned commit above.
+replace github.com/smnsjas/go-psrp => github.com/Geogboe/go-psrp v0.2.2-boxy244

@@ -22,7 +22,7 @@ type sandboxCreateTestServer struct {
 	server *httptest.Server
 
 	mu                    sync.Mutex
-	pools                 []model.Pool
+	pools                 []model.PoolSummary
 	createStatus          int
 	createErrorMessage    string
 	createBody            string
@@ -41,13 +41,11 @@ func newSandboxCreateTestServer(t *testing.T) *sandboxCreateTestServer {
 	t.Helper()
 
 	ts := &sandboxCreateTestServer{
-		pools: []model.Pool{
+		pools: []model.PoolSummary{
 			{
-				Name: "web",
-				Inventory: model.ResourceCollection{
-					ExpectedType:    model.ResourceTypeContainer,
-					ExpectedProfile: "web",
-				},
+				Name:    "web",
+				Type:    model.ResourceTypeContainer,
+				Profile: "web",
 			},
 		},
 		createStatus:       http.StatusAccepted,
@@ -100,7 +98,7 @@ func newSandboxCreateTestServer(t *testing.T) *sandboxCreateTestServer {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/pools", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/v1/pools/summary", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(ts.pools)
 	})
