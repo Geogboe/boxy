@@ -542,6 +542,12 @@ func (s *Server) fragmentHandler(tmpl *template.Template, fragment string, data 
 			d.CanManagePools = isAdmin
 			d.CanViewDiagnostics = isAdmin
 			d.CanManageServiceKeys = isAdmin
+			// decoratePageData (full-page loads) sets this from the same
+			// session; fragmentHandler must too, or every 5s poll re-renders
+			// a pool-group's Retry/Destroy/Drain/Fill forms with an empty
+			// csrf_token hidden input, and any submit against a just-polled
+			// form then fails requireUICSRF. See TestUI_fragmentSetsCSRFToken.
+			d.CSRFToken = ensureCSRFCookie(w, r, s.insecureHTTP)
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

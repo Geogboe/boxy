@@ -79,6 +79,47 @@ func TestUI_poolsShowsCapacityDrainStateAndResourceRows(t *testing.T) {
 	}
 }
 
+// TestUI_fragmentSetsCSRFToken is a regression test for a real bug: unlike
+// decoratePageData (full-page loads), fragmentHandler never set
+// pageData.CSRFToken, so every 5s poll of #pools-fragment re-rendered its
+// Drain/Fill/Destroy/Retry forms with an empty "csrf_token" hidden input.
+// Submitting one of those forms after a poll -- not right after the initial
+// page load -- would then fail requireUICSRF with 403, even for a
+// legitimate admin session. This asserts the fragment response itself
+// carries a real (non-empty) csrf_token, not just the full page.
+func TestUI_fragmentSetsCSRFToken(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	if err := st.PutPool(ctx, model.Pool{Name: "pool-a"}); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	// An errored resource gives the fragment a real csrf_token-bearing form
+	// (the per-resource Retry/Destroy forms) to check regardless of how the
+	// pool-group row itself is laid out.
+	if err := st.PutResource(ctx, model.Resource{ID: "failed-1", OriginPool: "pool-a", State: model.ResourceStateError}); err != nil {
+		t.Fatalf("PutResource: %v", err)
+	}
+	mux := server.NewTestMuxWithPoolAdmin(st, sandbox.New(st, nil), &fakePoolMaintenance{}, nil)
+
+	fragment := httptest.NewRecorder()
+	mux.ServeHTTP(fragment, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/fragments/pools-table", nil)))
+	if fragment.Code != http.StatusOK {
+		t.Fatalf("status = %d", fragment.Code)
+	}
+	body := fragment.Body.String()
+	if strings.Contains(body, `name="csrf_token" value=""`) {
+		t.Fatalf("fragment rendered an empty csrf_token hidden field: %q", body)
+	}
+	if !strings.Contains(body, `name="csrf_token" value="`) {
+		t.Fatalf("fragment missing a csrf_token hidden field at all: %q", body)
+	}
+	csrf := csrfCookieFromResponse(t, fragment)
+	if csrf.Value == "" || !strings.Contains(body, `name="csrf_token" value="`+csrf.Value+`"`) {
+		t.Fatalf("fragment csrf_token field does not match the CSRF cookie it set: cookie=%q body=%q", csrf.Value, body)
+	}
+}
+
 func TestUI_poolDetailShowsPolicyDrainResourcesProviderAndCapacity(t *testing.T) {
 	ctx := context.Background()
 	st := store.NewMemoryStore()
