@@ -76,6 +76,11 @@ type pageData struct {
 	DiagnosticsPullURL    string
 	DiagnosticsViewAllURL string
 	DiagnosticsNextURL    string
+	// PoolsRefreshedAt is rendered inside pools_table_fragment (not the
+	// surrounding page shell) so it updates on every htmx swap of
+	// #pools-fragment, matching the mock's "timestamp next to Refresh".
+	PoolsRefreshedAt  string
+	PoolResourceCount int
 }
 
 // sandboxView is the dashboard's per-sandbox row, joining the sandbox record
@@ -174,10 +179,36 @@ type providerView struct {
 	HasSample   bool
 }
 
+// templateFuncs are shared across every page template. dict lets a single
+// {{template "name" ...}} call pass more than one named value into a shared
+// sub-template: html/template's $ inside a {{define}} block rebinds to
+// whatever pipeline was passed to {{template}}, not the caller's own $, so a
+// sub-template that needs e.g. both a poolView and the page's CSRFToken has
+// to receive them bundled into one map. Used by pools.html's
+// "pool_resource_table" (pools list/detail resource rows, #327).
+var templateFuncs = template.FuncMap{
+	"dict": templateDict,
+}
+
+func templateDict(pairs ...any) (map[string]any, error) {
+	if len(pairs)%2 != 0 {
+		return nil, fmt.Errorf("dict: odd number of arguments (%d)", len(pairs))
+	}
+	m := make(map[string]any, len(pairs)/2)
+	for i := 0; i < len(pairs); i += 2 {
+		key, ok := pairs[i].(string)
+		if !ok {
+			return nil, fmt.Errorf("dict: key %v is not a string", pairs[i])
+		}
+		m[key] = pairs[i+1]
+	}
+	return m, nil
+}
+
 // pageTemplate parses the layout together with a single page template so that
 // each page's {{define "content"}} block overrides the layout's {{block "content"}}.
 func pageTemplate(page string) *template.Template {
-	return template.Must(template.ParseFS(templateFS,
+	return template.Must(template.New("layout.html").Funcs(templateFuncs).ParseFS(templateFS,
 		"templates/layout.html",
 		"templates/"+page,
 	))
@@ -542,6 +573,12 @@ func (s *Server) fragmentHandler(tmpl *template.Template, fragment string, data 
 			d.CanManagePools = isAdmin
 			d.CanViewDiagnostics = isAdmin
 			d.CanManageServiceKeys = isAdmin
+			// decoratePageData (full-page loads) sets this from the same
+			// session; fragmentHandler must too, or every 5s poll re-renders
+			// a pool-group's Retry/Destroy/Drain/Fill forms with an empty
+			// csrf_token hidden input, and any submit against a just-polled
+			// form then fails requireUICSRF. See TestUI_fragmentSetsCSRFToken.
+			d.CSRFToken = ensureCSRFCookie(w, r, s.insecureHTTP)
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -603,13 +640,21 @@ func (s *Server) poolsData(r *http.Request) (pageData, error) {
 		return pageData{}, err
 	}
 	views := buildPoolViews(pools, resources, poolJobs)
+	liveResourceCount := 0
+	for _, resource := range resources {
+		if !isHistoricalResource(resource) {
+			liveResourceCount++
+		}
+	}
 	data := pageData{
-		Pools:            pools,
-		PoolViews:        views,
-		PoolResult:       poolResultFromQuery(r),
-		PoolError:        r.URL.Query().Get("config_error"),
-		PoolHistory:      r.URL.Query().Get("view") == "history",
-		ResourceLimitHit: resourceLimitHit,
+		Pools:             pools,
+		PoolViews:         views,
+		PoolResult:        poolResultFromQuery(r),
+		PoolError:         r.URL.Query().Get("config_error"),
+		PoolHistory:       r.URL.Query().Get("view") == "history",
+		ResourceLimitHit:  resourceLimitHit,
+		PoolsRefreshedAt:  dashboardTime(time.Now()),
+		PoolResourceCount: liveResourceCount,
 	}
 	if name := r.PathValue("name"); name != "" {
 		for i := range views {
