@@ -12,6 +12,7 @@ import (
 	"github.com/smnsjas/go-psrpcore/serialization"
 
 	"github.com/Geogboe/boxy/pkg/eventstream"
+	"github.com/Geogboe/boxy/pkg/vmsdk"
 )
 
 // mockExecutor is a test double for psrpExecutor.
@@ -23,10 +24,22 @@ type mockExecutor struct {
 	// execFunc so tests exercising only the script-text path (ExecText)
 	// don't need to set both.
 	execCommandFunc func(ctx context.Context, cmdName string, isScript bool, args ...interface{}) (*psrpclient.Result, error)
+
+	// connectCount/closeCount let session-reuse tests (#361) assert how many
+	// times a real connection was established/torn down, distinct from how
+	// many Exec/ExecText calls were made against it.
+	connectCount int
+	closeCount   int
 }
 
-func (m *mockExecutor) Connect(_ context.Context) error { return m.connectErr }
-func (m *mockExecutor) Close(_ context.Context) error   { return nil }
+func (m *mockExecutor) Connect(_ context.Context) error {
+	m.connectCount++
+	return m.connectErr
+}
+func (m *mockExecutor) Close(_ context.Context) error {
+	m.closeCount++
+	return nil
+}
 func (m *mockExecutor) Execute(ctx context.Context, script string) (*psrpclient.Result, error) {
 	return m.execFunc(ctx, script)
 }
@@ -765,5 +778,121 @@ func TestWrapKnownTransportError_PassesThroughOtherErrors(t *testing.T) {
 func TestWrapKnownTransportError_NilPassesThrough(t *testing.T) {
 	if got := wrapKnownTransportError(nil); got != nil {
 		t.Errorf("wrapKnownTransportError(nil) = %v, want nil", got)
+	}
+}
+
+// TestOpenSession_ReusesOneConnectionAcrossCalls is #361's core claim: two
+// guest-exec calls made through one OpenSession-returned Session connect
+// exactly once and close exactly once, not once per call -- the opposite of
+// Exec.Exec's documented per-call behavior (see
+// TestExec_TwoCalls_ConnectsAndClosesPerCall below for that contrast).
+func TestOpenSession_ReusesOneConnectionAcrossCalls(t *testing.T) {
+	mock := &mockExecutor{
+		execFunc: func(_ context.Context, _ string) (*psrpclient.Result, error) {
+			return &psrpclient.Result{Output: []interface{}{int32(0)}}, nil
+		},
+	}
+	e := makeExec(mock)
+
+	session, err := e.OpenSession(context.Background())
+	if err != nil {
+		t.Fatalf("OpenSession: unexpected error: %v", err)
+	}
+
+	if _, err := session.Exec(context.Background(), "cmd1"); err != nil {
+		t.Fatalf("first Exec on session: unexpected error: %v", err)
+	}
+	if _, err := session.Exec(context.Background(), "cmd2"); err != nil {
+		t.Fatalf("second Exec on session: unexpected error: %v", err)
+	}
+	if _, err := session.Exec(context.Background(), "cmd3"); err != nil {
+		t.Fatalf("third Exec on session: unexpected error: %v", err)
+	}
+
+	if mock.connectCount != 1 {
+		t.Errorf("connectCount = %d, want 1 (one connection reused across 3 calls)", mock.connectCount)
+	}
+	if mock.closeCount != 0 {
+		t.Errorf("closeCount = %d, want 0 before Close is called", mock.closeCount)
+	}
+
+	if err := session.Close(context.Background()); err != nil {
+		t.Fatalf("Close: unexpected error: %v", err)
+	}
+	if mock.closeCount != 1 {
+		t.Errorf("closeCount = %d, want 1 after Close", mock.closeCount)
+	}
+}
+
+// TestOpenSession_ExecTextSharesConnection confirms Session.ExecText also
+// reuses the same connection as Session.Exec rather than opening its own.
+func TestOpenSession_ExecTextSharesConnection(t *testing.T) {
+	mock := &mockExecutor{
+		execFunc: func(_ context.Context, _ string) (*psrpclient.Result, error) {
+			return &psrpclient.Result{Output: []interface{}{int32(0)}}, nil
+		},
+	}
+	e := makeExec(mock)
+
+	session, err := e.OpenSession(context.Background())
+	if err != nil {
+		t.Fatalf("OpenSession: unexpected error: %v", err)
+	}
+	defer session.Close(context.Background()) //nolint:errcheck
+
+	if _, err := session.Exec(context.Background(), "cmd1"); err != nil {
+		t.Fatalf("Exec: unexpected error: %v", err)
+	}
+	texter, ok := session.(vmsdk.GuestExecText)
+	if !ok {
+		t.Fatal("session should implement vmsdk.GuestExecText")
+	}
+	if _, err := texter.ExecText(context.Background(), "Get-Date"); err != nil {
+		t.Fatalf("ExecText: unexpected error: %v", err)
+	}
+
+	if mock.connectCount != 1 {
+		t.Errorf("connectCount = %d, want 1", mock.connectCount)
+	}
+}
+
+// TestOpenSession_ConnectError propagates a Connect failure the same way
+// Exec.Exec does.
+func TestOpenSession_ConnectError(t *testing.T) {
+	mock := &mockExecutor{connectErr: fmt.Errorf("vm not running")}
+	e := makeExec(mock)
+
+	_, err := e.OpenSession(context.Background())
+	if err == nil {
+		t.Fatal("expected error when Connect fails")
+	}
+	if !strings.Contains(err.Error(), "connect to VM") {
+		t.Errorf("error %q should mention connect to VM", err.Error())
+	}
+}
+
+// TestExec_TwoCalls_ConnectsAndClosesPerCall pins Exec.Exec's existing
+// per-call contract (unchanged by #361): every caller other than a
+// deliberate OpenSession user still pays Connect/Close on every call.
+func TestExec_TwoCalls_ConnectsAndClosesPerCall(t *testing.T) {
+	mock := &mockExecutor{
+		execFunc: func(_ context.Context, _ string) (*psrpclient.Result, error) {
+			return &psrpclient.Result{Output: []interface{}{int32(0)}}, nil
+		},
+	}
+	e := makeExec(mock)
+
+	if _, err := e.Exec(context.Background(), "cmd1"); err != nil {
+		t.Fatalf("first Exec: unexpected error: %v", err)
+	}
+	if _, err := e.Exec(context.Background(), "cmd2"); err != nil {
+		t.Fatalf("second Exec: unexpected error: %v", err)
+	}
+
+	if mock.connectCount != 2 {
+		t.Errorf("connectCount = %d, want 2 (one per Exec call)", mock.connectCount)
+	}
+	if mock.closeCount != 2 {
+		t.Errorf("closeCount = %d, want 2 (one per Exec call)", mock.closeCount)
 	}
 }

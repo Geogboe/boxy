@@ -34,6 +34,30 @@ type GuestExecStreamText interface {
 	ExecStreamText(ctx context.Context, text string, sink eventstream.Sink) (*ExecResult, error)
 }
 
+// GuestSession is a GuestExec bound to one already-established connection,
+// so a caller can run several commands under it before releasing the
+// connection. Implementations must not reconnect between calls -- Close
+// ends the underlying connection; a GuestSession is not reusable after
+// Close returns.
+type GuestSession interface {
+	GuestExec
+	Close(ctx context.Context) error
+}
+
+// GuestSessionOpener is an optional GuestExec capability for transports
+// whose connection establishment is expensive enough to be worth holding
+// open across multiple calls -- for example, a PSRP/WinRM runspace
+// negotiation over PowerShell Direct (#361). OpenSession connects once and
+// returns a GuestSession bound to that connection; the caller owns closing
+// it. A caller that has several guest-exec calls to make under the same
+// credential should prefer this, via a type assertion, over calling
+// GuestExec.Exec repeatedly when the concrete implementation supports it --
+// but implementing this interface is optional, and a plain GuestExec
+// remains fully usable without it.
+type GuestSessionOpener interface {
+	OpenSession(ctx context.Context) (GuestSession, error)
+}
+
 // ExecResult holds the output of a guest command execution.
 type ExecResult struct {
 	Stdout   string
