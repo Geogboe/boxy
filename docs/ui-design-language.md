@@ -60,7 +60,7 @@ remain the first view.
 
 Every action must be reachable with the keyboard and have a visible text or
 accessible label. Links that open the repository in another tab use
-`rel="noreferrer"`. Inputs retain labels, buttons describe their action, and
+`rel="noreferrer noopener"`. Inputs retain labels, buttons describe their action, and
 status text remains present when color changes between themes.
 
 Use flex or grid with wrapping for page controls. Keep tables in

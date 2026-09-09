@@ -618,6 +618,16 @@ func (c Config) Validate() error {
 		}
 	}
 	for _, pool := range c.Pools {
+		// "unassigned" is a reserved sentinel: the pools UI renders a
+		// synthetic dimmed row under this exact name for resources with no
+		// pool at all (internal/server/ui_pools.go). A real pool configured
+		// with this name would collide with that row's bucket and be
+		// rendered as the orphan bucket instead of a manageable pool. Reject
+		// it at config validation rather than trying to make the UI-layer
+		// sentinel and a real pool name distinguishable from each other.
+		if strings.EqualFold(strings.TrimSpace(string(pool.Name)), "unassigned") {
+			return fmt.Errorf("pool %q: %q is a reserved name and cannot be used as a pool name", pool.Name, "unassigned")
+		}
 		var resolvedTemplate model.ResourceTemplate
 		if strings.TrimSpace(pool.Template) != "" {
 			resolved, err := c.ResolveTemplate(pool.Template)

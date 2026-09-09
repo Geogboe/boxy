@@ -599,6 +599,33 @@ func TestConfigValidate_invalid_pool_type(t *testing.T) {
 	}
 }
 
+// TestConfigValidate_rejectsReservedUnassignedPoolName closes a Copilot
+// review finding on PR #362 (confirmed real, not just theoretical): the
+// pools UI (internal/server/ui_pools.go) uses the literal name "unassigned"
+// as an internal sentinel for resources with no configured pool at all. A
+// real pool configured with that exact name would collide with that
+// sentinel bucket and be mis-rendered as the synthetic orphan row instead of
+// a manageable pool. Reject it here instead of teaching the UI layer to
+// disambiguate a real pool from its own sentinel.
+func TestConfigValidate_rejectsReservedUnassignedPoolName(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"unassigned", "Unassigned", "UNASSIGNED", " unassigned "} {
+		cfg := Config{
+			Pools: []PoolSpec{
+				{Name: name},
+			},
+		}
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatalf("Validate() error = nil for pool name %q, want reserved-name rejection", name)
+		}
+		if !strings.Contains(err.Error(), "reserved name") {
+			t.Fatalf("Validate() error = %q, want it to mention the reserved name", err.Error())
+		}
+	}
+}
+
 func TestConfigValidate_valid_pool_type_aliases(t *testing.T) {
 	t.Parallel()
 
