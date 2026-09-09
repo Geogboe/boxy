@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.1.66](https://github.com/Geogboe/boxy/compare/v0.1.65...v0.1.66) (2026-09-08)
+
+
+### Features
+
+* **web-ui:** add an all-resources nav page ([1519797](https://github.com/Geogboe/boxy/commit/1519797e9dd67fcb5afb97bb1f5b21dd5c22e659))
+
+
+### Bug Fixes
+
+* address Copilot review findings on PR [#340](https://github.com/Geogboe/boxy/issues/340) ([7448ab8](https://github.com/Geogboe/boxy/commit/7448ab81b9c555c0e789071d509362d79199e8f7))
+* **agent:** install the diagnostics-wrapping logger as slog default ([20a86e0](https://github.com/Geogboe/boxy/commit/20a86e054b78e88310d470f8efc2d5815a515cd5)), closes [#334](https://github.com/Geogboe/boxy/issues/334)
+* **cli:** install a concrete slog default for the whole agent test file ([dedf394](https://github.com/Geogboe/boxy/commit/dedf3940dd2beedd045e667db11f674991e7b706))
+* **diagnostics:** use relative timestamps in retention pagination test ([6bf5d28](https://github.com/Geogboe/boxy/commit/6bf5d28bbe920a2adde9e8f2251de9967cd4c2ea)), closes [#341](https://github.com/Geogboe/boxy/issues/341)
+* **serve:** advertise only pool-required providers from the embedded agent ([0668f2b](https://github.com/Geogboe/boxy/commit/0668f2b6ef85933ae41500735e9f40aa94b3ab7e))
+* **serve:** recognize an explicit "embedded" agent pin in embeddedProviderTypes ([beaa72b](https://github.com/Geogboe/boxy/commit/beaa72b1a6b2e9f10b2506d7174be7f9952b4a71))
+* **web-ui:** cap the all-resources page and hide zero CreatedAt ([eabcc2b](https://github.com/Geogboe/boxy/commit/eabcc2b9fe399f6a00e522765663ae557e5a2ac1))
+
+
+### Documentation
+
+* generalize local Hyper-V test host name in checked-in docs ([53929fd](https://github.com/Geogboe/boxy/commit/53929fd282af0ca11a71e9656d0af2f38bdbc6ea))
+
 ## [0.1.65](https://github.com/Geogboe/boxy/compare/v0.1.64...v0.1.65) (2026-09-06)
 
 
