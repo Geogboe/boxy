@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.1.67](https://github.com/Geogboe/boxy/compare/v0.1.66...v0.1.67) (2026-09-09)
+
+
+### Features
+
+* **config:** add per-operation agent timeouts and provisioning watchdog threshold ([#333](https://github.com/Geogboe/boxy/issues/333), [#337](https://github.com/Geogboe/boxy/issues/337)) ([726f847](https://github.com/Geogboe/boxy/commit/726f847d97620491c18b088a2e7d375f84be567c))
+* **pool:** add stuck-provisioning watchdog to reconcile loop ([#337](https://github.com/Geogboe/boxy/issues/337)) ([4a20f4c](https://github.com/Geogboe/boxy/commit/4a20f4cdafb1e04f4d791e863c818ad9584fc73a))
+* **pool:** bound agent Create/PersonalizeGuest/Delete and quarantine on personalize timeout ([#333](https://github.com/Geogboe/boxy/issues/333)) ([925bcd5](https://github.com/Geogboe/boxy/commit/925bcd5bee05c244fa2b35cedeeaf53fdc359ab1))
+* **sandbox:** isolate per-sandbox fulfillment and quarantine timed-out allocations ([#333](https://github.com/Geogboe/boxy/issues/333)) ([e318d94](https://github.com/Geogboe/boxy/commit/e318d943dad9fa8f4a727065c2bcaf05f2936583))
+* **ui:** remodel /ui/pools to a collapsed-by-default summary view ([18bc886](https://github.com/Geogboe/boxy/commit/18bc886639857b09fdaf8b511491f1b92167e532))
+* **web-ui:** rename agent-facing verbiage to host ([#332](https://github.com/Geogboe/boxy/issues/332)) ([c44fba5](https://github.com/Geogboe/boxy/commit/c44fba59bfb3066b40d94cc3f498f3c9f2c9b439))
+
+
+### Bug Fixes
+
+* **auth:** unblock user-role CLI login and pool discovery ([#359](https://github.com/Geogboe/boxy/issues/359)) ([3c8f92e](https://github.com/Geogboe/boxy/commit/3c8f92ee14a38617e8388cf3204c69d4edd6452f))
+* **config:** reserve "unassigned" pool name; add rel=noopener to repo link ([becbcae](https://github.com/Geogboe/boxy/commit/becbcae8991754ca138fdadcd209780a76c5c802))
+* **hyperv:** defer network IP application to allocation time ([#358](https://github.com/Geogboe/boxy/issues/358)) ([6eb4004](https://github.com/Geogboe/boxy/commit/6eb40040ff4fd9253d593b0649ee1d4e0b5d9a4d))
+* **hyperv:** restore admission-time fail-fast for Linux + boxy-managed IP mode ([c03605c](https://github.com/Geogboe/boxy/commit/c03605c4cc3bdca43c63cafbdbfc1226c952481f))
+* **hyperv:** reuse one PSRP session across apply_network+rotate_credential ([#361](https://github.com/Geogboe/boxy/issues/361)) ([b986f6b](https://github.com/Geogboe/boxy/commit/b986f6b870df8cfe01b235eccb1f8edd3017ce96))
+* **pool:** surface quarantine-exhausted pools instead of going silent ([#328](https://github.com/Geogboe/boxy/issues/328)) ([cc6d5b5](https://github.com/Geogboe/boxy/commit/cc6d5b5641683760a4c1068f06f0b7bc556dbc6f))
+* **server:** close [#327](https://github.com/Geogboe/boxy/issues/327) UI-validation findings (expand state, badge, footer) ([18019bc](https://github.com/Geogboe/boxy/commit/18019bc3daae1718734f3b486cdd36565598317e))
+* **server:** set CSRFToken in fragmentHandler for polled forms ([b3f4db8](https://github.com/Geogboe/boxy/commit/b3f4db8be1eb8d676b510e654ed16fd713a47e6f))
+* **web-ui:** hide destroyed/released resources from default views ([#353](https://github.com/Geogboe/boxy/issues/353)) ([9a4b341](https://github.com/Geogboe/boxy/commit/9a4b3419d762c030efb8b63b0d9c5e9858a5abad))
+
+
+### Testing
+
+* **hyperv:** use scanner-safe placeholder for [#361](https://github.com/Geogboe/boxy/issues/361)'s session-reuse test fixtures ([b1ea6ad](https://github.com/Geogboe/boxy/commit/b1ea6ad410f9f322731dbd84f3ff306c281bd050))
+
 ## [0.1.66](https://github.com/Geogboe/boxy/compare/v0.1.65...v0.1.66) (2026-09-08)
 
 
