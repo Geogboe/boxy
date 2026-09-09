@@ -351,6 +351,16 @@ tasks:
     cmds:
       - go run ./cmd/boxy serve --once {{.CLI_ARGS}}
 
+  serve:ui:
+    desc: >-
+      Run `boxy serve` against the devfactory-containers example config for
+      live UI validation (see docs/ui-design-language.md's "Validating a UI
+      change against its mockups"). Log in at http://127.0.0.1:9090/ui with
+      the password in examples/devfactory-containers/.boxy/bootstrap-admin-password.
+    dir: examples/devfactory-containers
+    cmds:
+      - go run {{.ROOT_DIR}}/cmd/boxy serve --config boxy.yaml --insecure --listen 127.0.0.1:9090 {{.CLI_ARGS}}
+
   build:
     desc: Build local ./boxy binary
     cmds:
