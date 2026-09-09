@@ -154,11 +154,12 @@ type poolView struct {
 }
 
 type poolResourceView struct {
-	ID       string
-	Type     model.ResourceType
-	Profile  model.ResourceProfile
-	State    model.ResourceState
-	Provider string
+	ID        string
+	Type      model.ResourceType
+	Profile   model.ResourceProfile
+	State     model.ResourceState
+	Provider  string
+	UpdatedAt time.Time
 }
 
 type agentView struct {
@@ -187,7 +188,21 @@ type providerView struct {
 // to receive them bundled into one map. Used by pools.html's
 // "pool_resource_table" (pools list/detail resource rows, #327).
 var templateFuncs = template.FuncMap{
-	"dict": templateDict,
+	"dict":  templateDict,
+	"since": templateSince,
+}
+
+// templateSince renders how long ago t was, for the resource table's
+// time-in-state column (#327's mockup showed this; the initial
+// implementation omitted it even though model.Resource.UpdatedAt already
+// carries the data). A zero t (never persisted, or a fake/test resource
+// that didn't set it) renders as "—" rather than a meaningless multi-year
+// duration since Go's zero time.Time.
+func templateSince(t time.Time) string {
+	if t.IsZero() {
+		return "—"
+	}
+	return humanize.ShortDuration(time.Since(t))
 }
 
 func templateDict(pairs ...any) (map[string]any, error) {

@@ -17,6 +17,13 @@
      without a definition until #327 — every one of those badges rendered
      with the browser's inherited text color instead of the intended cyan. */
   --cyan: #38bdf8;
+  /* Shared monospace stack for identifiers, pool names, and state badges —
+     matches #327's mockups, which render all three in monospace throughout
+     (see docs/ui-design-language.md's Foundations: system sans for prose,
+     monospace as the one deliberate accent for technical/status text).
+     Same value in both themes, so it's declared once here rather than
+     repeated in the light-theme block below. */
+  --font-mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
 }
 
 :root[data-theme="light"] {
@@ -82,11 +89,17 @@ a:hover {
 }
 
 /* Sidebar header: brand mark plus the version/repository/theme utility bar
-   that used to sit top-right of the content column (#327). */
+   that used to sit top-right of the content column (#327). The mockup keeps
+   the wordmark and the utility icons on one compact row; `display: grid`
+   with no explicit columns put each child on its own implicit row instead,
+   wrapping this into two rows in the shipped version -- fixed with flex +
+   space-between so it matches. */
 .sidebar-header {
+  align-items: center;
   border-bottom: 1px solid var(--border);
-  display: grid;
+  display: flex;
   gap: 0.6rem;
+  justify-content: space-between;
   margin-bottom: 1rem;
   padding: 0 1.25rem 1rem;
 }
@@ -306,6 +319,7 @@ tbody tr:hover {
   border-radius: 9999px;
   font-size: 0.75rem;
   font-weight: 500;
+  font-family: var(--font-mono);
 }
 
 .badge-ready { background: rgba(74, 222, 128, 0.15); color: var(--green); }
@@ -506,18 +520,28 @@ tbody tr:hover {
 .pool-group[open] > summary::before { transform: rotate(90deg); }
 .pool-group-header { align-items: center; display: flex; flex-wrap: wrap; gap: 1rem; justify-content: space-between; }
 .pool-group-primary, .pool-group-secondary, .pool-group-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 0.6rem; }
+/* Wider gap than the shared 0.6rem above: the mockup gives "N of M ready"
+   and the muted "total · max" cluster clear visual separation rather than
+   reading as one crowded run of text -- especially once a failed-count
+   suffix (#328) makes that muted segment longer. */
+.pool-group-secondary { gap: 1.5rem; }
 .pool-type { color: var(--text-muted); font-size: 0.8rem; }
 .pool-ready-warning { color: var(--yellow); font-size: 0.8rem; font-weight: 600; }
 .pool-total-muted { color: var(--text-muted); font-size: 0.8rem; }
-.pool-group table { min-width: 680px; table-layout: fixed; }
+.pool-group table { min-width: 980px; table-layout: fixed; }
 .pool-group-note { color: var(--text-muted); font-size: 0.8rem; margin: 0.25rem 0 0.75rem; }
 .pool-detail-link { color: inherit; }
+/* Pool names render in the shared monospace stack, matching #327's mockups
+   (and the resource-id/badge treatment elsewhere on this page) rather than
+   the page's default sans-serif prose face — this was the one piece of the
+   mockup's typography that didn't make it into the original implementation. */
+.pool-detail-link strong { font-family: var(--font-mono); font-size: 0.95rem; }
 
 /* "unassigned" is not a real pool — the row is visually recessive (dimmed
    name, no status derivation of its own) and carries the orphan-cleanup
    actions instead of Drain/Fill. See #327 and the #292 purge contract. */
 .pool-group-unassigned { opacity: 0.75; }
-.pool-unassigned-name { color: var(--text-muted); font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-style: italic; }
+.pool-unassigned-name { color: var(--text-muted); font-family: var(--font-mono); font-size: 0.95rem; font-style: italic; }
 
 .pools-refreshed-at { color: var(--text-muted); font-size: 0.75rem; padding: 0.75rem 1.25rem 0; }
 .pools-summary-footer { align-items: center; border-top: 1px solid var(--border); color: var(--text-muted); display: flex; flex-wrap: wrap; font-size: 0.8rem; gap: 1rem; justify-content: flex-start; padding: 0.85rem 1.25rem; }
@@ -527,7 +551,12 @@ tbody tr:hover {
    their normal box always (visibility, not display), and the actions column
    has a fixed width, so nothing shifts when the menu appears — the id
    column truncates instead (.row-id). */
-th.row-actions, td.row-actions { width: 11rem; }
+/* 11rem clipped the fifth action (Inspect) off a fully-populated
+   Retry/Destroy/Logs/Copy ID/Inspect row -- found via direct DOM inspection
+   during #327's re-validation: the markup rendered all five, but the fixed
+   width only had room to display four. 24rem fits all five .secondary-btn
+   buttons at their actual rendered size with the existing gap. */
+th.row-actions, td.row-actions { width: 24rem; }
 td.row-actions { position: relative; white-space: nowrap; }
 /* opacity, not visibility: a visibility:hidden menu is also pulled out of
    the tab order, so a keyboard user tabbing into a resource row could never
@@ -542,6 +571,11 @@ td.row-actions { position: relative; white-space: nowrap; }
 tr:hover .row-actions-menu, tr:focus-within .row-actions-menu { opacity: 1; }
 tr:hover .row-actions-toggle, tr:focus-within .row-actions-toggle { opacity: 0; }
 .row-id code { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Time-in-state column (#327's mockup had this; the original implementation
+   dropped it even though model.Resource.UpdatedAt already carries the
+   data -- see templateSince in internal/server/ui.go). Muted and narrow,
+   matching the mockup's own understated treatment of this column. */
+th.row-updated, td.row-updated { color: var(--text-muted); width: 5rem; }
 .page-back { margin-bottom: 0.75rem; }
 .pool-detail-card { overflow: visible; }
 .pool-detail-grid {

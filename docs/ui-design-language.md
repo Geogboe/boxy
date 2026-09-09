@@ -12,9 +12,14 @@ vocabulary instead of introducing page-specific visual rules.
   `--green`, `--yellow`, `--red`, and `--orange` are the only palette entry
   points. Dark mode is the default; `data-theme="light"` swaps the same
   tokens for the light palette.
-- **Typography:** use the system UI stack already defined on `body`. Page
-  titles and table headers carry hierarchy through size and weight, not a new
-  font family.
+- **Typography:** use the system UI stack already defined on `body` for
+  prose, page titles, and table headers — hierarchy there comes from size
+  and weight, not a new font family. The one deliberate exception is
+  `--font-mono`: identifiers (`<code>` for resource IDs), pool names, and
+  `.badge` state pills render in this shared monospace stack, since they
+  read as technical/status text rather than prose — matching #327's
+  mockups, which used monospace this way throughout. Don't introduce a
+  third font family; every technical/status element reuses `--font-mono`.
 - **Shape and spacing:** cards use the shared border and radius treatment;
   controls use the same compact padding and focusable hit area. Prefer the
   existing spacing rhythm over one-off pixel values.

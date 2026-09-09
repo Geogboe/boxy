@@ -11,8 +11,10 @@
 package humanize
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // CommaInt formats value with thousands separators, e.g. 4096 -> "4,096" and
@@ -37,4 +39,30 @@ func CommaInt(value int64) string {
 		b.WriteRune(digit)
 	}
 	return b.String()
+}
+
+// ShortDuration formats a non-negative duration as a compact single-unit
+// approximation — "42s", "3m", "11m", "1h", "2d" — the style used for a
+// dashboard's "how long has this been in its current state" column rather
+// than Go's own more precise but noisier "1h2m3s". A negative duration
+// (e.g. a zero/unset timestamp subtracted from now producing a negative
+// elapsed value) returns "—" rather than a misleading negative-looking
+// string; callers with a genuinely unknown timestamp should check for that
+// before calling and pass a zero duration is not assumed to mean "unknown"
+// here, since a real zero-elapsed duration ("0s", just happened) is a valid
+// input distinct from "unknown" — check the source timestamp instead.
+func ShortDuration(d time.Duration) string {
+	if d < 0 {
+		return "—"
+	}
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	}
 }
