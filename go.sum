@@ -10,8 +10,8 @@ github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c h1:udKWzYgxTojEK
 github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c/go.mod h1:xomTg63KZ2rFqZQzSB4Vz2SUXa1BpHTVz9L5PTmPC4E=
 github.com/Azure/go-ntlmssp v0.1.0 h1:DjFo6YtWzNqNvQdrwEyr/e4nhU3vRiwenz5QX7sFz+A=
 github.com/Azure/go-ntlmssp v0.1.0/go.mod h1:NYqdhxd/8aAct/s4qSYZEerdPuH1liG2/X9DiVTbhpk=
-github.com/Geogboe/go-psrp v0.2.1-boxy242 h1:QZnPz24gzRadxKs7nErdRsgkH618UXlmTtvmq7k75iQ=
-github.com/Geogboe/go-psrp v0.2.1-boxy242/go.mod h1:bGoUyfvqxOKMc3OIEZst0h4sujikC4mHr3/YyZuzOKc=
+github.com/Geogboe/go-psrp v0.2.2-boxy244 h1:VWhC7GBq5dR6QXlH36OUwCSKjeoJAVeXVlyXlV7mpgc=
+github.com/Geogboe/go-psrp v0.2.2-boxy244/go.mod h1:bGoUyfvqxOKMc3OIEZst0h4sujikC4mHr3/YyZuzOKc=
 github.com/Geogboe/go-psrpcore v0.0.0-20260828053523-50f4720fbe2b h1:n7QGB3Cd+O/jM7ADLLCU6XLeup7UYdANgMI8LmUsirc=
 github.com/Geogboe/go-psrpcore v0.0.0-20260828053523-50f4720fbe2b/go.mod h1:jQD6DZ5fbdmPO1vajs/lcIzph/HHpPG/nPRkRPG6qCk=
 github.com/Geogboe/rog v0.6.1 h1:+CiaiYE4OWui1eB9fWP5YcWd1k1ZserfGV1IX8DIIRM=

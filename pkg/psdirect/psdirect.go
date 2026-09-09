@@ -18,15 +18,25 @@ import (
 
 // psrpExecutor is the minimal go-psrp surface used by this package.
 // *psrpclient.Client satisfies this interface; tests inject a mock.
+//
+// ExecuteCommand builds and invokes a pipeline via PSRP's native
+// AddCommand/AddArgument (go-psrp v0.2.2-boxy244, #244) instead of a text
+// script, so a caller-controlled cmd/arg value never has to survive
+// PowerShell's own parser -- it is delivered as a typed CLIXML argument
+// object. Execute (the raw text-script entry point) is kept for ExecText's
+// opaque-PowerShell-text use case, which has no argv to protect in the
+// first place.
 type psrpExecutor interface {
 	Connect(ctx context.Context) error
 	Execute(ctx context.Context, script string) (*psrpclient.Result, error)
+	ExecuteCommand(ctx context.Context, cmdName string, isScript bool, args ...interface{}) (*psrpclient.Result, error)
 	Close(ctx context.Context) error
 }
 
 type psrpStreamExecutor interface {
 	psrpExecutor
 	ExecuteStream(ctx context.Context, script string) (*psrpclient.StreamResult, error)
+	ExecuteCommandStream(ctx context.Context, cmdName string, isScript bool, args ...interface{}) (*psrpclient.StreamResult, error)
 }
 
 // Exec implements vmsdk.GuestExec via PowerShell Direct (HvSocket/PSRP).
@@ -75,9 +85,7 @@ func (e *Exec) Exec(ctx context.Context, cmd string, args ...string) (*vmsdk.Exe
 	}
 	defer executor.Close(ctx) //nolint:errcheck
 
-	script := buildScript(cmd, args)
-
-	result, err := executor.Execute(ctx, script)
+	result, err := executor.ExecuteCommand(ctx, execScript, true, commandArgs(cmd, args)...)
 	if err != nil {
 		return nil, fmt.Errorf("psdirect: exec on VM %s: %w", e.VMID, wrapKnownTransportError(err))
 	}
@@ -89,12 +97,6 @@ func (e *Exec) Exec(ctx context.Context, cmd string, args ...string) (*vmsdk.Exe
 	}, nil
 }
 
-// ExecStream runs cmd through PowerShell Direct and forwards PSRP output as it
-// arrives. PowerShell's merged native output is represented on stdout; PSRP
-// error, warning, verbose, debug, progress, and information records are all
-// merged onto stderr — none of those are exclusively "errors", so a caller
-// deciding whether a command failed should rely on the exit code, not on
-// whether anything arrived on the stderr channel.
 // ExecText executes opaque PowerShell text without converting it to argv.
 func (e *Exec) ExecText(ctx context.Context, text string) (*vmsdk.ExecResult, error) {
 	executor, err := e.newExecutor(ctx)
@@ -115,19 +117,51 @@ func (e *Exec) ExecText(ctx context.Context, text string) (*vmsdk.ExecResult, er
 	return &vmsdk.ExecResult{Stdout: stdout, ExitCode: exitCode}, nil
 }
 
+// ExecStream runs cmd through PowerShell Direct and forwards PSRP output as it
+// arrives. PowerShell's merged native output is represented on stdout; PSRP
+// error, warning, verbose, debug, progress, and information records are all
+// merged onto stderr — none of those are exclusively "errors", so a caller
+// deciding whether a command failed should rely on the exit code, not on
+// whether anything arrived on the stderr channel.
 func (e *Exec) ExecStream(ctx context.Context, cmd string, args []string, sink eventstream.Sink) (*vmsdk.ExecResult, error) {
-	return e.execStreamScript(ctx, buildStreamScript(cmd, args), sink)
+	if sink == nil {
+		return nil, fmt.Errorf("psdirect: stream sink is required")
+	}
+	streamer, err := e.newStreamExecutor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer streamer.Close(ctx) //nolint:errcheck
+
+	stream, err := streamer.ExecuteCommandStream(ctx, execStreamScript, true, commandArgs(cmd, args)...)
+	if err != nil {
+		return nil, fmt.Errorf("psdirect: start stream on VM %s: %w", e.VMID, err)
+	}
+	return e.consumeStream(ctx, stream, sink)
 }
 
 // ExecStreamText streams opaque PowerShell text without converting it to argv.
 func (e *Exec) ExecStreamText(ctx context.Context, text string, sink eventstream.Sink) (*vmsdk.ExecResult, error) {
-	return e.execStreamScript(ctx, buildStreamTextScript(text), sink)
-}
-
-func (e *Exec) execStreamScript(ctx context.Context, script string, sink eventstream.Sink) (*vmsdk.ExecResult, error) {
 	if sink == nil {
 		return nil, fmt.Errorf("psdirect: stream sink is required")
 	}
+	streamer, err := e.newStreamExecutor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer streamer.Close(ctx) //nolint:errcheck
+
+	stream, err := streamer.ExecuteStream(ctx, buildStreamTextScript(text))
+	if err != nil {
+		return nil, fmt.Errorf("psdirect: start stream on VM %s: %w", e.VMID, err)
+	}
+	return e.consumeStream(ctx, stream, sink)
+}
+
+// newStreamExecutor creates and connects a psrpStreamExecutor, so both
+// ExecStream and ExecStreamText share identical connect/type-assertion
+// handling and differ only in which ExecuteStream* call they make.
+func (e *Exec) newStreamExecutor(ctx context.Context) (psrpStreamExecutor, error) {
 	executor, err := e.newExecutor(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("psdirect: create client for VM %s: %w", e.VMID, err)
@@ -139,13 +173,15 @@ func (e *Exec) execStreamScript(ctx context.Context, script string, sink eventst
 	if err := streamer.Connect(ctx); err != nil {
 		return nil, fmt.Errorf("psdirect: connect to VM %s: %w", e.VMID, err)
 	}
-	defer streamer.Close(ctx) //nolint:errcheck
+	return streamer, nil
+}
 
-	stream, err := streamer.ExecuteStream(ctx, script)
-	if err != nil {
-		return nil, fmt.Errorf("psdirect: start stream on VM %s: %w", e.VMID, err)
-	}
-
+// consumeStream fans in a StreamResult's channels, forwards them to sink via
+// streamEmitter, and returns the final exit code once the pipeline
+// completes. Shared by ExecStream and ExecStreamText -- everything after a
+// stream has been started is identical regardless of how the pipeline was
+// built.
+func (e *Exec) consumeStream(ctx context.Context, stream *psrpclient.StreamResult, sink eventstream.Sink) (*vmsdk.ExecResult, error) {
 	type streamItem struct {
 		channel eventstream.Channel
 		msg     *messages.Message
@@ -350,36 +386,60 @@ func wrapKnownTransportError(err error) error {
 	return fmt.Errorf("guest produced no output for a fixed ~30s and the underlying PSRP transport gave up (independent of --timeout, which only bounds the overall request): %w", err)
 }
 
-func buildStreamScript(cmd string, args []string) string {
-	parts := make([]string, 0, 1+len(args))
-	parts = append(parts, psQuote(cmd))
+// execScript and execStreamScript are fixed wrapper scripts: the text never
+// contains caller-controlled data, so there is nothing in either script for
+// PowerShell's own parser to mis-tokenize (the #238 bug class). cmd and args
+// are instead bound via PSRP's native AddCommand(..., isScript: true) +
+// AddArgument mechanism (go-psrp v0.2.2-boxy244, #244) -- each value is
+// delivered as its own typed CLIXML argument object into the script's
+// automatic $args array, exactly as `& { <script> } arg1 arg2` would bind
+// them for a local script block. commandArgs builds that argument list.
+//
+// AddCommand/AddArgument only replaces argv *delivery* into PSRP -- it does
+// not, by itself, get $LASTEXITCODE back out of a single-command pipeline
+// (go-psrpcore's PowerShell object has no AddStatement to chain a second
+// command), and it says nothing about how the *guest's* PowerShell 5.1
+// reconstructs a native process's command line once $__boxyCmd/$__boxyArgs
+// reach the `&` operator. So these scripts keep the exact `2>&1 | Out-String`
+// / exit-marker shape the pre-#244 text-script builders used, and
+// commandArgs keeps applying escapeNativeArg per argument -- see its doc
+// comment for why that hazard is independent of how the argument value
+// arrived at `&`.
+const execScript = `$__boxyCmd = $args[0]
+$__boxyArgs = @()
+if ($args.Count -gt 1) { $__boxyArgs = $args[1..($args.Count - 1)] }
+(& $__boxyCmd @__boxyArgs 2>&1) | Out-String
+$LASTEXITCODE`
+
+const execStreamScript = `$__boxyCmd = $args[0]
+$__boxyArgs = @()
+if ($args.Count -gt 1) { $__boxyArgs = $args[1..($args.Count - 1)] }
+& $__boxyCmd @__boxyArgs 2>&1
+Write-Output ('__BOXY_EXIT_CODE:' + [string]$LASTEXITCODE)`
+
+// commandArgs builds the positional-argument list passed alongside execScript
+// / execStreamScript: cmd first, then each of args, each still run through
+// escapeNativeArg (see its doc comment) since that hazard sits downstream of
+// PSRP argument delivery, at the guest's own native-process invocation.
+func commandArgs(cmd string, args []string) []interface{} {
+	out := make([]interface{}, 0, 1+len(args))
+	out = append(out, escapeNativeArg(cmd))
 	for _, a := range args {
-		parts = append(parts, psQuote(a))
+		out = append(out, escapeNativeArg(a))
 	}
-	return fmt.Sprintf("& %s 2>&1\nWrite-Output ('__BOXY_EXIT_CODE:' + [string]$LASTEXITCODE)", strings.Join(parts, " "))
+	return out
 }
 
-// buildScript constructs the PowerShell script that runs the command and
-// emits stdout (via Out-String) followed by $LASTEXITCODE as a separate object.
-//
-// The output stream will be [string, int32]:
-//   - string: combined stdout+stderr (2>&1)
-//   - int32:  process exit code via $LASTEXITCODE
+// buildStreamTextScript appends the exit-marker line ExecStreamText's
+// streaming path uses to recover $LASTEXITCODE. text is opaque caller-
+// supplied PowerShell text with no argv of its own to protect -- this
+// mirrors execScript's exit-code convention but is otherwise unrelated to
+// the AddCommand/AddArgument argv path above.
 func buildStreamTextScript(text string) string {
 	return text + "\nWrite-Output ('__BOXY_EXIT_CODE:' + [string]$LASTEXITCODE)"
 }
 
-func buildScript(cmd string, args []string) string {
-	parts := make([]string, 0, 1+len(args))
-	parts = append(parts, psQuote(cmd))
-	for _, a := range args {
-		parts = append(parts, psQuote(a))
-	}
-	return fmt.Sprintf("(& %s 2>&1) | Out-String\n$LASTEXITCODE",
-		strings.Join(parts, " "))
-}
-
-// extractOutput parses the PSRP output stream produced by buildScript.
+// extractOutput parses the PSRP output stream produced by execScript.
 // The last numeric item is the exit code; everything else is stdout, joined
 // with a newline between items that don't already end in one (Out-String
 // output typically already carries its own \r\n, so an unconditional join
@@ -469,8 +529,7 @@ func formatStreamValue(v interface{}) (text string, drop bool) {
 }
 
 // escapeNativeArg escapes s so it survives Windows PowerShell 5.1's native
-// command-line reconstruction for the `&` call operator, on top of whatever
-// psQuote does for the PowerShell parser itself.
+// command-line reconstruction for the `&` call operator.
 //
 // PowerShell performs no escaping of its own here: it joins already-parsed
 // argument values with spaces and wraps a value in a bare `"..."` pair only
@@ -486,27 +545,40 @@ func formatStreamValue(v interface{}) (text string, drop bool) {
 // (Windows argv escaping) minus the outer quote characters, which
 // PowerShell -- not this function -- adds.
 //
-// This is a documented stopgap, not the long-term fix: it only patches the
-// text-command-line-reconstruction hazard PowerShell's `&` operator creates
-// in the first place. The real fix is to stop going through a text command
-// line at all -- go-psrpcore's pipeline.Pipeline already supports invoking
-// a command via AddCommand/AddArgument, PSRP's native equivalent of a
-// parameterized query, which this bug class cannot occur against. Doing so
-// requires a client-level API this package's go-psrp dependency doesn't
-// currently expose; tracked in #244.
+// This hazard is a property of how PowerShell 5.1's `&` operator marshals
+// an array of string values into a single native process command line --
+// it applies whether those values came from parsed script text or, as of
+// #244, from CLIXML argument objects delivered via PSRP's
+// AddCommand/AddArgument and bound to $args. #244 removed a *different*,
+// PowerShell-*parser*-level hazard (a caller-controlled value embedded in
+// script text needing to survive PowerShell's own single-quoted-string
+// tokenization, formerly handled by the now-removed psQuote) by no longer
+// putting caller data in script text at all. It did not remove this one,
+// which sits downstream at the guest's native-process invocation
+// boundary -- so this function is still applied to every argument in
+// commandArgs, unconditionally, matching the pre-#244 native-command
+// scope (a cmdlet/function invocation via `&`/AddCommand needs no such
+// escaping at all, but distinguishing that from a native executable would
+// require resolving the command in the guest first).
 //
-// See #238 for the reported defect. The algorithm itself was verified live
-// against Windows PowerShell 5.1.26100 by invoking `&` directly with
-// hand-escaped literals; the no-whitespace quote-plus-trailing-backslash
-// case (the one case the direct-`&` matrix could not settle on inspection
-// alone, since it hinges on whether PowerShell wraps a whitespace-free
-// value at all) was separately verified end-to-end through psQuote's own
-// single-quote wrapper into a native argv dumper, confirmed to round-trip.
-// Coverage stops at the generated script string, though: this package has
-// no way to run a real PSRP session against a Windows guest from this host
-// (see AGENTS.md), so the psQuote -> PSRP wire serialization -> guest
-// runspace path beyond script generation remains unverified against a real
-// guest.
+// See #238 for the originally reported defect. The algorithm itself was
+// verified live against Windows PowerShell 5.1.26100 by invoking `&`
+// directly with hand-escaped literals; the no-whitespace
+// quote-plus-trailing-backslash case (the one case the direct-`&` matrix
+// could not settle on inspection alone, since it hinges on whether
+// PowerShell wraps a whitespace-free value at all) was separately verified
+// end-to-end through the pre-#244 psQuote's single-quote wrapper into a
+// native argv dumper, confirmed to round-trip. This package still has no
+// way to run a real PSRP session against a Windows guest from this host
+// (see AGENTS.md), so the #244 $args/AddArgument delivery path beyond
+// script generation remains unverified against a real guest, same as the
+// pre-#244 script-text path was. One specific unverified case: an empty
+// string argument produces no whitespace for PowerShell to quote around,
+// so its native-command-line reconstruction may drop it from the child
+// process's argv entirely rather than passing it through as an empty
+// argument. This is not a #244 regression -- the pre-#244 psQuote("")
+// path (`”`) had the same or worse fate -- but it means "empty-string
+// arguments now work" is not a claim this change can make either.
 func escapeNativeArg(s string) string {
 	hasSpace := strings.ContainsAny(s, " \t")
 	var b strings.Builder
@@ -533,16 +605,4 @@ func escapeNativeArg(s string) string {
 		}
 	}
 	return b.String()
-}
-
-// psQuote wraps s in a PowerShell single-quoted string literal, first
-// escaping it for native command-line reconstruction (escapeNativeArg, for
-// the & operator's argv rebuild -- see #238) and then doubling embedded
-// single quotes (for the PowerShell parser's own single-quoted-string
-// rule). These two escaping passes touch disjoint character classes --
-// backslash and double quote vs. single quote -- so order between them does
-// not matter; single-quote doubling is applied last only because it must
-// wrap the whole already-escaped literal.
-func psQuote(s string) string {
-	return "'" + strings.ReplaceAll(escapeNativeArg(s), "'", "''") + "'"
 }
