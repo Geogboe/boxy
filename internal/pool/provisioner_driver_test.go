@@ -16,14 +16,15 @@ type driverProvisionerConfig struct {
 }
 
 type fakeProviderDriver struct {
-	createCfg      any
-	createErr      error
-	deleted        []string
-	allocated      []string
-	personalized   []string
-	deleteErr      error
-	personalizeErr error
-	personalize    bool
+	createCfg         any
+	createErr         error
+	deleted           []string
+	allocated         []string
+	personalized      []string
+	deleteErr         error
+	personalizeErr    error
+	personalize       bool
+	applyNetworkCalls []bool
 }
 
 func (d *fakeProviderDriver) Type() providersdk.Type { return "fake" }
@@ -66,9 +67,10 @@ func (d *fakeProviderDriver) Allocate(ctx context.Context, id string) (map[strin
 	return map[string]any{"allocated": id}, nil
 }
 
-func (d *fakeProviderDriver) PersonalizeGuest(ctx context.Context, id string) (*providersdk.GuestPersonalizationResult, error) {
+func (d *fakeProviderDriver) PersonalizeGuest(ctx context.Context, id string, opts providersdk.GuestPersonalizationOptions) (*providersdk.GuestPersonalizationResult, error) {
 	_ = ctx
 	d.personalized = append(d.personalized, id)
+	d.applyNetworkCalls = append(d.applyNetworkCalls, opts.ApplyNetwork)
 	if d.personalizeErr != nil {
 		return nil, d.personalizeErr
 	}
@@ -211,6 +213,9 @@ func TestDriverProvisioner_AllocatePrefersGuestPersonalizer(t *testing.T) {
 	if len(driver.personalized) != 1 || len(driver.allocated) != 0 {
 		t.Fatalf("personalized=%v allocated=%v, want personalizer path only", driver.personalized, driver.allocated)
 	}
+	if len(driver.applyNetworkCalls) != 1 || !driver.applyNetworkCalls[0] {
+		t.Fatalf("applyNetworkCalls = %v, want [true] for an allocation-time personalize", driver.applyNetworkCalls)
+	}
 }
 
 func TestDriverProvisioner_AllocateFallsBackWhenPersonalizerHasNoResult(t *testing.T) {
@@ -226,6 +231,27 @@ func TestDriverProvisioner_AllocateFallsBackWhenPersonalizerHasNoResult(t *testi
 	}
 	if len(driver.personalized) != 1 || len(driver.allocated) != 1 {
 		t.Fatalf("personalized=%v allocated=%v, want personalizer then fallback allocate", driver.personalized, driver.allocated)
+	}
+}
+
+// TestDriverProvisioner_PersonalizeGuestForPoolNeverAppliesNetwork proves
+// admission/promotion-time personalization (PersonalizeGuestForPool) always
+// passes ApplyNetwork: false to the driver, so a preheated-but-unclaimed
+// resource never has its network identity applied (#358) — only Allocate's
+// personalize call (see the test above) may set it true.
+func TestDriverProvisioner_PersonalizeGuestForPoolNeverAppliesNetwork(t *testing.T) {
+	driver := &fakeProviderDriver{personalize: true}
+	dp := newDriverProvisioner(t, driver)
+
+	result, err := dp.PersonalizeGuestForPool(context.Background(), model.Pool{Name: "web"}, model.Resource{ID: "provider-res-1"})
+	if err != nil {
+		t.Fatalf("PersonalizeGuestForPool: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected a non-nil GuestPersonalizationResult")
+	}
+	if len(driver.applyNetworkCalls) != 1 || driver.applyNetworkCalls[0] {
+		t.Fatalf("applyNetworkCalls = %v, want [false] for admission-time personalize", driver.applyNetworkCalls)
 	}
 }
 

@@ -209,7 +209,7 @@ func (ap *AgentProvisioner) Allocate(ctx context.Context, pool model.Pool, res m
 		effLimit := effectiveDeadlineBound(ctx, ap.Timeouts.PersonalizeGuest)
 		personalizeCtx, cancel := withTimeout(ctx, ap.Timeouts.PersonalizeGuest)
 		start := ap.now()
-		result, err := gp.PersonalizeGuest(personalizeCtx, driverType, string(res.ID))
+		result, err := gp.PersonalizeGuest(personalizeCtx, driverType, string(res.ID), providersdk.GuestPersonalizationOptions{ApplyNetwork: true})
 		cancel()
 		if err != nil {
 			if errors.Is(personalizeCtx.Err(), context.DeadlineExceeded) {
@@ -486,7 +486,11 @@ func (ap *AgentProvisioner) PersonalizeGuestForPool(ctx context.Context, pool mo
 	// Allocate's allocation-time personalize call above. See #333.
 	personalizeCtx, cancel := withTimeout(ctx, ap.Timeouts.PersonalizeGuest)
 	defer cancel()
-	return gp.PersonalizeGuest(personalizeCtx, driverType, string(res.ID))
+	// Admission-time personalization never applies network configuration —
+	// a preheated resource has not been claimed by any sandbox yet and
+	// should not become network-reachable. See #358 and
+	// providersdk.GuestPersonalizationOptions.
+	return gp.PersonalizeGuest(personalizeCtx, driverType, string(res.ID), providersdk.GuestPersonalizationOptions{ApplyNetwork: false})
 }
 
 // ExecuteSandbox routes a provider-neutral command to the exact agent that

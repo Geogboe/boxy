@@ -1618,9 +1618,19 @@ func (*ListCommand) Descriptor() ([]byte, []int) {
 	return file_boxyagent_v1_agent_proto_rawDescGZIP(), []int{19}
 }
 
+// apply_network gates whether PersonalizeGuest may configure the guest's
+// network identity (static_ip/range-mode IP assignment) in addition to
+// rotating its credential. It defaults to false (proto3 zero value) so a
+// stale caller — or any code path that forgets to set it explicitly — gets
+// the safe, network-deferred behavior rather than silently reintroducing
+// #358's premature network exposure of preheated-but-unclaimed inventory.
+// Only allocation-time personalization (a sandbox actually claiming the
+// resource) should set this true; admission/promotion-time personalization
+// must leave it false. See ADR-0012's 2026-09 change note.
 type PersonalizeGuestCommand struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ResourceId    string                 `protobuf:"bytes,1,opt,name=resource_id,json=resourceId,proto3" json:"resource_id,omitempty"`
+	ApplyNetwork  bool                   `protobuf:"varint,2,opt,name=apply_network,json=applyNetwork,proto3" json:"apply_network,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1660,6 +1670,13 @@ func (x *PersonalizeGuestCommand) GetResourceId() string {
 		return x.ResourceId
 	}
 	return ""
+}
+
+func (x *PersonalizeGuestCommand) GetApplyNetwork() bool {
+	if x != nil {
+		return x.ApplyNetwork
+	}
+	return false
 }
 
 type ResourceResult struct {
@@ -2171,10 +2188,11 @@ const file_boxyagent_v1_agent_proto_rawDesc = "" +
 	"\x0fAllocateCommand\x12\x1f\n" +
 	"\vresource_id\x18\x01 \x01(\tR\n" +
 	"resourceId\"\r\n" +
-	"\vListCommand\":\n" +
+	"\vListCommand\"_\n" +
 	"\x17PersonalizeGuestCommand\x12\x1f\n" +
 	"\vresource_id\x18\x01 \x01(\tR\n" +
-	"resourceId\"\xc3\x02\n" +
+	"resourceId\x12#\n" +
+	"\rapply_network\x18\x02 \x01(\bR\fapplyNetwork\"\xc3\x02\n" +
 	"\x0eResourceResult\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12Y\n" +
 	"\x0fconnection_info\x18\x02 \x03(\v20.boxyagent.v1.ResourceResult.ConnectionInfoEntryR\x0econnectionInfo\x12F\n" +

@@ -39,6 +39,10 @@ type mockAgent struct {
 	allocateResult map[string]any
 	personalized   *providersdk.GuestPersonalizationResult
 	personalizeErr error
+	// personalizeApplyNetworkCalls records opts.ApplyNetwork for every
+	// PersonalizeGuest call, in order, so tests can assert whether a given
+	// call site (allocation vs. admission) requested network application.
+	personalizeApplyNetworkCalls []bool
 
 	// createEntered and createGate let a test observe that Create has been
 	// called (createEntered closes) and hold it there until the test is
@@ -142,7 +146,8 @@ func (m *mockAgent) Allocate(ctx context.Context, provider providersdk.Type, id 
 	return m.allocateResult, nil
 }
 
-func (m *mockAgent) PersonalizeGuest(ctx context.Context, provider providersdk.Type, id string) (*providersdk.GuestPersonalizationResult, error) {
+func (m *mockAgent) PersonalizeGuest(ctx context.Context, provider providersdk.Type, id string, opts providersdk.GuestPersonalizationOptions) (*providersdk.GuestPersonalizationResult, error) {
+	m.personalizeApplyNetworkCalls = append(m.personalizeApplyNetworkCalls, opts.ApplyNetwork)
 	if m.personalizeEntered != nil {
 		close(m.personalizeEntered)
 	}
@@ -570,6 +575,40 @@ func TestAgentProvisioner_Allocate_PrefersTypedGuestPersonalization(t *testing.T
 	}
 	if _, ok := got.Properties["legacy"]; ok {
 		t.Fatal("expected typed guest personalization to bypass legacy allocate result")
+	}
+	if len(mockAgent.personalizeApplyNetworkCalls) != 1 || !mockAgent.personalizeApplyNetworkCalls[0] {
+		t.Fatalf("personalizeApplyNetworkCalls = %v, want [true] for allocation-time personalize", mockAgent.personalizeApplyNetworkCalls)
+	}
+}
+
+// TestAgentProvisioner_PersonalizeGuestForPool_NeverAppliesNetwork guards
+// #358: admission/promotion-time personalization must never apply the
+// guest's network configuration, only allocation-time personalization may.
+func TestAgentProvisioner_PersonalizeGuestForPool_NeverAppliesNetwork(t *testing.T) {
+	mockAgent := newMockAgent(providersdk.Type("hyperv"))
+	mockAgent.personalized = &providersdk.GuestPersonalizationResult{
+		AccessDetails:       providersdk.GuestAccessDetails{Properties: map[string]string{}},
+		EphemeralCredential: &providersdk.GuestCredential{Kind: "password", Data: []byte(`{"username":"a","password":"b"}`)},
+	}
+
+	provisioner := &AgentProvisioner{
+		Registry: registryWith(t, mockAgent),
+		Specs: map[model.PoolName]boxyconfig.PoolSpec{
+			"vm-pool": {Name: "vm-pool", Type: "hyperv"},
+		},
+		Providers: map[string]providersdk.Instance{},
+	}
+
+	res := model.Resource{ID: "vm-1", Provider: model.ProviderRef{AgentID: mockAgent.info.ID}}
+	result, err := provisioner.PersonalizeGuestForPool(context.Background(), model.Pool{Name: "vm-pool"}, res)
+	if err != nil {
+		t.Fatalf("PersonalizeGuestForPool: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected a non-nil GuestPersonalizationResult")
+	}
+	if len(mockAgent.personalizeApplyNetworkCalls) != 1 || mockAgent.personalizeApplyNetworkCalls[0] {
+		t.Fatalf("personalizeApplyNetworkCalls = %v, want [false] for admission-time personalize", mockAgent.personalizeApplyNetworkCalls)
 	}
 }
 

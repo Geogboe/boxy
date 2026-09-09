@@ -89,11 +89,15 @@ type fakeDriver struct {
 // PersonalizeGuest method.
 type fakePersonalizingDriver struct {
 	*fakeDriver
-	personalizeErr error
-	personalizeRes *providersdk.GuestPersonalizationResult
+	personalizeErr     error
+	personalizeRes     *providersdk.GuestPersonalizationResult
+	gotApplyNetwork    bool
+	gotApplyNetworkSet bool
 }
 
-func (d *fakePersonalizingDriver) PersonalizeGuest(ctx context.Context, id string) (*providersdk.GuestPersonalizationResult, error) {
+func (d *fakePersonalizingDriver) PersonalizeGuest(ctx context.Context, id string, opts providersdk.GuestPersonalizationOptions) (*providersdk.GuestPersonalizationResult, error) {
+	d.gotApplyNetwork = opts.ApplyNetwork
+	d.gotApplyNetworkSet = true
 	return d.personalizeRes, d.personalizeErr
 }
 
@@ -401,7 +405,7 @@ func TestExecuteCommand(t *testing.T) {
 		cmd := &boxyagentv1.Command{
 			CommandId:    "cmd-10",
 			ProviderType: "hyperv",
-			Op:           &boxyagentv1.Command_PersonalizeGuest{PersonalizeGuest: &boxyagentv1.PersonalizeGuestCommand{ResourceId: "vm-1"}},
+			Op:           &boxyagentv1.Command_PersonalizeGuest{PersonalizeGuest: &boxyagentv1.PersonalizeGuestCommand{ResourceId: "vm-1", ApplyNetwork: true}},
 		}
 		res := executeCommand(context.Background(), drivers, cmd)
 		if res.GetError() != nil {
@@ -411,12 +415,36 @@ func TestExecuteCommand(t *testing.T) {
 		if got["access"] != "ssh" || got["host"] != "192.0.2.9" {
 			t.Fatalf("expected typed properties to round-trip, got %#v", got)
 		}
+		fpd := drivers["hyperv"].(*fakePersonalizingDriver)
+		if !fpd.gotApplyNetworkSet || !fpd.gotApplyNetwork {
+			t.Fatalf("expected apply_network=true to reach the driver, got set=%v value=%v", fpd.gotApplyNetworkSet, fpd.gotApplyNetwork)
+		}
 		var gotCredential providersdk.GuestCredential
 		if err := json.Unmarshal(res.GetPersonalizeGuest().GetGuestCredentialJson(), &gotCredential); err != nil {
 			t.Fatalf("unmarshal guest credential: %v", err)
 		}
 		if gotCredential.Kind != credential.Kind || string(gotCredential.Data) != string(credential.Data) {
 			t.Fatalf("guest credential = %+v, want %+v", gotCredential, *credential)
+		}
+	})
+
+	t.Run("personalize guest apply_network false reaches driver as false", func(t *testing.T) {
+		drivers := DriverSet{"hyperv": &fakePersonalizingDriver{
+			fakeDriver:     &fakeDriver{providerType: "hyperv"},
+			personalizeRes: &providersdk.GuestPersonalizationResult{},
+		}}
+		cmd := &boxyagentv1.Command{
+			CommandId:    "cmd-10b",
+			ProviderType: "hyperv",
+			Op:           &boxyagentv1.Command_PersonalizeGuest{PersonalizeGuest: &boxyagentv1.PersonalizeGuestCommand{ResourceId: "vm-1", ApplyNetwork: false}},
+		}
+		res := executeCommand(context.Background(), drivers, cmd)
+		if res.GetError() != nil {
+			t.Fatalf("unexpected error: %s", res.GetError().GetMessage())
+		}
+		fpd := drivers["hyperv"].(*fakePersonalizingDriver)
+		if !fpd.gotApplyNetworkSet || fpd.gotApplyNetwork {
+			t.Fatalf("expected apply_network=false to reach the driver, got set=%v value=%v", fpd.gotApplyNetworkSet, fpd.gotApplyNetwork)
 		}
 	})
 

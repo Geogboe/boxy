@@ -102,8 +102,28 @@ type GuestPersonalizationResult struct {
 	EphemeralCredential *GuestCredential
 }
 
-// GuestPersonalizer is an optional provider capability for allocation-time
-// guest personalization with typed, safe returned access details.
+// GuestPersonalizationOptions carries phase-dependent behavior for a
+// PersonalizeGuest call. It is a struct rather than a positional bool so a
+// future phase-dependent step gets a new field instead of another
+// positional argument.
+type GuestPersonalizationOptions struct {
+	// ApplyNetwork, when true, allows PersonalizeGuest to configure the
+	// guest's network identity (static_ip/range-mode IP assignment) in
+	// addition to rotating its credential. Credential rotation and
+	// verification always run regardless of this flag — PowerShell
+	// Direct/VMBus guest exec needs no network. Only allocation-time
+	// personalization (a sandbox actually claiming the resource) should set
+	// this true; admission-time (pool preheat) and promotion-time
+	// personalization must leave it false so a preheated-but-unclaimed VM
+	// never becomes network-reachable for no reason (#358). See ADR-0012's
+	// 2026-09 change note.
+	ApplyNetwork bool
+}
+
+// GuestPersonalizer is an optional provider capability for guest
+// personalization with typed, safe returned access details. The same method
+// is used at both admission time (pool preheat) and allocation time (a
+// sandbox claiming the resource); opts.ApplyNetwork distinguishes them.
 type GuestPersonalizer interface {
-	PersonalizeGuest(ctx context.Context, id string) (*GuestPersonalizationResult, error)
+	PersonalizeGuest(ctx context.Context, id string, opts GuestPersonalizationOptions) (*GuestPersonalizationResult, error)
 }

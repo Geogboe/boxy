@@ -8,6 +8,11 @@ import (
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
+var (
+	_ Agent                   = (*EmbeddedAgent)(nil)
+	_ GuestPersonalizingAgent = (*EmbeddedAgent)(nil)
+)
+
 // EmbeddedAgent is an in-process agent that dispatches directly to
 // drivers. No network involved — the server calls driver methods in the
 // same process. Used when boxy serve hosts providers locally.
@@ -113,7 +118,7 @@ func (a *EmbeddedAgent) List(ctx context.Context, provider providersdk.Type) ([]
 	return lister.List(ctx)
 }
 
-func (a *EmbeddedAgent) PersonalizeGuest(ctx context.Context, provider providersdk.Type, id string) (*providersdk.GuestPersonalizationResult, error) {
+func (a *EmbeddedAgent) PersonalizeGuest(ctx context.Context, provider providersdk.Type, id string, opts providersdk.GuestPersonalizationOptions) (*providersdk.GuestPersonalizationResult, error) {
 	d, err := a.driver(provider)
 	if err != nil {
 		return nil, err
@@ -123,7 +128,7 @@ func (a *EmbeddedAgent) PersonalizeGuest(ctx context.Context, provider providers
 	if !ok {
 		return nil, nil
 	}
-	return gp.PersonalizeGuest(ctx, id)
+	return gp.PersonalizeGuest(ctx, id, opts)
 }
 
 func (a *EmbeddedAgent) driver(provider providersdk.Type) (providersdk.Driver, error) {

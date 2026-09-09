@@ -54,9 +54,12 @@ type StreamingAgent interface {
 }
 
 // GuestPersonalizingAgent is an optional agent capability for providers that
-// expose the typed guest-personalization contract.
+// expose the typed guest-personalization contract. opts.ApplyNetwork
+// distinguishes allocation-time personalization (true) from admission/
+// promotion-time personalization (false) — see
+// providersdk.GuestPersonalizationOptions.
 type GuestPersonalizingAgent interface {
-	PersonalizeGuest(ctx context.Context, provider providersdk.Type, id string) (*providersdk.GuestPersonalizationResult, error)
+	PersonalizeGuest(ctx context.Context, provider providersdk.Type, id string, opts providersdk.GuestPersonalizationOptions) (*providersdk.GuestPersonalizationResult, error)
 }
 
 // ResourceListingAgent is an optional agent capability for providers whose
