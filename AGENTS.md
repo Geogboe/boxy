@@ -757,6 +757,16 @@ Wrap repeated commands in `Taskfile.yml`. If a command is run more than once, ad
 - **Release cadence is deliberately not "cut a release after every merged fix" (2026-08-27 decision).** The project stays prerelease (`prerelease: true` in both `release-please-config.json` and `.goreleaser.yml`) until the owner says otherwise, but a prerelease that ships after a single one-line bugfix is still a wasted release: a full 5-platform GoReleaser run (SBOMs, checksums, cosign signing, a manual approval click) for one commit's worth of change. release-please already supports this — it keeps exactly one open release PR that accumulates every commit landed on `main` since the last release, updating in place, until that PR is merged. The fix is workflow discipline, not tooling: **don't merge the release-please PR just because it appeared.** Let multiple fix/feat PRs land on `main` first so the pending release PR accumulates a real batch of changelog-worthy entries, and only merge it — cutting the actual tagged release — when there's enough substance to justify a release, or when the owner explicitly asks for one. This overrides the ship-it skill's Phase 8 default (which treats "approve and merge the release PR" as an automatic follow-on to a self-approved fix PR merge) — ask before merging a release-please PR rather than doing it on autopilot.
 
 - **Early-stage release scope:** Boxy has no users yet. Until that changes, aim to pack as much compatible, tested, and documented work into each release as practical. Batch related features, smaller improvements, and bug fixes together, but do not lower validation rigor or pull in blocked/design-only work without an explicit decision.
+- **Green CI is not the same gate as "no one has commented on this PR."**
+  During the post-0.1.66 batch (2026-09-09, PR #362), the aggregate batch PR
+  was described as ready to merge purely on `task ci:validate` passing —
+  without ever checking for Copilot's automated review or the repo owner's
+  own inline PR comments, both of which were already present and included a
+  real, confirmed bug (see #363 and ADR-0020's neighbors). Before merging any
+  PR — batch or otherwise — check `gh api repos/<owner>/<repo>/pulls/<n>/reviews`
+  and `.../comments` (not just `gh pr view`, which misses bot reviews and
+  inline comments) and classify every finding, human or bot. The bundled
+  `ship-it` skill's Phase 7.5 now makes this an explicit, non-skippable gate.
 
 ### GitHub Actions Node 24 migration — done
 
@@ -899,6 +909,20 @@ it's no longer needed. See #100.
   time password rotation, one-time sandbox delivery, and caller-supplied exec
   credentials. See [ADR-0010](docs/adr/0010-guest-credential-delivery.md) and
   the design spec for the accepted restart/lost-delivery behavior.
+- Post-0.1.66 batch (2026-09-09, PR #362, released as v0.1.67) landed
+  per-operation agent timeouts + a stuck-provisioning watchdog (#333/#337 —
+  see [ADR-0020](docs/adr/0020-bounded-agent-operations-and-provisioning-watchdog.md)),
+  pool quarantine-exhaustion visibility (#328), the `go-psrp`
+  `AddCommand`/`AddArgument` fork (#244, see the PSRP fork section above),
+  agent-facing UI verbiage renamed to "host" (#332), a Pools view remodel
+  (#327, see `docs/ui-design-language.md`), unblocked user-role CLI login
+  (#359), hidden-by-default deleted resources (#353), deferred allocation-time
+  IP assignment (#358), and PSRP session reuse across `apply_network` +
+  `rotate_credential` (#361, see the Guest Credentials section above). Filed
+  follow-ups: #350 (per-sandbox timeout doesn't scale with resource count)
+  and #363 (reconsider the pools UI's "unassigned" sentinel design — its
+  literal name is now reserved at config validation as a narrow fix, not a
+  redesign).
 
 # Deletions
 
