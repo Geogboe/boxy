@@ -348,15 +348,24 @@ unaffected either way: reading the address Hyper-V/DHCP already assigned
 via `vmIP` is an observation, not an application of boxy-managed network
 configuration, so it runs regardless of `ApplyNetwork`.
 
-One accepted, minor behavior change: a misconfigured Linux guest paired
-with `range`/`static_ip` mode (both boxy-managed-IP-unsupported for Linux —
-see `guestIPUnsupportedOnLinux`) previously failed at admission time,
-immediately quarantining the resource. It now succeeds at admission (the
-apply is skipped entirely, so the unsupported-mode check is never reached)
-and instead fails at the first `Allocate`. This trades earlier
-misconfiguration detection for the same network-exposure reduction that is
-this change's actual goal; a Linux pool that legitimately never configures
-`range`/`static_ip` (the supported configuration) is unaffected.
+A misconfigured Linux guest paired with `range`/`static_ip` mode (both
+boxy-managed-IP-unsupported for Linux — see `guestIPUnsupportedOnLinux`)
+still fails at admission time, immediately quarantining the resource,
+exactly as before this change: the Linux-unsupported check runs
+unconditionally, not gated by `ApplyNetwork`, since it is a pure
+`guestOS` comparison that does no guest-side network work of its own. Only
+the actual reservation/apply is deferred to `Allocate`; the validation is
+not.
 
 The issue's broader overlay-network/management-sidecar question is out of
 scope for this change and remains open.
+
+## Change log
+
+- 2026-09-08: corrected the above — an earlier revision of this change
+  deferred the Linux-unsupported check itself behind `ApplyNetwork` along
+  with the actual apply, which meant a misconfigured Linux guest silently
+  passed admission and only failed, repeatedly, on every subsequent
+  `Allocate` (a fail-fast regression, found and fixed the same day). The
+  check is now split from the apply and runs unconditionally, restoring
+  admission-time quarantine for this case.

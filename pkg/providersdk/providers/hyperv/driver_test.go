@@ -1822,6 +1822,38 @@ func TestDriver_PersonalizeGuest_StaticIP_LinuxUnsupported(t *testing.T) {
 	}
 }
 
+// TestDriver_PersonalizeGuest_StaticIP_LinuxUnsupported_FailsAtAdmission
+// guards a fail-fast regression introduced by #358: before #358, a Linux
+// guest misconfigured with static_ip mode was rejected at admission time
+// (opts.ApplyNetwork=false), quarantining the resource once. #358 moved the
+// actual IP application behind opts.ApplyNetwork, but the Linux-unsupported
+// check lived inside assignGuestIP — reachable only when ApplyNetwork is
+// true — so the same misconfiguration silently passed admission and would
+// only surface, repeatedly, on every subsequent Allocate. The Linux check
+// does no guest-side network work, so it is safe to run unconditionally.
+func TestDriver_PersonalizeGuest_StaticIP_LinuxUnsupported_FailsAtAdmission(t *testing.T) {
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		if strings.Contains(script, "Get-VM -Id") {
+			return "boxy_guest_os=linux;boxy_guest_user=ubuntu;boxy_net_static_ip=192.0.2.10;boxy_net_prefix=24\n", nil
+		}
+		return "boxy-abc123\n", nil
+	})
+	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
+		return providersdk.GuestBootstrapCredential{Username: "ubuntu", Password: "${BOXY_TEST_PASSWORD}"}, nil
+	}
+	d.guestExecFactory = func(_, _, _, _, _ string) vmsdk.GuestExec {
+		return &fakeGuestExec{exitCode: 0}
+	}
+
+	_, err := d.PersonalizeGuest(context.Background(), fakeGUID, providersdk.GuestPersonalizationOptions{ApplyNetwork: false})
+	if err == nil {
+		t.Fatal("expected admission-time error for Linux guest with static IP config")
+	}
+	if !strings.Contains(err.Error(), "Linux") {
+		t.Errorf("error %q should mention Linux", err.Error())
+	}
+}
+
 // --- NetworkConfig.Range (#222 / ADR-0012) ---
 
 func TestNetworkConfig_Validate_Range(t *testing.T) {
@@ -2174,6 +2206,48 @@ func TestDriver_PersonalizeGuest_RangeIP_LinuxUnsupported(t *testing.T) {
 	_, err := d.PersonalizeGuest(context.Background(), fakeGUID, providersdk.GuestPersonalizationOptions{ApplyNetwork: true})
 	if err == nil {
 		t.Fatal("expected error for Linux guest with range-based IP config")
+	}
+	if !strings.Contains(err.Error(), "Linux") {
+		t.Errorf("error %q should mention Linux", err.Error())
+	}
+
+	// A rejected Linux guest must not burn a reservation it can never apply.
+	entry, ok, lookupErr := d.ledgerLookup(fakeGUID)
+	if lookupErr != nil {
+		t.Fatalf("ledgerLookup: %v", lookupErr)
+	}
+	if !ok {
+		t.Fatal("expected the ledger entry to still exist")
+	}
+	if entry.AssignedAddress != "" {
+		t.Errorf("AssignedAddress = %q, want empty — Linux rejection must precede reservation", entry.AssignedAddress)
+	}
+}
+
+// TestDriver_PersonalizeGuest_RangeIP_LinuxUnsupported_FailsAtAdmission is
+// the range-mode counterpart to
+// TestDriver_PersonalizeGuest_StaticIP_LinuxUnsupported_FailsAtAdmission —
+// see that test's doc comment for the #358 fail-fast regression this guards.
+func TestDriver_PersonalizeGuest_RangeIP_LinuxUnsupported_FailsAtAdmission(t *testing.T) {
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		if strings.Contains(script, "Get-VM -Id") {
+			return "boxy_guest_os=linux;boxy_guest_user=ubuntu\n", nil
+		}
+		return "boxy-abc123\n", nil
+	})
+	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
+		return providersdk.GuestBootstrapCredential{Username: "ubuntu", Password: "${BOXY_TEST_PASSWORD}"}, nil
+	}
+	d.guestExecFactory = func(_, _, _, _, _ string) vmsdk.GuestExec {
+		return &fakeGuestExec{exitCode: 0}
+	}
+	if err := d.reserveRangeEntry(fakeGUID, &NetworkConfig{Range: "203.0.113.0/24"}); err != nil {
+		t.Fatalf("reserveRangeEntry: %v", err)
+	}
+
+	_, err := d.PersonalizeGuest(context.Background(), fakeGUID, providersdk.GuestPersonalizationOptions{ApplyNetwork: false})
+	if err == nil {
+		t.Fatal("expected admission-time error for Linux guest with range-based IP config")
 	}
 	if !strings.Contains(err.Error(), "Linux") {
 		t.Errorf("error %q should mention Linux", err.Error())
