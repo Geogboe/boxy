@@ -2207,7 +2207,7 @@ func TestDriver_AssignGuestIP_ScriptIsIdempotentAndVerifiesApply(t *testing.T) {
 // session)/Close counts and per-session Exec counts, not wall-clock timing.
 func TestDriver_PersonalizeGuest_ReusesSessionAcrossOldCredentialSteps(t *testing.T) {
 	d := mockDriver(nil)
-	const oldCred = "old-cred"
+	const oldCred = "${BOXY_TEST_PASSWORD}"
 	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
 		return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: oldCred}, nil
 	}
@@ -2274,7 +2274,7 @@ func TestDriver_PersonalizeGuest_ReusesSessionAcrossOldCredentialSteps(t *testin
 func TestDriver_PersonalizeGuest_ClosesOldSessionOnApplyNetworkFailure(t *testing.T) {
 	d := mockDriver(nil)
 	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
-		return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "old-cred"}, nil
+		return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "${BOXY_TEST_PASSWORD}"}, nil
 	}
 	var sessions []*countingGuestSession
 	d.guestExecFactory = func(_, _, _, guestPassword, _ string) vmsdk.GuestExec {
