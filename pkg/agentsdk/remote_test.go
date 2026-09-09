@@ -189,7 +189,7 @@ func TestRemoteAgent_PersonalizeGuestRoundTrip(t *testing.T) {
 	}
 	resultCh := make(chan result, 1)
 	go func() {
-		res, err := a.PersonalizeGuest(context.Background(), "hyperv", "vm-1")
+		res, err := a.PersonalizeGuest(context.Background(), "hyperv", "vm-1", providersdk.GuestPersonalizationOptions{ApplyNetwork: true})
 		resultCh <- result{res, err}
 	}()
 
@@ -200,6 +200,9 @@ func TestRemoteAgent_PersonalizeGuestRoundTrip(t *testing.T) {
 	}
 	if personalize.GetResourceId() != "vm-1" {
 		t.Fatalf("expected resource id vm-1, got %q", personalize.GetResourceId())
+	}
+	if !personalize.GetApplyNetwork() {
+		t.Fatalf("expected apply_network to round-trip as true")
 	}
 
 	credentialJSON, err := json.Marshal(&providersdk.GuestCredential{
@@ -254,7 +257,7 @@ func TestRemoteAgent_PersonalizeGuestUnsupportedReturnsNilNotError(t *testing.T)
 	}
 	resultCh := make(chan result, 1)
 	go func() {
-		res, err := a.PersonalizeGuest(context.Background(), "docker", "c1")
+		res, err := a.PersonalizeGuest(context.Background(), "docker", "c1", providersdk.GuestPersonalizationOptions{})
 		resultCh <- result{res, err}
 	}()
 

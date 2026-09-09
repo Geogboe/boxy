@@ -81,7 +81,7 @@ func (dp *DriverProvisioner) Allocate(ctx context.Context, pool model.Pool, res 
 		return providersdk.AllocationResult{}, fmt.Errorf("allocate pool %q: %w", pool.Name, err)
 	}
 	if gp, ok := driver.(providersdk.GuestPersonalizer); ok {
-		result, err := gp.PersonalizeGuest(ctx, string(res.ID))
+		result, err := gp.PersonalizeGuest(ctx, string(res.ID), providersdk.GuestPersonalizationOptions{ApplyNetwork: true})
 		if err != nil {
 			return providersdk.AllocationResult{}, err
 		}
@@ -119,7 +119,7 @@ func (dp *DriverProvisioner) PersonalizeGuestForPool(ctx context.Context, pool m
 	if !ok {
 		return nil, nil
 	}
-	return gp.PersonalizeGuest(ctx, string(res.ID))
+	return gp.PersonalizeGuest(ctx, string(res.ID), providersdk.GuestPersonalizationOptions{ApplyNetwork: false})
 }
 
 func (dp *DriverProvisioner) Destroy(ctx context.Context, pool model.Pool, res model.Resource) error {

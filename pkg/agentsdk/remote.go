@@ -617,10 +617,13 @@ func (a *RemoteAgent) Allocate(ctx context.Context, provider providersdk.Type, i
 // collapse to nil, nil here so callers fall back to the generic Allocate
 // path exactly as EmbeddedAgent's callers do (see
 // internal/pool/provisioner_agent.go's AgentProvisioner.Allocate).
-func (a *RemoteAgent) PersonalizeGuest(ctx context.Context, provider providersdk.Type, id string) (*providersdk.GuestPersonalizationResult, error) {
+func (a *RemoteAgent) PersonalizeGuest(ctx context.Context, provider providersdk.Type, id string, opts providersdk.GuestPersonalizationOptions) (*providersdk.GuestPersonalizationResult, error) {
 	res, err := a.call(ctx, &boxyagentv1.Command{
 		ProviderType: string(provider),
-		Op:           &boxyagentv1.Command_PersonalizeGuest{PersonalizeGuest: &boxyagentv1.PersonalizeGuestCommand{ResourceId: id}},
+		Op: &boxyagentv1.Command_PersonalizeGuest{PersonalizeGuest: &boxyagentv1.PersonalizeGuestCommand{
+			ResourceId:   id,
+			ApplyNetwork: opts.ApplyNetwork,
+		}},
 	})
 	if err != nil {
 		return nil, err

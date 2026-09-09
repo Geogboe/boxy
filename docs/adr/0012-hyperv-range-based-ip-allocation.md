@@ -307,3 +307,56 @@ gap for both halves of what the original bug broke). This does not weaken
 check reads the guest's own configured state over the same lag-free VMBus
 channel used to apply it, not the host-side adapter view ADR-0012 already
 distrusts.
+
+## Update (2026-09-08)
+
+#358 deferred the actual in-guest network apply (`applyRangeIP`/
+`applyStaticIP`, i.e. `assignGuestIP`) from admission time (pool preheat) to
+allocation time (a sandbox actually claiming the resource) — a
+preheated-but-unclaimed pool VM has no reason to be network-reachable.
+`providersdk.GuestPersonalizer.PersonalizeGuest` gained a
+`GuestPersonalizationOptions{ApplyNetwork bool}` parameter, threaded through
+`agentsdk.GuestPersonalizingAgent`, the `PersonalizeGuestCommand.apply_network`
+gRPC field (additive, proto3 zero value `false` — the safe default),
+`AgentProvisioner`/`DriverProvisioner`, and both drivers' generic `Allocate`.
+Only allocation-time calls (`AgentProvisioner.Allocate`,
+`DriverProvisioner.Allocate`, `hyperv.Driver.Allocate`) set `ApplyNetwork:
+true`; admission-time (`PersonalizeGuestForPool`, both provisioners) and
+promotion (`internal/pool/promotion.go`'s `rotateCredential`, which calls
+`PersonalizeGuestForPool`) always pass `false`.
+
+This ADR's mode discriminator is unaffected: `reserveRangeEntry` still
+writes the ledger entry at `Create` time with no `AssignedAddress`, so
+`ledgerLookup`'s `hasRangeEntry` result — which selects the range branch
+over the static_ip/DHCP branches — is identical on both the admission and
+allocation calls. Only the actual `reserveAddress` (which claims a real
+address from the range) and the in-guest apply are deferred; skipping them
+at admission time means a preheated resource's ledger entry legitimately
+has an empty `AssignedAddress` until its first `Allocate`, not a bug.
+
+Credential rotation and verification are unaffected by `ApplyNetwork` and
+always run: both use PowerShell Direct over VMBus, which needs no network,
+so admission-time personalization still rotates the guest off its bootstrap
+credential before the resource reaches Ready — only the network identity
+is deferred. `GuestPersonalizationResult.AccessDetails` reports no
+`host`/`ssh_host` when the network was not applied, rather than an empty or
+stale value, so a Ready-but-unclaimed resource's properties never advertise
+a network address it does not actually have.
+
+DHCP-mode resources (neither `static_ip` nor `range` configured) are
+unaffected either way: reading the address Hyper-V/DHCP already assigned
+via `vmIP` is an observation, not an application of boxy-managed network
+configuration, so it runs regardless of `ApplyNetwork`.
+
+One accepted, minor behavior change: a misconfigured Linux guest paired
+with `range`/`static_ip` mode (both boxy-managed-IP-unsupported for Linux —
+see `guestIPUnsupportedOnLinux`) previously failed at admission time,
+immediately quarantining the resource. It now succeeds at admission (the
+apply is skipped entirely, so the unsupported-mode check is never reached)
+and instead fails at the first `Allocate`. This trades earlier
+misconfiguration detection for the same network-exposure reduction that is
+this change's actual goal; a Linux pool that legitimately never configures
+`range`/`static_ip` (the supported configuration) is unaffected.
+
+The issue's broader overlay-network/management-sidecar question is out of
+scope for this change and remains open.

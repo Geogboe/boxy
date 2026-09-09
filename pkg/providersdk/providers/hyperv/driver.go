@@ -22,6 +22,11 @@ import (
 	"github.com/Geogboe/boxy/pkg/vmsdk"
 )
 
+var (
+	_ providersdk.Driver            = (*Driver)(nil)
+	_ providersdk.GuestPersonalizer = (*Driver)(nil)
+)
+
 // Driver implements providersdk.Driver for local Hyper-V.
 // VM lifecycle (New-VM, Start-VM, etc.) uses powershell.exe on the host.
 // Guest exec uses PowerShell Direct via go-psrp (Windows) or SSH (Linux).
@@ -1102,7 +1107,7 @@ if (Test-Path '%s') { Remove-Item '%s' -Force }
 // --- Allocate ---
 
 func (d *Driver) Allocate(ctx context.Context, id string) (map[string]any, error) {
-	result, err := d.PersonalizeGuest(ctx, id)
+	result, err := d.PersonalizeGuest(ctx, id, providersdk.GuestPersonalizationOptions{ApplyNetwork: true})
 	if err != nil {
 		return nil, err
 	}
@@ -1112,18 +1117,26 @@ func (d *Driver) Allocate(ctx context.Context, id string) (map[string]any, error
 	return result.AccessDetails.ToProperties(), nil
 }
 
-// PersonalizeGuest applies guest networking and rotates the guest's admin
-// credential for the VM identified by id. It holds a per-resource lock for
-// the duration (see lockPersonalize) so that overlapping invocations for the
-// same VM — preheat and allocation both call this, and either can retry —
-// cannot interleave their PowerShell Direct sessions against the same guest.
+// PersonalizeGuest rotates the guest's admin credential for the VM
+// identified by id and, when opts.ApplyNetwork is true, also applies its
+// static_ip/range-mode network configuration. It holds a per-resource lock
+// for the duration (see lockPersonalize) so that overlapping invocations for
+// the same VM — admission (opts.ApplyNetwork=false) and allocation
+// (opts.ApplyNetwork=true) both call this, and either can retry — cannot
+// interleave their PowerShell Direct sessions against the same guest.
 // Failures emit a structured event distinguishing which phase failed (see
 // personalizeFailureStep) rather than a single undifferentiated bucket.
-func (d *Driver) PersonalizeGuest(ctx context.Context, id string) (*providersdk.GuestPersonalizationResult, error) {
+//
+// Deferring network application to allocation time is deliberate (#358): a
+// preheated-but-unclaimed pool VM should not become network-reachable just
+// because it reached Ready. Credential rotation and verification always run
+// regardless of opts.ApplyNetwork — they use PowerShell Direct over VMBus,
+// which needs no network. See ADR-0012's 2026-09 change note.
+func (d *Driver) PersonalizeGuest(ctx context.Context, id string, opts providersdk.GuestPersonalizationOptions) (*providersdk.GuestPersonalizationResult, error) {
 	unlock := d.lockPersonalize(id)
 	defer unlock()
 	start := time.Now()
-	result, err := d.personalizeGuestLocked(ctx, id)
+	result, err := d.personalizeGuestLocked(ctx, id, opts)
 	elapsed := time.Since(start)
 	if err != nil {
 		step := personalizeFailureStep(err)
@@ -1204,7 +1217,7 @@ func personalizeFailureStep(err error) string {
 
 // personalizeGuestLocked is PersonalizeGuest's implementation, run only
 // while the caller holds this VM's personalize lock.
-func (d *Driver) personalizeGuestLocked(ctx context.Context, id string) (*providersdk.GuestPersonalizationResult, error) {
+func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts providersdk.GuestPersonalizationOptions) (*providersdk.GuestPersonalizationResult, error) {
 	timer := newPersonalizeStepTimer(id)
 
 	notes, err := d.readNotes(ctx, id)
@@ -1251,30 +1264,49 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string) (*provid
 	// The IP ledger's own presence for id is the mode discriminator: if a
 	// range-mode entry exists, it wins; otherwise fall back to today's
 	// static_ip Notes check, unchanged. See ADR-0012.
+	//
+	// opts.ApplyNetwork gates the two boxy-managed modes (range and
+	// static_ip) only (#358): a preheated-but-unclaimed resource must not
+	// have its network identity applied and become reachable. The ledger
+	// entry itself (reserveRangeEntry) is written at Create time, so
+	// hasRangeEntry — the mode discriminator — is unaffected by deferring
+	// the actual address reservation/apply to allocation time; it still
+	// selects the same branch on both calls. DHCP-mode resources (neither
+	// range nor static_ip configured) are unaffected either way: reading
+	// the address Hyper-V/DHCP already assigned via vmIP is not "applying"
+	// anything boxy-managed, so it always runs.
 	rangeEntry, hasRangeEntry, err := d.ledgerLookup(id)
 	if err != nil {
 		return nil, fmt.Errorf("read IP ledger for %s: %w", id, err)
 	}
 
 	var ip string
-	if hasRangeEntry {
-		// Range mode trusts the address it just reserved and applied as
-		// authoritative — it does NOT re-read it back via vmIP below the
-		// way static_ip mode does. Get-VMNetworkAdapter's IPAddresses is
-		// populated by guest integration services and can lag a fresh
-		// New-NetIPAddress by several seconds, returning a stale
-		// pre-assignment address or an empty list; the ledger's own
-		// AssignedAddress has no such lag. See ADR-0012.
-		ip, err = d.applyRangeIP(ctx, id, guestOS, guestUser, bootstrap.Password, rangeEntry)
-		if err != nil {
-			return nil, fmt.Errorf("apply range IP for VM %s: %w", id, err)
+	switch {
+	case hasRangeEntry:
+		if opts.ApplyNetwork {
+			// Range mode trusts the address it just reserved and applied as
+			// authoritative — it does NOT re-read it back via vmIP below the
+			// way static_ip mode does. Get-VMNetworkAdapter's IPAddresses is
+			// populated by guest integration services and can lag a fresh
+			// New-NetIPAddress by several seconds, returning a stale
+			// pre-assignment address or an empty list; the ledger's own
+			// AssignedAddress has no such lag. See ADR-0012.
+			ip, err = d.applyRangeIP(ctx, id, guestOS, guestUser, bootstrap.Password, rangeEntry)
+			if err != nil {
+				return nil, fmt.Errorf("apply range IP for VM %s: %w", id, err)
+			}
 		}
-	} else {
-		if strings.TrimSpace(notes["boxy_net_static_ip"]) != "" {
+	case strings.TrimSpace(notes["boxy_net_static_ip"]) != "":
+		if opts.ApplyNetwork {
 			if err := d.applyStaticIP(ctx, id, guestOS, guestUser, bootstrap.Password, notes); err != nil {
 				return nil, fmt.Errorf("apply static IP for VM %s: %w", id, err)
 			}
+			ip, err = d.vmIP(ctx, vmName)
+			if err != nil {
+				return nil, fmt.Errorf("get IP for VM %q: %w", vmName, err)
+			}
 		}
+	default:
 		ip, err = d.vmIP(ctx, vmName)
 		if err != nil {
 			return nil, fmt.Errorf("get IP for VM %q: %w", vmName, err)
@@ -1321,22 +1353,31 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string) (*provid
 		return nil, fmt.Errorf("encode guest credential for %s: %w", id, err)
 	}
 
+	// ip is empty when opts.ApplyNetwork was false and this resource uses a
+	// boxy-managed network mode (range or static_ip): no network-reachable
+	// address was applied, so none is reported here (#358) — advertising a
+	// blank "host"/"ssh_host" on a Ready-but-unclaimed resource would be
+	// worse than advertising nothing.
 	var access map[string]string
 
 	if strings.EqualFold(guestOS, "linux") {
 		access = map[string]string{
 			"access":   "ssh",
-			"ssh_host": ip,
 			"ssh_port": "22",
 			"ssh_user": guestUser,
-			"ssh_cmd":  fmt.Sprintf("ssh %s@%s", guestUser, ip),
+		}
+		if ip != "" {
+			access["ssh_host"] = ip
+			access["ssh_cmd"] = fmt.Sprintf("ssh %s@%s", guestUser, ip)
 		}
 	} else {
 		access = map[string]string{
 			"access":    "winrm",
-			"host":      ip,
 			"user":      guestUser,
 			"psrp_vmid": id,
+		}
+		if ip != "" {
+			access["host"] = ip
 		}
 	}
 
@@ -1550,10 +1591,16 @@ func guestIPUnsupportedOnLinux(mechanism string) error {
 // ip/prefix/gateway/dns is all either needs to source, from Notes or the
 // ledger respectively.
 //
-// The script is idempotent and self-verifying (#235, fixed 2026-08-26): a
-// preheated resource is always personalized a second time on its first
-// Allocate, so re-applying to an already-configured guest is the normal
-// path, not an edge case. The original script removed the guest's existing
+// The script is idempotent and self-verifying (#235, fixed 2026-08-26):
+// before #358 (2026-09-08), a preheated resource was always personalized a
+// second time on its first Allocate, making re-application to an
+// already-configured guest the normal path rather than an edge case. #358
+// deferred the actual apply to allocation time, so a resource's network
+// configuration is now normally applied exactly once — but a retry after a
+// crash or transient failure (or a second Allocate of the same resource,
+// e.g. after a rollback) still re-applies to an already-configured guest,
+// so idempotency remains required, not just historically motivated. The
+// original script removed the guest's existing
 // IPv4 address but left its default route in place; New-NetIPAddress's own
 // -DefaultGateway then rejected the reapply ("Instance DefaultGateway
 // already exists") *after* the working address was already torn out,
