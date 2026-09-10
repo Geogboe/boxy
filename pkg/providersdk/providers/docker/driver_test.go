@@ -133,6 +133,10 @@ type mockDockerClient struct {
 	containerExecInspect func(ctx context.Context, execID string) (container.ExecInspect, error)
 	containerRemove      func(ctx context.Context, containerID string, options container.RemoveOptions) error
 	info                 func(ctx context.Context) (systemtypes.Info, error)
+	networkCreate        func(ctx context.Context, name string, options network.CreateOptions) (network.CreateResponse, error)
+	networkConnect       func(ctx context.Context, networkID, containerID string, config *network.EndpointSettings) error
+	networkDisconnect    func(ctx context.Context, networkID, containerID string, force bool) error
+	networkRemove        func(ctx context.Context, networkID string) error
 }
 
 func (m *mockDockerClient) ImageInspect(ctx context.Context, imageID string, opts ...client.ImageInspectOption) (imagetypes.InspectResponse, error) {
@@ -185,6 +189,18 @@ func (m *mockDockerClient) Info(ctx context.Context) (systemtypes.Info, error) {
 		return m.info(ctx)
 	}
 	return systemtypes.Info{}, nil
+}
+func (m *mockDockerClient) NetworkCreate(ctx context.Context, name string, options network.CreateOptions) (network.CreateResponse, error) {
+	return m.networkCreate(ctx, name, options)
+}
+func (m *mockDockerClient) NetworkConnect(ctx context.Context, networkID, containerID string, config *network.EndpointSettings) error {
+	return m.networkConnect(ctx, networkID, containerID, config)
+}
+func (m *mockDockerClient) NetworkDisconnect(ctx context.Context, networkID, containerID string, force bool) error {
+	return m.networkDisconnect(ctx, networkID, containerID, force)
+}
+func (m *mockDockerClient) NetworkRemove(ctx context.Context, networkID string) error {
+	return m.networkRemove(ctx, networkID)
 }
 
 // runningInspect returns an InspectResponse that looks like a running container.
