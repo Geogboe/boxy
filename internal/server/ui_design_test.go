@@ -50,6 +50,7 @@ func TestUIDesignLanguageDocumentsStableSurface(t *testing.T) {
 		".row-actions-toggle",
 		".badge-promoting",
 		".badge-recycling",
+		"--font-mono",
 	} {
 		if !strings.Contains(string(css), selector) {
 			t.Errorf("stylesheet missing documented selector %q", selector)

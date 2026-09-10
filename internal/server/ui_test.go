@@ -294,6 +294,51 @@ func TestUI_poolsRow_failedCountFoldedIntoMutedText(t *testing.T) {
 	}
 }
 
+// TestUI_poolsRow_expandedTableShowsUpdatedColumnAndAllFiveActions closes two
+// findings from re-validating #327 directly against its mockups with vision
+// (rather than structural/text checks alone): the mockup's expanded resource
+// table has a time-in-state column ("42s", "3m", "11m", ...) that the
+// original implementation dropped even though model.Resource.UpdatedAt
+// already carries the data, and the actions column's fixed 11rem width
+// silently clipped the fifth action (Inspect) off a fully-populated
+// Retry/Destroy/Logs/Copy ID/Inspect row -- present in the DOM, invisible on
+// screen. Both are asserted here since a Go template test can check text
+// presence, but only a live browser screenshot actually caught either one.
+func TestUI_poolsRow_expandedTableShowsUpdatedColumnAndAllFiveActions(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	if err := st.PutPool(ctx, model.Pool{Name: "pool-a"}); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	if err := st.PutResource(ctx, model.Resource{
+		ID: "failed-1", OriginPool: "pool-a", State: model.ResourceStateError,
+		UpdatedAt: time.Now().Add(-90 * time.Second),
+	}); err != nil {
+		t.Fatalf("PutResource: %v", err)
+	}
+	mux := server.NewTestMuxWithPoolAdmin(st, sandbox.New(st, nil), &fakePoolMaintenance{}, &poolAdminCleanup{})
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/pools", nil)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	body := w.Body.String()
+
+	if !strings.Contains(body, `<th scope="col" class="row-updated">Updated</th>`) {
+		t.Fatalf("resource table missing the Updated column header; body = %q", body)
+	}
+	if !strings.Contains(body, `<td class="row-updated">1m</td>`) {
+		t.Fatalf("resource row missing its humanized time-in-state value; body = %q", body)
+	}
+	for _, action := range []string{"Retry", "Destroy", "Logs", "Copy ID", "Inspect"} {
+		if !strings.Contains(body, ">"+action+"<") {
+			t.Fatalf("resource row missing action %q (a fixed-width actions column previously clipped it off screen while still rendering it); body = %q", action, body)
+		}
+	}
+}
+
 // TestUI_poolsRow_expandStatePreservedAcrossPoll guards a real bug found
 // during #327 UI validation: native <details open> is discarded whenever
 // htmx's 5s poll swaps #pools-fragment's innerHTML, because the replacement

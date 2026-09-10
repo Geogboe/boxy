@@ -535,6 +535,23 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   PII); neither was caused by #208's own changes, and conflating "PR is red"
   with "PR broke it" would have led to fixing the wrong branch. Root-cause
   before patching.
+- **A specific known flake on `windows-latest`'s `Test` job (2026-09-09):**
+  `t.TempDir()` cleanup can fail with `TempDir RemoveAll cleanup: unlinkat
+  ...: The directory is not empty` for any test under `internal/cli` that
+  spawns an agent via `runAgentServe`/`agent_serve_test.go` helpers into a
+  `t.TempDir()`-backed data dir (seen on both
+  `TestAgentServe_TokenRegistrationThenCertReconnect` and
+  `TestRunAgentServe_SetsDefaultLoggerSoPackageLevelLogsReachDiagnostics` —
+  different tests, same root cause: something still holds a file handle
+  open in that directory when Go's test cleanup tries to remove it,
+  Windows-only since POSIX allows removing a directory while a process
+  holds a handle into it but Windows does not). Reproduced identically
+  across four separate CI runs on PR #367, none of which touched
+  `internal/cli` or agent-serve code at all — confirmed pre-existing and
+  environmental, not caused by that PR. A plain rerun of the failed job
+  reliably goes green; don't chase this as a code bug without first
+  checking whether the failing test is even reachable from your branch's
+  changes (see the entry above).
 - **Fully validate locally before pushing, including the parts that are easy
   to skip because you already predict the result.** `task ci:validate` (or
   the specific local scan/lint commands it wraps) must actually be run and

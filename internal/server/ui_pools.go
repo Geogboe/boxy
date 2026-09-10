@@ -116,7 +116,7 @@ func makePoolView(configured model.Pool, resources []model.Resource, active jobs
 		}
 		resourceView := poolResourceView{
 			ID: string(resource.ID), Type: resource.Type, Profile: resource.Profile,
-			State: resource.State, Provider: resource.Provider.Name,
+			State: resource.State, Provider: resource.Provider.Name, UpdatedAt: resource.UpdatedAt,
 		}
 		if isHistoricalResource(resource) {
 			view.HistoricalResources = append(view.HistoricalResources, resourceView)

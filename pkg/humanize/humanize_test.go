@@ -3,6 +3,7 @@ package humanize_test
 import (
 	"math"
 	"testing"
+	"time"
 
 	"github.com/Geogboe/boxy/pkg/humanize"
 )
@@ -29,6 +30,31 @@ func TestCommaInt(t *testing.T) {
 	for _, tc := range cases {
 		if got := humanize.CommaInt(tc.in); got != tc.want {
 			t.Errorf("CommaInt(%d) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestShortDuration(t *testing.T) {
+	cases := []struct {
+		in   time.Duration
+		want string
+	}{
+		{0, "0s"},
+		{42 * time.Second, "42s"},
+		{59 * time.Second, "59s"},
+		{60 * time.Second, "1m"},
+		{3 * time.Minute, "3m"},
+		{59 * time.Minute, "59m"},
+		{time.Hour, "1h"},
+		{11*time.Hour + 30*time.Minute, "11h"},
+		{23*time.Hour + 59*time.Minute, "23h"},
+		{24 * time.Hour, "1d"},
+		{48 * time.Hour, "2d"},
+		{-time.Second, "—"},
+	}
+	for _, tc := range cases {
+		if got := humanize.ShortDuration(tc.in); got != tc.want {
+			t.Errorf("ShortDuration(%s) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }
