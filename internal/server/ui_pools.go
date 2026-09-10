@@ -104,6 +104,7 @@ func makePoolView(configured model.Pool, resources []model.Resource, active jobs
 		ConfigDrain:         configured.Drain.ConfigDeclared,
 		OperatorDrain:       configured.Drain.Operator,
 		Resources:           make([]poolResourceView, 0, len(resources)),
+		AllocatedResources:  make([]poolResourceView, 0),
 		HistoricalResources: make([]poolResourceView, 0),
 	}
 	providerNames := make(map[string]struct{})
@@ -121,10 +122,20 @@ func makePoolView(configured model.Pool, resources []model.Resource, active jobs
 			ID: string(resource.ID), Type: resource.Type, Profile: resource.Profile,
 			State: resource.State, Provider: resource.Provider.Name, UpdatedAt: resource.UpdatedAt,
 		}
-		if isHistoricalResource(resource) {
+		switch {
+		case isHistoricalResource(resource):
 			view.HistoricalResources = append(view.HistoricalResources, resourceView)
 			view.HistoricalCount++
-		} else {
+		case resource.State == model.ResourceStateAllocated:
+			// #366: an allocated resource has left the pool for a sandbox —
+			// it still counts toward TotalCount/max_total (the pool can't
+			// provision a replacement past that cap until this one is
+			// destroyed or released), but showing it inline among Ready/
+			// Provisioning inventory reads as if it's still idle in the
+			// pool. Keep it visually distinct instead.
+			view.AllocatedResources = append(view.AllocatedResources, resourceView)
+			view.AllocatedCount++
+		default:
 			view.Resources = append(view.Resources, resourceView)
 		}
 		if resource.Provider.Name != "" {

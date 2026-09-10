@@ -149,6 +149,8 @@ type poolView struct {
 	OperatorDrain       bool
 	ProviderNames       []string
 	Resources           []poolResourceView
+	AllocatedResources  []poolResourceView
+	AllocatedCount      int
 	HistoricalResources []poolResourceView
 	HistoricalCount     int
 }

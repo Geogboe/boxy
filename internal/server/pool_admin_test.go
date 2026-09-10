@@ -354,6 +354,55 @@ func TestUI_poolMutationsRequireCSRFAndRedirectWithBanner(t *testing.T) {
 	}
 }
 
+// TestUI_poolViewsSeparateAllocatedResourcesFromPoolInventory guards against
+// #366: an allocated resource has left the pool for a sandbox, but used to
+// render identically to (and inline with) Ready/Provisioning resources in
+// the pools tables, reading as if it were still idle pool inventory. It
+// still counts toward TotalCount/max_total (that invariant must not
+// change — see AGENTS.md's computeToProvisionCount notes), but the pools
+// list, pool detail, and unassigned-pool views must all show it in a
+// visually distinct "allocated to sandboxes" section instead.
+func TestUI_poolViewsSeparateAllocatedResourcesFromPoolInventory(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	if err := st.PutPool(ctx, model.Pool{
+		Name: "pool-a", Policies: model.PoolPolicies{Preheat: model.PreheatPolicy{MinReady: 1, MaxTotal: 3}},
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeContainer, ExpectedProfile: model.ResourceProfileDefault},
+	}); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	for _, resource := range []model.Resource{
+		{ID: "ready-1", OriginPool: "pool-a", Type: model.ResourceTypeContainer, Profile: model.ResourceProfileDefault, State: model.ResourceStateReady, Provider: model.ProviderRef{Name: "docker"}},
+		{ID: "allocated-1", OriginPool: "pool-a", Type: model.ResourceTypeContainer, Profile: model.ResourceProfileDefault, State: model.ResourceStateAllocated, Provider: model.ProviderRef{Name: "docker"}},
+	} {
+		if err := st.PutResource(ctx, resource); err != nil {
+			t.Fatalf("PutResource: %v", err)
+		}
+	}
+	mux := server.NewTestMuxWithPoolAdmin(st, sandbox.New(st, nil), &fakePoolMaintenance{}, nil)
+
+	list := httptest.NewRecorder()
+	mux.ServeHTTP(list, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/pools", nil)))
+	if !strings.Contains(list.Body.String(), "allocated to sandboxes") {
+		t.Fatalf("pools list missing allocated-resources section: %q", list.Body.String())
+	}
+	if !strings.Contains(list.Body.String(), "2 total · max 3") {
+		t.Fatal("pools list total count must still include the allocated resource")
+	}
+	if strings.Contains(list.Body.String(), `action="/ui/pools/pool-a/resources/allocated-1/destroy"`) {
+		t.Fatal("pools list must not offer a one-click Destroy on a resource still allocated to a sandbox")
+	}
+
+	detail := httptest.NewRecorder()
+	mux.ServeHTTP(detail, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/pools/pool-a", nil)))
+	if !strings.Contains(detail.Body.String(), "Allocated to sandboxes") {
+		t.Fatalf("pool detail missing allocated-resources card: %q", detail.Body.String())
+	}
+	if !strings.Contains(detail.Body.String(), "allocated-1") {
+		t.Fatal("pool detail must still list the allocated resource somewhere")
+	}
+}
+
 // TestUI_poolResourceInspectUsesSessionAuth guards against #352: the pool
 // tables' "Inspect" link used to point straight at the bearer-token-only
 // /api/v1/resources/{id} REST endpoint, which an authenticated *UI session*
