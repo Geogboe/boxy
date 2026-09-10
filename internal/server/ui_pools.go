@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -9,8 +10,10 @@ import (
 	"strconv"
 
 	"github.com/Geogboe/boxy/internal/pool"
+	"github.com/Geogboe/boxy/pkg/httpjson"
 	"github.com/Geogboe/boxy/pkg/jobs"
 	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/store"
 )
 
 func buildPoolViews(pools []model.Pool, resources []model.Resource, poolJobs []jobs.Job) []poolView {
@@ -169,6 +172,30 @@ func poolStatus(view poolView, resources []model.Resource, active jobs.Job, hasA
 
 func isHistoricalResource(resource model.Resource) bool {
 	return resource.State == model.ResourceStateReleased || resource.State == model.ResourceStateDestroyed
+}
+
+// handleInspectResourceUI is the session-authenticated counterpart to
+// GET /api/v1/resources/{id} (#352). The pools/sandboxes templates' "Inspect"
+// links used to point straight at the bearer-token-only API route, which a
+// cookie-authenticated UI session cannot call — a browser hitting that link
+// while signed into the dashboard sees "missing or invalid bearer token"
+// even though the operator is authenticated. This route reuses the same
+// admin-only visibility as the pool resource tables it's linked from.
+func (s *Server) handleInspectResourceUI(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireUIAdmin(w, r); !ok {
+		return
+	}
+	id := model.ResourceID(r.PathValue("id"))
+	res, err := s.store.GetResource(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		httpjson.Error(w, http.StatusNotFound, "resource not found")
+		return
+	}
+	if err != nil {
+		httpjson.Error(w, http.StatusInternalServerError, "failed to get resource")
+		return
+	}
+	httpjson.Write(w, http.StatusOK, res)
 }
 
 func requireUIAdmin(w http.ResponseWriter, r *http.Request) (string, bool) {
