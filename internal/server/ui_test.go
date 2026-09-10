@@ -413,6 +413,11 @@ func TestUI_sandboxes_renders(t *testing.T) {
 	if strings.Contains(body, `class="badge badge-ready badge-transient"`) {
 		t.Fatalf("ready sandbox should not be marked badge-transient, body = %q", body)
 	}
+	// #347: like the resources table, the sandboxes table had no
+	// table-scroll wrapper and could clip on a narrow viewport.
+	if !strings.Contains(body, `<div class="table-scroll"><table>`) {
+		t.Fatalf("sandboxes table is missing its table-scroll wrapper; body = %q", body)
+	}
 }
 
 // TestUI_sandboxes_resourceDetailExpands closes #255: the sandboxes table
@@ -562,6 +567,15 @@ func TestUI_resources_listsAcrossPoolsAndSandboxes(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("resources page missing %q; body = %q", want, body)
 		}
+	}
+	// #347: the resources table has no width cap on its widest columns
+	// (IDs, pool names, provider names), and .table-card's own
+	// "overflow: hidden" clips anything wider than the viewport with no
+	// way to reach the cut-off columns. Every other data table
+	// (pools/agents/catalog/service-keys) wraps its <table> in
+	// .table-scroll (overflow-x: auto) for exactly this reason.
+	if !strings.Contains(body, `<div class="table-scroll"><table>`) {
+		t.Fatalf("resources table is missing its table-scroll wrapper; body = %q", body)
 	}
 	// Neither PutResource call above set CreatedAt, so both rows carry a
 	// zero time.Time -- must render as an em dash, not the misleading
