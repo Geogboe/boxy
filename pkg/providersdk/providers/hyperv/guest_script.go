@@ -41,3 +41,16 @@ func rotateGuestCredential(ctx context.Context, exec vmsdk.GuestExec, guestOS, u
 	cmd, args := rotationCommand(guestOS, username, password)
 	return exec.Exec(ctx, cmd, args...)
 }
+
+func verifyGuestCredential(ctx context.Context, exec vmsdk.GuestExec, guestOS string) (*vmsdk.ExecResult, error) {
+	if strings.EqualFold(guestOS, "linux") {
+		return exec.Exec(ctx, "id", "-u")
+	}
+	if scriptExec, ok := exec.(vmsdk.GuestExecScript); ok {
+		// This runs only in the separate session authenticated with the new
+		// credential. Query the runspace identity without launching another
+		// native process in the verification path.
+		return scriptExec.ExecScript(ctx, `if ([string]::IsNullOrWhiteSpace([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)) { throw 'authenticated identity unavailable' }`)
+	}
+	return exec.Exec(ctx, "whoami")
+}

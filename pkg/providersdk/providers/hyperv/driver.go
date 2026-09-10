@@ -1407,11 +1407,7 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts pro
 	}
 	defer verificationSession.Close(ctx) //nolint:errcheck,gosec // best-effort close; the verification result itself is what's checked below.
 	timer.step("connect_rotated_credential")
-	probeCommand := []string{"whoami"}
-	if strings.EqualFold(guestOS, "linux") {
-		probeCommand = []string{"id", "-u"}
-	}
-	verificationResult, err := verificationSession.Exec(ctx, probeCommand[0], probeCommand[1:]...)
+	verificationResult, err := verifyGuestCredential(ctx, verificationSession, guestOS)
 	if err != nil {
 		return nil, fmt.Errorf("verify rotated guest credential for %s: %w", id, err)
 	}

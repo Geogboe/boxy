@@ -66,7 +66,7 @@ func TestPersonalizeDirectScriptsPreserveCredentialBoundary(t *testing.T) {
 				t.Fatal("expected separate verification session")
 			}
 			old, fresh := sessions[0], sessions[1]
-			if len(old.scripts) != 2 || old.execCount != 0 || fresh.execCount != 1 || len(fresh.scripts) != 0 {
+			if len(old.scripts) != 2 || old.execCount != 0 || fresh.execCount != 0 || len(fresh.scripts) != 1 {
 				t.Fatal("incorrect script or verification path")
 			}
 			if old.closeCount != 1 || fresh.closeCount != 1 {
