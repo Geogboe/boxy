@@ -157,37 +157,79 @@ func (d *Driver) segmentLedgerPathOrDefault() string {
 	return "network-segments.json"
 }
 
+// segments returns the Driver's single, shared *segmentLedger instance,
+// constructing it exactly once. Building a fresh *segmentLedger (and
+// therefore a fresh, unshared diskjson.Store/sync.Mutex) on every call would
+// defeat the ledger's own concurrency guarantee: two concurrent
+// CreateSegment/allocate calls would each lock their own independent mutex
+// over the same underlying file, both could read the same stale snapshot,
+// and the second Update's write would silently clobber the first's. Mirrors
+// the ledgerStore/ledgerOnce pattern already used for the IP-range ledger
+// above.
 func (d *Driver) segments() *segmentLedger {
-	return newSegmentLedger(d.segmentLedgerPathOrDefault())
+	d.segmentLedgerOnce.Do(func() {
+		d.segmentLedger = newSegmentLedger(d.segmentLedgerPathOrDefault())
+	})
+	return d.segmentLedger
 }
 
 // CreateSegment creates a dedicated Internal vSwitch + NAT for one sandbox.
 // Internal, not Private: Private would also cut off the host-provided NAT
 // (all internet access), which is the wrong default until egress policy
 // exists to restrict it deliberately (see the design spec's Decision 1).
+//
+// The switch's host-side adapter is referenced directly by its deterministic
+// name, "vEthernet (<switch name>)" — the same convention networkrange.go's
+// NetworkRanges already establishes for Internal/Private switches — rather
+// than a fuzzy Get-NetAdapter | Where-Object -like lookup. The wildcard form
+// was both a correctness bug (a substring match plus Select-Object -First 1
+// can silently pick the wrong adapter, e.g. when one switch name is a
+// substring of another's or of an unrelated host NIC) and a quoting defect
+// (the pattern was interpolated into a double-quoted PowerShell string,
+// which still expands $variables/backticks — psq() only protects
+// single-quoted contexts, so it provided no real protection there
+// regardless of input source). Task-2 code review findings 2 (and the
+// review's separate Minor quoting-consistency note, resolved as a side
+// effect) and the independent security scan finding on this same line.
+//
+// On failure, the sandbox's ledger entry is deliberately NOT released (see
+// the comment on the error-handling branch below for why).
 func (d *Driver) CreateSegment(ctx context.Context, sandboxID string) (providersdk.SegmentRef, error) {
 	alloc, err := d.segments().allocate(sandboxID)
 	if err != nil {
 		return "", fmt.Errorf("allocate segment CIDR for sandbox %q: %w", sandboxID, err)
 	}
+	adapterAlias := fmt.Sprintf("vEthernet (%s)", alloc.SwitchName)
 	_, err = d.ps(ctx, fmt.Sprintf(`
 $ErrorActionPreference = 'Stop'
 if (-not (Get-VMSwitch -Name '%s' -ErrorAction SilentlyContinue)) {
     New-VMSwitch -SwitchName '%s' -SwitchType Internal | Out-Null
 }
-$adapter = Get-NetAdapter | Where-Object { $_.Name -like "*%s*" } | Select-Object -First 1
-if (-not (Get-NetIPAddress -InterfaceAlias $adapter.Name -IPAddress '%s' -ErrorAction SilentlyContinue)) {
-    New-NetIPAddress -IPAddress '%s' -PrefixLength 29 -InterfaceAlias $adapter.Name | Out-Null
+if (-not (Get-NetIPAddress -InterfaceAlias '%s' -IPAddress '%s' -ErrorAction SilentlyContinue)) {
+    New-NetIPAddress -IPAddress '%s' -PrefixLength 29 -InterfaceAlias '%s' | Out-Null
 }
 if (-not (Get-NetNat -Name '%s' -ErrorAction SilentlyContinue)) {
     New-NetNat -Name '%s' -InternalIPInterfaceAddressPrefix '%s' | Out-Null
 }
 `,
-		psq(alloc.SwitchName), psq(alloc.SwitchName), psq(alloc.SwitchName),
-		psq(alloc.Gateway), psq(alloc.Gateway),
+		psq(alloc.SwitchName), psq(alloc.SwitchName),
+		psq(adapterAlias), psq(alloc.Gateway), psq(alloc.Gateway), psq(adapterAlias),
 		psq(alloc.SwitchName), psq(alloc.SwitchName), psq(alloc.CIDR)))
 	if err != nil {
-		_ = d.segments().release(sandboxID)
+		// Deliberately not releasing the ledger entry here (task-2 code
+		// review finding 3): allocate()'s own idempotency contract exists
+		// specifically so a retried CreateSegment for the same sandboxID
+		// gets back the same CIDR/gateway/switch name, not a fresh one. If
+		// the PowerShell step fails partway (e.g. New-VMSwitch succeeds but
+		// New-NetNat fails) and this released the entry, a retry would
+		// allocate a *different* CIDR while the partially-created
+		// VMSwitch/IP from the first attempt is still bound to the *old*
+		// one — the script's own "if not exists" idempotency checks would
+		// then paper over a real mismatch instead of cleanly retrying
+		// against the same identity. Retrying with the same ledger entry is
+		// what makes this safe: the deterministic switch name and CIDR are
+		// unchanged, so the "if not exists" checks above correctly resume
+		// wherever the previous attempt left off.
 		return "", fmt.Errorf("create segment for sandbox %q: %w", sandboxID, err)
 	}
 	return providersdk.SegmentRef(alloc.SwitchName), nil

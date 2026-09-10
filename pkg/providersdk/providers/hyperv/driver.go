@@ -118,6 +118,17 @@ type Driver struct {
 	// Config.DataDir already is when a boxy config file's directory is
 	// known (RelativePathResolver).
 	segmentLedgerPath string
+
+	// segmentLedger/segmentLedgerOnce cache the *segmentLedger instance so
+	// every CreateSegment/AttachToSegment/DestroySegment call on this Driver
+	// shares one diskjson.Store — and therefore one sync.Mutex — over
+	// network-segments.json. Mirrors ledgerStore/ledgerOnce above: building
+	// a fresh *segmentLedger (and fresh, unshared mutex) per call would
+	// defeat the ledger's own concurrency guarantee, letting two concurrent
+	// allocate() calls each read a stale snapshot and race their writes
+	// (task-2 code review finding 1).
+	segmentLedger     *segmentLedger
+	segmentLedgerOnce sync.Once
 }
 
 // lockPersonalize serializes PersonalizeGuest invocations for the same VM
