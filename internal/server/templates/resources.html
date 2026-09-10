@@ -25,7 +25,7 @@
 {{define "resources_table_fragment"}}
 {{if .ResourceLimitHit}}<div class="table-card-subtitle bounded-note">Showing the first 1,000 resources. Use filters or the API for larger inventories.</div>{{end}}
 {{if .Resources}}
-<table>
+<div class="table-scroll"><table>
   <thead>
     <tr>
       <th scope="col">ID</th>
@@ -52,7 +52,7 @@
     </tr>
     {{end}}
   </tbody>
-</table>
+</table></div>
 {{else}}
 <div class="empty">{{if .ResourceHistory}}No historical resources{{else}}No resources{{end}}</div>
 {{end}}
