@@ -24,12 +24,35 @@ resources are split across two hosts (because that's where capacity was)
 has no way for those resources to reach each other at all — each host's
 switch is a separate, unconnected L2 segment.
 
-This design closes both gaps, plus adds egress policy (an outbound
-allow-list instead of open NAT) and just-in-time (JIT) native-protocol
-access to one resource (SSH/RDP) without permanently exposing it.
+This design closes both gaps and adds just-in-time (JIT) native-protocol
+access to one resource (SSH/RDP) without permanently exposing it. Egress
+policy (restricting *what* a sandbox can reach outbound) turned out to be
+its own real design problem once examined — see "Egress policy" under
+Non-goals — and is deliberately not part of this design.
 
 ### Non-goals for this design
 
+- **Egress policy (restricting what a sandbox can reach outbound).**
+  Examined during design review and found to be its own real design
+  problem, not a bullet point inside this one: does a rule apply
+  per-sandbox, per-pool, or globally? Who's allowed to define one
+  (operator only, or can a sandbox requester propose rules subject to
+  approval)? Does "allow github.com" mean HTTPS only, or any protocol on
+  that host? Does DNS resolution itself need to be controlled (open DNS
+  lets a sandbox exfiltrate data through query names alone, regardless of
+  what the firewall blocks afterward)? There's also a real mechanism
+  question underneath all of that: a firewall/NAT rule can only match IP
+  addresses, not hostnames (hostnames never appear in a packet — only in
+  the DNS lookup that preceded it), so a hostname-shaped allow-list
+  needs either IP/CIDR-only rules (blunt, IPs can rotate) or an actual
+  hostname-aware proxy in the path (accurate, but new infrastructure to
+  build and run). None of this is resolved here — it's a separate future
+  design session. **Interim default:** each sandbox's new private network
+  (Decision 1) gets unrestricted outbound NAT, matching the effectively
+  open internet access sandboxes already have today — this design changes
+  *isolation between sandboxes*, not what any one sandbox can already
+  reach outbound. Nothing here should be read as "sandboxes lose internet
+  access until egress policy ships."
 - **NAT traversal / relay fallback for hosts that cannot reach each other
   directly over UDP.** This assumes hosts running Boxy agents are
   operator-controlled infrastructure that can already reach each other
@@ -69,15 +92,22 @@ the host itself.
 
 ## Decisions
 
-### 1. Isolation is driver-native, not a deployed appliance — in scope
+### 1. Isolation is driver-native, automatic for every sandbox, not a deployed appliance — in scope
 
 Boxy already has a place for "know how to manage resources on this
 provider": the driver. Hyper-V's agent runs on the host with full host
-access already; creating a `Private`/`Internal` vSwitch and a NAT object
+access already; creating an `Internal` vSwitch and a NAT object
 (`New-VMSwitch`, `New-NetNat`) is the same *kind* of operation as creating
 a VM, one level up. Docker's own `docker network create` already gives an
 isolated bridge network per call, with no cross-network reachability by
 default.
+
+This is **automatic for every sandbox, not opt-in.** Today's leaky shared
+switch is a real bug (see "the actual gap" above), not a missing feature
+someone has to ask to fix — every sandbox gets its own segment
+unconditionally. The cost (one extra switch/network object created and
+torn down per sandbox) is worth paying universally rather than leaving the
+default leaky for anyone who doesn't know to ask.
 
 **New optional driver capability, `providersdk.NetworkIsolator`**
 (detected by type assertion, same pattern as every other optional
@@ -87,16 +117,23 @@ capability in this package):
 type NetworkIsolator interface {
     CreateSegment(ctx context.Context, sandboxID model.SandboxID) (SegmentRef, error)
     DestroySegment(ctx context.Context, ref SegmentRef) error
-    AllowEgress(ctx context.Context, ref SegmentRef, rule EgressRule) error
-    RevokeEgress(ctx context.Context, ref SegmentRef, rule EgressRule) error
 }
 ```
 
-- Hyper-V implements it: a dedicated `Private` (single host) or `Internal`
-  (needs NAT) vSwitch per sandbox, `New-NetNat` for egress, Windows
-  Firewall rules scoped to that NAT for the allow-list.
-- Docker implements it: a dedicated bridge network per sandbox, iptables
-  rules scoped to that network's NAT for the allow-list.
+(Egress control — restricting what a segment can reach outbound — is
+deliberately not part of this interface; see "Egress policy" under
+Non-goals. A future design would extend this capability, not replace it.)
+
+- Hyper-V implements it: a dedicated `Internal` vSwitch per sandbox (host
+  and VMs can talk to it, but it's not bridged to any other sandbox's
+  switch) plus `New-NetNat` bound to that switch's subnet, unrestricted —
+  see the egress non-goal above for why this is open, not filtered, for
+  now. (An `Internal` switch, not `Private`: `Private` would also cut off
+  the host-provided NAT, i.e. all internet access — the wrong default
+  until egress policy exists to restrict it deliberately instead.)
+- Docker implements it: a dedicated bridge network per sandbox — Docker's
+  own default NAT/egress behavior is unchanged, only the per-sandbox
+  network boundary is new.
 - devfactory does **not** implement it, initially — same reasoning as its
   documented `GuestPersonalizer` non-goal (one real consumer's mechanics,
   no second real provider yet to validate a simulated contract against).
@@ -112,9 +149,11 @@ whatever shared switch/network config it used before.
 ### 2. Cross-host connectivity is a new provider-neutral `pkg/` primitive — in scope
 
 **`pkg/meshnet`** owns the agent-side `wireguard-go`
-(`golang.zx2c4.com/wireguard`) device lifecycle: one WireGuard interface
-**per sandbox that spans hosts**, never a shared interface across
-sandboxes — this preserves the "one sandbox's bug can't leak into
+(`golang.zx2c4.com/wireguard`) device lifecycle. Each host a given
+sandbox actually touches gets its own WireGuard interface **for that
+sandbox specifically** — a sandbox spanning 3 hosts means 3 interfaces
+(one per host), never one interface shared across different sandboxes on
+the same host. This preserves the "one sandbox's bug can't leak into
 another's" property at the OS-object level, the same way the per-sandbox
 vSwitch does. `meshnet` is what a `NetworkIsolator` implementation plugs
 its segment's routing into when a sandbox needs a cross-host hop; drivers
@@ -125,32 +164,34 @@ per segment, on demand. The private key **never leaves the agent
 process** — not sent to `boxy serve`, not persisted anywhere else. Only
 the public key is reported to `boxy serve` as part of segment creation.
 
+**The reachable endpoint address is operator-configured, not
+auto-detected.** A host can be multi-homed (several NICs/IPs), and
+guessing which one is reachable by other Boxy hosts is exactly the kind
+of inference this project avoids elsewhere (e.g. `hyperv.Config.DataDir`
+requires an explicit path rather than inferring one). Each agent's own
+config declares the address it should be dialed at for mesh traffic — the
+same explicit-over-inferred posture ADR-0012/ADR-0013 already establish
+for this driver.
+
 **Peer introduction rides the existing ADR-0005 transport.** `boxy serve`
 already holds an authenticated gRPC connection to every agent (mTLS,
 per-agent identity). When a sandbox's resources land on Host-1 and
-Host-2, `boxy serve` collects each host's public key + reachable endpoint
-(from segment creation) and relays Host-2's info to Host-1's agent and the
-mirror to Host-2's, over that existing channel — no new transport, no
-extra registration step. Each agent's `meshnet` component then peers
-directly with the other, and the actual encrypted tunnel is host-to-host,
-direct UDP — `boxy serve` is never in that data path, only in the
-introduction. This is architecturally the same role Headscale plays for
-Tailscale (coordinator, not relay); Boxy already has the coordinator, so
-nothing analogous to Headscale itself needs to be stood up separately.
+Host-2, `boxy serve` collects each host's public key (from segment
+creation) and its configured mesh endpoint, and relays Host-2's info to
+Host-1's agent and the mirror to Host-2's, over that existing channel —
+no new transport, no extra registration step. Each agent's `meshnet`
+component then peers directly with the other, and the actual encrypted
+tunnel is host-to-host, direct UDP — `boxy serve` is never in that data
+path, only in the introduction. This is architecturally the same role
+Headscale plays for Tailscale (coordinator, not relay); Boxy already has
+the coordinator, so nothing analogous to Headscale itself needs to be
+stood up separately.
 
 A single-host sandbox never touches `meshnet` at all — WireGuard peer
 count scales with concurrent *multi-host* sandboxes, not total sandbox
 count.
 
-### 3. Egress is allow-list, deny-by-default — in scope
-
-A sandbox spec may declare an egress allow-list (hostnames/CIDRs). At
-`CreateSegment` time (and via `AllowEgress`/`RevokeEgress` for later
-changes), the driver translates it into scoped NAT/firewall rules on that
-segment. No rule, no route out — a missing allow-list entry fails closed,
-not open.
-
-### 4. JIT native-protocol access rides the existing control-plane connections, not WireGuard — in scope
+### 3. JIT native-protocol access rides the existing control-plane connections, not WireGuard — in scope
 
 Initially designed as an embedded WireGuard client in the CLI (so an
 operator's laptop could dial a resource directly, mirroring the
@@ -171,7 +212,10 @@ Boxy already has the equivalent chain: `boxy` CLI → HTTPS API → `boxy
 serve` → gRPC/mTLS → the target agent (ADR-0005). JIT access reuses it:
 
 - `POST /api/v1/sandboxes/{id}/connect` (new endpoint; request names
-  `resource_id` + `port`) creates a `model.JITSession`
+  `resource_id` + `port`), gated the same way exec already is
+  (`APIKeyRoleUser`/`APIKeyRoleAdmin`, restricted to the caller's own
+  sandboxes — same authorization shape ADR-0007/ADR-0008 already
+  established, not a new access model), creates a `model.JITSession`
   (`SandboxID`, `ResourceID`, `Port`, `Requester`, `ExpiresAt`) — persisted
   the same way `model.Sandbox` already is — and upgrades the HTTP
   connection to a bidirectional byte stream, following the same streaming
@@ -200,10 +244,10 @@ stuck mid-transition after a crash) re-evaluates every `JITSession`
 against its `ExpiresAt` and re-issues `close` for anything already past
 due — no new recovery mechanism, the existing one generalizes.
 
-### 5. `AccessBroker` extension point — interface defined now, no implementation
+### 4. `AccessBroker` extension point — interface defined now, no implementation
 
 For operators who already run Teleport or Boundary, Boxy's own JIT
-session/relay (Decision 4) is redundant machinery duplicating what those
+session/relay (Decision 3) is redundant machinery duplicating what those
 products already do better (session recording, audit, RBAC, a transport
 already proven to cross hostile networks). Rather than build a concrete
 integration now, this design reserves the seam:
@@ -218,7 +262,7 @@ type AccessBroker interface {
 }
 ```
 
-Unconfigured (the default): Decision 4's relay is what `boxy connect`
+Unconfigured (the default): Decision 3's relay is what `boxy connect`
 uses. Configured: sandbox fulfillment/deletion calls
 `Register`/`DeregisterSandbox` instead, and `boxy connect` becomes a thin
 wrapper printing whatever connection instructions the broker's own
@@ -245,11 +289,10 @@ against instead of retrofitting one later.
   observable (not just vanishing), and both get an orphan sweep on
   crash/reconnect, following the same reasoning ADR-0006 already documents
   for why an earlier narrower split left a real recovery gap.
-- Egress `AllowEgress`/`RevokeEgress` failures do not roll back segment
-  creation — a segment with no successfully-applied egress rules is still
-  a valid, fully-isolated (deny-all-egress) segment; the sandbox request
-  itself surfaces the rule-application failure rather than failing silently
-  or over-permitting.
+- A `JITSession`'s create call fails closed: if the agent cannot dial
+  `resource:port` (wrong port, resource not listening, resource gone), the
+  session is never persisted and the CLI surfaces the dial failure
+  directly rather than handing back a listener that silently does nothing.
 
 ## Testing
 
