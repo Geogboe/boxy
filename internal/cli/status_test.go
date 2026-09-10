@@ -99,6 +99,54 @@ func TestRunStatus_CountsFailedSandboxesSeparately(t *testing.T) {
 	}
 }
 
+// TestRunStatus_UserRoleGetsFriendlyPoolsMessage guards against #360: a
+// user-role API key can log in and create/exec/delete its own sandboxes
+// (#359), but GET /api/v1/pools stays auditor/admin-only by design (pool
+// inventory is administrative detail, not something sandbox-request
+// construction needs). Before this fix, boxy status surfaced that 403 as a
+// raw "fetch pools: request ... returned HTTP 403: ..." error and printed
+// nothing at all -- including the sandbox summary a user-role key can
+// legitimately see. It must instead explain the restriction in place of the
+// Pools line and still show Sandboxes.
+func TestRunStatus_UserRoleGetsFriendlyPoolsMessage(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("GET /api/v1/pools", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = fmt.Fprint(w, `{"error":"insufficient role"}`)
+	})
+	mux.HandleFunc("GET /api/v1/sandboxes", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `[{"id":"sb-1","name":"test","status":"ready"}]`)
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cmd := newStatusCommand()
+	stdout, stderr := captureCommandOutput(cmd)
+	cmd.SetArgs([]string{"--server", srv.URL})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("status error: %v", err)
+	}
+
+	output := stdout.String()
+	for _, want := range []string{"healthy", "administrator or auditor role", "1 active, 0 failed"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("expected %q in output, got: %s", want, output)
+		}
+	}
+	if strings.Contains(output, "resources ready") {
+		t.Fatalf("output should not fabricate a pools summary line: %s", output)
+	}
+	if got := stderr.String(); got != "" {
+		t.Fatalf("stderr = %q, want empty", got)
+	}
+}
+
 func TestRunStatus_ServerDown(t *testing.T) {
 	cmd := newStatusCommand()
 	stdout, stderr := captureCommandOutput(cmd)

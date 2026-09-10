@@ -114,6 +114,11 @@ boxy
 │     Error: cannot reach server at 127.0.0.1:9090
 │     Is `boxy serve` running?
 │
+│   $ boxy status  (user-role API key -- pool inventory is auditor/admin-only)
+│     Server:     https://127.0.0.1:9090 (healthy)
+│     Pools:      unavailable (viewing pool inventory requires an administrator or auditor role)
+│     Sandboxes:  1 active, 0 failed
+│
 │
 ├── login                                      Store an operator API key in the OS keyring
 │   ├── --server <url>                           Server URL (overrides env/global defaults)
