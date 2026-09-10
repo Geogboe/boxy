@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.68](https://github.com/Geogboe/boxy/compare/v0.1.67...v0.1.68) (2026-09-10)
+
+
+### Bug Fixes
+
+* address Copilot review findings on PR [#367](https://github.com/Geogboe/boxy/issues/367) ([ebf1568](https://github.com/Geogboe/boxy/commit/ebf15685c00131a29ee6897438dde63641856826))
+* **server:** close [#327](https://github.com/Geogboe/boxy/issues/327)'s visual-elegance gap against its mockups ([380c006](https://github.com/Geogboe/boxy/commit/380c006b53d001611adbc699ddab0b189d013ca8))
+
+
+### Documentation
+
+* note the windows-latest t.TempDir() cleanup flake found on PR [#367](https://github.com/Geogboe/boxy/issues/367) ([f982c45](https://github.com/Geogboe/boxy/commit/f982c4503120103c43f2676c96cf4b951a8b4df6))
+* write up post-0.1.66 batch learnings (ADR, UI patterns, PR-review gate) ([a5f48d3](https://github.com/Geogboe/boxy/commit/a5f48d3fed5655d50bcca4dcd5d8c35814799014))
+
 ## [0.1.67](https://github.com/Geogboe/boxy/compare/v0.1.66...v0.1.67) (2026-09-09)
 
 
