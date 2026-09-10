@@ -326,7 +326,7 @@ func TestUI_poolsRow_expandedTableShowsUpdatedColumnAndAllFiveActions(t *testing
 	}
 	body := w.Body.String()
 
-	if !strings.Contains(body, `<th scope="col">Updated</th>`) {
+	if !strings.Contains(body, `<th scope="col" class="row-updated">Updated</th>`) {
 		t.Fatalf("resource table missing the Updated column header; body = %q", body)
 	}
 	if !strings.Contains(body, `<td class="row-updated">1m</td>`) {
