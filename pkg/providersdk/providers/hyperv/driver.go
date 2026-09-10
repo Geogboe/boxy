@@ -25,6 +25,7 @@ import (
 var (
 	_ providersdk.Driver            = (*Driver)(nil)
 	_ providersdk.GuestPersonalizer = (*Driver)(nil)
+	_ providersdk.NetworkIsolator   = (*Driver)(nil)
 )
 
 // Driver implements providersdk.Driver for local Hyper-V.
@@ -110,6 +111,13 @@ type Driver struct {
 	// mirrors internal/pool.Manager.lockPool's per-key mutex-map pattern.
 	personalizeLocksMu sync.Mutex
 	personalizeLocks   map[string]*sync.Mutex
+
+	// segmentLedgerPath is where the per-sandbox network-segment CIDR
+	// ledger is persisted (see network_isolation.go). Empty uses the
+	// package default "network-segments.json", resolved the same way
+	// Config.DataDir already is when a boxy config file's directory is
+	// known (RelativePathResolver).
+	segmentLedgerPath string
 }
 
 // lockPersonalize serializes PersonalizeGuest invocations for the same VM
@@ -292,6 +300,7 @@ func New(cfg *Config) (*Driver, error) {
 		memoryBudgetMB:         budget,
 		memoryBudgetConfigured: true,
 		ledgerStore:            diskjson.New(filepath.Join(dataDir, ledgerFilename), newLedgerData),
+		segmentLedgerPath:      filepath.Join(dataDir, "network-segments.json"),
 	}, nil
 }
 
