@@ -1371,7 +1371,7 @@ func TestDriver_PersonalizeGuest_LogsStepTiming(t *testing.T) {
 
 	out := buf.String()
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	for _, step := range []string{"read_notes", "resolve_bootstrap_credential", "resolve_vm_name", "apply_network", "rotate_credential", "verify_credential"} {
+	for _, step := range []string{"read_notes", "resolve_bootstrap_credential", "apply_network", "rotate_credential", "verify_credential"} {
 		line := findLine(t, lines, "step="+step)
 		if !strings.Contains(line, "elapsed_ms=") || !strings.Contains(line, "total_elapsed_ms=") {
 			t.Fatalf("step %q line missing elapsed_ms/total_elapsed_ms; got:\n%s", step, line)

@@ -1133,9 +1133,9 @@ func (d *Driver) Allocate(ctx context.Context, id string) (map[string]any, error
 // regardless of opts.ApplyNetwork — they use PowerShell Direct over VMBus,
 // which needs no network. See ADR-0012's 2026-09 change note.
 func (d *Driver) PersonalizeGuest(ctx context.Context, id string, opts providersdk.GuestPersonalizationOptions) (*providersdk.GuestPersonalizationResult, error) {
+	start := time.Now()
 	unlock := d.lockPersonalize(id)
 	defer unlock()
-	start := time.Now()
 	result, err := d.personalizeGuestLocked(ctx, id, opts)
 	elapsed := time.Since(start)
 	if err != nil {
@@ -1155,7 +1155,7 @@ func (d *Driver) PersonalizeGuest(ctx context.Context, id string, opts providers
 }
 
 // personalizeStepTimer logs each major phase of guest personalization at
-// debug level with its own elapsed duration, so an operator watching normal
+// info level with its own elapsed duration, so an operator watching normal
 // (non-error, non-timeout) allocations can see exactly where time goes
 // instead of only learning about a step after it fails or times out (#355).
 // This is deliberately independent of the pool-reconcile PolicyController's
@@ -1185,7 +1185,7 @@ func (t *personalizeStepTimer) step(name string) {
 	// the structured attrs) so they remain visible in `boxy diagnostics
 	// logs`'s default table view, which prints only timestamp/level/
 	// component/message and not arbitrary attrs (#355).
-	slog.Debug(fmt.Sprintf("hyperv guest personalization step %q took %s (%s elapsed total)", name, stepElapsed, totalElapsed),
+	slog.Info(fmt.Sprintf("hyperv guest personalization step %q took %s (%s elapsed total)", name, stepElapsed, totalElapsed),
 		"component", "hyperv", "provider", "hyperv",
 		"operation", "personalize", "step", name,
 		"resource", t.id,
@@ -1252,11 +1252,15 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts pro
 		return nil, fmt.Errorf("generate guest credential for %s: %w", id, err)
 	}
 
-	vmName, err := d.vmNameFromID(ctx, id)
-	if err != nil {
-		return nil, fmt.Errorf("resolve VM name for %s: %w", id, err)
+	// Managed range networking already verifies the address in the guest.
+	// Resolve host integration metadata only when an IP readback needs it.
+	readIP := func() (string, error) {
+		vmName, err := d.vmNameFromID(ctx, id)
+		if err != nil {
+			return "", fmt.Errorf("resolve VM name for %s: %w", id, err)
+		}
+		return d.vmIP(ctx, vmName)
 	}
-	timer.step("resolve_vm_name")
 
 	// Apply network configuration inside the guest via PowerShell Direct
 	// (VMBus — no network required) before querying the IP. This is the
@@ -1301,6 +1305,7 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts pro
 			return fmt.Errorf("open guest session for %s: %w", id, err)
 		}
 		oldSession = session
+		timer.step("connect_current_credential")
 		return nil
 	}
 	// Registered immediately after openOld is defined -- not after the
@@ -1359,15 +1364,15 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts pro
 			if err := d.applyStaticIP(ctx, oldSession, guestOS, notes); err != nil {
 				return nil, fmt.Errorf("apply static IP for VM %s: %w", id, err)
 			}
-			ip, err = d.vmIP(ctx, vmName)
+			ip, err = readIP()
 			if err != nil {
-				return nil, fmt.Errorf("get IP for VM %q: %w", vmName, err)
+				return nil, fmt.Errorf("get IP for VM %q: %w", id, err)
 			}
 		}
 	default:
-		ip, err = d.vmIP(ctx, vmName)
+		ip, err = readIP()
 		if err != nil {
-			return nil, fmt.Errorf("get IP for VM %q: %w", vmName, err)
+			return nil, fmt.Errorf("get IP for VM %q: %w", id, err)
 		}
 	}
 	timer.step("apply_network")
@@ -1376,8 +1381,7 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts pro
 		return nil, err
 	}
 
-	rotationCmd, rotationArgs := rotationCommand(guestOS, guestUser, newPassword)
-	rotationResult, err := oldSession.Exec(ctx, rotationCmd, rotationArgs...)
+	rotationResult, err := rotateGuestCredential(ctx, oldSession, guestOS, guestUser, newPassword)
 	if err != nil {
 		return nil, fmt.Errorf("rotate guest credential for %s: %w", id, err)
 	}
@@ -1392,6 +1396,7 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts pro
 	// connection below.
 	closeErr := oldSession.Close(ctx)
 	oldSession = nil
+	timer.step("close_current_credential")
 	if closeErr != nil {
 		slog.Warn("hyperv: close guest session after rotation", "resource_id", id, "error", closeErr)
 	}
@@ -1401,6 +1406,7 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts pro
 		return nil, fmt.Errorf("reconnect with rotated guest credential for %s: %w", id, err)
 	}
 	defer verificationSession.Close(ctx) //nolint:errcheck,gosec // best-effort close; the verification result itself is what's checked below.
+	timer.step("connect_rotated_credential")
 	probeCommand := []string{"whoami"}
 	if strings.EqualFold(guestOS, "linux") {
 		probeCommand = []string{"id", "-u"}
@@ -1757,6 +1763,16 @@ func (d *Driver) assignGuestIP(ctx context.Context, exec vmsdk.GuestExec, guestO
 	}
 	gateway = strings.TrimSpace(gateway)
 	dns = strings.TrimSpace(dns)
+	if scriptExec, ok := exec.(vmsdk.GuestExecScript); ok {
+		result, err := scriptExec.ExecScript(ctx, assignIPScript, ip, prefix, gateway, dns)
+		if err != nil {
+			return fmt.Errorf("run static IP script: %w", err)
+		}
+		if result == nil || result.ExitCode != 0 {
+			return fmt.Errorf("static IP script exited %d", resultExitCode(result))
+		}
+		return nil
+	}
 
 	// Build the PowerShell script to assign the address inside the guest.
 	// We target the first non-disabled adapter ordered by interface index.
