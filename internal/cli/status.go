@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -59,17 +60,27 @@ func runStatus(ctx context.Context, opts statusOpts, cmd *cobra.Command) error {
 	out := cmd.OutOrStdout()
 	_, _ = fmt.Fprintf(out, "  Server:     %s (healthy)\n", base)
 
-	// Pools
+	// Pools. GET /api/v1/pools is auditor/admin-only by design (#359
+	// scoped user-role access to login and sandbox-request construction,
+	// not full administrative inventory) -- a user-role key legitimately
+	// 403s here. That's a newly-*reachable* rough edge now that user-role
+	// login itself works (#360): explain the restriction in place of the
+	// Pools line instead of failing the whole command, so a user-role
+	// caller still sees the Sandboxes summary it does have access to.
 	pools, err := fetchJSON[[]model.Pool](ctx, client, base+"/api/v1/pools")
-	if err != nil {
+	var poolsErr *apiError
+	switch {
+	case errors.As(err, &poolsErr) && poolsErr.StatusCode == http.StatusForbidden:
+		_, _ = fmt.Fprintf(out, "  Pools:      unavailable (viewing pool inventory requires an administrator or auditor role)\n")
+	case err != nil:
 		return fmt.Errorf("fetch pools: %w", err)
+	default:
+		totalResources := 0
+		for _, p := range pools {
+			totalResources += len(p.Inventory.Resources)
+		}
+		_, _ = fmt.Fprintf(out, "  Pools:      %d configured, %d resources ready\n", len(pools), totalResources)
 	}
-
-	totalResources := 0
-	for _, p := range pools {
-		totalResources += len(p.Inventory.Resources)
-	}
-	_, _ = fmt.Fprintf(out, "  Pools:      %d configured, %d resources ready\n", len(pools), totalResources)
 
 	// Sandboxes. Counted deliberately (a switch over the known
 	// model.SandboxStatus* constants) rather than by excluding just
