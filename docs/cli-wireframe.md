@@ -449,6 +449,12 @@ boxy
 │   │   │   $ boxy agent service install --instance-name test1 --user --config boxy.yaml --server s:9091
 │   │   │     ✓ boxy-agent-test1 installed and started (config: .boxy-agent-test1/service.yaml, log: .boxy-agent-test1/service.log)
 │   │   │
+│   │   │   $ boxy agent service install --config boxy.yaml --server s:9091  (provider config invalid or stale)
+│   │   │     Error: invalid provider config in boxy.yaml: create driver for provider type "hyperv":
+│   │   │            memory_budget_mb is required
+│   │   │     (fails before writing service.yaml or registering the service -- this remote agent's own
+│   │   │      copy of providers[].config drifted from the server's; update both files)
+│   │   │
 │   │   ├── uninstall                              Remove the installed service
 │   │   │   ├── --instance-name <name>                Target a named instance (default: the unnamed instance)
 │   │   │   ├── --user                                Target the --user instance (must match how it was installed)

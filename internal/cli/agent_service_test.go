@@ -230,6 +230,52 @@ func TestAgentServiceInstall_PersistsProviderConfigsBaseDirFromConfigFile(t *tes
 	}
 }
 
+// TestAgentServiceInstall_InvalidProviderConfigFailsFastWithConfigPath
+// closes #349's "cheaper alternative": a remote-agent deployment carries its
+// own copy of providers[].config, separate from the server's, and a new
+// required field (e.g. hyperv's memory_budget_mb, added in v0.1.65) is easy
+// to update in one file and forget in the other. Before this fix, `agent
+// service install --config` never validated provider config at all -- it
+// wrote service.yaml and registered the OS service unconditionally, so the
+// missing field was only discovered later when the installed service
+// actually started, as a bare "memory_budget_mb is required" with no
+// indication of which config file needed fixing. Install must now fail fast,
+// before registering anything, with the offending config file's path in the
+// error.
+func TestAgentServiceInstall_InvalidProviderConfigFailsFastWithConfigPath(t *testing.T) {
+	withElevated(t, true)
+	m := &fakeManager{}
+	withFakeSvcManager(t, m)
+
+	configDir := t.TempDir()
+	boxyConfigPath := filepath.Join(configDir, "boxy.yaml")
+	// A hyperv provider instance with no memory_budget_mb -- required since
+	// v0.1.65, with no default (see hyperv.Config.effectiveMemoryBudgetMB).
+	if err := os.WriteFile(boxyConfigPath, []byte("providers:\n  - name: hyperv-local\n    type: hyperv\n    config: {}\npools: []\n"), 0o600); err != nil {
+		t.Fatalf("write boxy.yaml: %v", err)
+	}
+
+	err := runAgentServiceInstall(newTestCmd(&bytes.Buffer{}), agentServiceInstallOpts{
+		agentOpts: agentServeOpts{
+			server:     "boxy-server:9091",
+			configPath: boxyConfigPath,
+			dataDir:    filepath.Join(t.TempDir(), ".boxy-agent"),
+		},
+	})
+	if err == nil {
+		t.Fatal("expected an error for a provider config missing a required field")
+	}
+	if !strings.Contains(err.Error(), boxyConfigPath) {
+		t.Fatalf("error = %q, want it to name the offending config file %q", err.Error(), boxyConfigPath)
+	}
+	if !strings.Contains(err.Error(), "memory_budget_mb") {
+		t.Fatalf("error = %q, want it to name the missing field", err.Error())
+	}
+	if len(m.installedSpecs) != 0 {
+		t.Fatal("must not call Install when provider config validation fails")
+	}
+}
+
 func TestAgentServiceInstall_NotElevated_ErrorsWithoutInstalling(t *testing.T) {
 	withElevated(t, false)
 	m := &fakeManager{}
