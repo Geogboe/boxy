@@ -255,6 +255,7 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ui/pools/{name}", s.uiHandler(poolsTmpl, "pools", s.poolsData))
 	mux.HandleFunc("GET /ui/sandboxes", s.uiHandler(sandboxesTmpl, "sandboxes", s.sandboxesData))
 	mux.HandleFunc("GET /ui/resources", s.uiHandler(resourcesTmpl, "resources", s.resourcesData))
+	mux.HandleFunc("GET /ui/resources/{id}", s.handleInspectResourceUI)
 	mux.HandleFunc("GET /ui/agents", s.uiHandler(agentsTmpl, "agents", s.agentsData))
 	mux.HandleFunc("GET /ui/profile", s.uiHandler(profileTmpl, "profile", s.profileData))
 	mux.HandleFunc("GET /ui/service-keys", s.serviceKeysHandler(serviceKeysTmpl))

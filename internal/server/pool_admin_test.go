@@ -354,6 +354,65 @@ func TestUI_poolMutationsRequireCSRFAndRedirectWithBanner(t *testing.T) {
 	}
 }
 
+// TestUI_poolResourceInspectUsesSessionAuth guards against #352: the pool
+// tables' "Inspect" link used to point straight at the bearer-token-only
+// /api/v1/resources/{id} REST endpoint, which an authenticated *UI session*
+// (cookie-based, no bearer token) cannot call. /ui/resources/{id} is the
+// session-authenticated equivalent the templates now link to instead.
+func TestUI_poolResourceInspectUsesSessionAuth(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	if err := st.PutResource(ctx, model.Resource{
+		ID: "inspect-me", OriginPool: "pool-a", Type: model.ResourceTypeVM,
+		Profile: model.ResourceProfileDefault, State: model.ResourceStateReady,
+		Provider: model.ProviderRef{Name: "hyperv"},
+	}); err != nil {
+		t.Fatalf("PutResource: %v", err)
+	}
+	mux := server.NewTestMuxWithPoolAdmin(st, sandbox.New(st, nil), &fakePoolMaintenance{}, nil)
+
+	// The pool detail page's Inspect link must not point at the bearer-only
+	// API route any more.
+	detail := httptest.NewRecorder()
+	mux.ServeHTTP(detail, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/pools/pool-a", nil)))
+	if strings.Contains(detail.Body.String(), `href="/api/v1/resources/inspect-me"`) {
+		t.Fatal("pool detail Inspect link still points at the bearer-only API route")
+	}
+	if !strings.Contains(detail.Body.String(), `href="/ui/resources/inspect-me"`) {
+		t.Fatalf("pool detail Inspect link missing session-authed route: %q", detail.Body.String())
+	}
+
+	// The session-authed route itself works for an admin session and returns
+	// the resource as JSON.
+	inspect := httptest.NewRecorder()
+	mux.ServeHTTP(inspect, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/resources/inspect-me", nil)))
+	if inspect.Code != http.StatusOK {
+		t.Fatalf("inspect status = %d, body = %q", inspect.Code, inspect.Body.String())
+	}
+	var got model.Resource
+	if err := json.Unmarshal(inspect.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal inspect response: %v", err)
+	}
+	if got.ID != "inspect-me" || got.Provider.Name != "hyperv" {
+		t.Fatalf("inspect response = %+v", got)
+	}
+
+	// Unauthenticated requests redirect to login rather than 401ing like the
+	// bearer-only API route does.
+	unauth := httptest.NewRecorder()
+	mux.ServeHTTP(unauth, httptest.NewRequest(http.MethodGet, "/ui/resources/inspect-me", nil))
+	if unauth.Code != http.StatusFound {
+		t.Fatalf("unauthenticated inspect status = %d, want redirect", unauth.Code)
+	}
+
+	// Unknown resource IDs 404 instead of leaking a generic 500.
+	missing := httptest.NewRecorder()
+	mux.ServeHTTP(missing, server.AuthedRequest(httptest.NewRequest(http.MethodGet, "/ui/resources/does-not-exist", nil)))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing resource status = %d, want 404", missing.Code)
+	}
+}
+
 func TestUI_poolMutationsRejectNonAdminSession(t *testing.T) {
 	st := store.NewMemoryStore()
 	_ = st.PutPool(context.Background(), model.Pool{Name: "pool-a"})
