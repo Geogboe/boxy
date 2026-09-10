@@ -67,6 +67,7 @@ type SandboxExecutor interface {
 
 // Server is the HTTP server for the Boxy REST API and optional web UI.
 type Server struct {
+	notifyWork      func()
 	store           store.Store
 	sandboxMgr      *sandbox.Manager
 	poolMaintenance PoolMaintenance
@@ -97,6 +98,9 @@ type Server struct {
 
 // ServerOptions controls transport security and API authentication.
 type ServerOptions struct {
+	// NotifyWork must be nonblocking. It wakes reconciliation after a durable
+	// sandbox request; periodic reconciliation remains the recovery path.
+	NotifyWork      func()
 	AuthRequired    bool
 	InsecureHTTP    bool
 	TLSCertPEM      []byte
@@ -148,6 +152,7 @@ func NewWithOptions(st store.Store, sm *sandbox.Manager, pm PoolMaintenance, aa 
 		}
 	}
 	s := &Server{
+		notifyWork:      opts.NotifyWork,
 		store:           st,
 		sandboxMgr:      sm,
 		poolMaintenance: pm,
