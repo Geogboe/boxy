@@ -109,6 +109,19 @@ unconditionally. The cost (one extra switch/network object created and
 torn down per sandbox) is worth paying universally rather than leaving the
 default leaky for anyone who doesn't know to ask.
 
+**Segment creation cannot happen at resource-`Create` time.** Boxy
+provisions resources into a pool's ready inventory ahead of any sandbox
+(preheat) — `Create` runs with no sandbox in the picture yet, and a
+sandbox later *claims* an already-created, already-network-attached
+resource via a separate `Allocate` call. A per-sandbox segment therefore
+has to be created (once, on the sandbox's first claim) and each claimed
+resource *moved onto it* at allocation time, not creation time — the same
+timing this codebase already uses for network identity: `GuestPersonalizer`
+only applies IP configuration when `GuestPersonalizationOptions.ApplyNetwork`
+is true, which is set only at allocation, never at preheat, so an
+unclaimed preheated VM is never needlessly reconfigured. `NetworkIsolator`
+follows the same rule, via a third method:
+
 **New optional driver capability, `providersdk.NetworkIsolator`**
 (detected by type assertion, same pattern as every other optional
 capability in this package):
@@ -116,9 +129,19 @@ capability in this package):
 ```go
 type NetworkIsolator interface {
     CreateSegment(ctx context.Context, sandboxID model.SandboxID) (SegmentRef, error)
+    AttachToSegment(ctx context.Context, providerResourceID string, ref SegmentRef) error
     DestroySegment(ctx context.Context, ref SegmentRef) error
 }
 ```
+
+`AttachToSegment` moves an already-created resource off whatever
+pool-level switch/network it was created on and onto the sandbox's
+segment — for Hyper-V, `Connect-VMNetworkAdapter -SwitchName` (works on a
+running VM, no restart, and Hyper-V supports this as a live reconnect);
+for Docker, disconnect the container from its default network and connect
+it to the sandbox's dedicated one. **This must be fast — sandboxes need to
+be ready near-instantly, so this is a single lightweight reconnect
+operation, not anything that blocks on a slow provisioning-style step.**
 
 (Egress control — restricting what a segment can reach outbound — is
 deliberately not part of this interface; see "Egress policy" under
@@ -143,8 +166,10 @@ Non-goals. A future design would extend this capability, not replace it.)
   not devfactory.
 
 `SegmentRef` is an opaque, provider-defined identifier (switch/network
-name) a resource's own `Create` call is given to attach to, replacing
-whatever shared switch/network config it used before.
+name) `AttachToSegment` uses to know which segment to move a resource
+onto, and that new resources allocated later into the same sandbox reuse
+(one `CreateSegment` call per sandbox, many `AttachToSegment` calls — one
+per resource claimed into it).
 
 ### 2. Cross-host connectivity is a new provider-neutral `pkg/` primitive — in scope
 
@@ -274,12 +299,15 @@ against instead of retrofitting one later.
 
 ## Error Handling
 
-- `CreateSegment` runs, and must succeed, before any resource `Create`
-  call for that sandbox — a failure fails the sandbox cleanly with no
-  segment or resource left behind, matching the existing package-input
-  validation rule ("Check required package capabilities before provider
-  allocation begins; a validation error should not leave an allocated
-  resource behind").
+- `CreateSegment` runs, and must succeed, on a sandbox's first resource
+  claim, before that resource's `AttachToSegment` call — a failure fails
+  the claim cleanly rather than leaving a resource allocated but
+  unattached. `AttachToSegment` failing for a *later* resource claimed
+  into an already-segmented sandbox fails only that claim, not the whole
+  sandbox or its already-attached resources — matching the existing
+  package-input validation rule ("Check required package capabilities
+  before provider allocation begins; a validation error should not leave
+  an allocated resource behind").
 - For a multi-host sandbox, per-host `CreateSegment` calls happen first
   (each independently valid even for a single host); peering is only
   attempted once resources are confirmed to span hosts. A peering failure
