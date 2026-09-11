@@ -16,22 +16,34 @@ Set-LocalUser -Name $username -Password $secure -ErrorAction Stop`
 
 const assignIPScript = `param($ip, $prefix, $gateway, $dns)
 $ErrorActionPreference = 'Stop'
-$adapter = Get-NetAdapter | Where-Object { $_.Status -ne 'Disabled' } | Sort-Object InterfaceIndex | Select-Object -First 1
+$adapter = Get-CimInstance -Namespace root/StandardCimv2 -ClassName MSFT_NetAdapter -Filter 'Hidden = FALSE AND (InterfaceOperationalStatus <> 2 OR InterfaceAdminStatus <> 2)' | Sort-Object InterfaceIndex | Select-Object -First 1
 if ($null -eq $adapter) { throw 'no network adapter found in guest' }
-$existing = Get-NetIPAddress -InterfaceIndex $adapter.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
-if ($existing) { $existing | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue | Out-Null }
-$existingRoute = Get-NetRoute -InterfaceIndex $adapter.InterfaceIndex -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue
-if ($existingRoute) { $existingRoute | Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue | Out-Null }
-$parameters = @{ InterfaceIndex = $adapter.InterfaceIndex; IPAddress = $ip; PrefixLength = [int]$prefix }
-if ($gateway) { $parameters.DefaultGateway = $gateway }
-New-NetIPAddress @parameters | Out-Null
+$nativeGateway = if ($gateway) { $gateway } else { 'none' }
+& "$env:SystemRoot/System32/netsh.exe" interface ipv4 set address "name=$($adapter.InterfaceIndex)" source=static "address=$ip/$prefix" "gateway=$nativeGateway" store=persistent | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'static address command failed in guest' }
 $servers = @($dns.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-if ($servers.Count) { Set-DnsClientServerAddress -InterfaceIndex $adapter.InterfaceIndex -ServerAddresses $servers | Out-Null }
-$applied = Get-NetIPAddress -InterfaceIndex $adapter.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -eq $ip -and $_.AddressState -in @('Preferred', 'Tentative') }
+foreach ($family in @('ipv4', 'ipv6')) {
+    $familyServers = @($servers | Where-Object { if ($family -eq 'ipv6') { $_ -match ':' } else { $_ -notmatch ':' } })
+    if (!$familyServers.Count) { continue }
+    & "$env:SystemRoot/System32/netsh.exe" interface $family set dnsservers "name=$($adapter.InterfaceIndex)" source=static "address=$($familyServers[0])" validate=no | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'DNS configuration command failed in guest' }
+    for ($serverIndex = 1; $serverIndex -lt $familyServers.Count; $serverIndex++) {
+        & "$env:SystemRoot/System32/netsh.exe" interface $family add dnsservers "name=$($adapter.InterfaceIndex)" "address=$($familyServers[$serverIndex])" "index=$($serverIndex+1)" validate=no | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'DNS configuration command failed in guest' }
+    }
+    $addressFamily = if ($family -eq 'ipv6') { 23 } else { 2 }
+    $configuredDNS = Get-CimInstance -Namespace root/StandardCimv2 -ClassName MSFT_DNSClientServerAddress -Filter "InterfaceIndex = $($adapter.InterfaceIndex) AND AddressFamily = $addressFamily"
+    if (($configuredDNS.ServerAddresses -join ',') -ne ($familyServers -join ',')) { throw 'DNS servers did not apply in guest' }
+}
+$filter = "InterfaceIndex = $($adapter.InterfaceIndex) AND AddressFamily = 2"
+$applied = Get-CimInstance -Namespace root/StandardCimv2 -ClassName MSFT_NetIPAddress -Filter $filter | Where-Object { $_.IPAddress -eq $ip -and $_.PrefixLength -eq [int]$prefix -and $_.AddressState -in @(1,4) }
 if ($null -eq $applied) { throw 'address did not apply in guest' }
+$routes = @(Get-CimInstance -Namespace root/StandardCimv2 -ClassName MSFT_NetRoute -Filter $filter | Where-Object { $_.DestinationPrefix -eq '0.0.0.0/0' })
 if ($gateway) {
-    $route = Get-NetRoute -InterfaceIndex $adapter.InterfaceIndex -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue
+    $route = $routes | Where-Object { $_.NextHop -eq $gateway }
     if ($null -eq $route) { throw 'default gateway did not apply in guest' }
+} elseif ($routes.Count) {
+    throw 'unexpected default gateway remains in guest'
 }`
 
 func rotateGuestCredential(ctx context.Context, exec vmsdk.GuestExec, guestOS, username, password string) (*vmsdk.ExecResult, error) {
@@ -40,17 +52,4 @@ func rotateGuestCredential(ctx context.Context, exec vmsdk.GuestExec, guestOS, u
 	}
 	cmd, args := rotationCommand(guestOS, username, password)
 	return exec.Exec(ctx, cmd, args...)
-}
-
-func verifyGuestCredential(ctx context.Context, exec vmsdk.GuestExec, guestOS string) (*vmsdk.ExecResult, error) {
-	if strings.EqualFold(guestOS, "linux") {
-		return exec.Exec(ctx, "id", "-u")
-	}
-	if scriptExec, ok := exec.(vmsdk.GuestExecScript); ok {
-		// This runs only in the separate session authenticated with the new
-		// credential. Query the runspace identity without launching another
-		// native process in the verification path.
-		return scriptExec.ExecScript(ctx, `if ([string]::IsNullOrWhiteSpace([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)) { throw 'authenticated identity unavailable' }`)
-	}
-	return exec.Exec(ctx, "whoami")
 }

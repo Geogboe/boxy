@@ -1292,9 +1292,7 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts pro
 	// per step instead of once per credential). openOld is idempotent so
 	// whichever step needs the connection first opens it, and every
 	// subsequent step before the rotation boundary reuses the same one.
-	// verify_credential inherently needs a *new* connection under the
-	// just-rotated credential -- it is never merged into this session; see
-	// its own openGuestSession call below.
+	// Rotation succeeds when its command completes successfully; no second login is required.
 	var oldSession vmsdk.GuestSession
 	openOld := func(sshHost string) error {
 		if oldSession != nil {
@@ -1390,30 +1388,12 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts pro
 		return nil, fmt.Errorf("rotate guest credential for %s failed with exit code %d: %s", id, resultExitCode(rotationResult), resultOutput(rotationResult))
 	}
 
-	// rotate_credential was the last old-credential step; release the
-	// connection now instead of waiting for the deferred fallback so it
-	// isn't held open across verify_credential's separate, new-credential
-	// connection below.
+	// Release the session after the checked rotation command completes.
 	closeErr := oldSession.Close(ctx)
 	oldSession = nil
 	timer.step("close_current_credential")
 	if closeErr != nil {
 		slog.Warn("hyperv: close guest session after rotation", "resource_id", id, "error", closeErr)
-	}
-
-	verificationSession, err := d.openGuestSession(ctx, id, guestOS, guestUser, newPassword, ip)
-	if err != nil {
-		return nil, fmt.Errorf("reconnect with rotated guest credential for %s: %w", id, err)
-	}
-	defer verificationSession.Close(ctx) //nolint:errcheck,gosec // best-effort close; the verification result itself is what's checked below.
-	timer.step("connect_rotated_credential")
-	verificationResult, err := verifyGuestCredential(ctx, verificationSession, guestOS)
-	if err != nil {
-		return nil, fmt.Errorf("verify rotated guest credential for %s: %w", id, err)
-	}
-	timer.step("verify_credential")
-	if verificationResult == nil || verificationResult.ExitCode != 0 {
-		return nil, fmt.Errorf("verify rotated guest credential for %s failed with exit code %d: %s", id, resultExitCode(verificationResult), resultOutput(verificationResult))
 	}
 
 	credentialData, err := json.Marshal(map[string]string{
