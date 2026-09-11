@@ -25,6 +25,7 @@ import (
 var (
 	_ providersdk.Driver            = (*Driver)(nil)
 	_ providersdk.GuestPersonalizer = (*Driver)(nil)
+	_ providersdk.NetworkIsolator   = (*Driver)(nil)
 )
 
 // Driver implements providersdk.Driver for local Hyper-V.
@@ -110,6 +111,24 @@ type Driver struct {
 	// mirrors internal/pool.Manager.lockPool's per-key mutex-map pattern.
 	personalizeLocksMu sync.Mutex
 	personalizeLocks   map[string]*sync.Mutex
+
+	// segmentLedgerPath is where the per-sandbox network-segment CIDR
+	// ledger is persisted (see network_isolation.go). New resolves it under
+	// Config.DataDir, the same way ledgerStore already is when a boxy config
+	// file's directory is known (RelativePathResolver). Empty falls back to
+	// a per-Driver ephemeral temp location — see segments().
+	segmentLedgerPath string
+
+	// segmentLedger/segmentLedgerOnce cache the *segmentLedger instance so
+	// every CreateSegment/AttachToSegment/DestroySegment call on this Driver
+	// shares one diskjson.Store — and therefore one sync.Mutex — over
+	// segmentLedgerFilename. Mirrors ledgerStore/ledgerOnce above: building
+	// a fresh *segmentLedger (and fresh, unshared mutex) per call would
+	// defeat the ledger's own concurrency guarantee, letting two concurrent
+	// allocate() calls each read a stale snapshot and race their writes
+	// (task-2 code review finding 1).
+	segmentLedger     *segmentLedger
+	segmentLedgerOnce sync.Once
 }
 
 // lockPersonalize serializes PersonalizeGuest invocations for the same VM
@@ -292,6 +311,7 @@ func New(cfg *Config) (*Driver, error) {
 		memoryBudgetMB:         budget,
 		memoryBudgetConfigured: true,
 		ledgerStore:            diskjson.New(filepath.Join(dataDir, ledgerFilename), newLedgerData),
+		segmentLedgerPath:      filepath.Join(dataDir, segmentLedgerFilename),
 	}, nil
 }
 
