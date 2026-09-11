@@ -2,6 +2,7 @@ package hyperv
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -203,11 +204,27 @@ func blockForIndex(index int) (cidr string, gateway string, err error) {
 		return "", "", fmt.Errorf("%w: block index %d is outside the %d /%d blocks in %s",
 			errSegmentRangeExhausted, index, blocks, segmentPrefixLen, segmentBaseCIDR)
 	}
+	//nolint:gosec // index is bounded to [0, blocks) immediately above, and
+	// blocks is derived from segmentBaseCIDR's own prefix length, so the
+	// conversion cannot overflow uint32 for any base range this constant can
+	// express.
 	blockStart := baseInt + uint32(index)*segmentBlockSize
-	blockIP := net.IPv4(byte(blockStart>>24), byte(blockStart>>16), byte(blockStart>>8), byte(blockStart))
 	gatewayInt := blockStart + 1
-	gatewayIP := net.IPv4(byte(gatewayInt>>24), byte(gatewayInt>>16), byte(gatewayInt>>8), byte(gatewayInt))
-	return fmt.Sprintf("%s/%d", blockIP.String(), segmentPrefixLen), gatewayIP.String(), nil
+	return fmt.Sprintf("%s/%d", ipv4FromUint32(blockStart), segmentPrefixLen), ipv4FromUint32(gatewayInt), nil
+}
+
+// ipv4FromUint32 renders an IPv4 address held as a single uint32 (most
+// significant octet first, matching segmentBaseBounds' packing) as
+// dotted-quad text. The octets are taken through encoding/binary rather than
+// a hand-rolled shift-and-truncate chain: the shifts are correct either way,
+// but the
+// explicit byte(x>>16) truncations read to gosec (G115) as unchecked integer
+// conversions, and suppressing that on every octet would be noisier than
+// simply not writing the conversion.
+func ipv4FromUint32(addr uint32) string {
+	var octets [4]byte
+	binary.BigEndian.PutUint32(octets[:], addr)
+	return net.IPv4(octets[0], octets[1], octets[2], octets[3]).String()
 }
 
 // indexForBlock recovers a persisted block's index within segmentBaseCIDR:

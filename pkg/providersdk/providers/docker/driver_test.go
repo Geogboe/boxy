@@ -134,6 +134,7 @@ type mockDockerClient struct {
 	containerRemove      func(ctx context.Context, containerID string, options container.RemoveOptions) error
 	info                 func(ctx context.Context) (systemtypes.Info, error)
 	networkCreate        func(ctx context.Context, name string, options network.CreateOptions) (network.CreateResponse, error)
+	networkInspect       func(ctx context.Context, networkID string, options network.InspectOptions) (network.Inspect, error)
 	networkConnect       func(ctx context.Context, networkID, containerID string, config *network.EndpointSettings) error
 	networkDisconnect    func(ctx context.Context, networkID, containerID string, force bool) error
 	networkRemove        func(ctx context.Context, networkID string) error
@@ -192,6 +193,17 @@ func (m *mockDockerClient) Info(ctx context.Context) (systemtypes.Info, error) {
 }
 func (m *mockDockerClient) NetworkCreate(ctx context.Context, name string, options network.CreateOptions) (network.CreateResponse, error) {
 	return m.networkCreate(ctx, name, options)
+}
+
+// NetworkInspect defaults to reporting the network as absent rather than
+// returning a zero-value Inspect, which would read as "found" with an empty
+// ID. An empty mock represents a Docker host with none of this driver's
+// networks on it yet -- the state every first CreateSegment call sees.
+func (m *mockDockerClient) NetworkInspect(ctx context.Context, networkID string, options network.InspectOptions) (network.Inspect, error) {
+	if m.networkInspect != nil {
+		return m.networkInspect(ctx, networkID, options)
+	}
+	return network.Inspect{}, notFoundError{msg: "network " + networkID + " not found"}
 }
 func (m *mockDockerClient) NetworkConnect(ctx context.Context, networkID, containerID string, config *network.EndpointSettings) error {
 	return m.networkConnect(ctx, networkID, containerID, config)

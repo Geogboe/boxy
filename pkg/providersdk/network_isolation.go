@@ -25,11 +25,30 @@ type SegmentRef string
 type NetworkIsolator interface {
 	// CreateSegment creates a new, empty private network segment for the
 	// given sandbox. Called once per sandbox, on its first resource claim.
+	//
+	// Idempotent per sandboxID: repeated calls for the same sandbox return
+	// the same SegmentRef without erroring, rather than creating a second
+	// segment. Callers therefore retry a failed or interrupted CreateSegment
+	// freely; an implementation that created a fresh segment each time would
+	// strand the earlier ones, since only the ref the caller ends up holding
+	// is ever passed to DestroySegment.
+	//
+	// sandboxID is expected to already be safe for use inside a
+	// provider-specific resource name -- no spaces, and restricted to
+	// DNS-label-safe characters. Boxy's own sandbox IDs satisfy this by
+	// construction, so implementations are not required to sanitize or
+	// escape it further; they may derive a deterministic switch/network name
+	// from it directly.
 	CreateSegment(ctx context.Context, sandboxID string) (SegmentRef, error)
 
 	// AttachToSegment moves an already-created resource (identified by the
 	// driver's own provider-specific resource ID, as returned in
 	// Resource.ID from Driver.Create) onto the given segment.
+	//
+	// Idempotent: calling it again on a resource already attached to ref is
+	// not an error. A retry after a partially-applied attach must converge
+	// on the same end state -- the resource on ref and off everything else --
+	// rather than failing because some of that work was already done.
 	AttachToSegment(ctx context.Context, providerResourceID string, ref SegmentRef) error
 
 	// DestroySegment tears down a segment created by CreateSegment. Must be

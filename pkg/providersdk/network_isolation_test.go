@@ -73,5 +73,7 @@ func (nonIsolatingDriver) Read(ctx context.Context, id string) (*providersdk.Res
 func (nonIsolatingDriver) Update(ctx context.Context, id string, op providersdk.Operation) (*providersdk.Result, error) {
 	return nil, nil
 }
-func (nonIsolatingDriver) Delete(ctx context.Context, id string) error                    { return nil }
-func (nonIsolatingDriver) Allocate(ctx context.Context, id string) (map[string]any, error) { return nil, nil }
+func (nonIsolatingDriver) Delete(ctx context.Context, id string) error { return nil }
+func (nonIsolatingDriver) Allocate(ctx context.Context, id string) (map[string]any, error) {
+	return nil, nil
+}
