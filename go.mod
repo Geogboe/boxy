@@ -94,7 +94,9 @@ require (
 // the HvSocket backend, deferring to the caller's own ctx deadline instead.
 // See AGENTS.md's Architectural Notes for the full trace and the fork-vs-
 // upstream decision. Revisit if/when either fix lands upstream.
-replace github.com/smnsjas/go-psrpcore => github.com/Geogboe/go-psrpcore v0.0.0-20260828053523-50f4720fbe2b
+// The current core pin also fixes out-of-process acknowledgement flow control
+// and transport shutdown; see Geogboe/go-psrpcore#1.
+replace github.com/smnsjas/go-psrpcore => github.com/Geogboe/go-psrpcore v0.0.0-20260910211527-de55a2ef9798
 
 // go-psrp's fork also carries v0.2.2-boxy244 (#244): adds Client.
 // ExecuteCommand/ExecuteCommandStream, which build a pipeline via
@@ -102,5 +104,7 @@ replace github.com/smnsjas/go-psrpcore => github.com/Geogboe/go-psrpcore v0.0.0-
 // a text script string, so pkg/psdirect no longer has to reconstruct a
 // quoted PowerShell command line at all. No go-psrpcore change was needed
 // for this one -- CreatePipelineBuilder/AddCommand/AddArgument already
-// existed on the pinned commit above.
-replace github.com/smnsjas/go-psrp => github.com/Geogboe/go-psrp v0.2.2-boxy244
+// existed on the pinned commit above. The current pin also removes fixed
+// HvSocket lifecycle waits and cancels blocked initialization reads; see
+// Geogboe/go-psrp#1.
+replace github.com/smnsjas/go-psrp => github.com/Geogboe/go-psrp v0.2.2-boxy244.0.20260911140057-e27085a9b389
