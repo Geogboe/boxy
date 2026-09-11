@@ -364,12 +364,11 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
 - `hyperv.personalizeGuestLocked`'s guest-exec connection lifecycle is
   credential-scoped (#361, 2026-09): `apply_network` and `rotate_credential`
   share one `vmsdk.GuestSession` (via `psdirect.Exec.OpenSession`) under the
-  guest's old/pre-rotation credential, closed before `verify_credential` opens
-  a distinct session under the newly-rotated credential — never merged across
-  that rotation boundary. This only reduces sessions on the range/static_ip +
-  `ApplyNetwork: true` (allocation-time) path (3 → 2); admission-time and
-  DHCP-mode paths were already 2 and are unchanged. Verified via connect/close
-  counters on a fake executor, not live-guest timing — see the issue for why.
+  guest's old/pre-rotation credential, then close it after the checked rotation
+  command succeeds. Personalization does not open a second session to verify
+  the new credential; fresh-login checks belong in live validation. Tests cover
+  session ownership and failure handling. See
+  `docs/windows-allocation-performance.md` for measured results and limitations.
 
 ### Bundled Agent Skill
 

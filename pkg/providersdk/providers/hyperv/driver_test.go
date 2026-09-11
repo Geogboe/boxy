@@ -2051,7 +2051,7 @@ func TestDriver_PersonalizeGuest_AppliesRangeIP(t *testing.T) {
 
 // TestDriver_PersonalizeGuest_RangeIP_ApplyNetworkFalse_DefersApply guards
 // #358: admission-time personalization (ApplyNetwork: false) on a range-mode
-// pool must rotate and verify the guest's credential without ever applying
+// pool must rotate the guest's credential without ever applying
 // (or even reserving) the range address, so a preheated-but-unclaimed VM
 // never becomes network-reachable. The ledger entry from reserveRangeEntry
 // (Create time) is the mode discriminator and must remain unaffected — it
