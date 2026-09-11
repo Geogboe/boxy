@@ -265,6 +265,23 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   (`PoolSpec.Config` is an undecoded `map[string]any` outside the driver,
   and the driver itself normally runs on a remote agent, not the daemon
   that owns pool reconciliation).
+- **`providersdk.NetworkIsolator`** (`CreateSegment`/`AttachToSegment`/
+  `DestroySegment`, keyed by an opaque `SegmentRef`) is the optional
+  per-sandbox network isolation capability, type-asserted like every other
+  one here (2026-09, #224). It can't live on `Driver.Create`: preheated
+  resources exist before any sandbox claims them, so a segment is created on
+  a sandbox's first claim and each resource is moved onto it at allocation
+  time. All three methods are contractually idempotent — `CreateSegment` per
+  `sandboxID`, returning the same ref on a repeat — and `sandboxID` is
+  documented as already name-safe, so drivers don't each invent their own
+  escaping. `hyperv` (Internal vSwitch + `New-NetNat` over a `diskjson`
+  segment ledger) and `docker` (per-sandbox bridge, connect-then-disconnect)
+  implement it; `devfactory` deliberately does not, same reasoning as
+  `GuestPersonalizer`/`NetworkRangeReporter` above. **Driver-side only so
+  far — nothing consumes it yet**, and two unverified-from-this-host risks
+  (`New-NetNat`'s possible one-per-host limit; `New-NetIPAddress` timing
+  right after `New-VMSwitch`) must be settled before it is wired up. See
+  [ADR-0021](docs/adr/0021-network-isolation-driver-capability.md).
 
 ### PSRP Transport Dependency Fork (go-psrp / go-psrpcore)
 
