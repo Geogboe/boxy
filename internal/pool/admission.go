@@ -92,6 +92,8 @@ type ResourcePackageApplier interface {
 
 // AdmissionHandler applies the policy for resource.provisioned events.
 type AdmissionHandler struct {
+	// NotifyReady is a nonblocking reconciliation hint after ready state is durable.
+	NotifyReady  func()
 	Store        store.Store
 	Secrets      boxysecrets.Store
 	Personalizer GuestAdmissionPersonalizer
@@ -222,6 +224,9 @@ func (h *AdmissionHandler) markReady(ctx context.Context, res model.Resource, pr
 	res.UpdatedAt = time.Now().UTC()
 	if err := h.Store.PutResource(ctx, res); err != nil {
 		return lifecycle.OutcomeRetry, fmt.Errorf("mark resource %q ready: %w", res.ID, err)
+	}
+	if h.NotifyReady != nil {
+		h.NotifyReady()
 	}
 	return lifecycle.OutcomeAck, nil
 }

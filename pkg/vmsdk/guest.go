@@ -21,6 +21,14 @@ type GuestExecText interface {
 	ExecText(ctx context.Context, text string) (*ExecResult, error)
 }
 
+// GuestExecScript optionally runs trusted provider script source directly in
+// the guest engine. Arguments remain data, without native-process escaping or
+// interpolation into source. Implementations must fail on script errors or
+// incomplete execution rather than infer success from a stale native exit code.
+type GuestExecScript interface {
+	ExecScript(ctx context.Context, script string, args ...string) (*ExecResult, error)
+}
+
 // GuestExecStreamer is an optional capability for guests that can expose
 // command output before the process exits. Implementations must preserve
 // stdout/stderr channel identity and return only after a terminal result is

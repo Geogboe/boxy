@@ -89,9 +89,12 @@ func restoreSlogDefaultAfter(t *testing.T) {
 }
 
 func TestAgentServe_TokenRegistrationThenCertReconnect(t *testing.T) {
-	restoreSlogDefaultAfter(t)
 	serverDir := t.TempDir()
 	agentDir := t.TempDir()
+	// Restore the process-global logger before TempDir cleanup. Server
+	// shutdown can log after the agent exits; its diagnostics sink must not
+	// recreate files while Windows is removing the agent directory.
+	restoreSlogDefaultAfter(t)
 
 	st := store.NewMemoryStore()
 	registry := pool.NewAgentRegistry()

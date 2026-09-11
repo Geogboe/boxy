@@ -1301,20 +1301,14 @@ func TestDriver_PersonalizeGuest_RotatesAndReturnsCredential(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PersonalizeGuest: %v", err)
 	}
-	if len(guestExecs) != 2 {
-		t.Fatalf("guest exec sessions = %d, want bootstrap and verification sessions", len(guestExecs))
+	if len(guestExecs) != 1 {
+		t.Fatalf("guest exec sessions = %d, want one bootstrap session", len(guestExecs))
 	}
 	if guestExecs[0].password != "${BOXY_TEST_PASSWORD}" {
 		t.Fatalf("bootstrap password = %q, want bootstrap", guestExecs[0].password)
 	}
-	if guestExecs[1].password == "" || guestExecs[1].password == guestExecs[0].password {
-		t.Fatalf("rotated password = %q, want a fresh password", guestExecs[1].password)
-	}
 	if len(guestExecs[0].calls) != 1 || !strings.Contains(strings.Join(guestExecs[0].calls[0], " "), "Set-LocalUser") {
 		t.Fatalf("rotation calls = %+v, want Set-LocalUser", guestExecs[0].calls)
-	}
-	if len(guestExecs[1].calls) != 1 || guestExecs[1].calls[0][0] != "whoami" {
-		t.Fatalf("verification calls = %+v, want whoami", guestExecs[1].calls)
 	}
 
 	if result.EphemeralCredential == nil || result.EphemeralCredential.Kind != "password" {
@@ -1327,8 +1321,8 @@ func TestDriver_PersonalizeGuest_RotatesAndReturnsCredential(t *testing.T) {
 	if err := json.Unmarshal(result.EphemeralCredential.Data, &payload); err != nil {
 		t.Fatalf("decode returned credential: %v", err)
 	}
-	if payload.Username != "Administrator" || payload.Password != guestExecs[1].password {
-		t.Fatalf("returned payload = %+v, want Administrator/%q", payload, guestExecs[1].password)
+	if payload.Username != "Administrator" || payload.Password == "" || payload.Password == guestExecs[0].password {
+		t.Fatal("expected Administrator and a fresh password")
 	}
 }
 
@@ -1371,7 +1365,7 @@ func TestDriver_PersonalizeGuest_LogsStepTiming(t *testing.T) {
 
 	out := buf.String()
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	for _, step := range []string{"read_notes", "resolve_bootstrap_credential", "resolve_vm_name", "apply_network", "rotate_credential", "verify_credential"} {
+	for _, step := range []string{"read_notes", "resolve_bootstrap_credential", "apply_network", "rotate_credential", "close_current_credential"} {
 		line := findLine(t, lines, "step="+step)
 		if !strings.Contains(line, "elapsed_ms=") || !strings.Contains(line, "total_elapsed_ms=") {
 			t.Fatalf("step %q line missing elapsed_ms/total_elapsed_ms; got:\n%s", step, line)
@@ -1745,12 +1739,9 @@ func TestDriver_PersonalizeGuest_AppliesStaticIP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PersonalizeGuest: %v", err)
 	}
-	// Expect 2 guest sessions (#361): applyStaticIP + rotation share one
-	// connection under the old (pre-rotation) credential, and verification
-	// opens a distinct second connection under the new credential. This is
-	// down from 3 in the pre-#361 per-call-connection behavior.
-	if len(execCalls) != 2 {
-		t.Fatalf("guest exec session count = %d, want 2 (applyStaticIP+rotation shared, verification separate)", len(execCalls))
+	// Network application and rotation share one session; no verification login.
+	if len(execCalls) != 1 {
+		t.Fatalf("guest exec session count = %d, want 1 shared session", len(execCalls))
 	}
 	if got := result.AccessDetails.Properties["host"]; got != "192.0.2.10" {
 		t.Errorf("host = %q, want 192.0.2.10", got)
@@ -1758,8 +1749,8 @@ func TestDriver_PersonalizeGuest_AppliesStaticIP(t *testing.T) {
 }
 
 // TestDriver_PersonalizeGuest_StaticIP_ApplyNetworkFalse_DefersApply guards
-// #358 for static_ip mode: admission-time personalization must rotate and
-// verify the guest's credential without ever calling assignGuestIP, and must
+// #358 for static_ip mode: admission-time personalization must rotate
+// the guest's credential without ever calling assignGuestIP, and must
 // not report a "host" in AccessDetails since no address was applied.
 func TestDriver_PersonalizeGuest_StaticIP_ApplyNetworkFalse_DefersApply(t *testing.T) {
 	var execCalls []string
@@ -1790,9 +1781,9 @@ func TestDriver_PersonalizeGuest_StaticIP_ApplyNetworkFalse_DefersApply(t *testi
 	if err != nil {
 		t.Fatalf("PersonalizeGuest: %v", err)
 	}
-	// Expect 2 guest exec calls: rotation + verification only.
-	if len(execCalls) != 2 {
-		t.Fatalf("guest exec call count = %d, want 2 (rotation + verification only, no network apply)", len(execCalls))
+	// Network application and rotation share one session; no verification login.
+	if len(execCalls) != 1 {
+		t.Fatalf("guest exec call count = %d, want 1 rotation session, no network apply", len(execCalls))
 	}
 	if got, ok := result.AccessDetails.Properties["host"]; ok {
 		t.Errorf("host = %q present in AccessDetails, want no host reported when network was not applied", got)
@@ -2034,11 +2025,9 @@ func TestDriver_PersonalizeGuest_AppliesRangeIP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PersonalizeGuest: %v", err)
 	}
-	// Expect 2 guest sessions (#361): applyRangeIP + rotation share one
-	// connection under the old (pre-rotation) credential, and verification
-	// opens a distinct second connection under the new credential.
-	if len(execCalls) != 2 {
-		t.Fatalf("guest exec session count = %d, want 2 (applyRangeIP+rotation shared, verification separate)", len(execCalls))
+	// Network application and rotation share one session; no verification login.
+	if len(execCalls) != 1 {
+		t.Fatalf("guest exec session count = %d, want 1 shared session", len(execCalls))
 	}
 
 	entry, ok, err := d.ledgerLookup(fakeGUID)
@@ -2062,7 +2051,7 @@ func TestDriver_PersonalizeGuest_AppliesRangeIP(t *testing.T) {
 
 // TestDriver_PersonalizeGuest_RangeIP_ApplyNetworkFalse_DefersApply guards
 // #358: admission-time personalization (ApplyNetwork: false) on a range-mode
-// pool must rotate and verify the guest's credential without ever applying
+// pool must rotate the guest's credential without ever applying
 // (or even reserving) the range address, so a preheated-but-unclaimed VM
 // never becomes network-reachable. The ledger entry from reserveRangeEntry
 // (Create time) is the mode discriminator and must remain unaffected — it
@@ -2103,10 +2092,9 @@ func TestDriver_PersonalizeGuest_RangeIP_ApplyNetworkFalse_DefersApply(t *testin
 	if err != nil {
 		t.Fatalf("PersonalizeGuest: %v", err)
 	}
-	// Expect exactly 2 guest exec calls: rotation + verification — no
-	// applyRangeIP call at all.
-	if len(execCalls) != 2 {
-		t.Fatalf("guest exec call count = %d, want 2 (rotation + verification only, no network apply)", len(execCalls))
+	// Network application and rotation share one session; no verification login.
+	if len(execCalls) != 1 {
+		t.Fatalf("guest exec call count = %d, want 1 rotation session, no network apply", len(execCalls))
 	}
 
 	entry, ok, err := d.ledgerLookup(fakeGUID)
@@ -2172,14 +2160,9 @@ func TestDriver_AssignGuestIP_ScriptIsIdempotentAndVerifiesApply(t *testing.T) {
 	if _, err := d.PersonalizeGuest(context.Background(), fakeGUID, providersdk.GuestPersonalizationOptions{ApplyNetwork: true}); err != nil {
 		t.Fatalf("PersonalizeGuest: %v", err)
 	}
-	// #361: the assign-IP call and the credential-rotation call now share
-	// one session (execs[0], opened under the old/pre-rotation credential),
-	// so execs[0] carries 2 calls (assign-IP script, then rotation) instead
-	// of being reopened per call; execs[1] is the separate new-credential
-	// session verify_credential opens. The assign-IP script is still
-	// execs[0]'s first call.
-	if len(execs) != 2 || len(execs[0].calls) != 2 {
-		t.Fatalf("assign-IP guest exec session calls = %+v, want exactly 2 sessions with the first carrying 2 calls (assign-IP + rotation)", execs)
+	// Network application and rotation share one session.
+	if len(execs) != 1 || len(execs[0].calls) != 2 {
+		t.Fatalf("assign-IP guest exec session calls = %+v, want exactly 1 session carrying 2 calls (assign-IP + rotation)", execs)
 	}
 	script := strings.Join(execs[0].calls[0], " ")
 
@@ -2197,14 +2180,7 @@ func TestDriver_AssignGuestIP_ScriptIsIdempotentAndVerifiesApply(t *testing.T) {
 	}
 }
 
-// TestDriver_PersonalizeGuest_ReusesSessionAcrossOldCredentialSteps is #361's
-// core hyperv-level claim: personalizeGuestLocked opens exactly one guest
-// session for its old-credential steps (apply_network + rotate_credential)
-// and a distinct second session, under the newly-rotated credential, for
-// verify_credential -- never three separate connections, and never a
-// connection shared across the credential-rotation boundary. It asserts this
-// via countingGuestSession's own Connect(-equivalent: one factory call per
-// session)/Close counts and per-session Exec counts, not wall-clock timing.
+// Personalization shares one session for networking and rotation, then closes it.
 func TestDriver_PersonalizeGuest_ReusesSessionAcrossOldCredentialSteps(t *testing.T) {
 	d := mockDriver(nil)
 	const oldCred = "${BOXY_TEST_PASSWORD}"
@@ -2235,30 +2211,21 @@ func TestDriver_PersonalizeGuest_ReusesSessionAcrossOldCredentialSteps(t *testin
 		t.Fatalf("PersonalizeGuest: %v", err)
 	}
 
-	if len(sessions) != 2 {
-		t.Fatalf("opened %d guest sessions, want exactly 2 (one shared old-credential session, one new-credential session)", len(sessions))
+	if len(sessions) != 1 {
+		t.Fatalf("opened %d guest sessions, want exactly 1 shared session", len(sessions))
 	}
-	oldSession, newSession := sessions[0], sessions[1]
+	oldSession := sessions[0]
 
 	if oldSession.password != oldCred {
 		t.Errorf("sessions[0].password = %q, want the old (pre-rotation) credential %q", oldSession.password, oldCred)
-	}
-	if newSession.password == oldCred || newSession.password == "" {
-		t.Errorf("sessions[1].password = %q, want the newly-rotated credential, distinct from %q", newSession.password, oldCred)
 	}
 
 	if oldSession.execCount != 2 {
 		t.Errorf("old-credential session Exec count = %d, want 2 (apply_network + rotate_credential sharing one connection)", oldSession.execCount)
 	}
-	if newSession.execCount != 1 {
-		t.Errorf("new-credential session Exec count = %d, want 1 (verify_credential)", newSession.execCount)
-	}
 
 	if oldSession.closeCount != 1 {
 		t.Errorf("old-credential session closeCount = %d, want exactly 1 (closed once after rotate_credential, not once per call)", oldSession.closeCount)
-	}
-	if newSession.closeCount != 1 {
-		t.Errorf("new-credential session closeCount = %d, want exactly 1", newSession.closeCount)
 	}
 }
 
@@ -2299,7 +2266,7 @@ func TestDriver_PersonalizeGuest_ClosesOldSessionOnApplyNetworkFailure(t *testin
 	}
 
 	if len(sessions) != 1 {
-		t.Fatalf("opened %d guest sessions, want exactly 1 (apply_network failed before verify_credential could open a second)", len(sessions))
+		t.Fatalf("opened %d guest sessions, want exactly 1 (apply_network failure closes the only session)", len(sessions))
 	}
 	if sessions[0].closeCount != 1 {
 		t.Errorf("old-credential session closeCount = %d, want exactly 1 -- a failure inside apply_network must not strand the connection", sessions[0].closeCount)

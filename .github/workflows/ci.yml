@@ -1,4 +1,5 @@
-# CI pipeline — runs lint, test, and build on every push and PR.
+# CI runs for ready PRs targeting main, merge queues, and main updates.
+# Draft PR events create skipped checks without allocating runners.
 #
 # All third-party actions are pinned to a full commit SHA (not a mutable tag)
 # per #55. Dependabot (.github/dependabot.yml) opens PRs to bump these pins.
@@ -8,12 +9,20 @@ on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+  merge_group:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
   lint:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Lint
     runs-on: ubuntu-latest
     steps:
@@ -33,6 +42,7 @@ jobs:
         run: golangci-lint run ./...
 
   test:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -55,6 +65,7 @@ jobs:
         run: go test -race -short -tags devtools ./internal/cli/...
 
   installer-smoke:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Installer Smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -72,6 +83,7 @@ jobs:
         run: go test ./scripts -count=1
 
   build:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Build
     runs-on: ubuntu-latest
     steps:
@@ -85,6 +97,7 @@ jobs:
         run: go build ./cmd/boxy
 
   betterleaks:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Betterleaks
     runs-on: ubuntu-latest
     steps:
@@ -103,6 +116,7 @@ jobs:
         run: betterleaks git . --no-banner --redact --log-opts HEAD
 
   pii:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Betterleaks PII
     runs-on: ubuntu-latest
     steps:
