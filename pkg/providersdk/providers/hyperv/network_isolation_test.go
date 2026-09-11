@@ -2,6 +2,7 @@ package hyperv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -149,7 +150,14 @@ func TestDriver_CreateSegment_RunsSwitchAndNatSetup(t *testing.T) {
 	if len(scripts) != 1 {
 		t.Fatalf("expected exactly one PowerShell call, got %d", len(scripts))
 	}
-	for _, want := range []string{"New-VMSwitch", "SwitchType Internal", "New-NetNat", "10.250.0.0/29", "vEthernet (boxy-sb-sb-1)"} {
+	for _, want := range []string{
+		"New-VMSwitch", "SwitchType Internal", "New-NetNat", "10.250.0.0/29",
+		"vEthernet (boxy-sb-sb-1)",
+		// The prefix length is rendered from segmentPrefixLen, and the
+		// gateway/alias pair around it must not have been transposed when
+		// that %d was inserted into the positional argument list.
+		"New-NetIPAddress -IPAddress '10.250.0.1' -PrefixLength 29 -InterfaceAlias 'vEthernet (boxy-sb-sb-1)'",
+	} {
 		if !strings.Contains(scripts[0], want) {
 			t.Fatalf("script missing %q:\n%s", want, scripts[0])
 		}
@@ -176,9 +184,24 @@ func TestDriver_CreateSegment_FailurePreservesLedgerEntry(t *testing.T) {
 	if _, err := d.CreateSegment(context.Background(), "sb-1"); err == nil {
 		t.Fatal("expected CreateSegment to fail")
 	}
-	before, err := d.segments().allocate("sb-1")
+
+	// Observe the persisted ledger directly rather than calling allocate()
+	// again: allocate is itself mutating (it can pop FreedIndexes and hand
+	// out a fresh block), so using it as the observation mechanism produces
+	// the same-looking result whether or not the entry actually survived.
+	before, err := d.segments().store.Load()
 	if err != nil {
-		t.Fatalf("allocate after failure: %v", err)
+		t.Fatalf("load ledger after failure: %v", err)
+	}
+	entry, ok := before.BySandboxID["sb-1"]
+	if !ok {
+		t.Fatal("CreateSegment released sb-1's ledger entry on failure; a retry would allocate a different CIDR than the partially-created switch is bound to")
+	}
+	if entry.CIDR != "10.250.0.0/29" {
+		t.Fatalf("preserved entry CIDR = %q, want the first block %q", entry.CIDR, "10.250.0.0/29")
+	}
+	if len(before.FreedIndexes) != 0 {
+		t.Fatalf("CreateSegment returned block indexes to the free list on failure: %v", before.FreedIndexes)
 	}
 
 	fail = false
@@ -186,15 +209,86 @@ func TestDriver_CreateSegment_FailurePreservesLedgerEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("retry CreateSegment: %v", err)
 	}
-	if ref != providersdk.SegmentRef(before.SwitchName) {
-		t.Fatalf("retry got switch %q, want the same one from before the failure %q", ref, before.SwitchName)
+	if ref != providersdk.SegmentRef(entry.SwitchName) {
+		t.Fatalf("retry got switch %q, want the same one from before the failure %q", ref, entry.SwitchName)
 	}
-	after, err := d.segments().allocate("sb-1")
+	after, err := d.segments().store.Load()
 	if err != nil {
-		t.Fatalf("allocate after retry: %v", err)
+		t.Fatalf("load ledger after retry: %v", err)
 	}
-	if after.CIDR != before.CIDR {
-		t.Fatalf("retry changed the CIDR: got %q, want %q (the one allocated before the failure)", after.CIDR, before.CIDR)
+	if after.BySandboxID["sb-1"].CIDR != entry.CIDR {
+		t.Fatalf("retry changed the CIDR: got %q, want %q (the one allocated before the failure)",
+			after.BySandboxID["sb-1"].CIDR, entry.CIDR)
+	}
+}
+
+func TestBlockForIndex_RejectsIndexBeyondBaseRange(t *testing.T) {
+	// 10.250.0.0/16 holds exactly 8192 /29 blocks, so 8192 is the first
+	// index past the end.
+	const blocks = 8192
+	if _, _, err := blockForIndex(blocks - 1); err != nil {
+		t.Fatalf("last in-range index must still allocate: %v", err)
+	}
+	for _, index := range []int{blocks, blocks + 1, 1 << 30, -1} {
+		_, _, err := blockForIndex(index)
+		if err == nil {
+			t.Fatalf("blockForIndex(%d) returned an address outside %s instead of an error", index, segmentBaseCIDR)
+		}
+		if index >= 0 && !errors.Is(err, errSegmentRangeExhausted) {
+			t.Fatalf("blockForIndex(%d) error = %v, want it to wrap errSegmentRangeExhausted", index, err)
+		}
+	}
+}
+
+func TestIndexForBlock_RejectsCIDROutsideBaseRange(t *testing.T) {
+	// Below the base address: the unsigned subtraction would underflow into
+	// an enormous bogus index if unchecked.
+	if _, err := indexForBlock("10.249.255.248/29"); err == nil {
+		t.Fatal("indexForBlock accepted a CIDR sorting below segmentBaseCIDR")
+	}
+	// Past the last block in the base range.
+	if _, err := indexForBlock("10.251.0.0/29"); err == nil {
+		t.Fatal("indexForBlock accepted a CIDR beyond segmentBaseCIDR's last block")
+	}
+	got, err := indexForBlock("10.250.0.8/29")
+	if err != nil {
+		t.Fatalf("indexForBlock on a valid block: %v", err)
+	}
+	if got != 1 {
+		t.Fatalf("indexForBlock(10.250.0.8/29) = %d, want 1", got)
+	}
+}
+
+// TestSegmentLedger_ReleaseSkipsCorruptCIDR covers the other half of the
+// underflow guard: a hand-edited/corrupt CIDR must not push a bogus index
+// onto the free list for the next allocate to hand out.
+func TestSegmentLedger_ReleaseSkipsCorruptCIDR(t *testing.T) {
+	ledgerPath := filepath.Join(t.TempDir(), "network-segments.json")
+	ledger := newSegmentLedger(ledgerPath)
+
+	if _, err := ledger.allocate("sb-1"); err != nil {
+		t.Fatalf("allocate: %v", err)
+	}
+	if _, err := ledger.store.Update(func(s segmentLedgerState) (segmentLedgerState, error) {
+		alloc := s.BySandboxID["sb-1"]
+		alloc.CIDR = "10.249.255.248/29"
+		s.BySandboxID["sb-1"] = alloc
+		return s, nil
+	}); err != nil {
+		t.Fatalf("corrupt ledger entry: %v", err)
+	}
+	if err := ledger.release("sb-1"); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	state, err := ledger.store.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if _, ok := state.BySandboxID["sb-1"]; ok {
+		t.Fatal("release left the corrupt entry in place")
+	}
+	if len(state.FreedIndexes) != 0 {
+		t.Fatalf("release pushed an index recovered from a corrupt CIDR onto the free list: %v", state.FreedIndexes)
 	}
 }
 
@@ -240,6 +334,81 @@ func TestDriver_DestroySegment_RemovesNatThenSwitch(t *testing.T) {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q:\n%s", want, script)
 		}
+	}
+}
+
+// TestDriver_DestroySegment_ReleasesLedgerEntry covers the final-review fix
+// that made DestroySegment self-contained: the ledger entry is keyed by
+// sandbox ID and reachable only through unexported API, so a caller holding
+// a providersdk.NetworkIsolator could never release it separately. Matching
+// happens on the recorded SwitchName because switchNameForSandbox's
+// space-stripping is lossy and cannot be inverted.
+func TestDriver_DestroySegment_ReleasesLedgerEntry(t *testing.T) {
+	d := mockDriver(func(context.Context, string) (string, error) { return "", nil })
+	d.segmentLedgerPath = filepath.Join(t.TempDir(), "network-segments.json")
+
+	ref, err := d.CreateSegment(context.Background(), "sb-1")
+	if err != nil {
+		t.Fatalf("CreateSegment: %v", err)
+	}
+	if err := d.DestroySegment(context.Background(), ref); err != nil {
+		t.Fatalf("DestroySegment: %v", err)
+	}
+
+	state, err := d.segments().store.Load()
+	if err != nil {
+		t.Fatalf("load ledger: %v", err)
+	}
+	if _, ok := state.BySandboxID["sb-1"]; ok {
+		t.Fatal("DestroySegment left sb-1's ledger entry behind; its CIDR would leak permanently")
+	}
+	if len(state.FreedIndexes) != 1 || state.FreedIndexes[0] != 0 {
+		t.Fatalf("FreedIndexes = %v, want the destroyed segment's block index [0] returned for reuse", state.FreedIndexes)
+	}
+
+	// The freed block is genuinely reusable by the next sandbox.
+	next, err := d.CreateSegment(context.Background(), "sb-2")
+	if err != nil {
+		t.Fatalf("CreateSegment sb-2: %v", err)
+	}
+	state, err = d.segments().store.Load()
+	if err != nil {
+		t.Fatalf("reload ledger: %v", err)
+	}
+	if got := state.BySandboxID["sb-2"].CIDR; got != "10.250.0.0/29" {
+		t.Fatalf("sb-2 CIDR = %q, want the reused first block %q (ref %q)", got, "10.250.0.0/29", next)
+	}
+}
+
+// TestDriver_DestroySegment_IdempotentWhenAlreadyGone mirrors the Docker
+// driver's test of the same name. Hyper-V is idempotent by construction --
+// the teardown script's Get- guards no-op when the NAT/switch are gone, and
+// releaseBySwitchName no-ops when no entry carries the switch name.
+func TestDriver_DestroySegment_IdempotentWhenAlreadyGone(t *testing.T) {
+	d := mockDriver(func(context.Context, string) (string, error) { return "", nil })
+	d.segmentLedgerPath = filepath.Join(t.TempDir(), "network-segments.json")
+
+	ref, err := d.CreateSegment(context.Background(), "sb-1")
+	if err != nil {
+		t.Fatalf("CreateSegment: %v", err)
+	}
+	if err := d.DestroySegment(context.Background(), ref); err != nil {
+		t.Fatalf("first DestroySegment: %v", err)
+	}
+	if err := d.DestroySegment(context.Background(), ref); err != nil {
+		t.Fatalf("second DestroySegment on an already-gone segment must be a no-op, got: %v", err)
+	}
+	// Never created at all, so no ledger entry ever existed for it.
+	if err := d.DestroySegment(context.Background(), providersdk.SegmentRef("boxy-sb-never-existed")); err != nil {
+		t.Fatalf("DestroySegment on an unknown segment must be a no-op, got: %v", err)
+	}
+
+	state, err := d.segments().store.Load()
+	if err != nil {
+		t.Fatalf("load ledger: %v", err)
+	}
+	if len(state.FreedIndexes) != 1 {
+		t.Fatalf("FreedIndexes = %v, want exactly one entry (repeat destroys must not free the same block twice)", state.FreedIndexes)
 	}
 }
 

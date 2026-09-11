@@ -113,16 +113,16 @@ type Driver struct {
 	personalizeLocks   map[string]*sync.Mutex
 
 	// segmentLedgerPath is where the per-sandbox network-segment CIDR
-	// ledger is persisted (see network_isolation.go). Empty uses the
-	// package default "network-segments.json", resolved the same way
-	// Config.DataDir already is when a boxy config file's directory is
-	// known (RelativePathResolver).
+	// ledger is persisted (see network_isolation.go). New resolves it under
+	// Config.DataDir, the same way ledgerStore already is when a boxy config
+	// file's directory is known (RelativePathResolver). Empty falls back to
+	// a per-Driver ephemeral temp location — see segments().
 	segmentLedgerPath string
 
 	// segmentLedger/segmentLedgerOnce cache the *segmentLedger instance so
 	// every CreateSegment/AttachToSegment/DestroySegment call on this Driver
 	// shares one diskjson.Store — and therefore one sync.Mutex — over
-	// network-segments.json. Mirrors ledgerStore/ledgerOnce above: building
+	// segmentLedgerFilename. Mirrors ledgerStore/ledgerOnce above: building
 	// a fresh *segmentLedger (and fresh, unshared mutex) per call would
 	// defeat the ledger's own concurrency guarantee, letting two concurrent
 	// allocate() calls each read a stale snapshot and race their writes
@@ -311,7 +311,7 @@ func New(cfg *Config) (*Driver, error) {
 		memoryBudgetMB:         budget,
 		memoryBudgetConfigured: true,
 		ledgerStore:            diskjson.New(filepath.Join(dataDir, ledgerFilename), newLedgerData),
-		segmentLedgerPath:      filepath.Join(dataDir, "network-segments.json"),
+		segmentLedgerPath:      filepath.Join(dataDir, segmentLedgerFilename),
 	}, nil
 }
 

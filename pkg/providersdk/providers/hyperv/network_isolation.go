@@ -2,8 +2,11 @@ package hyperv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/Geogboe/boxy/pkg/diskjson"
@@ -28,13 +31,36 @@ type segmentLedgerState struct {
 	BySandboxID  map[string]segmentAllocation `json:"by_sandbox_id"`
 }
 
-// segmentBaseCIDR is the private range this driver carves per-sandbox /29
-// blocks (8 addresses: network, gateway, up to 5 usable hosts, broadcast --
-// enough for a small sandbox lab) out of. Chosen from RFC 1918 space
-// unlikely to collide with an operator's own LAN (10.250.0.0/16 is well
-// outside common home/office 10.0.0.0/8 allocations that start near
-// 10.0.x.x or 10.1.x.x).
+// segmentBaseCIDR is the private range this driver carves per-sandbox blocks
+// out of. Chosen from RFC 1918 space unlikely to collide with an operator's
+// own LAN (10.250.0.0/16 is well outside common home/office 10.0.0.0/8
+// allocations that start near 10.0.x.x or 10.1.x.x).
 const segmentBaseCIDR = "10.250.0.0/16"
+
+// segmentPrefixLen is the prefix length of each per-sandbox block carved out
+// of segmentBaseCIDR. A /29 is 8 addresses: network, gateway, up to 5 usable
+// hosts, broadcast -- enough for a small sandbox lab.
+//
+// This is the single source of truth for the block size: the persisted CIDR
+// string, the host-side New-NetIPAddress -PrefixLength argument, and
+// segmentBlockSize's address arithmetic are all derived from it rather than
+// repeating the literal in three places.
+const segmentPrefixLen = 29
+
+// segmentBlockSize is how many IPv4 addresses one segmentPrefixLen block
+// spans, derived from segmentPrefixLen rather than restated.
+const segmentBlockSize = 1 << (32 - segmentPrefixLen)
+
+// segmentLedgerFilename is the JSON file name for the per-sandbox network
+// segment ledger, written under Config.DataDir next to ledgerFilename.
+const segmentLedgerFilename = "network-segments.json"
+
+// errSegmentRangeExhausted reports that segmentBaseCIDR has no block left at
+// the requested index -- either every block is in use, or a persisted index
+// is out of range. Named (and wrapped, not replaced, by its callers) so a
+// caller can tell genuine exhaustion apart from a malformed-config parse
+// failure with errors.Is.
+var errSegmentRangeExhausted = errors.New("network segment range exhausted")
 
 type segmentLedger struct {
 	store *diskjson.Store[segmentLedgerState]
@@ -85,76 +111,138 @@ func (l *segmentLedger) allocate(sandboxID string) (segmentAllocation, error) {
 
 func (l *segmentLedger) release(sandboxID string) error {
 	_, err := l.store.Update(func(s segmentLedgerState) (segmentLedgerState, error) {
-		if s.BySandboxID == nil {
-			return s, nil
+		return releaseAllocation(s, sandboxID), nil
+	})
+	return err
+}
+
+// releaseBySwitchName frees whichever sandbox's allocation carries
+// switchName, if any. DestroySegment only ever receives the SegmentRef (the
+// switch name), and switchNameForSandbox's space-stripping transformation is
+// lossy, so it cannot be inverted to recover the sandbox ID -- matching on
+// the SwitchName recorded verbatim in the allocation is exact where inverting
+// the derivation would not be. A switch name with no matching entry is a
+// no-op, not an error, matching DestroySegment's own idempotency contract.
+//
+// The scan and the release share one store.Update (and therefore one lock
+// acquisition) rather than a Load followed by a separate release call, so no
+// concurrent allocate can slip between finding the entry and deleting it.
+func (l *segmentLedger) releaseBySwitchName(switchName string) error {
+	_, err := l.store.Update(func(s segmentLedgerState) (segmentLedgerState, error) {
+		for sandboxID, alloc := range s.BySandboxID {
+			if alloc.SwitchName == switchName {
+				return releaseAllocation(s, sandboxID), nil
+			}
 		}
-		alloc, ok := s.BySandboxID[sandboxID]
-		if !ok {
-			return s, nil
-		}
-		// Recover the index from the CIDR to free it for reuse: the block
-		// size is fixed (/29 = 8 addresses), so the offset from
-		// segmentBaseCIDR's base address, divided by 8, is the index.
-		idx, err := indexForBlock(alloc.CIDR)
-		if err == nil {
-			s.FreedIndexes = append(s.FreedIndexes, idx)
-		}
-		delete(s.BySandboxID, sandboxID)
 		return s, nil
 	})
 	return err
 }
 
-// blockForIndex computes the index-th /29 block within segmentBaseCIDR,
-// returning its network CIDR and the first usable address (used as the
-// switch's gateway/host-side IP).
-func blockForIndex(index int) (cidr string, gateway string, err error) {
+// releaseAllocation removes sandboxID's entry from an in-flight ledger state
+// and returns its block index to FreedIndexes for reuse. Factored out so
+// release and releaseBySwitchName share one implementation rather than each
+// reimplementing the free-list accounting; both call it from inside their own
+// store.Update callback, so it must not lock anything itself.
+//
+// A CIDR whose index can't be recovered (corrupt or hand-edited state, see
+// indexForBlock's range checks) is dropped from BySandboxID without being
+// added to FreedIndexes: leaking one reusable block is strictly better than
+// pushing a bogus index onto the free list for the next allocate to hand out.
+func releaseAllocation(s segmentLedgerState, sandboxID string) segmentLedgerState {
+	if s.BySandboxID == nil {
+		return s
+	}
+	alloc, ok := s.BySandboxID[sandboxID]
+	if !ok {
+		return s
+	}
+	if idx, err := indexForBlock(alloc.CIDR); err == nil {
+		s.FreedIndexes = append(s.FreedIndexes, idx)
+	}
+	delete(s.BySandboxID, sandboxID)
+	return s
+}
+
+// segmentBaseBounds parses segmentBaseCIDR into its base address (as a
+// uint32) and the number of segmentPrefixLen blocks it can hold -- 8192 for
+// the current /16 base and /29 blocks, derived rather than hardcoded so a
+// change to either constant stays consistent.
+func segmentBaseBounds() (baseInt uint32, blocks int, err error) {
 	_, base, parseErr := net.ParseCIDR(segmentBaseCIDR)
 	if parseErr != nil {
-		return "", "", fmt.Errorf("parse segmentBaseCIDR: %w", parseErr)
+		return 0, 0, fmt.Errorf("parse segmentBaseCIDR: %w", parseErr)
 	}
 	ip4 := base.IP.To4()
 	if ip4 == nil {
-		return "", "", fmt.Errorf("segmentBaseCIDR %q is not IPv4", segmentBaseCIDR)
+		return 0, 0, fmt.Errorf("segmentBaseCIDR %q is not IPv4", segmentBaseCIDR)
 	}
-	offset := uint32(index) * 8
-	baseInt := uint32(ip4[0])<<24 | uint32(ip4[1])<<16 | uint32(ip4[2])<<8 | uint32(ip4[3])
-	blockStart := baseInt + offset
+	ones, bits := base.Mask.Size()
+	if bits != 32 || ones > segmentPrefixLen {
+		return 0, 0, fmt.Errorf("segmentBaseCIDR %q cannot hold a /%d block", segmentBaseCIDR, segmentPrefixLen)
+	}
+	baseInt = uint32(ip4[0])<<24 | uint32(ip4[1])<<16 | uint32(ip4[2])<<8 | uint32(ip4[3])
+	return baseInt, 1 << (segmentPrefixLen - ones), nil
+}
+
+// blockForIndex computes the index-th segmentPrefixLen block within
+// segmentBaseCIDR, returning its network CIDR and the first usable address
+// (used as the switch's gateway/host-side IP).
+//
+// The index is range-checked against segmentBaseCIDR's real capacity before
+// any address arithmetic runs, so an out-of-range index returns
+// errSegmentRangeExhausted instead of silently computing an address outside
+// the base range (or, for a very large index, wrapping the uint32 offset
+// around into unrelated address space).
+func blockForIndex(index int) (cidr string, gateway string, err error) {
+	baseInt, blocks, err := segmentBaseBounds()
+	if err != nil {
+		return "", "", err
+	}
+	if index < 0 || index >= blocks {
+		return "", "", fmt.Errorf("%w: block index %d is outside the %d /%d blocks in %s",
+			errSegmentRangeExhausted, index, blocks, segmentPrefixLen, segmentBaseCIDR)
+	}
+	blockStart := baseInt + uint32(index)*segmentBlockSize
 	blockIP := net.IPv4(byte(blockStart>>24), byte(blockStart>>16), byte(blockStart>>8), byte(blockStart))
 	gatewayInt := blockStart + 1
 	gatewayIP := net.IPv4(byte(gatewayInt>>24), byte(gatewayInt>>16), byte(gatewayInt>>8), byte(gatewayInt))
-	return fmt.Sprintf("%s/29", blockIP.String()), gatewayIP.String(), nil
+	return fmt.Sprintf("%s/%d", blockIP.String(), segmentPrefixLen), gatewayIP.String(), nil
 }
 
+// indexForBlock recovers a persisted block's index within segmentBaseCIDR:
+// the block size is fixed, so the offset from segmentBaseCIDR's base address
+// divided by segmentBlockSize is the index. A CIDR that sorts below the base
+// address, or beyond its last block, is reported as an error rather than
+// allowed to underflow the unsigned subtraction (or overshoot) into a
+// plausible-looking but wrong index -- reachable only from corrupt or
+// hand-edited ledger state, but silent if unchecked.
 func indexForBlock(cidr string) (int, error) {
 	_, block, err := net.ParseCIDR(cidr)
 	if err != nil {
 		return 0, err
 	}
-	_, base, err := net.ParseCIDR(segmentBaseCIDR)
+	baseInt, blocks, err := segmentBaseBounds()
 	if err != nil {
 		return 0, err
 	}
-	blockIP4, baseIP4 := block.IP.To4(), base.IP.To4()
-	if blockIP4 == nil || baseIP4 == nil {
-		return 0, fmt.Errorf("non-IPv4 CIDR")
+	blockIP4 := block.IP.To4()
+	if blockIP4 == nil {
+		return 0, fmt.Errorf("non-IPv4 CIDR %q", cidr)
 	}
 	blockInt := uint32(blockIP4[0])<<24 | uint32(blockIP4[1])<<16 | uint32(blockIP4[2])<<8 | uint32(blockIP4[3])
-	baseInt := uint32(baseIP4[0])<<24 | uint32(baseIP4[1])<<16 | uint32(baseIP4[2])<<8 | uint32(baseIP4[3])
-	return int((blockInt - baseInt) / 8), nil
+	if blockInt < baseInt {
+		return 0, fmt.Errorf("CIDR %q sorts below segmentBaseCIDR %s", cidr, segmentBaseCIDR)
+	}
+	index := int((blockInt - baseInt) / segmentBlockSize)
+	if index >= blocks {
+		return 0, fmt.Errorf("CIDR %q is outside segmentBaseCIDR %s", cidr, segmentBaseCIDR)
+	}
+	return index, nil
 }
 
 func switchNameForSandbox(sandboxID string) string {
 	return "boxy-sb-" + strings.ReplaceAll(sandboxID, " ", "")
-}
-
-// segmentLedgerPathOrDefault returns d's ledger location, defaulting the
-// same way Config.DataDir already does elsewhere in this package.
-func (d *Driver) segmentLedgerPathOrDefault() string {
-	if d.segmentLedgerPath != "" {
-		return d.segmentLedgerPath
-	}
-	return "network-segments.json"
 }
 
 // segments returns the Driver's single, shared *segmentLedger instance,
@@ -164,13 +252,41 @@ func (d *Driver) segmentLedgerPathOrDefault() string {
 // CreateSegment/allocate calls would each lock their own independent mutex
 // over the same underlying file, both could read the same stale snapshot,
 // and the second Update's write would silently clobber the first's. Mirrors
-// the ledgerStore/ledgerOnce pattern already used for the IP-range ledger
-// above.
+// the ledgerStore/ledgerOnce pattern already used for the IP-range ledger.
+//
+// When New wasn't used to set segmentLedgerPath explicitly (e.g. a Driver
+// built directly, as most tests in this package do), the ledger falls back to
+// an ephemeral temp directory -- the same shape as ledger()'s own fallback,
+// and for the same reason: a fixed relative filename resolved against the
+// ambient process working directory would let unrelated Drivers converge on
+// one shared file and race on each other's state.
 func (d *Driver) segments() *segmentLedger {
 	d.segmentLedgerOnce.Do(func() {
-		d.segmentLedger = newSegmentLedger(d.segmentLedgerPathOrDefault())
+		d.segmentLedger = newSegmentLedger(d.resolveSegmentLedgerPath())
 	})
 	return d.segmentLedger
+}
+
+// resolveSegmentLedgerPath returns the configured segment ledger path, or an
+// ephemeral per-Driver one when none was configured. See segments().
+func (d *Driver) resolveSegmentLedgerPath() string {
+	if d.segmentLedgerPath != "" {
+		return d.segmentLedgerPath
+	}
+	dir, err := os.MkdirTemp("", "boxy-hyperv-segments-*")
+	if err != nil {
+		// os.MkdirTemp("", pattern) already resolves "" to os.TempDir()
+		// internally, so this fallback dir is the same one that just failed
+		// to yield a fresh subdirectory -- reusing the fixed
+		// segmentLedgerFilename here would let every Driver whose MkdirTemp
+		// call fails converge on one shared file, racing on state that has
+		// nothing to do with each other. Make the fallback name unique too
+		// (pid plus this Driver's own address can't collide within a single
+		// machine) so a MkdirTemp failure degrades to "broken in isolation"
+		// rather than "silently shared".
+		return filepath.Join(os.TempDir(), fmt.Sprintf("boxy-hyperv-segments-%d-%p.json", os.Getpid(), d))
+	}
+	return filepath.Join(dir, segmentLedgerFilename)
 }
 
 // CreateSegment creates a dedicated Internal vSwitch + NAT for one sandbox.
@@ -206,14 +322,15 @@ if (-not (Get-VMSwitch -Name '%s' -ErrorAction SilentlyContinue)) {
     New-VMSwitch -SwitchName '%s' -SwitchType Internal | Out-Null
 }
 if (-not (Get-NetIPAddress -InterfaceAlias '%s' -IPAddress '%s' -ErrorAction SilentlyContinue)) {
-    New-NetIPAddress -IPAddress '%s' -PrefixLength 29 -InterfaceAlias '%s' | Out-Null
+    New-NetIPAddress -IPAddress '%s' -PrefixLength %d -InterfaceAlias '%s' | Out-Null
 }
 if (-not (Get-NetNat -Name '%s' -ErrorAction SilentlyContinue)) {
     New-NetNat -Name '%s' -InternalIPInterfaceAddressPrefix '%s' | Out-Null
 }
 `,
 		psq(alloc.SwitchName), psq(alloc.SwitchName),
-		psq(adapterAlias), psq(alloc.Gateway), psq(alloc.Gateway), psq(adapterAlias),
+		psq(adapterAlias), psq(alloc.Gateway),
+		psq(alloc.Gateway), segmentPrefixLen, psq(adapterAlias),
 		psq(alloc.SwitchName), psq(alloc.SwitchName), psq(alloc.CIDR)))
 	if err != nil {
 		// Deliberately not releasing the ledger entry here (task-2 code
@@ -255,9 +372,26 @@ Connect-VMNetworkAdapter -VMName '%s' -SwitchName '%s' | Out-Null`,
 	return nil
 }
 
-// DestroySegment removes the NAT and switch created by CreateSegment.
-// Idempotent: a segment already gone (both Get- calls find nothing) is not
-// an error, matching Driver.Delete's contract.
+// DestroySegment removes the NAT and switch created by CreateSegment and
+// frees the sandbox's ledger entry, returning its CIDR block for reuse.
+// Idempotent: a segment already gone (both Get- calls find nothing, and no
+// ledger entry carries this switch name) is not an error, matching
+// Driver.Delete's contract.
+//
+// The ledger release happens here rather than in the caller: release is an
+// unexported method on an unexported type reached through an unexported
+// accessor, so code holding only a providersdk.NetworkIsolator interface
+// value -- which is how every real consumer of this capability sees the
+// driver -- has no way to invoke it. Doing it here also makes this method
+// symmetric with the Docker driver's DestroySegment, which is likewise
+// self-contained. The entry is matched by its recorded SwitchName rather
+// than by inverting switchNameForSandbox to recover a sandbox ID; that
+// derivation strips spaces and so is not invertible.
+//
+// The PowerShell teardown runs first and the release only on its success:
+// the same preserve-on-failure reasoning CreateSegment documents applies in
+// reverse, so a retry after a partial teardown still resolves the same
+// switch/NAT identity rather than finding the entry already gone.
 func (d *Driver) DestroySegment(ctx context.Context, ref providersdk.SegmentRef) error {
 	switchName := string(ref)
 	_, err := d.ps(ctx, fmt.Sprintf(`
@@ -272,11 +406,8 @@ if (Get-VMSwitch -Name '%s' -ErrorAction SilentlyContinue) {
 	if err != nil {
 		return fmt.Errorf("destroy segment %q: %w", ref, err)
 	}
-	// Best-effort: the ledger entry is keyed by sandbox ID, not switch name,
-	// and DestroySegment only receives the SegmentRef (switch name). The
-	// caller (Plan 1b's allocation-teardown wiring) is responsible for
-	// calling ledger release via the sandbox ID it already has; this
-	// method's job is the PowerShell teardown only. (No action needed here
-	// -- documented so Plan 1b's author doesn't have to rediscover this.)
+	if err := d.segments().releaseBySwitchName(switchName); err != nil {
+		return fmt.Errorf("release segment ledger entry for %q: %w", ref, err)
+	}
 	return nil
 }
