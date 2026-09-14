@@ -84,6 +84,9 @@ message CommandResult {
     ListResult list = 8;
     PersonalizeGuestResult personalize_guest = 9;
     OperationStreamEvent operation_stream = 10;
+    CreateSegmentResult create_segment = 11;
+    google.protobuf.Empty attach_to_segment = 12;
+    google.protobuf.Empty destroy_segment = 13;
   }
 }
 
@@ -172,6 +175,9 @@ message Command {
     AllocateCommand allocate = 7;
     ListCommand list = 8;
     PersonalizeGuestCommand personalize_guest = 9;
+    CreateSegmentCommand create_segment = 10;
+    AttachToSegmentCommand attach_to_segment = 11;
+    DestroySegmentCommand destroy_segment = 12;
   }
 }
 
@@ -219,6 +225,27 @@ message ListCommand {}
 message PersonalizeGuestCommand {
   string resource_id = 1;
   bool apply_network = 2;
+}
+
+// CreateSegmentCommand asks the agent to create a new, empty private
+// network segment for one sandbox. See providersdk.NetworkIsolator.
+message CreateSegmentCommand {
+  string sandbox_id = 1;
+}
+
+// AttachToSegmentCommand asks the agent to move an already-created
+// resource onto an existing segment. segment_ref is the opaque value a
+// prior CreateSegmentResult returned.
+message AttachToSegmentCommand {
+  string resource_id = 1;
+  string segment_ref = 2;
+}
+
+// DestroySegmentCommand asks the agent to tear down a segment created by
+// CreateSegmentCommand. Must be idempotent for an already-gone segment,
+// matching DeleteCommand's contract.
+message DestroySegmentCommand {
+  string segment_ref = 1;
 }
 
 message ResourceResult {
@@ -269,4 +296,8 @@ message ListResult {
 message PersonalizeGuestResult {
   map<string, string> properties = 1;
   bytes guest_credential_json = 2;
+}
+
+message CreateSegmentResult {
+  string segment_ref = 1;
 }

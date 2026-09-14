@@ -449,6 +449,9 @@ type CommandResult struct {
 	//	*CommandResult_List
 	//	*CommandResult_PersonalizeGuest
 	//	*CommandResult_OperationStream
+	//	*CommandResult_CreateSegment
+	//	*CommandResult_AttachToSegment
+	//	*CommandResult_DestroySegment
 	Outcome       isCommandResult_Outcome `protobuf_oneof:"outcome"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -579,6 +582,33 @@ func (x *CommandResult) GetOperationStream() *OperationStreamEvent {
 	return nil
 }
 
+func (x *CommandResult) GetCreateSegment() *CreateSegmentResult {
+	if x != nil {
+		if x, ok := x.Outcome.(*CommandResult_CreateSegment); ok {
+			return x.CreateSegment
+		}
+	}
+	return nil
+}
+
+func (x *CommandResult) GetAttachToSegment() *emptypb.Empty {
+	if x != nil {
+		if x, ok := x.Outcome.(*CommandResult_AttachToSegment); ok {
+			return x.AttachToSegment
+		}
+	}
+	return nil
+}
+
+func (x *CommandResult) GetDestroySegment() *emptypb.Empty {
+	if x != nil {
+		if x, ok := x.Outcome.(*CommandResult_DestroySegment); ok {
+			return x.DestroySegment
+		}
+	}
+	return nil
+}
+
 type isCommandResult_Outcome interface {
 	isCommandResult_Outcome()
 }
@@ -619,6 +649,18 @@ type CommandResult_OperationStream struct {
 	OperationStream *OperationStreamEvent `protobuf:"bytes,10,opt,name=operation_stream,json=operationStream,proto3,oneof"`
 }
 
+type CommandResult_CreateSegment struct {
+	CreateSegment *CreateSegmentResult `protobuf:"bytes,11,opt,name=create_segment,json=createSegment,proto3,oneof"`
+}
+
+type CommandResult_AttachToSegment struct {
+	AttachToSegment *emptypb.Empty `protobuf:"bytes,12,opt,name=attach_to_segment,json=attachToSegment,proto3,oneof"`
+}
+
+type CommandResult_DestroySegment struct {
+	DestroySegment *emptypb.Empty `protobuf:"bytes,13,opt,name=destroy_segment,json=destroySegment,proto3,oneof"`
+}
+
 func (*CommandResult_Resource) isCommandResult_Outcome() {}
 
 func (*CommandResult_Status) isCommandResult_Outcome() {}
@@ -636,6 +678,12 @@ func (*CommandResult_List) isCommandResult_Outcome() {}
 func (*CommandResult_PersonalizeGuest) isCommandResult_Outcome() {}
 
 func (*CommandResult_OperationStream) isCommandResult_Outcome() {}
+
+func (*CommandResult_CreateSegment) isCommandResult_Outcome() {}
+
+func (*CommandResult_AttachToSegment) isCommandResult_Outcome() {}
+
+func (*CommandResult_DestroySegment) isCommandResult_Outcome() {}
 
 type AgentError struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
@@ -1173,6 +1221,9 @@ type Command struct {
 	//	*Command_Allocate
 	//	*Command_List
 	//	*Command_PersonalizeGuest
+	//	*Command_CreateSegment
+	//	*Command_AttachToSegment
+	//	*Command_DestroySegment
 	Op            isCommand_Op `protobuf_oneof:"op"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1292,6 +1343,33 @@ func (x *Command) GetPersonalizeGuest() *PersonalizeGuestCommand {
 	return nil
 }
 
+func (x *Command) GetCreateSegment() *CreateSegmentCommand {
+	if x != nil {
+		if x, ok := x.Op.(*Command_CreateSegment); ok {
+			return x.CreateSegment
+		}
+	}
+	return nil
+}
+
+func (x *Command) GetAttachToSegment() *AttachToSegmentCommand {
+	if x != nil {
+		if x, ok := x.Op.(*Command_AttachToSegment); ok {
+			return x.AttachToSegment
+		}
+	}
+	return nil
+}
+
+func (x *Command) GetDestroySegment() *DestroySegmentCommand {
+	if x != nil {
+		if x, ok := x.Op.(*Command_DestroySegment); ok {
+			return x.DestroySegment
+		}
+	}
+	return nil
+}
+
 type isCommand_Op interface {
 	isCommand_Op()
 }
@@ -1324,6 +1402,18 @@ type Command_PersonalizeGuest struct {
 	PersonalizeGuest *PersonalizeGuestCommand `protobuf:"bytes,9,opt,name=personalize_guest,json=personalizeGuest,proto3,oneof"`
 }
 
+type Command_CreateSegment struct {
+	CreateSegment *CreateSegmentCommand `protobuf:"bytes,10,opt,name=create_segment,json=createSegment,proto3,oneof"`
+}
+
+type Command_AttachToSegment struct {
+	AttachToSegment *AttachToSegmentCommand `protobuf:"bytes,11,opt,name=attach_to_segment,json=attachToSegment,proto3,oneof"`
+}
+
+type Command_DestroySegment struct {
+	DestroySegment *DestroySegmentCommand `protobuf:"bytes,12,opt,name=destroy_segment,json=destroySegment,proto3,oneof"`
+}
+
 func (*Command_Create) isCommand_Op() {}
 
 func (*Command_Read) isCommand_Op() {}
@@ -1337,6 +1427,12 @@ func (*Command_Allocate) isCommand_Op() {}
 func (*Command_List) isCommand_Op() {}
 
 func (*Command_PersonalizeGuest) isCommand_Op() {}
+
+func (*Command_CreateSegment) isCommand_Op() {}
+
+func (*Command_AttachToSegment) isCommand_Op() {}
+
+func (*Command_DestroySegment) isCommand_Op() {}
 
 // config_json/operation_json carry providersdk.Driver's `cfg any` /
 // `Operation interface{}` across the wire as opaque, already-JSON-encoded
@@ -1679,6 +1775,154 @@ func (x *PersonalizeGuestCommand) GetApplyNetwork() bool {
 	return false
 }
 
+// CreateSegmentCommand asks the agent to create a new, empty private
+// network segment for one sandbox. See providersdk.NetworkIsolator.
+type CreateSegmentCommand struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateSegmentCommand) Reset() {
+	*x = CreateSegmentCommand{}
+	mi := &file_boxyagent_v1_agent_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateSegmentCommand) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateSegmentCommand) ProtoMessage() {}
+
+func (x *CreateSegmentCommand) ProtoReflect() protoreflect.Message {
+	mi := &file_boxyagent_v1_agent_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateSegmentCommand.ProtoReflect.Descriptor instead.
+func (*CreateSegmentCommand) Descriptor() ([]byte, []int) {
+	return file_boxyagent_v1_agent_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *CreateSegmentCommand) GetSandboxId() string {
+	if x != nil {
+		return x.SandboxId
+	}
+	return ""
+}
+
+// AttachToSegmentCommand asks the agent to move an already-created
+// resource onto an existing segment. segment_ref is the opaque value a
+// prior CreateSegmentResult returned.
+type AttachToSegmentCommand struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ResourceId    string                 `protobuf:"bytes,1,opt,name=resource_id,json=resourceId,proto3" json:"resource_id,omitempty"`
+	SegmentRef    string                 `protobuf:"bytes,2,opt,name=segment_ref,json=segmentRef,proto3" json:"segment_ref,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AttachToSegmentCommand) Reset() {
+	*x = AttachToSegmentCommand{}
+	mi := &file_boxyagent_v1_agent_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AttachToSegmentCommand) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AttachToSegmentCommand) ProtoMessage() {}
+
+func (x *AttachToSegmentCommand) ProtoReflect() protoreflect.Message {
+	mi := &file_boxyagent_v1_agent_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AttachToSegmentCommand.ProtoReflect.Descriptor instead.
+func (*AttachToSegmentCommand) Descriptor() ([]byte, []int) {
+	return file_boxyagent_v1_agent_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *AttachToSegmentCommand) GetResourceId() string {
+	if x != nil {
+		return x.ResourceId
+	}
+	return ""
+}
+
+func (x *AttachToSegmentCommand) GetSegmentRef() string {
+	if x != nil {
+		return x.SegmentRef
+	}
+	return ""
+}
+
+// DestroySegmentCommand asks the agent to tear down a segment created by
+// CreateSegmentCommand. Must be idempotent for an already-gone segment,
+// matching DeleteCommand's contract.
+type DestroySegmentCommand struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SegmentRef    string                 `protobuf:"bytes,1,opt,name=segment_ref,json=segmentRef,proto3" json:"segment_ref,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DestroySegmentCommand) Reset() {
+	*x = DestroySegmentCommand{}
+	mi := &file_boxyagent_v1_agent_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DestroySegmentCommand) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DestroySegmentCommand) ProtoMessage() {}
+
+func (x *DestroySegmentCommand) ProtoReflect() protoreflect.Message {
+	mi := &file_boxyagent_v1_agent_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DestroySegmentCommand.ProtoReflect.Descriptor instead.
+func (*DestroySegmentCommand) Descriptor() ([]byte, []int) {
+	return file_boxyagent_v1_agent_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *DestroySegmentCommand) GetSegmentRef() string {
+	if x != nil {
+		return x.SegmentRef
+	}
+	return ""
+}
+
 type ResourceResult struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -1690,7 +1934,7 @@ type ResourceResult struct {
 
 func (x *ResourceResult) Reset() {
 	*x = ResourceResult{}
-	mi := &file_boxyagent_v1_agent_proto_msgTypes[21]
+	mi := &file_boxyagent_v1_agent_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1702,7 +1946,7 @@ func (x *ResourceResult) String() string {
 func (*ResourceResult) ProtoMessage() {}
 
 func (x *ResourceResult) ProtoReflect() protoreflect.Message {
-	mi := &file_boxyagent_v1_agent_proto_msgTypes[21]
+	mi := &file_boxyagent_v1_agent_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1715,7 +1959,7 @@ func (x *ResourceResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResourceResult.ProtoReflect.Descriptor instead.
 func (*ResourceResult) Descriptor() ([]byte, []int) {
-	return file_boxyagent_v1_agent_proto_rawDescGZIP(), []int{21}
+	return file_boxyagent_v1_agent_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *ResourceResult) GetId() string {
@@ -1749,7 +1993,7 @@ type ResourceStatusResult struct {
 
 func (x *ResourceStatusResult) Reset() {
 	*x = ResourceStatusResult{}
-	mi := &file_boxyagent_v1_agent_proto_msgTypes[22]
+	mi := &file_boxyagent_v1_agent_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1761,7 +2005,7 @@ func (x *ResourceStatusResult) String() string {
 func (*ResourceStatusResult) ProtoMessage() {}
 
 func (x *ResourceStatusResult) ProtoReflect() protoreflect.Message {
-	mi := &file_boxyagent_v1_agent_proto_msgTypes[22]
+	mi := &file_boxyagent_v1_agent_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1774,7 +2018,7 @@ func (x *ResourceStatusResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResourceStatusResult.ProtoReflect.Descriptor instead.
 func (*ResourceStatusResult) Descriptor() ([]byte, []int) {
-	return file_boxyagent_v1_agent_proto_rawDescGZIP(), []int{22}
+	return file_boxyagent_v1_agent_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *ResourceStatusResult) GetId() string {
@@ -1800,7 +2044,7 @@ type OperationResult struct {
 
 func (x *OperationResult) Reset() {
 	*x = OperationResult{}
-	mi := &file_boxyagent_v1_agent_proto_msgTypes[23]
+	mi := &file_boxyagent_v1_agent_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1812,7 +2056,7 @@ func (x *OperationResult) String() string {
 func (*OperationResult) ProtoMessage() {}
 
 func (x *OperationResult) ProtoReflect() protoreflect.Message {
-	mi := &file_boxyagent_v1_agent_proto_msgTypes[23]
+	mi := &file_boxyagent_v1_agent_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1825,7 +2069,7 @@ func (x *OperationResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OperationResult.ProtoReflect.Descriptor instead.
 func (*OperationResult) Descriptor() ([]byte, []int) {
-	return file_boxyagent_v1_agent_proto_rawDescGZIP(), []int{23}
+	return file_boxyagent_v1_agent_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *OperationResult) GetOutputs() map[string]string {
@@ -1851,7 +2095,7 @@ type OperationStreamEvent struct {
 
 func (x *OperationStreamEvent) Reset() {
 	*x = OperationStreamEvent{}
-	mi := &file_boxyagent_v1_agent_proto_msgTypes[24]
+	mi := &file_boxyagent_v1_agent_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1863,7 +2107,7 @@ func (x *OperationStreamEvent) String() string {
 func (*OperationStreamEvent) ProtoMessage() {}
 
 func (x *OperationStreamEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_boxyagent_v1_agent_proto_msgTypes[24]
+	mi := &file_boxyagent_v1_agent_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1876,7 +2120,7 @@ func (x *OperationStreamEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OperationStreamEvent.ProtoReflect.Descriptor instead.
 func (*OperationStreamEvent) Descriptor() ([]byte, []int) {
-	return file_boxyagent_v1_agent_proto_rawDescGZIP(), []int{24}
+	return file_boxyagent_v1_agent_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *OperationStreamEvent) GetChannel() string {
@@ -1929,7 +2173,7 @@ type AllocateResult struct {
 
 func (x *AllocateResult) Reset() {
 	*x = AllocateResult{}
-	mi := &file_boxyagent_v1_agent_proto_msgTypes[25]
+	mi := &file_boxyagent_v1_agent_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1941,7 +2185,7 @@ func (x *AllocateResult) String() string {
 func (*AllocateResult) ProtoMessage() {}
 
 func (x *AllocateResult) ProtoReflect() protoreflect.Message {
-	mi := &file_boxyagent_v1_agent_proto_msgTypes[25]
+	mi := &file_boxyagent_v1_agent_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1954,7 +2198,7 @@ func (x *AllocateResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AllocateResult.ProtoReflect.Descriptor instead.
 func (*AllocateResult) Descriptor() ([]byte, []int) {
-	return file_boxyagent_v1_agent_proto_rawDescGZIP(), []int{25}
+	return file_boxyagent_v1_agent_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *AllocateResult) GetPropertiesJson() []byte {
@@ -1973,7 +2217,7 @@ type ListResult struct {
 
 func (x *ListResult) Reset() {
 	*x = ListResult{}
-	mi := &file_boxyagent_v1_agent_proto_msgTypes[26]
+	mi := &file_boxyagent_v1_agent_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1985,7 +2229,7 @@ func (x *ListResult) String() string {
 func (*ListResult) ProtoMessage() {}
 
 func (x *ListResult) ProtoReflect() protoreflect.Message {
-	mi := &file_boxyagent_v1_agent_proto_msgTypes[26]
+	mi := &file_boxyagent_v1_agent_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1998,7 +2242,7 @@ func (x *ListResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListResult.ProtoReflect.Descriptor instead.
 func (*ListResult) Descriptor() ([]byte, []int) {
-	return file_boxyagent_v1_agent_proto_rawDescGZIP(), []int{26}
+	return file_boxyagent_v1_agent_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *ListResult) GetResources() []*ResourceStatusResult {
@@ -2023,7 +2267,7 @@ type PersonalizeGuestResult struct {
 
 func (x *PersonalizeGuestResult) Reset() {
 	*x = PersonalizeGuestResult{}
-	mi := &file_boxyagent_v1_agent_proto_msgTypes[27]
+	mi := &file_boxyagent_v1_agent_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2035,7 +2279,7 @@ func (x *PersonalizeGuestResult) String() string {
 func (*PersonalizeGuestResult) ProtoMessage() {}
 
 func (x *PersonalizeGuestResult) ProtoReflect() protoreflect.Message {
-	mi := &file_boxyagent_v1_agent_proto_msgTypes[27]
+	mi := &file_boxyagent_v1_agent_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2048,7 +2292,7 @@ func (x *PersonalizeGuestResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PersonalizeGuestResult.ProtoReflect.Descriptor instead.
 func (*PersonalizeGuestResult) Descriptor() ([]byte, []int) {
-	return file_boxyagent_v1_agent_proto_rawDescGZIP(), []int{27}
+	return file_boxyagent_v1_agent_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *PersonalizeGuestResult) GetProperties() map[string]string {
@@ -2063,6 +2307,50 @@ func (x *PersonalizeGuestResult) GetGuestCredentialJson() []byte {
 		return x.GuestCredentialJson
 	}
 	return nil
+}
+
+type CreateSegmentResult struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SegmentRef    string                 `protobuf:"bytes,1,opt,name=segment_ref,json=segmentRef,proto3" json:"segment_ref,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateSegmentResult) Reset() {
+	*x = CreateSegmentResult{}
+	mi := &file_boxyagent_v1_agent_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateSegmentResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateSegmentResult) ProtoMessage() {}
+
+func (x *CreateSegmentResult) ProtoReflect() protoreflect.Message {
+	mi := &file_boxyagent_v1_agent_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateSegmentResult.ProtoReflect.Descriptor instead.
+func (*CreateSegmentResult) Descriptor() ([]byte, []int) {
+	return file_boxyagent_v1_agent_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *CreateSegmentResult) GetSegmentRef() string {
+	if x != nil {
+		return x.SegmentRef
+	}
+	return ""
 }
 
 var File_boxyagent_v1_agent_proto protoreflect.FileDescriptor
@@ -2095,7 +2383,7 @@ const file_boxyagent_v1_agent_proto_rawDesc = "" +
 	"\favailability\x18\x04 \x03(\v2\".boxyagent.v1.ProviderAvailabilityR\favailability\"X\n" +
 	"\x14ProviderAvailability\x12#\n" +
 	"\rprovider_type\x18\x01 \x01(\tR\fproviderType\x12\x1b\n" +
-	"\tmemory_mb\x18\x02 \x01(\x03R\bmemoryMb\"\xea\x04\n" +
+	"\tmemory_mb\x18\x02 \x01(\x03R\bmemoryMb\"\xbf\x06\n" +
 	"\rCommandResult\x12\x1d\n" +
 	"\n" +
 	"command_id\x18\x01 \x01(\tR\tcommandId\x12:\n" +
@@ -2108,7 +2396,10 @@ const file_boxyagent_v1_agent_proto_rawDesc = "" +
 	"\x04list\x18\b \x01(\v2\x18.boxyagent.v1.ListResultH\x00R\x04list\x12S\n" +
 	"\x11personalize_guest\x18\t \x01(\v2$.boxyagent.v1.PersonalizeGuestResultH\x00R\x10personalizeGuest\x12O\n" +
 	"\x10operation_stream\x18\n" +
-	" \x01(\v2\".boxyagent.v1.OperationStreamEventH\x00R\x0foperationStreamB\t\n" +
+	" \x01(\v2\".boxyagent.v1.OperationStreamEventH\x00R\x0foperationStream\x12J\n" +
+	"\x0ecreate_segment\x18\v \x01(\v2!.boxyagent.v1.CreateSegmentResultH\x00R\rcreateSegment\x12D\n" +
+	"\x11attach_to_segment\x18\f \x01(\v2\x16.google.protobuf.EmptyH\x00R\x0fattachToSegment\x12A\n" +
+	"\x0fdestroy_segment\x18\r \x01(\v2\x16.google.protobuf.EmptyH\x00R\x0edestroySegmentB\t\n" +
 	"\aoutcome\"q\n" +
 	"\n" +
 	"AgentError\x12\x18\n" +
@@ -2158,7 +2449,7 @@ const file_boxyagent_v1_agent_proto_rawDesc = "" +
 	"\x16client_certificate_pem\x18\x02 \x01(\fR\x14clientCertificatePem\x123\n" +
 	"\x16client_private_key_pem\x18\x05 \x01(\fR\x13clientPrivateKeyPem\x12,\n" +
 	"\x12ca_certificate_pem\x18\x03 \x01(\fR\x10caCertificatePem\x12<\n" +
-	"\x1aheartbeat_interval_seconds\x18\x04 \x01(\x05R\x18heartbeatIntervalSeconds\"\xed\x03\n" +
+	"\x1aheartbeat_interval_seconds\x18\x04 \x01(\x05R\x18heartbeatIntervalSeconds\"\xde\x05\n" +
 	"\aCommand\x12\x1d\n" +
 	"\n" +
 	"command_id\x18\x01 \x01(\tR\tcommandId\x12#\n" +
@@ -2169,7 +2460,11 @@ const file_boxyagent_v1_agent_proto_rawDesc = "" +
 	"\x06delete\x18\x06 \x01(\v2\x1b.boxyagent.v1.DeleteCommandH\x00R\x06delete\x12;\n" +
 	"\ballocate\x18\a \x01(\v2\x1d.boxyagent.v1.AllocateCommandH\x00R\ballocate\x12/\n" +
 	"\x04list\x18\b \x01(\v2\x19.boxyagent.v1.ListCommandH\x00R\x04list\x12T\n" +
-	"\x11personalize_guest\x18\t \x01(\v2%.boxyagent.v1.PersonalizeGuestCommandH\x00R\x10personalizeGuestB\x04\n" +
+	"\x11personalize_guest\x18\t \x01(\v2%.boxyagent.v1.PersonalizeGuestCommandH\x00R\x10personalizeGuest\x12K\n" +
+	"\x0ecreate_segment\x18\n" +
+	" \x01(\v2\".boxyagent.v1.CreateSegmentCommandH\x00R\rcreateSegment\x12R\n" +
+	"\x11attach_to_segment\x18\v \x01(\v2$.boxyagent.v1.AttachToSegmentCommandH\x00R\x0fattachToSegment\x12N\n" +
+	"\x0fdestroy_segment\x18\f \x01(\v2#.boxyagent.v1.DestroySegmentCommandH\x00R\x0edestroySegmentB\x04\n" +
 	"\x02op\"0\n" +
 	"\rCreateCommand\x12\x1f\n" +
 	"\vconfig_json\x18\x01 \x01(\fR\n" +
@@ -2192,7 +2487,18 @@ const file_boxyagent_v1_agent_proto_rawDesc = "" +
 	"\x17PersonalizeGuestCommand\x12\x1f\n" +
 	"\vresource_id\x18\x01 \x01(\tR\n" +
 	"resourceId\x12#\n" +
-	"\rapply_network\x18\x02 \x01(\bR\fapplyNetwork\"\xc3\x02\n" +
+	"\rapply_network\x18\x02 \x01(\bR\fapplyNetwork\"5\n" +
+	"\x14CreateSegmentCommand\x12\x1d\n" +
+	"\n" +
+	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\"Z\n" +
+	"\x16AttachToSegmentCommand\x12\x1f\n" +
+	"\vresource_id\x18\x01 \x01(\tR\n" +
+	"resourceId\x12\x1f\n" +
+	"\vsegment_ref\x18\x02 \x01(\tR\n" +
+	"segmentRef\"8\n" +
+	"\x15DestroySegmentCommand\x12\x1f\n" +
+	"\vsegment_ref\x18\x01 \x01(\tR\n" +
+	"segmentRef\"\xc3\x02\n" +
 	"\x0eResourceResult\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12Y\n" +
 	"\x0fconnection_info\x18\x02 \x03(\v20.boxyagent.v1.ResourceResult.ConnectionInfoEntryR\x0econnectionInfo\x12F\n" +
@@ -2234,7 +2540,10 @@ const file_boxyagent_v1_agent_proto_rawDesc = "" +
 	"\x15guest_credential_json\x18\x02 \x01(\fR\x13guestCredentialJson\x1a=\n" +
 	"\x0fPropertiesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x012\xf0\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"6\n" +
+	"\x13CreateSegmentResult\x12\x1f\n" +
+	"\vsegment_ref\x18\x01 \x01(\tR\n" +
+	"segmentRef2\xf0\x01\n" +
 	"\x15AgentTransportService\x12F\n" +
 	"\aConnect\x12\x1a.boxyagent.v1.AgentMessage\x1a\x1b.boxyagent.v1.ServerMessage(\x010\x01\x12\x8e\x01\n" +
 	"\x1fResolveGuestBootstrapCredential\x124.boxyagent.v1.ResolveGuestBootstrapCredentialRequest\x1a5.boxyagent.v1.ResolveGuestBootstrapCredentialResponseB@Z>github.com/Geogboe/boxy/pkg/agentproto/boxyagentv1;boxyagentv1b\x06proto3"
@@ -2251,7 +2560,7 @@ func file_boxyagent_v1_agent_proto_rawDescGZIP() []byte {
 	return file_boxyagent_v1_agent_proto_rawDescData
 }
 
-var file_boxyagent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
+var file_boxyagent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
 var file_boxyagent_v1_agent_proto_goTypes = []any{
 	(*ResolveGuestBootstrapCredentialRequest)(nil),  // 0: boxyagent.v1.ResolveGuestBootstrapCredentialRequest
 	(*ResolveGuestBootstrapCredentialResponse)(nil), // 1: boxyagent.v1.ResolveGuestBootstrapCredentialResponse
@@ -2274,19 +2583,23 @@ var file_boxyagent_v1_agent_proto_goTypes = []any{
 	(*AllocateCommand)(nil),                         // 18: boxyagent.v1.AllocateCommand
 	(*ListCommand)(nil),                             // 19: boxyagent.v1.ListCommand
 	(*PersonalizeGuestCommand)(nil),                 // 20: boxyagent.v1.PersonalizeGuestCommand
-	(*ResourceResult)(nil),                          // 21: boxyagent.v1.ResourceResult
-	(*ResourceStatusResult)(nil),                    // 22: boxyagent.v1.ResourceStatusResult
-	(*OperationResult)(nil),                         // 23: boxyagent.v1.OperationResult
-	(*OperationStreamEvent)(nil),                    // 24: boxyagent.v1.OperationStreamEvent
-	(*AllocateResult)(nil),                          // 25: boxyagent.v1.AllocateResult
-	(*ListResult)(nil),                              // 26: boxyagent.v1.ListResult
-	(*PersonalizeGuestResult)(nil),                  // 27: boxyagent.v1.PersonalizeGuestResult
-	nil,                                             // 28: boxyagent.v1.ResourceResult.ConnectionInfoEntry
-	nil,                                             // 29: boxyagent.v1.ResourceResult.MetadataEntry
-	nil,                                             // 30: boxyagent.v1.OperationResult.OutputsEntry
-	nil,                                             // 31: boxyagent.v1.OperationStreamEvent.AttributesEntry
-	nil,                                             // 32: boxyagent.v1.PersonalizeGuestResult.PropertiesEntry
-	(*emptypb.Empty)(nil),                           // 33: google.protobuf.Empty
+	(*CreateSegmentCommand)(nil),                    // 21: boxyagent.v1.CreateSegmentCommand
+	(*AttachToSegmentCommand)(nil),                  // 22: boxyagent.v1.AttachToSegmentCommand
+	(*DestroySegmentCommand)(nil),                   // 23: boxyagent.v1.DestroySegmentCommand
+	(*ResourceResult)(nil),                          // 24: boxyagent.v1.ResourceResult
+	(*ResourceStatusResult)(nil),                    // 25: boxyagent.v1.ResourceStatusResult
+	(*OperationResult)(nil),                         // 26: boxyagent.v1.OperationResult
+	(*OperationStreamEvent)(nil),                    // 27: boxyagent.v1.OperationStreamEvent
+	(*AllocateResult)(nil),                          // 28: boxyagent.v1.AllocateResult
+	(*ListResult)(nil),                              // 29: boxyagent.v1.ListResult
+	(*PersonalizeGuestResult)(nil),                  // 30: boxyagent.v1.PersonalizeGuestResult
+	(*CreateSegmentResult)(nil),                     // 31: boxyagent.v1.CreateSegmentResult
+	nil,                                             // 32: boxyagent.v1.ResourceResult.ConnectionInfoEntry
+	nil,                                             // 33: boxyagent.v1.ResourceResult.MetadataEntry
+	nil,                                             // 34: boxyagent.v1.OperationResult.OutputsEntry
+	nil,                                             // 35: boxyagent.v1.OperationStreamEvent.AttributesEntry
+	nil,                                             // 36: boxyagent.v1.PersonalizeGuestResult.PropertiesEntry
+	(*emptypb.Empty)(nil),                           // 37: google.protobuf.Empty
 }
 var file_boxyagent_v1_agent_proto_depIdxs = []int32{
 	3,  // 0: boxyagent.v1.AgentMessage.register:type_name -> boxyagent.v1.RegisterRequest
@@ -2294,41 +2607,47 @@ var file_boxyagent_v1_agent_proto_depIdxs = []int32{
 	6,  // 2: boxyagent.v1.AgentMessage.result:type_name -> boxyagent.v1.CommandResult
 	8,  // 3: boxyagent.v1.AgentMessage.log_batch:type_name -> boxyagent.v1.LogBatch
 	5,  // 4: boxyagent.v1.Heartbeat.availability:type_name -> boxyagent.v1.ProviderAvailability
-	21, // 5: boxyagent.v1.CommandResult.resource:type_name -> boxyagent.v1.ResourceResult
-	22, // 6: boxyagent.v1.CommandResult.status:type_name -> boxyagent.v1.ResourceStatusResult
-	23, // 7: boxyagent.v1.CommandResult.operation:type_name -> boxyagent.v1.OperationResult
-	33, // 8: boxyagent.v1.CommandResult.deleted:type_name -> google.protobuf.Empty
-	25, // 9: boxyagent.v1.CommandResult.allocate:type_name -> boxyagent.v1.AllocateResult
+	24, // 5: boxyagent.v1.CommandResult.resource:type_name -> boxyagent.v1.ResourceResult
+	25, // 6: boxyagent.v1.CommandResult.status:type_name -> boxyagent.v1.ResourceStatusResult
+	26, // 7: boxyagent.v1.CommandResult.operation:type_name -> boxyagent.v1.OperationResult
+	37, // 8: boxyagent.v1.CommandResult.deleted:type_name -> google.protobuf.Empty
+	28, // 9: boxyagent.v1.CommandResult.allocate:type_name -> boxyagent.v1.AllocateResult
 	7,  // 10: boxyagent.v1.CommandResult.error:type_name -> boxyagent.v1.AgentError
-	26, // 11: boxyagent.v1.CommandResult.list:type_name -> boxyagent.v1.ListResult
-	27, // 12: boxyagent.v1.CommandResult.personalize_guest:type_name -> boxyagent.v1.PersonalizeGuestResult
-	24, // 13: boxyagent.v1.CommandResult.operation_stream:type_name -> boxyagent.v1.OperationStreamEvent
-	9,  // 14: boxyagent.v1.LogBatch.events:type_name -> boxyagent.v1.LogEvent
-	12, // 15: boxyagent.v1.ServerMessage.registered:type_name -> boxyagent.v1.RegisterResponse
-	13, // 16: boxyagent.v1.ServerMessage.command:type_name -> boxyagent.v1.Command
-	11, // 17: boxyagent.v1.ServerMessage.log_request:type_name -> boxyagent.v1.LogRequest
-	14, // 18: boxyagent.v1.Command.create:type_name -> boxyagent.v1.CreateCommand
-	15, // 19: boxyagent.v1.Command.read:type_name -> boxyagent.v1.ReadCommand
-	16, // 20: boxyagent.v1.Command.update:type_name -> boxyagent.v1.UpdateCommand
-	17, // 21: boxyagent.v1.Command.delete:type_name -> boxyagent.v1.DeleteCommand
-	18, // 22: boxyagent.v1.Command.allocate:type_name -> boxyagent.v1.AllocateCommand
-	19, // 23: boxyagent.v1.Command.list:type_name -> boxyagent.v1.ListCommand
-	20, // 24: boxyagent.v1.Command.personalize_guest:type_name -> boxyagent.v1.PersonalizeGuestCommand
-	28, // 25: boxyagent.v1.ResourceResult.connection_info:type_name -> boxyagent.v1.ResourceResult.ConnectionInfoEntry
-	29, // 26: boxyagent.v1.ResourceResult.metadata:type_name -> boxyagent.v1.ResourceResult.MetadataEntry
-	30, // 27: boxyagent.v1.OperationResult.outputs:type_name -> boxyagent.v1.OperationResult.OutputsEntry
-	31, // 28: boxyagent.v1.OperationStreamEvent.attributes:type_name -> boxyagent.v1.OperationStreamEvent.AttributesEntry
-	22, // 29: boxyagent.v1.ListResult.resources:type_name -> boxyagent.v1.ResourceStatusResult
-	32, // 30: boxyagent.v1.PersonalizeGuestResult.properties:type_name -> boxyagent.v1.PersonalizeGuestResult.PropertiesEntry
-	2,  // 31: boxyagent.v1.AgentTransportService.Connect:input_type -> boxyagent.v1.AgentMessage
-	0,  // 32: boxyagent.v1.AgentTransportService.ResolveGuestBootstrapCredential:input_type -> boxyagent.v1.ResolveGuestBootstrapCredentialRequest
-	10, // 33: boxyagent.v1.AgentTransportService.Connect:output_type -> boxyagent.v1.ServerMessage
-	1,  // 34: boxyagent.v1.AgentTransportService.ResolveGuestBootstrapCredential:output_type -> boxyagent.v1.ResolveGuestBootstrapCredentialResponse
-	33, // [33:35] is the sub-list for method output_type
-	31, // [31:33] is the sub-list for method input_type
-	31, // [31:31] is the sub-list for extension type_name
-	31, // [31:31] is the sub-list for extension extendee
-	0,  // [0:31] is the sub-list for field type_name
+	29, // 11: boxyagent.v1.CommandResult.list:type_name -> boxyagent.v1.ListResult
+	30, // 12: boxyagent.v1.CommandResult.personalize_guest:type_name -> boxyagent.v1.PersonalizeGuestResult
+	27, // 13: boxyagent.v1.CommandResult.operation_stream:type_name -> boxyagent.v1.OperationStreamEvent
+	31, // 14: boxyagent.v1.CommandResult.create_segment:type_name -> boxyagent.v1.CreateSegmentResult
+	37, // 15: boxyagent.v1.CommandResult.attach_to_segment:type_name -> google.protobuf.Empty
+	37, // 16: boxyagent.v1.CommandResult.destroy_segment:type_name -> google.protobuf.Empty
+	9,  // 17: boxyagent.v1.LogBatch.events:type_name -> boxyagent.v1.LogEvent
+	12, // 18: boxyagent.v1.ServerMessage.registered:type_name -> boxyagent.v1.RegisterResponse
+	13, // 19: boxyagent.v1.ServerMessage.command:type_name -> boxyagent.v1.Command
+	11, // 20: boxyagent.v1.ServerMessage.log_request:type_name -> boxyagent.v1.LogRequest
+	14, // 21: boxyagent.v1.Command.create:type_name -> boxyagent.v1.CreateCommand
+	15, // 22: boxyagent.v1.Command.read:type_name -> boxyagent.v1.ReadCommand
+	16, // 23: boxyagent.v1.Command.update:type_name -> boxyagent.v1.UpdateCommand
+	17, // 24: boxyagent.v1.Command.delete:type_name -> boxyagent.v1.DeleteCommand
+	18, // 25: boxyagent.v1.Command.allocate:type_name -> boxyagent.v1.AllocateCommand
+	19, // 26: boxyagent.v1.Command.list:type_name -> boxyagent.v1.ListCommand
+	20, // 27: boxyagent.v1.Command.personalize_guest:type_name -> boxyagent.v1.PersonalizeGuestCommand
+	21, // 28: boxyagent.v1.Command.create_segment:type_name -> boxyagent.v1.CreateSegmentCommand
+	22, // 29: boxyagent.v1.Command.attach_to_segment:type_name -> boxyagent.v1.AttachToSegmentCommand
+	23, // 30: boxyagent.v1.Command.destroy_segment:type_name -> boxyagent.v1.DestroySegmentCommand
+	32, // 31: boxyagent.v1.ResourceResult.connection_info:type_name -> boxyagent.v1.ResourceResult.ConnectionInfoEntry
+	33, // 32: boxyagent.v1.ResourceResult.metadata:type_name -> boxyagent.v1.ResourceResult.MetadataEntry
+	34, // 33: boxyagent.v1.OperationResult.outputs:type_name -> boxyagent.v1.OperationResult.OutputsEntry
+	35, // 34: boxyagent.v1.OperationStreamEvent.attributes:type_name -> boxyagent.v1.OperationStreamEvent.AttributesEntry
+	25, // 35: boxyagent.v1.ListResult.resources:type_name -> boxyagent.v1.ResourceStatusResult
+	36, // 36: boxyagent.v1.PersonalizeGuestResult.properties:type_name -> boxyagent.v1.PersonalizeGuestResult.PropertiesEntry
+	2,  // 37: boxyagent.v1.AgentTransportService.Connect:input_type -> boxyagent.v1.AgentMessage
+	0,  // 38: boxyagent.v1.AgentTransportService.ResolveGuestBootstrapCredential:input_type -> boxyagent.v1.ResolveGuestBootstrapCredentialRequest
+	10, // 39: boxyagent.v1.AgentTransportService.Connect:output_type -> boxyagent.v1.ServerMessage
+	1,  // 40: boxyagent.v1.AgentTransportService.ResolveGuestBootstrapCredential:output_type -> boxyagent.v1.ResolveGuestBootstrapCredentialResponse
+	39, // [39:41] is the sub-list for method output_type
+	37, // [37:39] is the sub-list for method input_type
+	37, // [37:37] is the sub-list for extension type_name
+	37, // [37:37] is the sub-list for extension extendee
+	0,  // [0:37] is the sub-list for field type_name
 }
 
 func init() { file_boxyagent_v1_agent_proto_init() }
@@ -2352,6 +2671,9 @@ func file_boxyagent_v1_agent_proto_init() {
 		(*CommandResult_List)(nil),
 		(*CommandResult_PersonalizeGuest)(nil),
 		(*CommandResult_OperationStream)(nil),
+		(*CommandResult_CreateSegment)(nil),
+		(*CommandResult_AttachToSegment)(nil),
+		(*CommandResult_DestroySegment)(nil),
 	}
 	file_boxyagent_v1_agent_proto_msgTypes[10].OneofWrappers = []any{
 		(*ServerMessage_Registered)(nil),
@@ -2366,6 +2688,9 @@ func file_boxyagent_v1_agent_proto_init() {
 		(*Command_Allocate)(nil),
 		(*Command_List)(nil),
 		(*Command_PersonalizeGuest)(nil),
+		(*Command_CreateSegment)(nil),
+		(*Command_AttachToSegment)(nil),
+		(*Command_DestroySegment)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -2373,7 +2698,7 @@ func file_boxyagent_v1_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_boxyagent_v1_agent_proto_rawDesc), len(file_boxyagent_v1_agent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   33,
+			NumMessages:   37,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
