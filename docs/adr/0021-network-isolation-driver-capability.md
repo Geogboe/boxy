@@ -168,11 +168,13 @@ item. Revisit only for a concrete testing need with its own scoping writeup.
   fake PowerShell executor. Neither path has been run against live
   infrastructure from the development host (see AGENTS.md's "This development
   host cannot run Hyper-V VMs" note), which leaves the two open risks below.
-- Nothing consumes the capability yet. Plan 1a is driver-side only; wiring
-  sandbox creation/allocation/teardown to call it is Plan 1b, which is also
-  where the two risks below have to be settled.
+- The control plane does not consume the capability yet. Plan 1a is
+  driver-side only; Plan 1b carried it up to `agentsdk.NetworkIsolatingAgent`
+  so an agent can dispatch the three calls, but nothing asks it to. Wiring
+  sandbox creation/allocation/teardown to actually call it is Plan 1c, which
+  is also where the two risks below have to be settled.
 
-## Open risks for Plan 1b
+## Open risks for Plan 1c
 
 Both are unverifiable from the development host and neither is fixed here —
 they are recorded so the consumer-side work starts by resolving them, not by
@@ -184,7 +186,7 @@ rediscovering them:
    instances are unsupported. If that holds, the Hyper-V design is
    non-functional past the first sandbox on a given host: the second
    `New-NetNat` fails and `CreateSegment` errors. Verifying this on a real
-   Hyper-V host is a prerequisite for Plan 1b; a fallback would likely be one
+   Hyper-V host is a prerequisite for Plan 1c; a fallback would likely be one
    shared NAT over the whole `10.250.0.0/16` base with per-sandbox isolation
    resting on the separate switches alone.
 2. **`New-NetIPAddress` immediately after `New-VMSwitch` assumes the host
@@ -199,3 +201,15 @@ rediscovering them:
 
 - 2026-09-10: Initial decision, recorded with Plan 1a (driver-side
   implementation of the capability for Hyper-V and Docker). Part of #224.
+- 2026-09-14: This ADR was written before Plan 1b landed, and at the time
+  used "Plan 1b" for the consumer-side work. Plan 1b turned out to be agent
+  wiring: it added `agentsdk.NetworkIsolatingAgent` — implemented by both
+  `EmbeddedAgent` (type-asserting the local driver) and `RemoteAgent` (three
+  new commands over the existing gRPC stream) — on top of the driver
+  capability this ADR describes. That still creates no real segment from the
+  control plane: nothing calls the agent capability either. The
+  sandbox/allocation wiring that will is now Plan 1c
+  (`docs/superpowers/plans/2026-09-10-overlay-network-isolation-sandbox-wiring-plan.md`),
+  and both open Hyper-V risks above remain open, explicitly deferred to it.
+  References to "Plan 1b" in Consequences and the open-risks section were
+  updated accordingly. Part of #224.

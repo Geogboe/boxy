@@ -1777,6 +1777,8 @@ func (x *PersonalizeGuestCommand) GetApplyNetwork() bool {
 
 // CreateSegmentCommand asks the agent to create a new, empty private
 // network segment for one sandbox. See providersdk.NetworkIsolator.
+// Idempotent per sandbox_id: a repeat returns the same segment_ref rather
+// than creating a second segment.
 type CreateSegmentCommand struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`

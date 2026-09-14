@@ -262,10 +262,12 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   escaping. `hyperv` (Internal vSwitch + `New-NetNat` over a `diskjson`
   segment ledger) and `docker` (per-sandbox bridge, connect-then-disconnect)
   implement it; `devfactory` deliberately does not, same reasoning as
-  `GuestPersonalizer`/`NetworkRangeReporter` above. **Driver-side only so
-  far — nothing consumes it yet**, and two unverified-from-this-host risks
-  (`New-NetNat`'s possible one-per-host limit; `New-NetIPAddress` timing
-  right after `New-VMSwitch`) must be settled before it is wired up. See
+  `GuestPersonalizer`/`NetworkRangeReporter` above. **Reachable via
+  `agentsdk.NetworkIsolatingAgent` on both `EmbeddedAgent` and `RemoteAgent`,
+  but the control plane still calls none of it**, and two
+  unverified-from-this-host risks (`New-NetNat`'s possible one-per-host
+  limit; `New-NetIPAddress` timing right after `New-VMSwitch`) must be
+  settled before it is wired up (Plan 1c). See
   [ADR-0021](docs/adr/0021-network-isolation-driver-capability.md).
 
 ### PSRP Transport Dependency Fork (go-psrp / go-psrpcore)
