@@ -884,3 +884,91 @@ func TestErrorResult_ClassifiesTypedErrors(t *testing.T) {
 		}
 	})
 }
+
+// fakeIsolatingDriver adds providersdk.NetworkIsolator on top of a minimal
+// driver, mirroring fakePersonalizingDriver's "capability on top of a base
+// driver" shape used for the analogous GuestPersonalizer tests in this file.
+type fakeIsolatingDriver struct {
+	*fakeDriver
+	createSegmentRef providersdk.SegmentRef
+	createSegmentErr error
+	attachErr        error
+	destroyErr       error
+	gotSandboxID     string
+	gotResourceID    string
+	gotAttachRef     providersdk.SegmentRef
+	gotDestroyRef    providersdk.SegmentRef
+}
+
+func (f *fakeIsolatingDriver) CreateSegment(_ context.Context, sandboxID string) (providersdk.SegmentRef, error) {
+	f.gotSandboxID = sandboxID
+	if f.createSegmentErr != nil {
+		return "", f.createSegmentErr
+	}
+	return f.createSegmentRef, nil
+}
+func (f *fakeIsolatingDriver) AttachToSegment(_ context.Context, providerResourceID string, ref providersdk.SegmentRef) error {
+	f.gotResourceID, f.gotAttachRef = providerResourceID, ref
+	return f.attachErr
+}
+func (f *fakeIsolatingDriver) DestroySegment(_ context.Context, ref providersdk.SegmentRef) error {
+	f.gotDestroyRef = ref
+	return f.destroyErr
+}
+
+func TestEmbeddedAgent_CreateSegment(t *testing.T) {
+	driver := &fakeIsolatingDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}, createSegmentRef: "boxy-sb-sb-1"}
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", driver)
+	if err != nil {
+		t.Fatalf("NewEmbeddedAgent: %v", err)
+	}
+	ref, err := agent.CreateSegment(context.Background(), "hyperv", "sb-1")
+	if err != nil {
+		t.Fatalf("CreateSegment: %v", err)
+	}
+	if ref != "boxy-sb-sb-1" {
+		t.Fatalf("ref = %q, want %q", ref, "boxy-sb-sb-1")
+	}
+	if driver.gotSandboxID != "sb-1" {
+		t.Fatalf("driver got sandboxID = %q, want %q", driver.gotSandboxID, "sb-1")
+	}
+}
+
+func TestEmbeddedAgent_AttachToSegment(t *testing.T) {
+	driver := &fakeIsolatingDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}}
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", driver)
+	if err != nil {
+		t.Fatalf("NewEmbeddedAgent: %v", err)
+	}
+	if err := agent.AttachToSegment(context.Background(), "hyperv", "vm-1", "boxy-sb-sb-1"); err != nil {
+		t.Fatalf("AttachToSegment: %v", err)
+	}
+	if driver.gotResourceID != "vm-1" || driver.gotAttachRef != "boxy-sb-sb-1" {
+		t.Fatalf("driver got (%q, %q)", driver.gotResourceID, driver.gotAttachRef)
+	}
+}
+
+func TestEmbeddedAgent_DestroySegment(t *testing.T) {
+	driver := &fakeIsolatingDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}}
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", driver)
+	if err != nil {
+		t.Fatalf("NewEmbeddedAgent: %v", err)
+	}
+	if err := agent.DestroySegment(context.Background(), "hyperv", "boxy-sb-sb-1"); err != nil {
+		t.Fatalf("DestroySegment: %v", err)
+	}
+	if driver.gotDestroyRef != "boxy-sb-sb-1" {
+		t.Fatalf("driver got destroy ref = %q, want %q", driver.gotDestroyRef, "boxy-sb-sb-1")
+	}
+}
+
+func TestEmbeddedAgent_CreateSegmentUnsupportedDriverErrors(t *testing.T) {
+	driver := &fakeDriver{providerType: "docker"}
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", driver)
+	if err != nil {
+		t.Fatalf("NewEmbeddedAgent: %v", err)
+	}
+	if _, err := agent.CreateSegment(context.Background(), "docker", "sb-1"); err == nil {
+		t.Fatal("expected an error for a driver that does not implement NetworkIsolator")
+	}
+}

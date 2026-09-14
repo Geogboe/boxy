@@ -11,6 +11,7 @@ import (
 var (
 	_ Agent                   = (*EmbeddedAgent)(nil)
 	_ GuestPersonalizingAgent = (*EmbeddedAgent)(nil)
+	_ NetworkIsolatingAgent   = (*EmbeddedAgent)(nil)
 )
 
 // EmbeddedAgent is an in-process agent that dispatches directly to
@@ -129,6 +130,42 @@ func (a *EmbeddedAgent) PersonalizeGuest(ctx context.Context, provider providers
 		return nil, nil
 	}
 	return gp.PersonalizeGuest(ctx, id, opts)
+}
+
+func (a *EmbeddedAgent) CreateSegment(ctx context.Context, provider providersdk.Type, sandboxID string) (providersdk.SegmentRef, error) {
+	d, err := a.driver(provider)
+	if err != nil {
+		return "", err
+	}
+	isolator, ok := d.(providersdk.NetworkIsolator)
+	if !ok {
+		return "", fmt.Errorf("agent %q: provider %q does not support network isolation", a.info.ID, provider)
+	}
+	return isolator.CreateSegment(ctx, sandboxID)
+}
+
+func (a *EmbeddedAgent) AttachToSegment(ctx context.Context, provider providersdk.Type, providerResourceID string, ref providersdk.SegmentRef) error {
+	d, err := a.driver(provider)
+	if err != nil {
+		return err
+	}
+	isolator, ok := d.(providersdk.NetworkIsolator)
+	if !ok {
+		return fmt.Errorf("agent %q: provider %q does not support network isolation", a.info.ID, provider)
+	}
+	return isolator.AttachToSegment(ctx, providerResourceID, ref)
+}
+
+func (a *EmbeddedAgent) DestroySegment(ctx context.Context, provider providersdk.Type, ref providersdk.SegmentRef) error {
+	d, err := a.driver(provider)
+	if err != nil {
+		return err
+	}
+	isolator, ok := d.(providersdk.NetworkIsolator)
+	if !ok {
+		return fmt.Errorf("agent %q: provider %q does not support network isolation", a.info.ID, provider)
+	}
+	return isolator.DestroySegment(ctx, ref)
 }
 
 func (a *EmbeddedAgent) driver(provider providersdk.Type) (providersdk.Driver, error) {

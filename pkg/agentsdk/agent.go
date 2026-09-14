@@ -62,6 +62,19 @@ type GuestPersonalizingAgent interface {
 	PersonalizeGuest(ctx context.Context, provider providersdk.Type, id string, opts providersdk.GuestPersonalizationOptions) (*providersdk.GuestPersonalizationResult, error)
 }
 
+// NetworkIsolatingAgent is an optional agent capability for providers that
+// implement providersdk.NetworkIsolator. Unlike GuestPersonalizingAgent
+// (which degrades to nil, nil for an unsupported driver so callers fall
+// back to the generic Allocate path), there is no fallback here: a caller
+// that reaches CreateSegment/AttachToSegment/DestroySegment already
+// type-asserted for this capability specifically, so an unsupported
+// driver is a caller bug, not an expected degrade path — it should error.
+type NetworkIsolatingAgent interface {
+	CreateSegment(ctx context.Context, provider providersdk.Type, sandboxID string) (providersdk.SegmentRef, error)
+	AttachToSegment(ctx context.Context, provider providersdk.Type, providerResourceID string, ref providersdk.SegmentRef) error
+	DestroySegment(ctx context.Context, provider providersdk.Type, ref providersdk.SegmentRef) error
+}
+
 // ResourceListingAgent is an optional agent capability for providers whose
 // underlying driver implements providersdk.ResourceLister. Not every driver
 // supports enumeration, so callers must type-assert for this rather than
