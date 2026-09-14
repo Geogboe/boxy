@@ -80,6 +80,7 @@ type streamWaiter struct {
 
 var _ GuestPersonalizingAgent = (*RemoteAgent)(nil)
 var _ AvailabilityReportingAgent = (*RemoteAgent)(nil)
+var _ NetworkIsolatingAgent = (*RemoteAgent)(nil)
 
 // reconstructAgentError rebuilds a typed error from an AgentError's
 // error_type/error_detail_json when recognized, falling back to today's
@@ -647,4 +648,49 @@ func (a *RemoteAgent) PersonalizeGuest(ctx context.Context, provider providersdk
 		AccessDetails:       providersdk.GuestAccessDetails{Properties: pg.GetProperties()},
 		EphemeralCredential: credential,
 	}, nil
+}
+
+func (a *RemoteAgent) CreateSegment(ctx context.Context, provider providersdk.Type, sandboxID string) (providersdk.SegmentRef, error) {
+	res, err := a.call(ctx, &boxyagentv1.Command{
+		ProviderType: string(provider),
+		Op:           &boxyagentv1.Command_CreateSegment{CreateSegment: &boxyagentv1.CreateSegmentCommand{SandboxId: sandboxID}},
+	})
+	if err != nil {
+		return "", err
+	}
+	if agentErr := res.GetError(); agentErr != nil {
+		return "", reconstructAgentError(a.info.ID, agentErr)
+	}
+	return providersdk.SegmentRef(res.GetCreateSegment().GetSegmentRef()), nil
+}
+
+func (a *RemoteAgent) AttachToSegment(ctx context.Context, provider providersdk.Type, providerResourceID string, ref providersdk.SegmentRef) error {
+	res, err := a.call(ctx, &boxyagentv1.Command{
+		ProviderType: string(provider),
+		Op: &boxyagentv1.Command_AttachToSegment{AttachToSegment: &boxyagentv1.AttachToSegmentCommand{
+			ResourceId: providerResourceID,
+			SegmentRef: string(ref),
+		}},
+	})
+	if err != nil {
+		return err
+	}
+	if agentErr := res.GetError(); agentErr != nil {
+		return reconstructAgentError(a.info.ID, agentErr)
+	}
+	return nil
+}
+
+func (a *RemoteAgent) DestroySegment(ctx context.Context, provider providersdk.Type, ref providersdk.SegmentRef) error {
+	res, err := a.call(ctx, &boxyagentv1.Command{
+		ProviderType: string(provider),
+		Op:           &boxyagentv1.Command_DestroySegment{DestroySegment: &boxyagentv1.DestroySegmentCommand{SegmentRef: string(ref)}},
+	})
+	if err != nil {
+		return err
+	}
+	if agentErr := res.GetError(); agentErr != nil {
+		return reconstructAgentError(a.info.ID, agentErr)
+	}
+	return nil
 }

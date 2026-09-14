@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/types/known/emptypb"
 
 	boxyagentv1 "github.com/Geogboe/boxy/pkg/agentproto/boxyagent/v1"
 	"github.com/Geogboe/boxy/pkg/diagnostics"
@@ -1028,3 +1029,140 @@ func TestRemoteAgent_Availability_BackwardCompatibleHeartbeatWithoutData(t *test
 }
 
 var _ AvailabilityReportingAgent = (*RemoteAgent)(nil)
+
+func TestRemoteAgent_CreateSegmentRoundTrip(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)
+	go func() { _ = a.Serve() }()
+
+	type result struct {
+		ref providersdk.SegmentRef
+		err error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		ref, err := a.CreateSegment(context.Background(), "hyperv", "sb-1")
+		resultCh <- result{ref, err}
+	}()
+
+	cmd := recvCommand(t, stream.sentCh)
+	createSegment := cmd.GetCreateSegment()
+	if createSegment == nil {
+		t.Fatalf("expected a CreateSegmentCommand, got %#v", cmd)
+	}
+	if createSegment.GetSandboxId() != "sb-1" {
+		t.Fatalf("expected sandbox_id sb-1, got %q", createSegment.GetSandboxId())
+	}
+
+	stream.feedResult(&boxyagentv1.CommandResult{
+		CommandId: cmd.GetCommandId(),
+		Outcome:   &boxyagentv1.CommandResult_CreateSegment{CreateSegment: &boxyagentv1.CreateSegmentResult{SegmentRef: "boxy-sb-sb-1"}},
+	})
+
+	select {
+	case r := <-resultCh:
+		if r.err != nil {
+			t.Fatalf("CreateSegment returned error: %v", r.err)
+		}
+		if r.ref != "boxy-sb-sb-1" {
+			t.Fatalf("ref = %q, want %q", r.ref, "boxy-sb-sb-1")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for CreateSegment to return")
+	}
+}
+
+func TestRemoteAgent_AttachToSegmentRoundTrip(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)
+	go func() { _ = a.Serve() }()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- a.AttachToSegment(context.Background(), "hyperv", "vm-1", "boxy-sb-sb-1")
+	}()
+
+	cmd := recvCommand(t, stream.sentCh)
+	attach := cmd.GetAttachToSegment()
+	if attach == nil {
+		t.Fatalf("expected an AttachToSegmentCommand, got %#v", cmd)
+	}
+	if attach.GetResourceId() != "vm-1" || attach.GetSegmentRef() != "boxy-sb-sb-1" {
+		t.Fatalf("expected (vm-1, boxy-sb-sb-1), got (%q, %q)", attach.GetResourceId(), attach.GetSegmentRef())
+	}
+
+	stream.feedResult(&boxyagentv1.CommandResult{
+		CommandId: cmd.GetCommandId(),
+		Outcome:   &boxyagentv1.CommandResult_AttachToSegment{AttachToSegment: &emptypb.Empty{}},
+	})
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("AttachToSegment returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for AttachToSegment to return")
+	}
+}
+
+func TestRemoteAgent_DestroySegmentRoundTrip(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)
+	go func() { _ = a.Serve() }()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- a.DestroySegment(context.Background(), "hyperv", "boxy-sb-sb-1")
+	}()
+
+	cmd := recvCommand(t, stream.sentCh)
+	destroy := cmd.GetDestroySegment()
+	if destroy == nil {
+		t.Fatalf("expected a DestroySegmentCommand, got %#v", cmd)
+	}
+	if destroy.GetSegmentRef() != "boxy-sb-sb-1" {
+		t.Fatalf("expected segment_ref boxy-sb-sb-1, got %q", destroy.GetSegmentRef())
+	}
+
+	stream.feedResult(&boxyagentv1.CommandResult{
+		CommandId: cmd.GetCommandId(),
+		Outcome:   &boxyagentv1.CommandResult_DestroySegment{DestroySegment: &emptypb.Empty{}},
+	})
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("DestroySegment returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for DestroySegment to return")
+	}
+}
+
+func TestRemoteAgent_CreateSegmentAgentErrorSurfaces(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)
+	go func() { _ = a.Serve() }()
+
+	resultCh := make(chan error, 1)
+	go func() {
+		_, err := a.CreateSegment(context.Background(), "hyperv", "sb-1")
+		resultCh <- err
+	}()
+
+	cmd := recvCommand(t, stream.sentCh)
+	stream.feedResult(&boxyagentv1.CommandResult{
+		CommandId: cmd.GetCommandId(),
+		Outcome:   &boxyagentv1.CommandResult_Error{Error: &boxyagentv1.AgentError{Message: "no capacity for another switch"}},
+	})
+
+	select {
+	case err := <-resultCh:
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for CreateSegment to return")
+	}
+}
