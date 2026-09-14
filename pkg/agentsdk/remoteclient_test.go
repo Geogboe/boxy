@@ -505,6 +505,101 @@ func TestExecuteCommand(t *testing.T) {
 		}
 	})
 
+	t.Run("create segment success", func(t *testing.T) {
+		drivers := DriverSet{"hyperv": &fakeIsolatingDriver{
+			fakeDriver:       &fakeDriver{providerType: "hyperv"},
+			createSegmentRef: "boxy-sb-sb-1",
+		}}
+		cmd := &boxyagentv1.Command{
+			CommandId:    "cmd-20",
+			ProviderType: "hyperv",
+			Op:           &boxyagentv1.Command_CreateSegment{CreateSegment: &boxyagentv1.CreateSegmentCommand{SandboxId: "sb-1"}},
+		}
+		res := executeCommand(context.Background(), drivers, cmd)
+		if res.GetError() != nil {
+			t.Fatalf("unexpected error: %s", res.GetError().GetMessage())
+		}
+		if got := res.GetCreateSegment().GetSegmentRef(); got != "boxy-sb-sb-1" {
+			t.Fatalf("segment_ref = %q, want %q", got, "boxy-sb-sb-1")
+		}
+		fid := drivers["hyperv"].(*fakeIsolatingDriver)
+		if fid.gotSandboxID != "sb-1" {
+			t.Fatalf("driver got sandboxID = %q, want %q", fid.gotSandboxID, "sb-1")
+		}
+	})
+
+	t.Run("create segment driver error is surfaced as AgentError", func(t *testing.T) {
+		drivers := DriverSet{"hyperv": &fakeIsolatingDriver{
+			fakeDriver:       &fakeDriver{providerType: "hyperv"},
+			createSegmentErr: errors.New("no free CIDR blocks"),
+		}}
+		cmd := &boxyagentv1.Command{
+			CommandId:    "cmd-21",
+			ProviderType: "hyperv",
+			Op:           &boxyagentv1.Command_CreateSegment{CreateSegment: &boxyagentv1.CreateSegmentCommand{SandboxId: "sb-1"}},
+		}
+		res := executeCommand(context.Background(), drivers, cmd)
+		if res.GetError() == nil {
+			t.Fatal("expected an AgentError")
+		}
+	})
+
+	t.Run("create segment unsupported by driver errors", func(t *testing.T) {
+		drivers := DriverSet{"docker": &fakeDriver{providerType: "docker"}}
+		cmd := &boxyagentv1.Command{
+			CommandId:    "cmd-22",
+			ProviderType: "docker",
+			Op:           &boxyagentv1.Command_CreateSegment{CreateSegment: &boxyagentv1.CreateSegmentCommand{SandboxId: "sb-1"}},
+		}
+		res := executeCommand(context.Background(), drivers, cmd)
+		if res.GetError() == nil {
+			t.Fatal("expected an error for a driver that does not implement NetworkIsolator")
+		}
+	})
+
+	t.Run("attach to segment success", func(t *testing.T) {
+		drivers := DriverSet{"hyperv": &fakeIsolatingDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}}}
+		cmd := &boxyagentv1.Command{
+			CommandId:    "cmd-23",
+			ProviderType: "hyperv",
+			Op: &boxyagentv1.Command_AttachToSegment{AttachToSegment: &boxyagentv1.AttachToSegmentCommand{
+				ResourceId: "vm-1",
+				SegmentRef: "boxy-sb-sb-1",
+			}},
+		}
+		res := executeCommand(context.Background(), drivers, cmd)
+		if res.GetError() != nil {
+			t.Fatalf("unexpected error: %s", res.GetError().GetMessage())
+		}
+		if res.GetAttachToSegment() == nil {
+			t.Fatalf("expected an AttachToSegment (empty) outcome, got %#v", res.GetOutcome())
+		}
+		fid := drivers["hyperv"].(*fakeIsolatingDriver)
+		if fid.gotResourceID != "vm-1" || fid.gotAttachRef != "boxy-sb-sb-1" {
+			t.Fatalf("driver got (%q, %q)", fid.gotResourceID, fid.gotAttachRef)
+		}
+	})
+
+	t.Run("destroy segment success", func(t *testing.T) {
+		drivers := DriverSet{"hyperv": &fakeIsolatingDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}}}
+		cmd := &boxyagentv1.Command{
+			CommandId:    "cmd-24",
+			ProviderType: "hyperv",
+			Op:           &boxyagentv1.Command_DestroySegment{DestroySegment: &boxyagentv1.DestroySegmentCommand{SegmentRef: "boxy-sb-sb-1"}},
+		}
+		res := executeCommand(context.Background(), drivers, cmd)
+		if res.GetError() != nil {
+			t.Fatalf("unexpected error: %s", res.GetError().GetMessage())
+		}
+		if res.GetDestroySegment() == nil {
+			t.Fatalf("expected a DestroySegment (empty) outcome, got %#v", res.GetOutcome())
+		}
+		fid := drivers["hyperv"].(*fakeIsolatingDriver)
+		if fid.gotDestroyRef != "boxy-sb-sb-1" {
+			t.Fatalf("driver got destroy ref = %q, want %q", fid.gotDestroyRef, "boxy-sb-sb-1")
+		}
+	})
+
 	t.Run("unknown provider type errors", func(t *testing.T) {
 		cmd := &boxyagentv1.Command{
 			CommandId:    "cmd-6",

@@ -706,6 +706,46 @@ func executeCommand(ctx context.Context, drivers DriverSet, cmd *boxyagentv1.Com
 			}},
 		}
 
+	case *boxyagentv1.Command_CreateSegment:
+		isolator, ok := d.(providersdk.NetworkIsolator)
+		if !ok {
+			return errorResult(cmd.GetCommandId(), fmt.Sprintf("provider %q does not support network isolation", cmd.GetProviderType()), nil)
+		}
+		ref, err := isolator.CreateSegment(ctx, op.CreateSegment.GetSandboxId())
+		if err != nil {
+			return errorResult(cmd.GetCommandId(), err.Error(), err)
+		}
+		return &boxyagentv1.CommandResult{
+			CommandId: cmd.GetCommandId(),
+			Outcome:   &boxyagentv1.CommandResult_CreateSegment{CreateSegment: &boxyagentv1.CreateSegmentResult{SegmentRef: string(ref)}},
+		}
+
+	case *boxyagentv1.Command_AttachToSegment:
+		isolator, ok := d.(providersdk.NetworkIsolator)
+		if !ok {
+			return errorResult(cmd.GetCommandId(), fmt.Sprintf("provider %q does not support network isolation", cmd.GetProviderType()), nil)
+		}
+		if err := isolator.AttachToSegment(ctx, op.AttachToSegment.GetResourceId(), providersdk.SegmentRef(op.AttachToSegment.GetSegmentRef())); err != nil {
+			return errorResult(cmd.GetCommandId(), err.Error(), err)
+		}
+		return &boxyagentv1.CommandResult{
+			CommandId: cmd.GetCommandId(),
+			Outcome:   &boxyagentv1.CommandResult_AttachToSegment{AttachToSegment: &emptypb.Empty{}},
+		}
+
+	case *boxyagentv1.Command_DestroySegment:
+		isolator, ok := d.(providersdk.NetworkIsolator)
+		if !ok {
+			return errorResult(cmd.GetCommandId(), fmt.Sprintf("provider %q does not support network isolation", cmd.GetProviderType()), nil)
+		}
+		if err := isolator.DestroySegment(ctx, providersdk.SegmentRef(op.DestroySegment.GetSegmentRef())); err != nil {
+			return errorResult(cmd.GetCommandId(), err.Error(), err)
+		}
+		return &boxyagentv1.CommandResult{
+			CommandId: cmd.GetCommandId(),
+			Outcome:   &boxyagentv1.CommandResult_DestroySegment{DestroySegment: &emptypb.Empty{}},
+		}
+
 	default:
 		return errorResult(cmd.GetCommandId(), "unknown command op", nil)
 	}
