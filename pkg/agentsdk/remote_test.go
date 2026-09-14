@@ -1166,3 +1166,80 @@ func TestRemoteAgent_CreateSegmentAgentErrorSurfaces(t *testing.T) {
 		t.Fatal("timed out waiting for CreateSegment to return")
 	}
 }
+
+// A CommandResult carrying some other oneof variant — a version-skewed agent,
+// or any malformed result — must not read as a successful empty SegmentRef.
+// Plan 1c persists what CreateSegment returns and later passes it back to
+// AttachToSegment/DestroySegment, so a silent ("", nil) here would fail far
+// from its cause.
+func TestRemoteAgent_CreateSegmentMismatchedOutcomeErrors(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)
+	go func() { _ = a.Serve() }()
+
+	type result struct {
+		ref providersdk.SegmentRef
+		err error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		ref, err := a.CreateSegment(context.Background(), "hyperv", "sb-1")
+		resultCh <- result{ref, err}
+	}()
+
+	cmd := recvCommand(t, stream.sentCh)
+	stream.feedResult(&boxyagentv1.CommandResult{
+		CommandId: cmd.GetCommandId(),
+		Outcome:   &boxyagentv1.CommandResult_Deleted{Deleted: &emptypb.Empty{}},
+	})
+
+	select {
+	case r := <-resultCh:
+		if r.err == nil {
+			t.Fatal("expected an error for a mismatched CommandResult outcome")
+		}
+		if r.ref != "" {
+			t.Fatalf("ref = %q, want empty alongside the error", r.ref)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for CreateSegment to return")
+	}
+}
+
+// An empty SegmentRef in an otherwise well-formed CreateSegmentResult is
+// deliberately *not* rejected here — see NetworkIsolatingAgent.CreateSegment's
+// doc comment. Validating that case is left to the caller (Plan 1c); this test
+// pins the current contract so a future change to it is a deliberate one.
+func TestRemoteAgent_CreateSegmentEmptyRefIsNotRejected(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)
+	go func() { _ = a.Serve() }()
+
+	type result struct {
+		ref providersdk.SegmentRef
+		err error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		ref, err := a.CreateSegment(context.Background(), "hyperv", "sb-1")
+		resultCh <- result{ref, err}
+	}()
+
+	cmd := recvCommand(t, stream.sentCh)
+	stream.feedResult(&boxyagentv1.CommandResult{
+		CommandId: cmd.GetCommandId(),
+		Outcome:   &boxyagentv1.CommandResult_CreateSegment{CreateSegment: &boxyagentv1.CreateSegmentResult{}},
+	})
+
+	select {
+	case r := <-resultCh:
+		if r.err != nil {
+			t.Fatalf("CreateSegment returned error: %v", r.err)
+		}
+		if r.ref != "" {
+			t.Fatalf("ref = %q, want empty", r.ref)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for CreateSegment to return")
+	}
+}

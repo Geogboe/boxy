@@ -661,7 +661,11 @@ func (a *RemoteAgent) CreateSegment(ctx context.Context, provider providersdk.Ty
 	if agentErr := res.GetError(); agentErr != nil {
 		return "", reconstructAgentError(a.info.ID, agentErr)
 	}
-	return providersdk.SegmentRef(res.GetCreateSegment().GetSegmentRef()), nil
+	cs := res.GetCreateSegment()
+	if cs == nil {
+		return "", fmt.Errorf("agent %q: unexpected result for create segment", a.info.ID)
+	}
+	return providersdk.SegmentRef(cs.GetSegmentRef()), nil
 }
 
 func (a *RemoteAgent) AttachToSegment(ctx context.Context, provider providersdk.Type, providerResourceID string, ref providersdk.SegmentRef) error {
