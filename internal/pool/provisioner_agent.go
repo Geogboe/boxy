@@ -249,6 +249,51 @@ func (ap *AgentProvisioner) Allocate(ctx context.Context, pool model.Pool, res m
 	return providersdk.AllocationResult{Properties: properties}, err
 }
 
+// CreateSegment satisfies sandbox.NetworkIsolatingAllocator. It resolves
+// the exact agent that owns res (never re-resolving by provider type --
+// see AgentProvisioner's own doc comment on why Allocate/Destroy must route
+// back to res.Provider.AgentID) and asks it to create (or, per
+// providersdk.NetworkIsolator's contract, idempotently return an existing)
+// segment for sandboxID.
+func (ap *AgentProvisioner) CreateSegment(ctx context.Context, pool model.Pool, res model.Resource, sandboxID model.SandboxID) (providersdk.SegmentRef, providersdk.Type, error) {
+	spec, ok := ap.Specs[pool.Name]
+	if !ok {
+		return "", "", fmt.Errorf("unknown pool %q", pool.Name)
+	}
+	driverType := ap.driverTypeForPool(spec)
+	agent, err := ap.agentForResource(res)
+	if err != nil {
+		return "", "", err
+	}
+	isolator, ok := agent.(agentsdk.NetworkIsolatingAgent)
+	if !ok {
+		return "", "", fmt.Errorf("agent %q does not support network isolation", res.Provider.AgentID)
+	}
+	ref, err := isolator.CreateSegment(ctx, driverType, string(sandboxID))
+	if err != nil {
+		return "", "", err
+	}
+	return ref, driverType, nil
+}
+
+// AttachToSegment satisfies sandbox.NetworkIsolatingAllocator.
+func (ap *AgentProvisioner) AttachToSegment(ctx context.Context, pool model.Pool, res model.Resource, ref providersdk.SegmentRef) error {
+	spec, ok := ap.Specs[pool.Name]
+	if !ok {
+		return fmt.Errorf("unknown pool %q", pool.Name)
+	}
+	driverType := ap.driverTypeForPool(spec)
+	agent, err := ap.agentForResource(res)
+	if err != nil {
+		return err
+	}
+	isolator, ok := agent.(agentsdk.NetworkIsolatingAgent)
+	if !ok {
+		return fmt.Errorf("agent %q does not support network isolation", res.Provider.AgentID)
+	}
+	return isolator.AttachToSegment(ctx, driverType, string(res.ID), ref)
+}
+
 // quarantineOnPersonalizeTimeout handles an allocation-time PersonalizeGuest
 // call that exceeded ap.Timeouts.PersonalizeGuest (#333). Per ADR-0010, a
 // timed-out guest rotation must never be treated like an ordinary allocation
