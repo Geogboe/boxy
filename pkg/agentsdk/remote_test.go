@@ -1210,6 +1210,106 @@ func TestRemoteAgent_CreateSegmentMismatchedOutcomeErrors(t *testing.T) {
 // deliberately *not* rejected here — see NetworkIsolatingAgent.CreateSegment's
 // doc comment. Validating that case is left to the caller (Plan 1c); this test
 // pins the current contract so a future change to it is a deliberate one.
+func TestRemoteAgent_MeshIdentityRoundTrip(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)
+	go func() { _ = a.Serve() }()
+
+	type result struct {
+		pub, endpoint, cidr string
+		err                 error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		pub, endpoint, cidr, err := a.MeshIdentity(context.Background(), "hyperv", "boxy-sb-sb-1")
+		resultCh <- result{pub, endpoint, cidr, err}
+	}()
+
+	cmd := recvCommand(t, stream.sentCh)
+	mi := cmd.GetMeshIdentity()
+	if mi == nil || mi.GetSegmentRef() != "boxy-sb-sb-1" {
+		t.Fatalf("expected a MeshIdentityCommand for boxy-sb-sb-1, got %#v", cmd)
+	}
+	stream.feedResult(&boxyagentv1.CommandResult{
+		CommandId: cmd.GetCommandId(),
+		Outcome: &boxyagentv1.CommandResult_MeshIdentity{MeshIdentity: &boxyagentv1.MeshIdentityResult{
+			PublicKey: "pub1", Endpoint: "203.0.113.5:51820", Cidr: "10.250.0.0/29",
+		}},
+	})
+
+	select {
+	case r := <-resultCh:
+		if r.err != nil {
+			t.Fatalf("MeshIdentity returned error: %v", r.err)
+		}
+		if r.pub != "pub1" || r.endpoint != "203.0.113.5:51820" || r.cidr != "10.250.0.0/29" {
+			t.Fatalf("got (%q, %q, %q)", r.pub, r.endpoint, r.cidr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for MeshIdentity to return")
+	}
+}
+
+func TestRemoteAgent_AddMeshPeerRoundTrip(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)
+	go func() { _ = a.Serve() }()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- a.AddMeshPeer(context.Background(), "hyperv", "boxy-sb-sb-1", "pub2", "203.0.113.9:51820", "10.250.0.8/29")
+	}()
+
+	cmd := recvCommand(t, stream.sentCh)
+	add := cmd.GetAddMeshPeer()
+	if add == nil || add.GetSegmentRef() != "boxy-sb-sb-1" || add.GetPeerPublicKey() != "pub2" || add.GetPeerEndpoint() != "203.0.113.9:51820" || add.GetPeerCidr() != "10.250.0.8/29" {
+		t.Fatalf("unexpected AddMeshPeerCommand: %#v", add)
+	}
+	stream.feedResult(&boxyagentv1.CommandResult{
+		CommandId: cmd.GetCommandId(),
+		Outcome:   &boxyagentv1.CommandResult_AddMeshPeer{AddMeshPeer: &emptypb.Empty{}},
+	})
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("AddMeshPeer returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for AddMeshPeer to return")
+	}
+}
+
+func TestRemoteAgent_RemoveMeshPeerRoundTrip(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)
+	go func() { _ = a.Serve() }()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- a.RemoveMeshPeer(context.Background(), "hyperv", "boxy-sb-sb-1", "pub2")
+	}()
+
+	cmd := recvCommand(t, stream.sentCh)
+	remove := cmd.GetRemoveMeshPeer()
+	if remove == nil || remove.GetSegmentRef() != "boxy-sb-sb-1" || remove.GetPeerPublicKey() != "pub2" {
+		t.Fatalf("unexpected RemoveMeshPeerCommand: %#v", remove)
+	}
+	stream.feedResult(&boxyagentv1.CommandResult{
+		CommandId: cmd.GetCommandId(),
+		Outcome:   &boxyagentv1.CommandResult_RemoveMeshPeer{RemoveMeshPeer: &emptypb.Empty{}},
+	})
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("RemoveMeshPeer returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for RemoveMeshPeer to return")
+	}
+}
+
 func TestRemoteAgent_CreateSegmentEmptyRefIsNotRejected(t *testing.T) {
 	stream := newFakeServerStream()
 	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)
