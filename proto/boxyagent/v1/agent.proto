@@ -100,6 +100,9 @@ message CommandResult {
     CreateSegmentResult create_segment = 11;
     google.protobuf.Empty attach_to_segment = 12;
     google.protobuf.Empty destroy_segment = 13;
+    MeshIdentityResult mesh_identity = 14;
+    google.protobuf.Empty add_mesh_peer = 15;
+    google.protobuf.Empty remove_mesh_peer = 16;
   }
 }
 
@@ -191,6 +194,9 @@ message Command {
     CreateSegmentCommand create_segment = 10;
     AttachToSegmentCommand attach_to_segment = 11;
     DestroySegmentCommand destroy_segment = 12;
+    MeshIdentityCommand mesh_identity = 13;
+    AddMeshPeerCommand add_mesh_peer = 14;
+    RemoveMeshPeerCommand remove_mesh_peer = 15;
   }
 }
 
@@ -268,6 +274,28 @@ message DestroySegmentCommand {
   string segment_ref = 1;
 }
 
+// MeshIdentityCommand asks the agent for the WireGuard identity of one
+// segment, lazily creating its mesh interface if this is the first mesh
+// call for it. See providersdk.MeshPeerer.
+message MeshIdentityCommand {
+  string segment_ref = 1;
+}
+
+// AddMeshPeerCommand asks the agent to peer segment_ref's mesh interface
+// with a remote peer. The segment's mesh interface must already exist
+// (i.e. a MeshIdentityCommand must already have been sent for it).
+message AddMeshPeerCommand {
+  string segment_ref = 1;
+  string peer_public_key = 2;
+  string peer_endpoint = 3;
+  string peer_cidr = 4;
+}
+
+message RemoveMeshPeerCommand {
+  string segment_ref = 1;
+  string peer_public_key = 2;
+}
+
 message ResourceResult {
   string id = 1;
   map<string, string> connection_info = 2;
@@ -320,4 +348,10 @@ message PersonalizeGuestResult {
 
 message CreateSegmentResult {
   string segment_ref = 1;
+}
+
+message MeshIdentityResult {
+  string public_key = 1;
+  string endpoint = 2;
+  string cidr = 3;
 }
