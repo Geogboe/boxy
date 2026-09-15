@@ -1067,3 +1067,80 @@ func TestEmbeddedAgent_CreateSegmentUnsupportedDriverErrors(t *testing.T) {
 		t.Fatal("expected an error for a driver that does not implement NetworkIsolator")
 	}
 }
+
+// fakeMeshPeeringDriver adds providersdk.MeshPeerer on top of a minimal
+// driver, mirroring fakeIsolatingDriver's shape.
+type fakeMeshPeeringDriver struct {
+	*fakeDriver
+	identityPub, identityEndpoint, identityCIDR       string
+	identityErr                                       error
+	addPeerErr, removePeerErr                         error
+	gotAddPeerKey, gotAddPeerEndpoint, gotAddPeerCIDR string
+	gotRemovePeerKey                                  string
+}
+
+func (f *fakeMeshPeeringDriver) MeshIdentity(_ context.Context, _ providersdk.SegmentRef) (string, string, string, error) {
+	return f.identityPub, f.identityEndpoint, f.identityCIDR, f.identityErr
+}
+func (f *fakeMeshPeeringDriver) AddMeshPeer(_ context.Context, _ providersdk.SegmentRef, peerPublicKey, peerEndpoint, peerCIDR string) error {
+	f.gotAddPeerKey, f.gotAddPeerEndpoint, f.gotAddPeerCIDR = peerPublicKey, peerEndpoint, peerCIDR
+	return f.addPeerErr
+}
+func (f *fakeMeshPeeringDriver) RemoveMeshPeer(_ context.Context, _ providersdk.SegmentRef, peerPublicKey string) error {
+	f.gotRemovePeerKey = peerPublicKey
+	return f.removePeerErr
+}
+
+func TestEmbeddedAgent_MeshIdentity(t *testing.T) {
+	driver := &fakeMeshPeeringDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}, identityPub: "pub1", identityEndpoint: "203.0.113.5:51820", identityCIDR: "10.250.0.0/29"}
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", driver)
+	if err != nil {
+		t.Fatalf("NewEmbeddedAgent: %v", err)
+	}
+	pub, endpoint, cidr, err := agent.MeshIdentity(context.Background(), "hyperv", "boxy-sb-sb-1")
+	if err != nil {
+		t.Fatalf("MeshIdentity: %v", err)
+	}
+	if pub != "pub1" || endpoint != "203.0.113.5:51820" || cidr != "10.250.0.0/29" {
+		t.Fatalf("got (%q, %q, %q)", pub, endpoint, cidr)
+	}
+}
+
+func TestEmbeddedAgent_AddMeshPeer(t *testing.T) {
+	driver := &fakeMeshPeeringDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}}
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", driver)
+	if err != nil {
+		t.Fatalf("NewEmbeddedAgent: %v", err)
+	}
+	if err := agent.AddMeshPeer(context.Background(), "hyperv", "boxy-sb-sb-1", "pub2", "203.0.113.9:51820", "10.250.0.8/29"); err != nil {
+		t.Fatalf("AddMeshPeer: %v", err)
+	}
+	if driver.gotAddPeerKey != "pub2" || driver.gotAddPeerEndpoint != "203.0.113.9:51820" || driver.gotAddPeerCIDR != "10.250.0.8/29" {
+		t.Fatalf("driver got (%q, %q, %q)", driver.gotAddPeerKey, driver.gotAddPeerEndpoint, driver.gotAddPeerCIDR)
+	}
+}
+
+func TestEmbeddedAgent_RemoveMeshPeer(t *testing.T) {
+	driver := &fakeMeshPeeringDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}}
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", driver)
+	if err != nil {
+		t.Fatalf("NewEmbeddedAgent: %v", err)
+	}
+	if err := agent.RemoveMeshPeer(context.Background(), "hyperv", "boxy-sb-sb-1", "pub2"); err != nil {
+		t.Fatalf("RemoveMeshPeer: %v", err)
+	}
+	if driver.gotRemovePeerKey != "pub2" {
+		t.Fatalf("driver got %q, want pub2", driver.gotRemovePeerKey)
+	}
+}
+
+func TestEmbeddedAgent_MeshIdentityUnsupportedDriverErrors(t *testing.T) {
+	driver := &fakeDriver{providerType: "docker"}
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", driver)
+	if err != nil {
+		t.Fatalf("NewEmbeddedAgent: %v", err)
+	}
+	if _, _, _, err := agent.MeshIdentity(context.Background(), "docker", "net-1"); err == nil {
+		t.Fatal("expected an error for a driver that does not implement MeshPeerer")
+	}
+}

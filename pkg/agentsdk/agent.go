@@ -112,6 +112,16 @@ type NetworkIsolatingAgent interface {
 	DestroySegment(ctx context.Context, provider providersdk.Type, ref providersdk.SegmentRef) error
 }
 
+// MeshPeeringAgent is an optional agent capability for providers that
+// implement providersdk.MeshPeerer. Like NetworkIsolatingAgent, an
+// unsupported driver is a caller error (no fallback path), since a caller
+// reaching these methods already type-asserted for this capability.
+type MeshPeeringAgent interface {
+	MeshIdentity(ctx context.Context, provider providersdk.Type, ref providersdk.SegmentRef) (publicKey, endpoint, cidr string, err error)
+	AddMeshPeer(ctx context.Context, provider providersdk.Type, ref providersdk.SegmentRef, peerPublicKey, peerEndpoint, peerCIDR string) error
+	RemoveMeshPeer(ctx context.Context, provider providersdk.Type, ref providersdk.SegmentRef, peerPublicKey string) error
+}
+
 // ResourceListingAgent is an optional agent capability for providers whose
 // underlying driver implements providersdk.ResourceLister. Not every driver
 // supports enumeration, so callers must type-assert for this rather than

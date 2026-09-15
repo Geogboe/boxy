@@ -12,6 +12,7 @@ var (
 	_ Agent                   = (*EmbeddedAgent)(nil)
 	_ GuestPersonalizingAgent = (*EmbeddedAgent)(nil)
 	_ NetworkIsolatingAgent   = (*EmbeddedAgent)(nil)
+	_ MeshPeeringAgent        = (*EmbeddedAgent)(nil)
 )
 
 // EmbeddedAgent is an in-process agent that dispatches directly to
@@ -171,6 +172,42 @@ func (a *EmbeddedAgent) DestroySegment(ctx context.Context, provider providersdk
 		return fmt.Errorf("agent %q: provider %q does not support network isolation", a.info.ID, provider)
 	}
 	return isolator.DestroySegment(ctx, ref)
+}
+
+func (a *EmbeddedAgent) MeshIdentity(ctx context.Context, provider providersdk.Type, ref providersdk.SegmentRef) (string, string, string, error) {
+	d, err := a.driver(provider)
+	if err != nil {
+		return "", "", "", err
+	}
+	peerer, ok := d.(providersdk.MeshPeerer)
+	if !ok {
+		return "", "", "", fmt.Errorf("agent %q: provider %q does not support mesh peering", a.info.ID, provider)
+	}
+	return peerer.MeshIdentity(ctx, ref)
+}
+
+func (a *EmbeddedAgent) AddMeshPeer(ctx context.Context, provider providersdk.Type, ref providersdk.SegmentRef, peerPublicKey, peerEndpoint, peerCIDR string) error {
+	d, err := a.driver(provider)
+	if err != nil {
+		return err
+	}
+	peerer, ok := d.(providersdk.MeshPeerer)
+	if !ok {
+		return fmt.Errorf("agent %q: provider %q does not support mesh peering", a.info.ID, provider)
+	}
+	return peerer.AddMeshPeer(ctx, ref, peerPublicKey, peerEndpoint, peerCIDR)
+}
+
+func (a *EmbeddedAgent) RemoveMeshPeer(ctx context.Context, provider providersdk.Type, ref providersdk.SegmentRef, peerPublicKey string) error {
+	d, err := a.driver(provider)
+	if err != nil {
+		return err
+	}
+	peerer, ok := d.(providersdk.MeshPeerer)
+	if !ok {
+		return fmt.Errorf("agent %q: provider %q does not support mesh peering", a.info.ID, provider)
+	}
+	return peerer.RemoveMeshPeer(ctx, ref, peerPublicKey)
 }
 
 func (a *EmbeddedAgent) driver(provider providersdk.Type) (providersdk.Driver, error) {
