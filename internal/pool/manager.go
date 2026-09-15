@@ -10,6 +10,7 @@ import (
 
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/policycontroller"
+	"github.com/Geogboe/boxy/pkg/providersdk"
 	boxysecrets "github.com/Geogboe/boxy/pkg/secrets"
 	"github.com/Geogboe/boxy/pkg/store"
 )
@@ -417,6 +418,28 @@ func (m *Manager) Fill(ctx context.Context, poolName model.PoolName) (model.Pool
 		return model.Pool{}, err
 	}
 	return m.store.GetPool(ctx, poolName)
+}
+
+// DestroySegment tears down one network segment by agent ID, delegating to
+// the configured provisioner if it supports SegmentDestroyingProvisioner.
+// Called by sandbox.DeletionReconciler (via the sandbox.SegmentDestroyer
+// capability -- see Task 6) once a sandbox's resources are all gone.
+//
+// Signature deliberately uses plain strings, not providersdk.Type/
+// providersdk.SegmentRef: internal/sandbox.SegmentDestroyer (Task 6) is
+// declared with plain strings, matching model.NetworkSegment's own
+// plain-string fields (that package doesn't import providersdk -- see
+// Task 1's doc comment on model.NetworkSegment). Go interface satisfaction
+// requires an exact method signature match, so a providersdk.Type/
+// SegmentRef parameter here would silently fail to satisfy
+// sandbox.SegmentDestroyer despite both underlying types being strings --
+// the conversion has to happen on this side of the boundary.
+func (m *Manager) DestroySegment(ctx context.Context, agentID string, providerType string, ref string) error {
+	destroyer, ok := m.provisioner.(SegmentDestroyingProvisioner)
+	if !ok {
+		return nil
+	}
+	return destroyer.DestroySegment(ctx, agentID, providersdk.Type(providerType), providersdk.SegmentRef(ref))
 }
 
 // DestroyResource tears down a tracked resource through its origin pool's
