@@ -5,9 +5,7 @@ package hyperv
 
 import (
 	"fmt"
-	"net/netip"
 	"path/filepath"
-	"strings"
 
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
@@ -29,8 +27,8 @@ type Config struct {
 	HostReserveMB *int64 `json:"host_reserve_mb,omitempty" yaml:"host_reserve_mb,omitempty"`
 
 	// DataDir is the directory where this Hyper-V provider's restart-safe
-	// state is persisted — currently just the range-based IP allocation
-	// ledger (see NetworkConfig.Range, ADR-0012). Relative paths resolve
+	// state is persisted — currently the per-sandbox network segment ledger
+	// (see network_isolation.go, ADR-0021). Relative paths resolve
 	// against the boxy config file's own directory when one is known (see
 	// ResolveRelativePaths); against the process's working directory
 	// otherwise. Empty defaults to ".boxy-agent/hyperv" via the same
@@ -74,11 +72,13 @@ func (c *Config) effectiveMemoryBudgetMB() (int64, error) {
 // Unlike devfactory's ResolveRelativePaths — which leaves an empty DataDir
 // alone, since devfactory falls back to a throwaway temp directory instead
 // — an empty DataDir here is defaulted to ".boxy-agent/hyperv" *before*
-// anchoring against baseDir. A lost ledger directly reproduces the address
-// collision #222 exists to fix, so an installed agent service (which
+// anchoring against baseDir. A lost ledger means losing track of which
+// per-sandbox /29 blocks are in use, so an installed agent service (which
 // persists ProviderConfigsBaseDir) and an interactive `boxy agent serve`
 // sharing the same --config must resolve to the same ledger file even
-// though their process working directories differ. See ADR-0012.
+// though their process working directories differ. Originally introduced
+// for #222's IP-range ledger (ADR-0012, now superseded); the segment ledger
+// it now anchors has the same requirement, see ADR-0021.
 func (c *Config) ResolveRelativePaths(baseDir string) {
 	if c.DataDir == "" {
 		c.DataDir = filepath.Join(defaultDataDirBase, defaultDataDirHyperV)
@@ -114,13 +114,13 @@ type CreateConfig struct {
 	MemoryMB int `json:"memory_mb" yaml:"memory_mb"`
 
 	// Switch is the name of the virtual switch to connect to. Optional.
+	//
+	// This is the switch a pooled VM lives on before any sandbox claims it.
+	// It is not the guest's final network: per-sandbox network isolation
+	// (providersdk.NetworkIsolator) moves each claimed VM onto its sandbox's
+	// own Internal switch at allocation time and addresses the guest from
+	// that segment's block. See ADR-0021.
 	Switch string `json:"switch" yaml:"switch"`
-
-	// Network holds optional static IP configuration to apply inside the guest
-	// during personalization. When omitted the guest relies on DHCP or a
-	// pre-configured address. Use this on Windows Server hosts where Hyper-V
-	// does not issue DHCP leases automatically.
-	Network *NetworkConfig `json:"network,omitempty" yaml:"network,omitempty"`
 
 	// GuestOS is the guest operating system: "windows" or "linux". Default: "windows".
 	// Windows guests use PowerShell Direct (psdirect); Linux guests use SSH.
@@ -143,78 +143,12 @@ type CreateConfig struct {
 	GuestPassword string `json:"guest_password" yaml:"guest_password"`
 }
 
-// NetworkConfig describes how to assign an IPv4 address to a guest VM
-// during personalization. Exactly one of StaticIP or Range must be set.
-type NetworkConfig struct {
-	// StaticIP is a single fixed IPv4 address (e.g. "203.0.113.50", an RFC
-	// 5737 documentation address) assigned to every VM this pool creates.
-	// Mutually exclusive with Range. Only safe for a pool that never has
-	// more than one VM alive at once — a pool with min_ready > 1, or that
-	// preheats multiple VMs before allocation, collides on the wire. Use
-	// Range for those. See ADR-0012.
-	StaticIP string `json:"static_ip,omitempty" yaml:"static_ip,omitempty"`
-
-	// Range is an IPv4 CIDR (e.g. "203.0.113.0/24") that a per-agent,
-	// restart-safe ledger allocates distinct addresses from at allocation
-	// time — one per resource, released back to the range on delete.
-	// Mutually exclusive with StaticIP. See ADR-0012.
-	Range string `json:"range,omitempty" yaml:"range,omitempty"`
-
-	// PrefixLength is the subnet prefix length (e.g. 24 for /24) applied
-	// alongside StaticIP. Default: 24. Not used in Range mode — the prefix
-	// there comes from Range's own CIDR bits, which is authoritative.
-	PrefixLength int `json:"prefix_length" yaml:"prefix_length"`
-
-	// DefaultGateway is the IPv4 default gateway (e.g. "203.0.113.1").
-	// Optional in both modes; in Range mode it is also excluded from
-	// allocation so no VM is ever assigned the gateway's own address.
-	DefaultGateway string `json:"default_gateway,omitempty" yaml:"default_gateway,omitempty"`
-
-	// DNSServers is a list of DNS server IPv4 addresses to assign. Optional.
-	DNSServers []string `json:"dns_servers,omitempty" yaml:"dns_servers,omitempty"`
-}
-
-// validate returns an error when the NetworkConfig is non-nil but inconsistent.
-func (n *NetworkConfig) validate() error {
-	if n == nil {
-		return nil
-	}
-	hasStatic := strings.TrimSpace(n.StaticIP) != ""
-	hasRange := strings.TrimSpace(n.Range) != ""
-	switch {
-	case hasStatic && hasRange:
-		return fmt.Errorf("network.static_ip and network.range are mutually exclusive; set only one")
-	case !hasStatic && !hasRange:
-		return fmt.Errorf("network.static_ip or network.range is required when network is set")
-	}
-	if hasRange {
-		prefix, err := netip.ParsePrefix(strings.TrimSpace(n.Range))
-		if err != nil {
-			return fmt.Errorf("network.range %q is not a valid CIDR: %w", n.Range, err)
-		}
-		if !prefix.Addr().Is4() {
-			return fmt.Errorf("network.range %q must be an IPv4 CIDR", n.Range)
-		}
-	}
-	if hasStatic {
-		addr, err := netip.ParseAddr(strings.TrimSpace(n.StaticIP))
-		if err != nil {
-			return fmt.Errorf("network.static_ip %q is not a valid IP address: %w", n.StaticIP, err)
-		}
-		if !addr.Is4() {
-			return fmt.Errorf("network.static_ip %q must be an IPv4 address", n.StaticIP)
-		}
-	}
-	if n.PrefixLength < 0 || n.PrefixLength > 32 {
-		return fmt.Errorf("network.prefix_length must be between 0 and 32, got %d", n.PrefixLength)
-	}
-	return nil
-}
-
-// effectivePrefixLength returns PrefixLength, defaulting to 24.
-func (n *NetworkConfig) effectivePrefixLength() int {
-	if n.PrefixLength == 0 {
-		return 24
-	}
-	return n.PrefixLength
-}
+// NOTE: a pool-level `network` block (static_ip/range/prefix_length/
+// default_gateway/dns_servers) existed here until 2026-09-14 and was removed
+// with #224's Plan 1c. Per-sandbox network isolation is automatic and has no
+// opt-out for this driver, so the segment — not the pool — always supplies a
+// claimed guest's real address, and a pool-declared one could only ever be
+// stale. See ADR-0012's and ADR-0013's 2026-09-14 change-log entries, and
+// AttachToSegment for what replaced it. CreateConfig decoding is lenient, so
+// a `network:` block left in an existing pool config is ignored rather than
+// rejected.

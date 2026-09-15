@@ -1638,553 +1638,39 @@ func TestDriver_List_EmptyHost(t *testing.T) {
 	}
 }
 
-// --- NetworkConfig ---
+// --- In-guest addressing (assignGuestIP) ---
+//
+// NOTE: the pool-declared static_ip/range network config that used to drive
+// this path, and its tests, were removed with #224's Plan 1c (see config.go's
+// note and ADR-0012/ADR-0013's 2026-09-14 change-log entries). assignGuestIP
+// itself survives, now reached only from AttachToSegment, so its #235
+// idempotency/self-verification guarantees are exercised through that path
+// instead. The segment-side behavior is covered in network_isolation_test.go.
 
-func TestNetworkConfig_Validate(t *testing.T) {
-	if err := (*NetworkConfig)(nil).validate(); err != nil {
-		t.Fatalf("nil validate() = %v, want nil", err)
-	}
-	if err := (&NetworkConfig{StaticIP: "192.0.2.10", PrefixLength: 24}).validate(); err != nil {
-		t.Fatalf("valid config: %v", err)
-	}
-	if err := (&NetworkConfig{PrefixLength: 24}).validate(); err == nil {
-		t.Fatal("missing static_ip: expected error")
-	}
-	if err := (&NetworkConfig{StaticIP: "192.0.2.10", PrefixLength: 33}).validate(); err == nil {
-		t.Fatal("prefix 33: expected error")
-	}
-	if err := (&NetworkConfig{StaticIP: "not-an-ip"}).validate(); err == nil {
-		t.Fatal("unparseable static_ip: expected error")
-	}
-	if err := (&NetworkConfig{StaticIP: "2001:db8::1"}).validate(); err == nil {
-		t.Fatal("IPv6 static_ip: expected error (IPv4-only, matching range's scope)")
-	}
-}
-
-func TestDriver_Create_WithNetworkConfig(t *testing.T) {
-	var capturedScript string
-	d := mockDriver(func(_ context.Context, script string) (string, error) {
-		if strings.Contains(script, hyperVAvailableMemoryScript) {
-			return "16384\n", nil
-		}
-		capturedScript += script
-		return fakeGUID + "\n", nil
-	})
-
-	_, err := d.Create(context.Background(), &CreateConfig{
-		TemplateVHD: `C:\Templates\base.vhdx`,
-		VHDDir:      `C:\VMs`,
-		Network: &NetworkConfig{
-			StaticIP:       "192.0.2.50",
-			PrefixLength:   24,
-			DefaultGateway: "192.0.2.1",
-			DNSServers:     []string{"203.0.113.1", "203.0.113.2"},
-		},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	for _, want := range []string{
-		"boxy_net_static_ip=192.0.2.50",
-		"boxy_net_prefix=24",
-		"boxy_net_gw=192.0.2.1",
-		"boxy_net_dns=203.0.113.1,203.0.113.2",
-	} {
-		if !strings.Contains(capturedScript, want) {
-			t.Errorf("notes missing %q in:\n%s", want, capturedScript)
-		}
-	}
-}
-
-func TestDriver_Create_InvalidNetworkConfig(t *testing.T) {
-	d := mockDriver(func(_ context.Context, _ string) (string, error) {
-		t.Fatal("psExec should not be called for invalid config")
-		return "", nil
-	})
-	_, err := d.Create(context.Background(), &CreateConfig{
-		TemplateVHD: `C:\Templates\base.vhdx`,
-		Network:     &NetworkConfig{PrefixLength: 24}, // missing static_ip
-	})
-	if err == nil {
-		t.Fatal("expected error for missing static_ip")
-	}
-	if !strings.Contains(err.Error(), "static_ip") {
-		t.Errorf("error %q should mention static_ip", err.Error())
-	}
-}
-
-func TestDriver_PersonalizeGuest_AppliesStaticIP(t *testing.T) {
-	var execCalls []string
-	callNum := 0
-	d := &Driver{
-		psExec: func(_ context.Context, script string) (string, error) {
-			callNum++
-			switch {
-			case strings.Contains(script, "Get-VM -Id") && !strings.Contains(script, ".Name"):
-				// readNotes: include static IP config
-				return "boxy_guest_os=windows;boxy_guest_user=Administrator;boxy_net_static_ip=192.0.2.10;boxy_net_prefix=24;boxy_net_gw=192.0.2.1;boxy_net_dns=203.0.113.1\n", nil
-			case strings.Contains(script, ".Name"):
-				return "boxy-abc123\n", nil
-			case strings.Contains(script, "Get-VMNetworkAdapter"):
-				return "192.0.2.10\n", nil
-			default:
-				return "", fmt.Errorf("unexpected ps call: %s", script)
-			}
-		},
-		resolveBootstrap: func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
-			return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "${BOXY_TEST_PASSWORD}"}, nil
-		},
-		guestExecFactory: func(_, _, _, _, _ string) vmsdk.GuestExec {
-			tag := fmt.Sprintf("call-%d", len(execCalls)+1)
-			execCalls = append(execCalls, tag)
-			return &fakeGuestExec{exitCode: 0}
-		},
-	}
-
-	result, err := d.PersonalizeGuest(context.Background(), fakeGUID, providersdk.GuestPersonalizationOptions{ApplyNetwork: true})
-	if err != nil {
-		t.Fatalf("PersonalizeGuest: %v", err)
-	}
-	// Expect 2 guest sessions (#361): applyStaticIP + rotation share one
-	// connection under the old (pre-rotation) credential, and verification
-	// opens a distinct second connection under the new credential. This is
-	// down from 3 in the pre-#361 per-call-connection behavior.
-	if len(execCalls) != 2 {
-		t.Fatalf("guest exec session count = %d, want 2 (applyStaticIP+rotation shared, verification separate)", len(execCalls))
-	}
-	if got := result.AccessDetails.Properties["host"]; got != "192.0.2.10" {
-		t.Errorf("host = %q, want 192.0.2.10", got)
-	}
-}
-
-// TestDriver_PersonalizeGuest_StaticIP_ApplyNetworkFalse_DefersApply guards
-// #358 for static_ip mode: admission-time personalization must rotate and
-// verify the guest's credential without ever calling assignGuestIP, and must
-// not report a "host" in AccessDetails since no address was applied.
-func TestDriver_PersonalizeGuest_StaticIP_ApplyNetworkFalse_DefersApply(t *testing.T) {
-	var execCalls []string
-	d := &Driver{
-		psExec: func(_ context.Context, script string) (string, error) {
-			switch {
-			case strings.Contains(script, "Get-VM -Id") && !strings.Contains(script, ".Name"):
-				return "boxy_guest_os=windows;boxy_guest_user=Administrator;boxy_net_static_ip=192.0.2.10;boxy_net_prefix=24;boxy_net_gw=192.0.2.1;boxy_net_dns=203.0.113.1\n", nil
-			case strings.Contains(script, ".Name"):
-				return "boxy-abc123\n", nil
-			default:
-				// No Get-VMNetworkAdapter case: deferred personalization must
-				// never read back a network address either.
-				return "", fmt.Errorf("unexpected ps call: %s", script)
-			}
-		},
-		resolveBootstrap: func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
-			return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "${BOXY_TEST_PASSWORD}"}, nil
-		},
-		guestExecFactory: func(_, _, _, _, _ string) vmsdk.GuestExec {
-			tag := fmt.Sprintf("call-%d", len(execCalls)+1)
-			execCalls = append(execCalls, tag)
-			return &fakeGuestExec{exitCode: 0}
-		},
-	}
-
-	result, err := d.PersonalizeGuest(context.Background(), fakeGUID, providersdk.GuestPersonalizationOptions{ApplyNetwork: false})
-	if err != nil {
-		t.Fatalf("PersonalizeGuest: %v", err)
-	}
-	// Expect 2 guest exec calls: rotation + verification only.
-	if len(execCalls) != 2 {
-		t.Fatalf("guest exec call count = %d, want 2 (rotation + verification only, no network apply)", len(execCalls))
-	}
-	if got, ok := result.AccessDetails.Properties["host"]; ok {
-		t.Errorf("host = %q present in AccessDetails, want no host reported when network was not applied", got)
-	}
-	if result.EphemeralCredential == nil {
-		t.Fatal("expected credential rotation to still occur without network application")
-	}
-}
-
-func TestDriver_PersonalizeGuest_StaticIP_LinuxUnsupported(t *testing.T) {
-	d := mockDriver(func(_ context.Context, script string) (string, error) {
-		if strings.Contains(script, "Get-VM -Id") {
-			return "boxy_guest_os=linux;boxy_guest_user=ubuntu;boxy_net_static_ip=192.0.2.10;boxy_net_prefix=24\n", nil
-		}
-		return "boxy-abc123\n", nil
-	})
-	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
-		return providersdk.GuestBootstrapCredential{Username: "ubuntu", Password: "${BOXY_TEST_PASSWORD}"}, nil
-	}
-	d.guestExecFactory = func(_, _, _, _, _ string) vmsdk.GuestExec {
-		return &fakeGuestExec{exitCode: 0}
-	}
-
-	_, err := d.PersonalizeGuest(context.Background(), fakeGUID, providersdk.GuestPersonalizationOptions{ApplyNetwork: true})
-	if err == nil {
-		t.Fatal("expected error for Linux guest with static IP config")
-	}
-	if !strings.Contains(err.Error(), "Linux") {
-		t.Errorf("error %q should mention Linux", err.Error())
-	}
-}
-
-// TestDriver_PersonalizeGuest_StaticIP_LinuxUnsupported_FailsAtAdmission
-// guards a fail-fast regression introduced by #358: before #358, a Linux
-// guest misconfigured with static_ip mode was rejected at admission time
-// (opts.ApplyNetwork=false), quarantining the resource once. #358 moved the
-// actual IP application behind opts.ApplyNetwork, but the Linux-unsupported
-// check lived inside assignGuestIP — reachable only when ApplyNetwork is
-// true — so the same misconfiguration silently passed admission and would
-// only surface, repeatedly, on every subsequent Allocate. The Linux check
-// does no guest-side network work, so it is safe to run unconditionally.
-func TestDriver_PersonalizeGuest_StaticIP_LinuxUnsupported_FailsAtAdmission(t *testing.T) {
-	d := mockDriver(func(_ context.Context, script string) (string, error) {
-		if strings.Contains(script, "Get-VM -Id") {
-			return "boxy_guest_os=linux;boxy_guest_user=ubuntu;boxy_net_static_ip=192.0.2.10;boxy_net_prefix=24\n", nil
-		}
-		return "boxy-abc123\n", nil
-	})
-	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
-		return providersdk.GuestBootstrapCredential{Username: "ubuntu", Password: "${BOXY_TEST_PASSWORD}"}, nil
-	}
-	d.guestExecFactory = func(_, _, _, _, _ string) vmsdk.GuestExec {
-		return &fakeGuestExec{exitCode: 0}
-	}
-
-	_, err := d.PersonalizeGuest(context.Background(), fakeGUID, providersdk.GuestPersonalizationOptions{ApplyNetwork: false})
-	if err == nil {
-		t.Fatal("expected admission-time error for Linux guest with static IP config")
-	}
-	if !strings.Contains(err.Error(), "Linux") {
-		t.Errorf("error %q should mention Linux", err.Error())
-	}
-}
-
-// --- NetworkConfig.Range (#222 / ADR-0012) ---
-
-func TestNetworkConfig_Validate_Range(t *testing.T) {
-	if err := (&NetworkConfig{Range: "203.0.113.0/24"}).validate(); err != nil {
-		t.Fatalf("valid range: %v", err)
-	}
-	if err := (&NetworkConfig{StaticIP: "192.0.2.10", Range: "203.0.113.0/24"}).validate(); err == nil {
-		t.Fatal("static_ip + range: expected mutual-exclusivity error")
-	}
-	if err := (&NetworkConfig{Range: "not-a-cidr"}).validate(); err == nil {
-		t.Fatal("invalid CIDR: expected error")
-	}
-	if err := (&NetworkConfig{Range: "2001:db8::/32"}).validate(); err == nil {
-		t.Fatal("IPv6 range: expected error (IPv4-only, matching static_ip's scope)")
-	}
-	if err := (&NetworkConfig{}).validate(); err == nil {
-		t.Fatal("neither static_ip nor range set: expected error")
-	}
-}
-
-func TestDriver_Create_WithRangeNetworkConfig(t *testing.T) {
-	var capturedScript string
-	d := mockDriver(func(_ context.Context, script string) (string, error) {
-		if strings.Contains(script, hyperVAvailableMemoryScript) {
-			return "16384\n", nil
-		}
-		capturedScript += script
-		return fakeGUID + "\n", nil
-	})
-
-	_, err := d.Create(context.Background(), &CreateConfig{
-		TemplateVHD: `C:\Templates\base.vhdx`,
-		VHDDir:      `C:\VMs`,
-		Network: &NetworkConfig{
-			Range:          "203.0.113.0/24",
-			DefaultGateway: "203.0.113.1",
-			DNSServers:     []string{"203.0.113.53"},
-		},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Range mode must never write networking data into VM Notes — see
-	// ADR-0012, "Ledger, not VM Notes".
-	for _, notWant := range []string{"boxy_net_static_ip", "boxy_net_prefix", "boxy_net_gw", "boxy_net_dns"} {
-		if strings.Contains(capturedScript, notWant) {
-			t.Errorf("range mode wrote %q into VM Notes, want none of it there:\n%s", notWant, capturedScript)
-		}
-	}
-
-	entry, ok, err := d.ledgerLookup(fakeGUID)
-	if err != nil {
-		t.Fatalf("ledgerLookup: %v", err)
-	}
-	if !ok {
-		t.Fatal("expected a ledger entry to exist after Create with network.range set")
-	}
-	if entry.RangeKey != "203.0.113.0/24" {
-		t.Errorf("RangeKey = %q, want 203.0.113.0/24", entry.RangeKey)
-	}
-	if entry.AssignedAddress != "" {
-		t.Errorf("AssignedAddress = %q, want empty — not assigned until Allocate", entry.AssignedAddress)
-	}
-	if entry.DefaultGateway != "203.0.113.1" {
-		t.Errorf("DefaultGateway = %q, want 203.0.113.1", entry.DefaultGateway)
-	}
-}
-
-// TestDriver_Allocate_TwoResourcesSamePool_DistinctAddresses drives the
-// actual acceptance criterion end to end — through Create then
-// Allocate/PersonalizeGuest for two resources sharing one pool's
-// network.range — rather than calling reserveAddress directly (that's
-// already covered at the unit level by
-// TestDriver_ReserveAddress_DistinctForConcurrentEntriesSameRange). This is
-// the #222 bug: two VMs in a min_ready > 1 pool must not receive the same
-// address once both are allocated.
-func TestDriver_Allocate_TwoResourcesSamePool_DistinctAddresses(t *testing.T) {
-	const idA = fakeGUID
-	const idB = "22222222-2222-2222-2222-222222222222"
-	resolveCalls := 0
-
-	d := mockDriver(func(_ context.Context, script string) (string, error) {
-		switch {
-		case strings.Contains(script, hyperVAvailableMemoryScript):
-			return "16384\n", nil
-		case strings.Contains(script, ".Id.ToString()"):
-			// Create's post-New-VM ID resolution: two sequential Creates,
-			// resolved in order.
-			resolveCalls++
-			if resolveCalls == 1 {
-				return idA + "\n", nil
-			}
-			return idB + "\n", nil
-		case strings.Contains(script, ".Name") && strings.Contains(script, idA):
-			return "boxy-a\n", nil
-		case strings.Contains(script, ".Name") && strings.Contains(script, idB):
-			return "boxy-b\n", nil
-		case strings.Contains(script, idA), strings.Contains(script, idB):
-			// readNotes for whichever id the script names.
-			return "boxy_guest_os=windows;boxy_guest_user=Administrator\n", nil
-		default:
-			return "", nil
-		}
-	})
-	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
-		return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "${BOXY_TEST_PASSWORD}"}, nil
-	}
-	d.guestExecFactory = func(_, _, _, _, _ string) vmsdk.GuestExec {
-		return &fakeGuestExec{exitCode: 0}
-	}
-
-	netCfg := &NetworkConfig{Range: "203.0.113.0/24"}
-	for i := 0; i < 2; i++ {
-		if _, err := d.Create(context.Background(), &CreateConfig{TemplateVHD: `C:\t.vhdx`, Network: netCfg}); err != nil {
-			t.Fatalf("Create (%d): %v", i+1, err)
-		}
-	}
-
-	resultA, err := d.PersonalizeGuest(context.Background(), idA, providersdk.GuestPersonalizationOptions{ApplyNetwork: true})
-	if err != nil {
-		t.Fatalf("PersonalizeGuest(idA): %v", err)
-	}
-	resultB, err := d.PersonalizeGuest(context.Background(), idB, providersdk.GuestPersonalizationOptions{ApplyNetwork: true})
-	if err != nil {
-		t.Fatalf("PersonalizeGuest(idB): %v", err)
-	}
-
-	hostA := resultA.AccessDetails.Properties["host"]
-	hostB := resultB.AccessDetails.Properties["host"]
-	if hostA == "" || hostB == "" {
-		t.Fatalf("empty host in access details: A=%q B=%q", hostA, hostB)
-	}
-	if hostA == hostB {
-		t.Fatalf("both resources in the pool were allocated address %q — the #222 collision", hostA)
-	}
-}
-
-func TestDriver_PersonalizeGuest_AppliesRangeIP(t *testing.T) {
-	d := mockDriver(nil)
-	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
-		return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "${BOXY_TEST_PASSWORD}"}, nil
-	}
-	var execCalls []string
-	d.guestExecFactory = func(_, _, _, _, _ string) vmsdk.GuestExec {
-		execCalls = append(execCalls, fmt.Sprintf("call-%d", len(execCalls)+1))
-		return &fakeGuestExec{exitCode: 0}
-	}
-	d.psExec = func(_ context.Context, script string) (string, error) {
-		switch {
-		case strings.Contains(script, "Get-VM -Id") && !strings.Contains(script, ".Name"):
-			// readNotes: no network fields — range mode carries none.
-			return "boxy_guest_os=windows;boxy_guest_user=Administrator\n", nil
-		case strings.Contains(script, ".Name"):
-			return "boxy-abc123\n", nil
-		default:
-			// Notably absent: a Get-VMNetworkAdapter case. Range mode must
-			// never call vmIP — falling through to this error is exactly
-			// what proves that (PersonalizeGuest below would fail loudly
-			// instead of silently passing on a stale/wrong address). See
-			// ADR-0012, "Range mode trusts the ledger's address".
-			return "", fmt.Errorf("unexpected ps call: %s", script)
-		}
-	}
-
-	if err := d.reserveRangeEntry(fakeGUID, &NetworkConfig{
-		Range:          "203.0.113.0/24",
-		DefaultGateway: "203.0.113.1",
-		DNSServers:     []string{"203.0.113.53"},
-	}); err != nil {
-		t.Fatalf("reserveRangeEntry: %v", err)
-	}
-
-	result, err := d.PersonalizeGuest(context.Background(), fakeGUID, providersdk.GuestPersonalizationOptions{ApplyNetwork: true})
-	if err != nil {
-		t.Fatalf("PersonalizeGuest: %v", err)
-	}
-	// Expect 2 guest sessions (#361): applyRangeIP + rotation share one
-	// connection under the old (pre-rotation) credential, and verification
-	// opens a distinct second connection under the new credential.
-	if len(execCalls) != 2 {
-		t.Fatalf("guest exec session count = %d, want 2 (applyRangeIP+rotation shared, verification separate)", len(execCalls))
-	}
-
-	entry, ok, err := d.ledgerLookup(fakeGUID)
-	if err != nil {
-		t.Fatalf("ledgerLookup: %v", err)
-	}
-	if !ok {
-		t.Fatal("expected ledger entry to still exist after Allocate")
-	}
-	if entry.AssignedAddress == "" {
-		t.Fatal("AssignedAddress is empty after PersonalizeGuest; expected a reserved address")
-	}
-	// The host in AccessDetails must be exactly the ledger's own reserved
-	// address, not an independently-queried value — see ADR-0012, "Range
-	// mode trusts the ledger's address, not a Get-VMNetworkAdapter
-	// read-back".
-	if got := result.AccessDetails.Properties["host"]; got != entry.AssignedAddress {
-		t.Errorf("host = %q, want the ledger's AssignedAddress %q", got, entry.AssignedAddress)
-	}
-}
-
-// TestDriver_PersonalizeGuest_RangeIP_ApplyNetworkFalse_DefersApply guards
-// #358: admission-time personalization (ApplyNetwork: false) on a range-mode
-// pool must rotate and verify the guest's credential without ever applying
-// (or even reserving) the range address, so a preheated-but-unclaimed VM
-// never becomes network-reachable. The ledger entry from reserveRangeEntry
-// (Create time) is the mode discriminator and must remain unaffected — it
-// still exists, but with no AssignedAddress yet.
-func TestDriver_PersonalizeGuest_RangeIP_ApplyNetworkFalse_DefersApply(t *testing.T) {
-	d := mockDriver(nil)
-	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
-		return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "${BOXY_TEST_PASSWORD}"}, nil
-	}
-	var execCalls []string
-	d.guestExecFactory = func(_, _, _, _, _ string) vmsdk.GuestExec {
-		execCalls = append(execCalls, fmt.Sprintf("call-%d", len(execCalls)+1))
-		return &fakeGuestExec{exitCode: 0}
-	}
-	d.psExec = func(_ context.Context, script string) (string, error) {
-		switch {
-		case strings.Contains(script, "Get-VM -Id") && !strings.Contains(script, ".Name"):
-			return "boxy_guest_os=windows;boxy_guest_user=Administrator\n", nil
-		case strings.Contains(script, ".Name"):
-			return "boxy-abc123\n", nil
-		default:
-			// No Get-VMNetworkAdapter case: deferred personalization must
-			// never read back a network address either, the same way
-			// allocation-time range mode never does (see the test above).
-			return "", fmt.Errorf("unexpected ps call: %s", script)
-		}
-	}
-
-	if err := d.reserveRangeEntry(fakeGUID, &NetworkConfig{
-		Range:          "203.0.113.0/24",
-		DefaultGateway: "203.0.113.1",
-		DNSServers:     []string{"203.0.113.53"},
-	}); err != nil {
-		t.Fatalf("reserveRangeEntry: %v", err)
-	}
-
-	result, err := d.PersonalizeGuest(context.Background(), fakeGUID, providersdk.GuestPersonalizationOptions{ApplyNetwork: false})
-	if err != nil {
-		t.Fatalf("PersonalizeGuest: %v", err)
-	}
-	// Expect exactly 2 guest exec calls: rotation + verification — no
-	// applyRangeIP call at all.
-	if len(execCalls) != 2 {
-		t.Fatalf("guest exec call count = %d, want 2 (rotation + verification only, no network apply)", len(execCalls))
-	}
-
-	entry, ok, err := d.ledgerLookup(fakeGUID)
-	if err != nil {
-		t.Fatalf("ledgerLookup: %v", err)
-	}
-	if !ok {
-		t.Fatal("expected ledger entry to still exist (written at Create/reserveRangeEntry time)")
-	}
-	if entry.AssignedAddress != "" {
-		t.Fatalf("AssignedAddress = %q, want empty — admission-time personalize must not reserve an address", entry.AssignedAddress)
-	}
-	if got, ok := result.AccessDetails.Properties["host"]; ok {
-		t.Errorf("host = %q present in AccessDetails, want no host reported when network was not applied", got)
-	}
-	if result.EphemeralCredential == nil {
-		t.Fatal("expected credential rotation to still occur without network application")
-	}
-}
-
-// TestDriver_AssignGuestIP_ScriptIsIdempotentAndVerifiesApply guards #235: a
-// second personalization of an already-configured guest (the normal path —
-// every preheated resource is personalized once to become ready, then again
-// on its first Allocate) must not destructively fail. The original script
-// removed the guest's existing IPv4 address but never its existing default
-// route, so New-NetIPAddress's own -DefaultGateway rejected the reapply
-// ("Instance DefaultGateway already exists") *after* the working address was
-// already torn out — leaving the guest on APIPA while ADR-0012's "trust the
-// ledger" design kept advertising the reserved address as healthy. This test
-// asserts the generated script both clears the stale route before reapplying
-// (idempotency) and verifies in-guest that the address actually took before
-// declaring success (closing the silent-failure gap the destructive bug hid
-// behind).
+// TestDriver_AssignGuestIP_ScriptIsIdempotentAndVerifiesApply keeps #235's
+// guarantees pinned: the in-guest script must clear an existing default
+// route before reapplying (so a second application to an already-configured
+// guest doesn't strand it on APIPA), and must verify in-guest that both the
+// address and its route actually took, rather than trusting
+// New-NetIPAddress's exit status.
 func TestDriver_AssignGuestIP_ScriptIsIdempotentAndVerifiesApply(t *testing.T) {
-	d := mockDriver(nil)
-	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
-		return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "${BOXY_TEST_PASSWORD}"}, nil
-	}
 	var execs []*recordingGuestExec
-	d.guestExecFactory = func(_, _, _, guestPassword, _ string) vmsdk.GuestExec {
-		exec := &recordingGuestExec{password: guestPassword}
-		execs = append(execs, exec)
-		return exec
-	}
-	d.psExec = func(_ context.Context, script string) (string, error) {
-		switch {
-		case strings.Contains(script, "Get-VM -Id") && !strings.Contains(script, ".Name"):
-			return "boxy_guest_os=windows;boxy_guest_user=Administrator\n", nil
-		case strings.Contains(script, ".Name"):
-			return "boxy-abc123\n", nil
-		default:
-			return "", fmt.Errorf("unexpected ps call: %s", script)
-		}
-	}
+	d := segmentDriver(t, windowsGuestNotes, &execs)
 
-	if err := d.reserveRangeEntry(fakeGUID, &NetworkConfig{
-		Range:          "203.0.113.0/24",
-		DefaultGateway: "203.0.113.1",
-	}); err != nil {
-		t.Fatalf("reserveRangeEntry: %v", err)
+	ref, err := d.CreateSegment(context.Background(), "sb-1")
+	if err != nil {
+		t.Fatalf("CreateSegment: %v", err)
 	}
-
-	if _, err := d.PersonalizeGuest(context.Background(), fakeGUID, providersdk.GuestPersonalizationOptions{ApplyNetwork: true}); err != nil {
-		t.Fatalf("PersonalizeGuest: %v", err)
+	if err := d.AttachToSegment(context.Background(), fakeGUID, ref); err != nil {
+		t.Fatalf("AttachToSegment: %v", err)
 	}
-	// #361: the assign-IP call and the credential-rotation call now share
-	// one session (execs[0], opened under the old/pre-rotation credential),
-	// so execs[0] carries 2 calls (assign-IP script, then rotation) instead
-	// of being reopened per call; execs[1] is the separate new-credential
-	// session verify_credential opens. The assign-IP script is still
-	// execs[0]'s first call.
-	if len(execs) != 2 || len(execs[0].calls) != 2 {
-		t.Fatalf("assign-IP guest exec session calls = %+v, want exactly 2 sessions with the first carrying 2 calls (assign-IP + rotation)", execs)
+	if len(execs) != 1 || len(execs[0].calls) != 1 {
+		t.Fatalf("guest exec sessions = %+v, want one session carrying the single assign-IP script", execs)
 	}
 	script := strings.Join(execs[0].calls[0], " ")
 
 	if !strings.Contains(script, "Remove-NetRoute") || !strings.Contains(script, "0.0.0.0/0") {
-		t.Errorf("assign script does not clear the interface's existing default route before reapplying the address, so a second personalization on an already-configured guest fails destructively (#235):\n%s", script)
+		t.Errorf("assign script does not clear the interface's existing default route before reapplying the address, so a second application to an already-configured guest fails destructively (#235):\n%s", script)
 	}
 	if !strings.Contains(script, "did not apply in guest") {
 		t.Errorf("assign script does not verify in-guest that the address actually applied and fail loudly if not (#235):\n%s", script)
@@ -2197,15 +1683,15 @@ func TestDriver_AssignGuestIP_ScriptIsIdempotentAndVerifiesApply(t *testing.T) {
 	}
 }
 
-// TestDriver_PersonalizeGuest_ReusesSessionAcrossOldCredentialSteps is #361's
-// core hyperv-level claim: personalizeGuestLocked opens exactly one guest
-// session for its old-credential steps (apply_network + rotate_credential)
-// and a distinct second session, under the newly-rotated credential, for
-// verify_credential -- never three separate connections, and never a
-// connection shared across the credential-rotation boundary. It asserts this
-// via countingGuestSession's own Connect(-equivalent: one factory call per
-// session)/Close counts and per-session Exec counts, not wall-clock timing.
-func TestDriver_PersonalizeGuest_ReusesSessionAcrossOldCredentialSteps(t *testing.T) {
+// TestDriver_PersonalizeGuest_OpensOneSessionPerCredential is what remains of
+// #361's session-lifecycle claim after Plan 1c removed the apply_network step
+// that used to share the old-credential session with rotation: exactly one
+// session under the guest's pre-rotation credential, and a distinct second
+// one under the newly-rotated credential for verification -- never a single
+// connection carried across the rotation boundary. Asserted via
+// countingGuestSession's own factory-call/Close counts, not wall-clock
+// timing.
+func TestDriver_PersonalizeGuest_OpensOneSessionPerCredential(t *testing.T) {
 	d := mockDriver(nil)
 	const oldCred = "${BOXY_TEST_PASSWORD}"
 	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
@@ -2213,21 +1699,18 @@ func TestDriver_PersonalizeGuest_ReusesSessionAcrossOldCredentialSteps(t *testin
 	}
 	var sessions []*countingGuestSession
 	d.guestExecFactory = func(_, _, _, guestPassword, _ string) vmsdk.GuestExec {
-		s := &countingGuestSession{password: guestPassword}
-		sessions = append(sessions, s)
-		return s
+		session := &countingGuestSession{password: guestPassword}
+		sessions = append(sessions, session)
+		return session
 	}
 	d.psExec = func(_ context.Context, script string) (string, error) {
 		switch {
-		case strings.Contains(script, "Get-VM -Id") && !strings.Contains(script, ".Name"):
-			// readNotes: static_ip mode, so apply_network runs a guest call.
-			return "boxy_guest_os=windows;boxy_guest_user=Administrator;boxy_net_static_ip=192.0.2.10;boxy_net_prefix=24\n", nil
-		case strings.Contains(script, ".Name"):
-			return "boxy-abc123\n", nil
 		case strings.Contains(script, "Get-VMNetworkAdapter"):
-			return "192.0.2.10\n", nil
+			return "10.0.0.5\n", nil
+		case strings.Contains(script, "(Get-VM -Id") && strings.Contains(script, ").Name"):
+			return "boxy-abc123\n", nil
 		default:
-			return "", fmt.Errorf("unexpected ps call: %s", script)
+			return windowsGuestNotes + "\n", nil
 		}
 	}
 
@@ -2236,203 +1719,86 @@ func TestDriver_PersonalizeGuest_ReusesSessionAcrossOldCredentialSteps(t *testin
 	}
 
 	if len(sessions) != 2 {
-		t.Fatalf("opened %d guest sessions, want exactly 2 (one shared old-credential session, one new-credential session)", len(sessions))
+		t.Fatalf("guest sessions opened = %d, want 2 (one per credential)", len(sessions))
 	}
-	oldSession, newSession := sessions[0], sessions[1]
-
-	if oldSession.password != oldCred {
-		t.Errorf("sessions[0].password = %q, want the old (pre-rotation) credential %q", oldSession.password, oldCred)
+	if sessions[0].password != oldCred {
+		t.Fatalf("first session password = %q, want the pre-rotation credential", sessions[0].password)
 	}
-	if newSession.password == oldCred || newSession.password == "" {
-		t.Errorf("sessions[1].password = %q, want the newly-rotated credential, distinct from %q", newSession.password, oldCred)
+	if sessions[1].password == oldCred || sessions[1].password == "" {
+		t.Fatalf("second session password = %q, want the freshly rotated credential", sessions[1].password)
 	}
-
-	if oldSession.execCount != 2 {
-		t.Errorf("old-credential session Exec count = %d, want 2 (apply_network + rotate_credential sharing one connection)", oldSession.execCount)
-	}
-	if newSession.execCount != 1 {
-		t.Errorf("new-credential session Exec count = %d, want 1 (verify_credential)", newSession.execCount)
-	}
-
-	if oldSession.closeCount != 1 {
-		t.Errorf("old-credential session closeCount = %d, want exactly 1 (closed once after rotate_credential, not once per call)", oldSession.closeCount)
-	}
-	if newSession.closeCount != 1 {
-		t.Errorf("new-credential session closeCount = %d, want exactly 1", newSession.closeCount)
+	for i, session := range sessions {
+		if session.closeCount != 1 {
+			t.Fatalf("session %d closed %d times, want exactly 1", i, session.closeCount)
+		}
+		if session.execCount != 1 {
+			t.Fatalf("session %d ran %d Exec calls, want exactly 1 (rotation, then verification)", i, session.execCount)
+		}
 	}
 }
 
-// TestDriver_PersonalizeGuest_ClosesOldSessionOnApplyNetworkFailure guards
-// against a connection leak on the old-credential session's own failure
-// path: an early return from within the apply_network switch (before
-// rotate_credential ever runs, so the explicit post-rotation Close is never
-// reached) must still close the connection openOld already established, via
-// the deferred fallback close. Registering that defer after the switch
-// instead of immediately after openOld is declared would leave exactly this
-// path unclosed -- caught during #361's implementation via code review, not
-// by a live guest.
-func TestDriver_PersonalizeGuest_ClosesOldSessionOnApplyNetworkFailure(t *testing.T) {
+// TestDriver_PersonalizeGuest_ToleratesUnreadableAddress covers the behavior
+// change Plan 1c's removal forced: with no pool-declared address left, every
+// pool reaches the vmIP read -- including pools on an Internal switch that
+// issues no DHCP, which are exactly the ones per-sandbox isolation targets.
+// A VM with no readable address must not fail personalization (and so be
+// quarantined) over a value its segment is about to supply anyway; it simply
+// advertises no address, the same shape #358 established for a deferred one.
+func TestDriver_PersonalizeGuest_ToleratesUnreadableAddress(t *testing.T) {
 	d := mockDriver(nil)
 	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
 		return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "${BOXY_TEST_PASSWORD}"}, nil
 	}
-	var sessions []*countingGuestSession
 	d.guestExecFactory = func(_, _, _, guestPassword, _ string) vmsdk.GuestExec {
-		s := &countingGuestSession{password: guestPassword, execErr: fmt.Errorf("guest apply-network script failed")}
-		sessions = append(sessions, s)
-		return s
+		return &recordingGuestExec{password: guestPassword}
 	}
 	d.psExec = func(_ context.Context, script string) (string, error) {
 		switch {
-		case strings.Contains(script, "Get-VM -Id") && !strings.Contains(script, ".Name"):
-			return "boxy_guest_os=windows;boxy_guest_user=Administrator;boxy_net_static_ip=192.0.2.10;boxy_net_prefix=24\n", nil
-		case strings.Contains(script, ".Name"):
+		case strings.Contains(script, "Get-VMNetworkAdapter"):
+			return "\n", nil // no address bound yet
+		case strings.Contains(script, "(Get-VM -Id") && strings.Contains(script, ").Name"):
 			return "boxy-abc123\n", nil
 		default:
-			return "", fmt.Errorf("unexpected ps call: %s", script)
+			return windowsGuestNotes + "\n", nil
 		}
 	}
 
-	_, err := d.PersonalizeGuest(context.Background(), fakeGUID, providersdk.GuestPersonalizationOptions{ApplyNetwork: true})
-	if err == nil {
-		t.Fatal("expected PersonalizeGuest to fail when the apply-network guest script fails")
+	result, err := d.PersonalizeGuest(context.Background(), fakeGUID, providersdk.GuestPersonalizationOptions{ApplyNetwork: true})
+	if err != nil {
+		t.Fatalf("PersonalizeGuest with no readable address must still succeed: %v", err)
 	}
-
-	if len(sessions) != 1 {
-		t.Fatalf("opened %d guest sessions, want exactly 1 (apply_network failed before verify_credential could open a second)", len(sessions))
+	if host, ok := result.AccessDetails.Properties["host"]; ok {
+		t.Fatalf("access details advertise host %q, want no address at all when none could be read", host)
 	}
-	if sessions[0].closeCount != 1 {
-		t.Errorf("old-credential session closeCount = %d, want exactly 1 -- a failure inside apply_network must not strand the connection", sessions[0].closeCount)
-	}
-}
-
-func TestDriver_PersonalizeGuest_RangeIP_LinuxUnsupported(t *testing.T) {
-	d := mockDriver(func(_ context.Context, script string) (string, error) {
-		if strings.Contains(script, "Get-VM -Id") {
-			return "boxy_guest_os=linux;boxy_guest_user=ubuntu\n", nil
-		}
-		return "boxy-abc123\n", nil
-	})
-	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
-		return providersdk.GuestBootstrapCredential{Username: "ubuntu", Password: "${BOXY_TEST_PASSWORD}"}, nil
-	}
-	d.guestExecFactory = func(_, _, _, _, _ string) vmsdk.GuestExec {
-		return &fakeGuestExec{exitCode: 0}
-	}
-	if err := d.reserveRangeEntry(fakeGUID, &NetworkConfig{Range: "203.0.113.0/24"}); err != nil {
-		t.Fatalf("reserveRangeEntry: %v", err)
-	}
-
-	_, err := d.PersonalizeGuest(context.Background(), fakeGUID, providersdk.GuestPersonalizationOptions{ApplyNetwork: true})
-	if err == nil {
-		t.Fatal("expected error for Linux guest with range-based IP config")
-	}
-	if !strings.Contains(err.Error(), "Linux") {
-		t.Errorf("error %q should mention Linux", err.Error())
-	}
-
-	// A rejected Linux guest must not burn a reservation it can never apply.
-	entry, ok, lookupErr := d.ledgerLookup(fakeGUID)
-	if lookupErr != nil {
-		t.Fatalf("ledgerLookup: %v", lookupErr)
-	}
-	if !ok {
-		t.Fatal("expected the ledger entry to still exist")
-	}
-	if entry.AssignedAddress != "" {
-		t.Errorf("AssignedAddress = %q, want empty — Linux rejection must precede reservation", entry.AssignedAddress)
+	if result.EphemeralCredential == nil {
+		t.Fatal("credential rotation must still have happened")
 	}
 }
 
-// TestDriver_PersonalizeGuest_RangeIP_LinuxUnsupported_FailsAtAdmission is
-// the range-mode counterpart to
-// TestDriver_PersonalizeGuest_StaticIP_LinuxUnsupported_FailsAtAdmission —
-// see that test's doc comment for the #358 fail-fast regression this guards.
-func TestDriver_PersonalizeGuest_RangeIP_LinuxUnsupported_FailsAtAdmission(t *testing.T) {
-	d := mockDriver(func(_ context.Context, script string) (string, error) {
-		if strings.Contains(script, "Get-VM -Id") {
-			return "boxy_guest_os=linux;boxy_guest_user=ubuntu\n", nil
-		}
-		return "boxy-abc123\n", nil
-	})
-	d.resolveBootstrap = func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
-		return providersdk.GuestBootstrapCredential{Username: "ubuntu", Password: "${BOXY_TEST_PASSWORD}"}, nil
-	}
-	d.guestExecFactory = func(_, _, _, _, _ string) vmsdk.GuestExec {
-		return &fakeGuestExec{exitCode: 0}
-	}
-	if err := d.reserveRangeEntry(fakeGUID, &NetworkConfig{Range: "203.0.113.0/24"}); err != nil {
-		t.Fatalf("reserveRangeEntry: %v", err)
-	}
-
-	_, err := d.PersonalizeGuest(context.Background(), fakeGUID, providersdk.GuestPersonalizationOptions{ApplyNetwork: false})
-	if err == nil {
-		t.Fatal("expected admission-time error for Linux guest with range-based IP config")
-	}
-	if !strings.Contains(err.Error(), "Linux") {
-		t.Errorf("error %q should mention Linux", err.Error())
-	}
-
-	// A rejected Linux guest must not burn a reservation it can never apply.
-	entry, ok, lookupErr := d.ledgerLookup(fakeGUID)
-	if lookupErr != nil {
-		t.Fatalf("ledgerLookup: %v", lookupErr)
-	}
-	if !ok {
-		t.Fatal("expected the ledger entry to still exist")
-	}
-	if entry.AssignedAddress != "" {
-		t.Errorf("AssignedAddress = %q, want empty — Linux rejection must precede reservation", entry.AssignedAddress)
-	}
-}
-
-func TestDriver_Delete_ReleasesLedgerEntry_MissingVM(t *testing.T) {
-	// The orphan sweep and a crash-then-recycle both call Delete on a VM
-	// already gone from Hyper-V — release must happen on that path too,
-	// not only when Remove-VM actually runs. See ADR-0012.
-	d := mockDriver(func(_ context.Context, _ string) (string, error) {
-		return "__BOXY_NOT_FOUND__\n", nil
-	})
-	if err := d.reserveRangeEntry(fakeGUID, &NetworkConfig{Range: "203.0.113.0/24"}); err != nil {
-		t.Fatalf("reserveRangeEntry: %v", err)
-	}
-	if _, err := d.reserveAddress(fakeGUID); err != nil {
-		t.Fatalf("reserveAddress: %v", err)
-	}
+// TestDriver_Delete_ForgetsPersonalizeState confirms Delete's deferred
+// cleanup still runs on the already-gone path after the IP ledger release it
+// used to share that defer with was removed.
+func TestDriver_Delete_ForgetsPersonalizeState(t *testing.T) {
+	d := mockDriver(func(context.Context, string) (string, error) { return "__BOXY_NOT_FOUND__\n", nil })
+	unlock := d.lockPersonalize(fakeGUID)
+	unlock()
+	d.rememberRotatedCredential(fakeGUID, "Administrator", "${BOXY_TEST_PASSWORD}")
 
 	if err := d.Delete(context.Background(), fakeGUID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 
-	if _, ok, err := d.ledgerLookup(fakeGUID); err != nil || ok {
-		t.Fatalf("ledgerLookup after Delete on a missing VM: ok=%v err=%v, want ok=false", ok, err)
+	d.personalizeLocksMu.Lock()
+	_, lockHeld := d.personalizeLocks[fakeGUID]
+	d.personalizeLocksMu.Unlock()
+	if lockHeld {
+		t.Error("Delete left the resource's personalize lock in the map")
 	}
-}
-
-func TestDriver_Delete_ReleasesLedgerEntry_SuccessfulTeardown(t *testing.T) {
-	callNum := 0
-	d := mockDriver(func(_ context.Context, _ string) (string, error) {
-		callNum++
-		switch callNum {
-		case 1:
-			return "boxy-abc123|C:\\VMs\\boxy-abc123.vhdx|Off\n", nil
-		default:
-			return "", nil
-		}
-	})
-	if err := d.reserveRangeEntry(fakeGUID, &NetworkConfig{Range: "203.0.113.0/24"}); err != nil {
-		t.Fatalf("reserveRangeEntry: %v", err)
-	}
-	if _, err := d.reserveAddress(fakeGUID); err != nil {
-		t.Fatalf("reserveAddress: %v", err)
-	}
-
-	if err := d.Delete(context.Background(), fakeGUID); err != nil {
-		t.Fatalf("Delete: %v", err)
-	}
-
-	if _, ok, err := d.ledgerLookup(fakeGUID); err != nil || ok {
-		t.Fatalf("ledgerLookup after successful Delete: ok=%v err=%v, want ok=false", ok, err)
+	d.rotatedCredsMu.Lock()
+	_, credHeld := d.rotatedCreds[fakeGUID]
+	d.rotatedCredsMu.Unlock()
+	if credHeld {
+		t.Error("Delete left the resource's rotated guest credential in memory")
 	}
 }
 

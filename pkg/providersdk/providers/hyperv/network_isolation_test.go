@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Geogboe/boxy/pkg/providersdk"
+	"github.com/Geogboe/boxy/pkg/vmsdk"
 )
 
 func TestSegmentLedger_AllocateCIDR_FirstFitNoCollision(t *testing.T) {
@@ -226,11 +227,11 @@ func TestBlockForIndex_RejectsIndexBeyondBaseRange(t *testing.T) {
 	// 10.250.0.0/16 holds exactly 8192 /29 blocks, so 8192 is the first
 	// index past the end.
 	const blocks = 8192
-	if _, _, err := blockForIndex(blocks - 1); err != nil {
+	if _, _, _, err := blockForIndex(blocks - 1); err != nil {
 		t.Fatalf("last in-range index must still allocate: %v", err)
 	}
 	for _, index := range []int{blocks, blocks + 1, 1 << 30, -1} {
-		_, _, err := blockForIndex(index)
+		_, _, _, err := blockForIndex(index)
 		if err == nil {
 			t.Fatalf("blockForIndex(%d) returned an address outside %s instead of an error", index, segmentBaseCIDR)
 		}
@@ -292,31 +293,299 @@ func TestSegmentLedger_ReleaseSkipsCorruptCIDR(t *testing.T) {
 	}
 }
 
-func TestDriver_AttachToSegment_ResolvesVMNameThenConnects(t *testing.T) {
-	callNum := 0
-	d := mockDriver(func(_ context.Context, script string) (string, error) {
-		callNum++
-		switch callNum {
-		case 1:
-			if !strings.Contains(script, "Get-VM -Id") {
-				t.Fatalf("first call should resolve VM name, got:\n%s", script)
+// segmentDriver builds a Driver wired the way a real agent is for the
+// attach path: a fake PowerShell host, a bootstrap resolver, and a guest-exec
+// factory recording every session it hands out. guestNotes is returned for
+// any Get-VM Notes read, so a caller can vary the guest OS/user.
+func segmentDriver(t *testing.T, guestNotes string, sessions *[]*recordingGuestExec) *Driver {
+	t.Helper()
+	d := &Driver{
+		psExec: func(_ context.Context, script string) (string, error) {
+			switch {
+			case strings.Contains(script, "(Get-VM -Id") && strings.Contains(script, ").Name"):
+				return "boxy-vm-1\n", nil
+			case strings.Contains(script, "(Get-VM -Id") && strings.Contains(script, ").Notes"):
+				return guestNotes + "\n", nil
+			case strings.Contains(script, "Get-VMNetworkAdapter"):
+				// The pre-segment address the VM holds on the pool's own
+				// switch; AttachToSegment is what replaces it.
+				return "10.0.0.5\n", nil
+			default:
+				return "", nil
 			}
-			return "boxy-vm-1\n", nil
-		case 2:
-			if !strings.Contains(script, "Connect-VMNetworkAdapter") || !strings.Contains(script, "boxy-vm-1") || !strings.Contains(script, "boxy-sb-sb-1") {
-				t.Fatalf("second call should connect the adapter, got:\n%s", script)
+		},
+		resolveBootstrap: func(context.Context, string) (providersdk.GuestBootstrapCredential, error) {
+			return providersdk.GuestBootstrapCredential{Username: "Administrator", Password: "${BOXY_TEST_PASSWORD}"}, nil
+		},
+		guestExecFactory: func(_, _, _, guestPassword, _ string) vmsdk.GuestExec {
+			exec := &recordingGuestExec{password: guestPassword}
+			if sessions != nil {
+				*sessions = append(*sessions, exec)
 			}
-			return "", nil
-		}
-		return "", fmt.Errorf("unexpected call %d", callNum)
-	})
+			return exec
+		},
+	}
+	d.segmentLedgerPath = filepath.Join(t.TempDir(), "network-segments.json")
+	return d
+}
 
-	err := d.AttachToSegment(context.Background(), fakeGUID, providersdk.SegmentRef("boxy-sb-sb-1"))
+const windowsGuestNotes = "boxy_guest_os=windows;boxy_guest_user=Administrator"
+
+// TestDriver_AttachToSegment_ConnectsThenAssignsSegmentAddress is the core
+// regression test for C2 (#224, Plan 1c final review): before this fix,
+// AttachToSegment moved the VM's adapter onto the segment's Internal switch
+// and stopped there. That switch issues no DHCP, so the guest kept its
+// stale, wrong-subnet address from the pool's original switch (or fell back
+// to APIPA) and was unreachable on the very network it had just been
+// isolated onto. The address must now come from the segment's own /29 block.
+func TestDriver_AttachToSegment_ConnectsThenAssignsSegmentAddress(t *testing.T) {
+	var sessions []*recordingGuestExec
+	d := segmentDriver(t, windowsGuestNotes, &sessions)
+
+	ref, err := d.CreateSegment(context.Background(), "sb-1")
 	if err != nil {
+		t.Fatalf("CreateSegment: %v", err)
+	}
+	if err := d.AttachToSegment(context.Background(), fakeGUID, ref); err != nil {
 		t.Fatalf("AttachToSegment: %v", err)
 	}
-	if callNum != 2 {
-		t.Fatalf("expected 2 PowerShell calls, got %d", callNum)
+
+	if len(sessions) != 1 {
+		t.Fatalf("guest sessions = %d, want exactly one in-guest addressing session", len(sessions))
+	}
+	if len(sessions[0].calls) != 1 {
+		t.Fatalf("guest exec calls = %+v, want one addressing script", sessions[0].calls)
+	}
+	script := strings.Join(sessions[0].calls[0], " ")
+	// The first block is 10.250.0.0/29: .1 is the switch's gateway, so the
+	// guest takes .2 (segmentGuestOffset).
+	for _, want := range []string{
+		"New-NetIPAddress",
+		"-IPAddress '10.250.0.2'",
+		"-PrefixLength 29",
+		"-DefaultGateway '10.250.0.1'",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("in-guest script missing %q:\n%s", want, script)
+		}
+	}
+	// A segment has no external resolution to point at, so no DNS servers
+	// are configured (see AttachToSegment).
+	if strings.Contains(script, "Set-DnsClientServerAddress") {
+		t.Fatalf("in-guest script should not configure DNS for an isolated segment:\n%s", script)
+	}
+}
+
+// TestDriver_AttachToSegment_PrefersRotatedCredentialOverStaleBootstrap
+// guards the ordering gap this fix had to solve: by attach time the guest
+// has been rotated off the pool bootstrap and the control plane has already
+// dropped its copy of the rotated value, so authenticating with whatever
+// resolveBootstrapCredential returns would fail against a real guest. The
+// driver must use the credential it rotated the guest onto itself.
+func TestDriver_AttachToSegment_PrefersRotatedCredentialOverStaleBootstrap(t *testing.T) {
+	var sessions []*recordingGuestExec
+	d := segmentDriver(t, windowsGuestNotes, &sessions)
+
+	if _, err := d.PersonalizeGuest(context.Background(), fakeGUID, providersdk.GuestPersonalizationOptions{ApplyNetwork: true}); err != nil {
+		t.Fatalf("PersonalizeGuest: %v", err)
+	}
+	rotated := sessions[len(sessions)-1].password
+	if rotated == "" || rotated == "${BOXY_TEST_PASSWORD}" {
+		t.Fatalf("verification session password = %q, want a freshly rotated value", rotated)
+	}
+
+	ref, err := d.CreateSegment(context.Background(), "sb-1")
+	if err != nil {
+		t.Fatalf("CreateSegment: %v", err)
+	}
+	before := len(sessions)
+	if err := d.AttachToSegment(context.Background(), fakeGUID, ref); err != nil {
+		t.Fatalf("AttachToSegment: %v", err)
+	}
+	if len(sessions) != before+1 {
+		t.Fatalf("guest sessions after attach = %d, want one more than %d", len(sessions), before)
+	}
+	if got := sessions[before].password; got != rotated {
+		t.Fatalf("attach session password = %q, want the rotated credential %q (the stale pool bootstrap would not authenticate)", got, rotated)
+	}
+}
+
+// TestDriver_AttachToSegment_FallsBackToBootstrapWithoutRotatedCredential
+// covers the agent-restart window: the in-memory rotated credential is gone,
+// so the attach falls back to resolveBootstrapCredential rather than failing
+// outright. Best-effort by design -- see segmentGuestCredential.
+func TestDriver_AttachToSegment_FallsBackToBootstrapWithoutRotatedCredential(t *testing.T) {
+	var sessions []*recordingGuestExec
+	d := segmentDriver(t, windowsGuestNotes, &sessions)
+
+	ref, err := d.CreateSegment(context.Background(), "sb-1")
+	if err != nil {
+		t.Fatalf("CreateSegment: %v", err)
+	}
+	if err := d.AttachToSegment(context.Background(), fakeGUID, ref); err != nil {
+		t.Fatalf("AttachToSegment: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].password != "${BOXY_TEST_PASSWORD}" {
+		t.Fatalf("sessions = %+v, want a single session using the bootstrap credential", sessions)
+	}
+}
+
+// TestDriver_AttachToSegment_ForgetsRotatedCredentialOnDelete pins the
+// retained credential's lifetime to the resource's own: once Delete confirms
+// the VM gone, the driver must not keep holding its guest password.
+func TestDriver_AttachToSegment_ForgetsRotatedCredentialOnDelete(t *testing.T) {
+	var sessions []*recordingGuestExec
+	d := segmentDriver(t, windowsGuestNotes, &sessions)
+	if _, err := d.PersonalizeGuest(context.Background(), fakeGUID, providersdk.GuestPersonalizationOptions{ApplyNetwork: true}); err != nil {
+		t.Fatalf("PersonalizeGuest: %v", err)
+	}
+	d.rotatedCredsMu.Lock()
+	_, held := d.rotatedCreds[fakeGUID]
+	d.rotatedCredsMu.Unlock()
+	if !held {
+		t.Fatal("expected the rotated credential to be retained after a verified rotation")
+	}
+
+	// Get-VM finds nothing: Delete's already-gone path, which still runs the
+	// deferred cleanup.
+	d.psExec = func(context.Context, string) (string, error) { return "__BOXY_NOT_FOUND__\n", nil }
+	if err := d.Delete(context.Background(), fakeGUID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	d.rotatedCredsMu.Lock()
+	_, stillHeld := d.rotatedCreds[fakeGUID]
+	d.rotatedCredsMu.Unlock()
+	if stillHeld {
+		t.Fatal("Delete left the resource's guest credential in memory")
+	}
+}
+
+// TestDriver_AttachToSegment_DerivesGuestAddressForLegacyLedgerEntry covers
+// an agent upgraded mid-sandbox: Plan 1a wrote network-segments.json without
+// a guest_address field, and an attach against such an entry must derive the
+// address from the block's CIDR rather than fail.
+func TestDriver_AttachToSegment_DerivesGuestAddressForLegacyLedgerEntry(t *testing.T) {
+	var sessions []*recordingGuestExec
+	d := segmentDriver(t, windowsGuestNotes, &sessions)
+
+	ref, err := d.CreateSegment(context.Background(), "sb-1")
+	if err != nil {
+		t.Fatalf("CreateSegment: %v", err)
+	}
+	// Rewrite the entry the way an older build would have persisted it.
+	if _, err := d.segments().store.Update(func(s segmentLedgerState) (segmentLedgerState, error) {
+		alloc := s.BySandboxID["sb-1"]
+		alloc.GuestAddress = ""
+		s.BySandboxID["sb-1"] = alloc
+		return s, nil
+	}); err != nil {
+		t.Fatalf("downgrade ledger entry: %v", err)
+	}
+
+	if err := d.AttachToSegment(context.Background(), fakeGUID, ref); err != nil {
+		t.Fatalf("AttachToSegment: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("guest sessions = %d, want one", len(sessions))
+	}
+	if script := strings.Join(sessions[0].calls[0], " "); !strings.Contains(script, "-IPAddress '10.250.0.2'") {
+		t.Fatalf("derived guest address missing from script:\n%s", script)
+	}
+}
+
+// TestDriver_AttachToSegment_RepeatReassignsSameAddress covers
+// providersdk.NetworkIsolator's idempotency contract for this method: the
+// guest address is derived from a constant offset, not allocated, so a retry
+// after a partial failure re-applies the identical address.
+func TestDriver_AttachToSegment_RepeatReassignsSameAddress(t *testing.T) {
+	var sessions []*recordingGuestExec
+	d := segmentDriver(t, windowsGuestNotes, &sessions)
+
+	ref, err := d.CreateSegment(context.Background(), "sb-1")
+	if err != nil {
+		t.Fatalf("CreateSegment: %v", err)
+	}
+	for attempt := 1; attempt <= 2; attempt++ {
+		if err := d.AttachToSegment(context.Background(), fakeGUID, ref); err != nil {
+			t.Fatalf("AttachToSegment attempt %d: %v", attempt, err)
+		}
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("guest sessions = %d, want one per attach attempt", len(sessions))
+	}
+	first := strings.Join(sessions[0].calls[0], " ")
+	second := strings.Join(sessions[1].calls[0], " ")
+	if first != second {
+		t.Fatalf("a retried attach configured a different address:\n%s\n---\n%s", first, second)
+	}
+}
+
+// TestDriver_AttachToSegment_LinuxGuestIsAHardError: PowerShell Direct is
+// Windows-only, and an unaddressed guest on an isolated switch is broken --
+// so this fails loudly rather than skipping. Matches how every other
+// boxy-managed in-guest addressing path rejects Linux.
+func TestDriver_AttachToSegment_LinuxGuestIsAHardError(t *testing.T) {
+	var sessions []*recordingGuestExec
+	d := segmentDriver(t, "boxy_guest_os=linux;boxy_guest_user=ubuntu", &sessions)
+
+	ref, err := d.CreateSegment(context.Background(), "sb-1")
+	if err != nil {
+		t.Fatalf("CreateSegment: %v", err)
+	}
+	err = d.AttachToSegment(context.Background(), fakeGUID, ref)
+	if err == nil {
+		t.Fatal("expected AttachToSegment to reject a Linux guest")
+	}
+	if !strings.Contains(err.Error(), "not supported for Linux guests") {
+		t.Fatalf("error = %v, want the shared Linux-unsupported message", err)
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("guest sessions = %d, want none for a rejected Linux guest", len(sessions))
+	}
+}
+
+// TestDriver_AttachToSegment_UnknownSegmentIsAnError: without a ledger entry
+// there is no way to know which address the guest should take, and silently
+// leaving it unaddressed is exactly the C2 defect this fix exists to close.
+func TestDriver_AttachToSegment_UnknownSegmentIsAnError(t *testing.T) {
+	d := segmentDriver(t, windowsGuestNotes, nil)
+	err := d.AttachToSegment(context.Background(), fakeGUID, providersdk.SegmentRef("boxy-sb-never-created"))
+	if err == nil {
+		t.Fatal("expected AttachToSegment to fail for a segment with no ledger entry")
+	}
+	if !strings.Contains(err.Error(), "no segment ledger entry") {
+		t.Fatalf("error = %v, want it to name the missing ledger entry", err)
+	}
+}
+
+// TestDriver_AttachToSegment_ConnectsAdapterBeforeAddressing pins the
+// ordering: the guest can only be addressed for the segment's subnet once
+// its adapter is actually on the segment's switch.
+func TestDriver_AttachToSegment_ConnectsAdapterBeforeAddressing(t *testing.T) {
+	var order []string
+	d := segmentDriver(t, windowsGuestNotes, nil)
+	ref, err := d.CreateSegment(context.Background(), "sb-1")
+	if err != nil {
+		t.Fatalf("CreateSegment: %v", err)
+	}
+
+	base := d.psExec
+	d.psExec = func(ctx context.Context, script string) (string, error) {
+		if strings.Contains(script, "Connect-VMNetworkAdapter") {
+			order = append(order, "connect")
+		}
+		return base(ctx, script)
+	}
+	d.guestExecFactory = func(_, _, _, _, _ string) vmsdk.GuestExec {
+		order = append(order, "assign")
+		return &recordingGuestExec{}
+	}
+
+	if err := d.AttachToSegment(context.Background(), fakeGUID, ref); err != nil {
+		t.Fatalf("AttachToSegment: %v", err)
+	}
+	if len(order) != 2 || order[0] != "connect" || order[1] != "assign" {
+		t.Fatalf("call order = %v, want connect then assign", order)
 	}
 }
 

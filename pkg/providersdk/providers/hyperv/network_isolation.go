@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/Geogboe/boxy/pkg/diskjson"
@@ -20,6 +21,16 @@ type segmentAllocation struct {
 	SwitchName string `json:"switch_name"`
 	CIDR       string `json:"cidr"`
 	Gateway    string `json:"gateway"`
+
+	// GuestAddress is the address AttachToSegment assigns inside the guest
+	// (see segmentGuestOffset). It is persisted for observability -- you can
+	// read a sandbox's in-guest address straight out of network-segments.json
+	// -- but it is never the authoritative source: every read path derives it
+	// from CIDR when empty (see lookupBySwitchName), because a ledger written
+	// before this field existed carries no value for it and an attach must
+	// not fail on that. Omitted from JSON when empty so an older ledger
+	// round-trips unchanged rather than gaining a blank key.
+	GuestAddress string `json:"guest_address,omitempty"`
 }
 
 type segmentLedgerState struct {
@@ -51,6 +62,25 @@ const segmentPrefixLen = 29
 // segmentBlockSize is how many IPv4 addresses one segmentPrefixLen block
 // spans, derived from segmentPrefixLen rather than restated.
 const segmentBlockSize = 1 << (32 - segmentPrefixLen)
+
+// segmentGatewayOffset/segmentGuestOffset are the fixed positions, counted
+// from a block's own network address, of the two addresses this driver hands
+// out within a segment: the host-side vSwitch adapter's gateway address and
+// the single guest address AttachToSegment configures inside the VM.
+//
+// One guest address is deliberately enough. A segment is single-tenant today
+// -- one sandbox, and (per the sandbox wiring) one AttachToSegment call per
+// claimed resource against that sandbox's segment -- so there is no
+// multi-host allocation problem to solve inside a block yet. Deriving the
+// address from a constant offset rather than tracking per-resource
+// assignments in the ledger keeps AttachToSegment idempotent for free: a
+// retry recomputes the identical address and assignGuestIP re-applies it to
+// an already-configured guest (see its doc comment). Handing out more than
+// one address per segment needs its own design, not a bigger constant.
+const (
+	segmentGatewayOffset = 1
+	segmentGuestOffset   = 2
+)
 
 // segmentLedgerFilename is the JSON file name for the per-sandbox network
 // segment ledger, written under Config.DataDir next to ledgerFilename.
@@ -93,14 +123,15 @@ func (l *segmentLedger) allocate(sandboxID string) (segmentAllocation, error) {
 		} else {
 			s.NextIndex++
 		}
-		cidr, gateway, err := blockForIndex(index)
+		cidr, gateway, guest, err := blockForIndex(index)
 		if err != nil {
 			return s, err
 		}
 		s.BySandboxID[sandboxID] = segmentAllocation{
-			SwitchName: switchNameForSandbox(sandboxID),
-			CIDR:       cidr,
-			Gateway:    gateway,
+			SwitchName:   switchNameForSandbox(sandboxID),
+			CIDR:         cidr,
+			Gateway:      gateway,
+			GuestAddress: guest,
 		}
 		return s, nil
 	})
@@ -138,6 +169,41 @@ func (l *segmentLedger) releaseBySwitchName(switchName string) error {
 		return s, nil
 	})
 	return err
+}
+
+// lookupBySwitchName returns the allocation recorded for switchName, if any.
+// AttachToSegment receives only the opaque SegmentRef (the switch name) and
+// never a sandbox ID, so this matches on the recorded SwitchName for exactly
+// the reason releaseBySwitchName does: switchNameForSandbox's space-stripping
+// derivation is lossy and cannot be inverted.
+//
+// A missing GuestAddress is derived from the entry's own CIDR rather than
+// treated as an error: Plan 1a wrote this ledger without that field, and an
+// agent upgraded mid-sandbox must still be able to address a guest on a
+// segment allocated by the older build. The derivation is the same one
+// blockForIndex performs, so the recovered value is identical to what a
+// freshly-allocated entry would carry. ok is false with a nil error when no
+// entry carries switchName -- a real condition (a segment created by a
+// different agent, or a hand-removed ledger), not a failure of this lookup.
+func (l *segmentLedger) lookupBySwitchName(switchName string) (segmentAllocation, bool, error) {
+	state, err := l.store.Load()
+	if err != nil {
+		return segmentAllocation{}, false, err
+	}
+	for _, alloc := range state.BySandboxID {
+		if alloc.SwitchName != switchName {
+			continue
+		}
+		if alloc.GuestAddress == "" {
+			guest, err := guestAddressForCIDR(alloc.CIDR)
+			if err != nil {
+				return segmentAllocation{}, false, fmt.Errorf("derive guest address for segment %q: %w", switchName, err)
+			}
+			alloc.GuestAddress = guest
+		}
+		return alloc, true, nil
+	}
+	return segmentAllocation{}, false, nil
 }
 
 // releaseAllocation removes sandboxID's entry from an in-flight ledger state
@@ -187,21 +253,22 @@ func segmentBaseBounds() (baseInt uint32, blocks int, err error) {
 }
 
 // blockForIndex computes the index-th segmentPrefixLen block within
-// segmentBaseCIDR, returning its network CIDR and the first usable address
-// (used as the switch's gateway/host-side IP).
+// segmentBaseCIDR, returning its network CIDR, the first usable address
+// (used as the switch's gateway/host-side IP), and the guest-assignable
+// address that follows it.
 //
 // The index is range-checked against segmentBaseCIDR's real capacity before
 // any address arithmetic runs, so an out-of-range index returns
 // errSegmentRangeExhausted instead of silently computing an address outside
 // the base range (or, for a very large index, wrapping the uint32 offset
 // around into unrelated address space).
-func blockForIndex(index int) (cidr string, gateway string, err error) {
+func blockForIndex(index int) (cidr string, gateway string, guest string, err error) {
 	baseInt, blocks, err := segmentBaseBounds()
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	if index < 0 || index >= blocks {
-		return "", "", fmt.Errorf("%w: block index %d is outside the %d /%d blocks in %s",
+		return "", "", "", fmt.Errorf("%w: block index %d is outside the %d /%d blocks in %s",
 			errSegmentRangeExhausted, index, blocks, segmentPrefixLen, segmentBaseCIDR)
 	}
 	//nolint:gosec // index is bounded to [0, blocks) immediately above, and
@@ -209,8 +276,28 @@ func blockForIndex(index int) (cidr string, gateway string, err error) {
 	// conversion cannot overflow uint32 for any base range this constant can
 	// express.
 	blockStart := baseInt + uint32(index)*segmentBlockSize
-	gatewayInt := blockStart + 1
-	return fmt.Sprintf("%s/%d", ipv4FromUint32(blockStart), segmentPrefixLen), ipv4FromUint32(gatewayInt), nil
+	return fmt.Sprintf("%s/%d", ipv4FromUint32(blockStart), segmentPrefixLen),
+		ipv4FromUint32(blockStart + segmentGatewayOffset),
+		ipv4FromUint32(blockStart + segmentGuestOffset),
+		nil
+}
+
+// guestAddressForCIDR derives a block's guest-assignable address from the
+// block's own network CIDR, so a ledger entry persisted before
+// segmentAllocation carried GuestAddress still yields the same address
+// blockForIndex would have computed for it. Shares segmentGuestOffset with
+// blockForIndex rather than restating the offset, so the two can't drift.
+func guestAddressForCIDR(cidr string) (string, error) {
+	_, block, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return "", fmt.Errorf("parse segment CIDR %q: %w", cidr, err)
+	}
+	ip4 := block.IP.To4()
+	if ip4 == nil {
+		return "", fmt.Errorf("segment CIDR %q is not IPv4", cidr)
+	}
+	blockStart := uint32(ip4[0])<<24 | uint32(ip4[1])<<16 | uint32(ip4[2])<<8 | uint32(ip4[3])
+	return ipv4FromUint32(blockStart + segmentGuestOffset), nil
 }
 
 // ipv4FromUint32 renders an IPv4 address held as a single uint32 (most
@@ -312,9 +399,9 @@ func (d *Driver) resolveSegmentLedgerPath() string {
 // exists to restrict it deliberately (see the design spec's Decision 1).
 //
 // The switch's host-side adapter is referenced directly by its deterministic
-// name, "vEthernet (<switch name>)" — the same convention networkrange.go's
-// NetworkRanges already establishes for Internal/Private switches — rather
-// than a fuzzy Get-NetAdapter | Where-Object -like lookup. The wildcard form
+// name, "vEthernet (<switch name>)" — the name Hyper-V gives an Internal
+// switch's host vNIC — rather than a fuzzy Get-NetAdapter | Where-Object
+// -like lookup. The wildcard form
 // was both a correctness bug (a substring match plus Select-Object -First 1
 // can silently pick the wrong adapter, e.g. when one switch name is a
 // substring of another's or of an unrelated host NIC) and a quoting defect
@@ -370,10 +457,35 @@ if (-not (Get-NetNat -Name '%s' -ErrorAction SilentlyContinue)) {
 }
 
 // AttachToSegment moves an already-created, already-running VM's network
-// adapter onto the sandbox's segment. This is the same live-reconnect
-// PowerShell Driver.Create already uses to attach a new VM to its
-// configured switch (driver.go's Create) -- no VM restart, single fast
-// call, matching the "must be fast" constraint.
+// adapter onto the sandbox's segment and then gives the guest a real address
+// on that segment's subnet.
+//
+// The adapter move is the same live-reconnect PowerShell Driver.Create
+// already uses to attach a new VM to its configured switch (driver.go's
+// Create) -- no VM restart, single fast call.
+//
+// The in-guest address assignment that follows it is what makes the move
+// useful (#224, Plan 1c): a segment's switch is Internal and issues no DHCP,
+// so a VM reconnected onto it keeps whatever address it had on the pool's
+// original switch -- wrong subnet, unreachable -- or falls back to APIPA.
+// The address is sourced from the segment's own ledger entry rather than
+// from any pool-declared network config, which is why hyperv's
+// range/static_ip pool config was removed in the same change: isolation is
+// automatic and universal for this driver, so the segment is always the
+// guest's real, final network and a pool-declared address could only ever
+// be stale. See ADR-0021's 2026-09-14 change-log entry.
+//
+// This makes the method heavier than ADR-0021's original "single lightweight
+// reconnect" framing -- it now costs a Get-VM notes read, possibly a
+// control-plane credential lookup, and a PSRP session (a real multi-second
+// guest round trip, see #361). That is an accepted tradeoff, recorded in
+// ADR-0021; there is no cheaper place to put it, because nothing else in the
+// allocation sequence knows the segment's subnet.
+//
+// Idempotent, per providersdk.NetworkIsolator's contract: the reconnect is
+// a no-op against the switch the VM is already on, the guest address is
+// derived from a constant offset into the block rather than allocated, and
+// assignGuestIP re-applies cleanly to an already-configured guest.
 func (d *Driver) AttachToSegment(ctx context.Context, providerResourceID string, ref providersdk.SegmentRef) error {
 	vmName, err := d.vmNameFromID(ctx, providerResourceID)
 	if err != nil {
@@ -386,7 +498,68 @@ Connect-VMNetworkAdapter -VMName '%s' -SwitchName '%s' | Out-Null`,
 	if err != nil {
 		return fmt.Errorf("attach %q to segment %q: %w", providerResourceID, ref, err)
 	}
+	if err := d.assignSegmentAddress(ctx, providerResourceID, ref); err != nil {
+		return fmt.Errorf("address %q on segment %q: %w", providerResourceID, ref, err)
+	}
 	return nil
+}
+
+// assignSegmentAddress configures the guest's IPv4 identity for the segment
+// it was just connected to, over PowerShell Direct (VMBus -- which needs no
+// working guest network, and so still reaches a VM that the reconnect just
+// stranded on a wrong-subnet address).
+//
+// A Linux guest is rejected the same way every other boxy-managed in-guest
+// addressing path rejects one (guestIPUnsupportedOnLinux): PowerShell Direct
+// is Windows-only and a Linux guest on an isolated segment needs its own
+// mechanism (cloud-init or similar), out of scope here. This is a hard error
+// rather than a skip -- an unaddressed guest on an isolated switch is simply
+// broken, and providersdk.NetworkIsolator's skip semantics are about a
+// driver not offering the capability at all, not about a resource the driver
+// cannot finish isolating.
+func (d *Driver) assignSegmentAddress(ctx context.Context, providerResourceID string, ref providersdk.SegmentRef) error {
+	alloc, ok, err := d.segments().lookupBySwitchName(string(ref))
+	if err != nil {
+		return fmt.Errorf("read segment ledger: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("no segment ledger entry records switch %q, so the guest's address on it is unknown", ref)
+	}
+
+	notes, err := d.readNotes(ctx, providerResourceID)
+	if err != nil {
+		return fmt.Errorf("read VM notes: %w", err)
+	}
+	guestOS := notes["boxy_guest_os"]
+	if guestOS == "" {
+		guestOS = "windows"
+	}
+	guestUser := notes["boxy_guest_user"]
+	if guestUser == "" {
+		if strings.EqualFold(guestOS, "linux") {
+			guestUser = "admin"
+		} else {
+			guestUser = "Administrator"
+		}
+	}
+	if strings.EqualFold(guestOS, "linux") {
+		return guestIPUnsupportedOnLinux("segment IP assignment")
+	}
+
+	username, password, err := d.segmentGuestCredential(ctx, providerResourceID, notes, guestUser)
+	if err != nil {
+		return err
+	}
+
+	session, err := d.openGuestSession(ctx, providerResourceID, guestOS, username, password, "")
+	if err != nil {
+		return fmt.Errorf("open guest session: %w", err)
+	}
+	defer session.Close(ctx) //nolint:errcheck,gosec // best-effort close; assignGuestIP's own result is what's checked.
+
+	// No DNS servers: a segment is an isolated network with no external
+	// resolution to point at today. Revisit only if a concrete need arises.
+	return d.assignGuestIP(ctx, session, guestOS, alloc.GuestAddress, strconv.Itoa(segmentPrefixLen), alloc.Gateway, "")
 }
 
 // DestroySegment removes the NAT and switch created by CreateSegment and
