@@ -2,6 +2,7 @@ package meshnet
 
 import (
 	"fmt"
+	"strings"
 
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
@@ -30,9 +31,7 @@ type tunFactory func(ifName string, mtu int) (tun.Device, error)
 // package), and brings the interface up listening on listenPort (0 lets
 // the OS/WireGuard choose an ephemeral port).
 func New(ifName string, listenPort int) (*Interface, error) {
-	return newWithTUNFactory(ifName, listenPort, func(name string, mtu int) (tun.Device, error) {
-		return tun.CreateTUN(name, mtu)
-	})
+	return newWithTUNFactory(ifName, listenPort, tun.CreateTUN)
 }
 
 func newWithTUNFactory(ifName string, listenPort int, factory tunFactory) (*Interface, error) {
@@ -64,6 +63,46 @@ func newWithTUNFactory(ifName string, listenPort int, factory tunFactory) (*Inte
 // key material safe to share with a peer or log.
 func (i *Interface) PublicKeyHex() string {
 	return i.publicKey
+}
+
+// AddPeer adds (or replaces, if pubKeyHex is already configured) a peer on
+// this interface: endpoint is the peer's "host:port" UDP address, and
+// allowedIPs are the CIDRs this peer is allowed to send/receive traffic for.
+// replace_allowed_ips=true means a re-add fully replaces the peer's prior
+// allowed-IP set rather than appending to it, matching Boxy's segment
+// membership being the sole source of truth for peer routing.
+func (i *Interface) AddPeer(pubKeyHex, endpoint string, allowedIPs []string) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "public_key=%s\n", pubKeyHex)
+	fmt.Fprintf(&b, "endpoint=%s\n", endpoint)
+	b.WriteString("replace_allowed_ips=true\n")
+	for _, ip := range allowedIPs {
+		fmt.Fprintf(&b, "allowed_ip=%s\n", ip)
+	}
+	if err := i.dev.IpcSet(b.String()); err != nil {
+		return fmt.Errorf("add peer %s: %w", pubKeyHex, err)
+	}
+	return nil
+}
+
+// RemovePeer removes the peer identified by pubKeyHex. Idempotent -- removing
+// an unknown peer is not an error, matching this codebase's Delete/Destroy
+// idempotency convention elsewhere.
+func (i *Interface) RemovePeer(pubKeyHex string) error {
+	cfg := fmt.Sprintf("public_key=%s\nremove=true\n", pubKeyHex)
+	if err := i.dev.IpcSet(cfg); err != nil {
+		return fmt.Errorf("remove peer %s: %w", pubKeyHex, err)
+	}
+	return nil
+}
+
+// Name returns the OS-level name this interface was actually given (which
+// may differ from the ifName passed to New on some platforms). A driver's
+// NetworkIsolator implementation uses this to route its segment's subnet
+// through this specific interface -- pkg/meshnet itself never touches OS
+// routing tables.
+func (i *Interface) Name() (string, error) {
+	return i.tunDevice.Name()
 }
 
 // Close tears down the WireGuard device and its TUN device. Idempotent --
