@@ -49,3 +49,23 @@ A running log of recently-landed feature batches and their supporting decisions.
   count) and #363 (reconsider the pools UI's "unassigned" sentinel design —
   its literal name is now reserved at config validation as a narrow fix, not
   a redesign).
+- Per-sandbox network isolation (#224, Decision 1) landed 2026-09-14 across
+  Plans 1a/1b/1c. Every sandbox now gets its own provider-level network —
+  a Docker bridge, or a Hyper-V Internal vSwitch plus NAT over a `/29` from
+  `10.250.0.0/16` — created on its first resource claim and torn down with
+  the sandbox. It is automatic and universal with no opt-out: an agent
+  advertises which provider types it can actually isolate, and one that
+  advertises none (devfactory) is skipped rather than failed. Hyper-V's
+  `AttachToSegment` also assigns the guest's address from the segment's own
+  block, which made the driver's pool-level `network` config
+  (`static_ip`/`range`, ADR-0012) and its range-validation capability
+  (ADR-0013) dead — both removed, their code archived under
+  `.archive/pkg/hyperv/`. See
+  [ADR-0021](adr/0021-network-isolation-driver-capability.md) for the
+  design and, importantly, for what is **not** settled: `New-NetNat`'s
+  possible one-instance-per-host limit is still unverified and would break
+  the second sandbox on a Hyper-V host if real. Also carries a deliberate
+  in-memory guest-credential retention in the Hyper-V driver (the rotated
+  credential is unavailable to `AttachToSegment` otherwise) worth a second
+  look, and adds a PSRP session to the allocation hot path, compounding
+  #350.

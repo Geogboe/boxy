@@ -225,31 +225,16 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   (locking only around the store write) left the exact window open that
   this one closes.
 - **`providersdk.NetworkRangeReporter`** (`NetworkRanges(ctx, switchName)`)
-  is an optional capability, detected by type assertion like every other
-  one in this package, that discovers a named switch's real IPv4 range from
-  the host's own `vEthernet (<switch name>)` adapter rather than trusting
-  an operator-declared `network.range` blindly (2026-08, #223). `hyperv.
-  Driver` is the only implementation — `devfactory` deliberately does not
-  implement it, same reasoning as `GuestPersonalizer`'s devfactory-parity
-  non-goal above (one real consumer, no second provider to validate a
-  simulated contract against). `Driver.Create` is the sole caller: it
-  validates the declared address falls *within* (not equal to) a discovered
-  range whenever `config.switch` and either `network.range` or
-  `network.static_ip` are set (both modes get this check, not just
-  `range` — a `static_ip` pool is exactly as exposed to a typo/drifted
-  address), right after `cc.Network.validate()` and before `reserveMemory`
-  so a bad config fails before reserving host memory. The discovery query
-  itself is bounded by `d.memQueryTimeout()`, reused rather than adding a
-  fourth overridable duration field. A positive contradiction is a hard
-  `Create` error; an indeterminate result (query failure, or nothing
-  discoverable — e.g. a Private switch has no host vNIC) logs a warning and
-  proceeds, since this host cannot validate the PowerShell against a real
-  switch — see [ADR-0013](docs/adr/0013-hyperv-network-range-reporter.md)
-  for the full design, including why validation lives in `Create` rather
-  than at pool registration/reconcile time as originally proposed
-  (`PoolSpec.Config` is an undecoded `map[string]any` outside the driver,
-  and the driver itself normally runs on a remote agent, not the daemon
-  that owns pool reconciliation).
+  is an optional capability that discovered a switch's real IPv4 range to
+  validate an operator-declared `network.range` against (2026-08, #223).
+  **It now has zero implementations**: the config it validated, and
+  `hyperv.Driver`'s implementation of it, were removed with #224's Plan 1c
+  (2026-09-14) once per-sandbox segments took over guest addressing — see
+  `NetworkIsolator` below. The interface is deliberately kept as
+  provider-neutral public SDK surface; the archived Hyper-V implementation
+  is under `.archive/pkg/hyperv/`. Don't treat it as an oversight — read
+  [ADR-0013](docs/adr/0013-hyperv-network-range-reporter.md)'s 2026-09-14
+  change-log entry first.
 - **`providersdk.NetworkIsolator`** (`CreateSegment`/`AttachToSegment`/
   `DestroySegment`, keyed by an opaque `SegmentRef`) is the optional
   per-sandbox network isolation capability, type-asserted like every other
@@ -262,13 +247,19 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   escaping. `hyperv` (Internal vSwitch + `New-NetNat` over a `diskjson`
   segment ledger) and `docker` (per-sandbox bridge, connect-then-disconnect)
   implement it; `devfactory` deliberately does not, same reasoning as
-  `GuestPersonalizer`/`NetworkRangeReporter` above. **Reachable via
-  `agentsdk.NetworkIsolatingAgent` on both `EmbeddedAgent` and `RemoteAgent`,
-  but the control plane still calls none of it**, and two
-  unverified-from-this-host risks (`New-NetNat`'s possible one-per-host
-  limit; `New-NetIPAddress` timing right after `New-VMSwitch`) must be
-  settled before it is wired up (Plan 1c). See
-  [ADR-0021](docs/adr/0021-network-isolation-driver-capability.md).
+  `GuestPersonalizer`/`NetworkRangeReporter` above. Wired end-to-end as of
+  2026-09-14: sandbox allocation creates and attaches segments, agents
+  advertise which provider types they can actually isolate (an agent that
+  doesn't is skipped, not failed), and `hyperv`'s `AttachToSegment` also
+  assigns the guest's in-guest address from the segment's own block — which
+  is why hyperv's pool-level `network` config (`static_ip`/`range`) is gone;
+  the segment is now always the guest's real network. **One risk remains open
+  and unverified from this dev host: `New-NetNat` may be effectively
+  one-instance-per-host, which would break the second sandbox on a Hyper-V
+  host.** Verify on real hardware before trusting this in production. See
+  [ADR-0021](docs/adr/0021-network-isolation-driver-capability.md) for that
+  risk, the credential-retention decision `AttachToSegment` needed, and the
+  cost it adds to the allocation hot path.
 
 ### PSRP Transport Dependency Fork (go-psrp / go-psrpcore)
 

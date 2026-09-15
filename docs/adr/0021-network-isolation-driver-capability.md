@@ -213,3 +213,102 @@ rediscovering them:
   and both open Hyper-V risks above remain open, explicitly deferred to it.
   References to "Plan 1b" in Consequences and the open-risks section were
   updated accordingly. Part of #224.
+- 2026-09-14 (Plan 1c, final-review fixes): the control plane now actually
+  calls this capability, and the two Critical defects that whole-branch
+  review found are fixed. Part of #224; the agreed design for both is in
+  `docs/superpowers/specs/2026-09-14-plan-1c-review-fix-addendum.md`.
+
+  **Capability advertisement (C1).** The daemon consults what an agent
+  advertises it can isolate before ever calling `CreateSegment`, treating
+  "not advertised" as skip-not-error. Previously the only real
+  `providersdk.NetworkIsolator` check happened inside the agent and returned
+  a hard error, so a devfactory-shaped agent — which deliberately does not
+  implement this capability, see above — failed allocation outright. Landed
+  as a parallel change across `pkg/agentsdk`, `internal/pool`, and
+  `internal/sandbox`; see those files for the mechanics.
+
+  **Segment-sourced Hyper-V guest addressing (C2).** `AttachToSegment` now
+  assigns the guest's IPv4 address after the `Connect-VMNetworkAdapter` move,
+  sourced from the segment's own ledger entry: the gateway takes the block's
+  first usable address and the guest takes the next (`segmentGatewayOffset` /
+  `segmentGuestOffset`). Without this the move was actively harmful — a
+  segment's Internal vSwitch issues no DHCP, so a reconnected VM kept a
+  stale, wrong-subnet address or fell back to APIPA, i.e. was isolated *and*
+  unreachable. The address is derived from a constant offset rather than
+  allocated, so `AttachToSegment` stays idempotent for free; `assignGuestIP`
+  (unchanged, #235) does the in-guest work and is self-verifying. Linux
+  guests are a hard error, matching every other boxy-managed in-guest
+  addressing path — PowerShell Direct is Windows-only, and an unaddressed
+  guest on an isolated switch is broken, not skippable.
+
+  Consequently the Hyper-V driver's pool-declared `network` config
+  (`static_ip`/`range` and friends) was removed entirely: with isolation
+  automatic and universal, the segment is always the guest's real final
+  network, so a pool-declared address could only ever be overwritten. See
+  ADR-0012's and ADR-0013's 2026-09-14 entries.
+
+  **This makes `AttachToSegment` heavier than the Decision section above
+  frames it.** That text calls for "a single lightweight reconnect, not a
+  provisioning-shaped operation" because the method runs on the
+  sandbox-creation hot path. The Hyper-V implementation now additionally
+  performs a `Get-VM` notes read, possibly a control-plane credential
+  lookup, and opens a PSRP session — a real multi-second guest round trip
+  (#361). That is an accepted trade, not an oversight: nothing else in the
+  allocation sequence knows the segment's subnet, so there is no cheaper
+  place to put it. It compounds #350 (per-sandbox timeout does not scale
+  with resource count), which should be weighed with this cost in mind.
+
+  **Guest credential at attach time — a gap the addendum's mechanics did not
+  anticipate.** The addendum specified resolving the bootstrap credential via
+  `resolveBootstrapCredential`, mirroring `personalizeGuestLocked`. Tracing
+  the real allocation order showed that cannot work: `Allocate` calls
+  `PersonalizeGuest`, which rotates the guest off whatever credential it
+  authenticated with, and `internal/pool` then *deletes* the server-side
+  per-resource credential, one-time-delivering the new value to the sandbox
+  caller (ADR-0010). By the time `ensureNetworkSegment` runs, a bootstrap
+  lookup returns the *pool* bootstrap, which the guest was rotated off at
+  admission. The driver now retains, in memory only, the credential it
+  rotated each guest onto (`rememberRotatedCredential`), recorded only after
+  `verify_credential` proves the guest accepted it, and dropped when the
+  resource is deleted. This does not widen ADR-0010's boundary — that value
+  is already described as opaque and process-local, and it never reaches
+  resource properties, VM notes, logs, the API, or agent config. Routing
+  makes it sound: `ProviderRef.AgentID` sends `Allocate` and
+  `AttachToSegment` for one resource to the same agent process. **Known
+  gap:** an agent restart between allocation and attach loses the retained
+  value; the fallback to the (stale) bootstrap will usually fail, surfacing
+  as a clear authentication error against a guest that simply never got
+  addressed — not a silently mis-addressed one. This was a judgment call made
+  during implementation and warrants a second look.
+
+## Open risks — status after Plan 1c
+
+Both risks recorded above were carried into Plan 1c to be settled there.
+Neither could be settled empirically: this development host cannot run
+Hyper-V VMs (see AGENTS.md), so everything below rests on fakes.
+
+1. **`New-NetNat` one-instance-per-host — STILL OPEN, unverified.** Nothing
+   in Plan 1c exercised a real `New-NetNat`, so this is re-recorded verbatim
+   rather than closed. If Windows does refuse a second NAT instance, the
+   Hyper-V design remains non-functional past the first sandbox on a host,
+   and the fallback is still the one sketched above: one shared NAT over the
+   whole `10.250.0.0/16` base, with per-sandbox isolation resting on the
+   separate switches alone. **This must be verified on a real Hyper-V host
+   before this feature is trusted in production.**
+2. **`New-NetIPAddress` timing right after `New-VMSwitch` — still
+   theoretical, and now better contained.** No timing failure was observed,
+   because nothing here has been run against a live host; no bounded
+   wait-for-adapter retry was added, since inventing one against a hazard
+   that cannot be reproduced would be untestable code guarding a guess. Two
+   things changed in its favor. The host-side sequence itself is *unchanged*
+   from Plan 1a — `CreateSegment`'s script still addresses
+   `vEthernet (<switch name>)` in the same script that created the switch —
+   so this fix neither worsens nor improves that specific window. And the new
+   guest-side step runs strictly later (after `CreateSegment` completes and
+   after `Connect-VMNetworkAdapter`), where the analogous hazard is an
+   adapter not yet visible *inside the guest*; there, `assignGuestIP`'s
+   script already throws `no network adapter found in guest` rather than
+   silently succeeding, so a materialization lag fails loudly and a retried
+   `AttachToSegment` converges. If a real host does show intermittent
+   `New-NetIPAddress` failures on a fresh switch, the fix belongs in
+   `CreateSegment` and should be recorded here.
