@@ -34,6 +34,17 @@ type Config struct {
 	// otherwise. Empty defaults to ".boxy-agent/hyperv" via the same
 	// resolution.
 	DataDir string `json:"data_dir,omitempty" yaml:"data_dir,omitempty"`
+
+	// MeshEndpoint is the host:port this agent should be dialed at by a
+	// peer agent's WireGuard interface for cross-host sandbox traffic.
+	// Explicit, operator-declared -- not auto-detected -- matching this
+	// package's existing posture for anything host-identity-shaped (see
+	// DataDir's doc comment): a multi-homed host has no reliable way for
+	// this code to guess which of its addresses another host can actually
+	// reach. Required only when MeshPeerer is actually used (a sandbox
+	// spanning this host and another); a single-host-only deployment never
+	// needs it set.
+	MeshEndpoint string `json:"mesh_endpoint,omitempty" yaml:"mesh_endpoint,omitempty"`
 }
 
 const DefaultHostReserveMB int64 = 512

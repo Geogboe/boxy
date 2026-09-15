@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Geogboe/boxy/pkg/eventstream"
+	"github.com/Geogboe/boxy/pkg/meshnet"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/providersdk/guestcred"
 	"github.com/Geogboe/boxy/pkg/psdirect"
@@ -25,6 +26,7 @@ var (
 	_ providersdk.Driver            = (*Driver)(nil)
 	_ providersdk.GuestPersonalizer = (*Driver)(nil)
 	_ providersdk.NetworkIsolator   = (*Driver)(nil)
+	_ providersdk.MeshPeerer        = (*Driver)(nil)
 )
 
 // Driver implements providersdk.Driver for local Hyper-V.
@@ -127,6 +129,18 @@ type Driver struct {
 	// snapshot and race their writes (task-2 code review finding 1).
 	segmentLedger     *segmentLedger
 	segmentLedgerOnce sync.Once
+
+	// meshEndpoint is Config.MeshEndpoint, threaded through the same way
+	// segmentLedgerPath is.
+	meshEndpoint string
+
+	// meshInterfaces holds this driver's live meshnet.Interface per
+	// segment, created lazily on first MeshIdentity call. In-memory only --
+	// a process restart loses these (and any peer must reconnect, which is
+	// expected WireGuard behavior after any endpoint goes down, not
+	// something this driver needs to special-case).
+	meshMu         sync.Mutex
+	meshInterfaces map[providersdk.SegmentRef]*meshnet.Interface
 }
 
 // lockPersonalize serializes PersonalizeGuest invocations for the same VM
@@ -406,12 +420,18 @@ func New(cfg *Config) (*Driver, error) {
 		dataDir = filepath.Join(wd, dataDir)
 	}
 
+	meshEndpoint := ""
+	if cfg != nil {
+		meshEndpoint = cfg.MeshEndpoint
+	}
+
 	return &Driver{
 		hostReserveMB:          reserve,
 		hostReserveConfigured:  true,
 		memoryBudgetMB:         budget,
 		memoryBudgetConfigured: true,
 		segmentLedgerPath:      filepath.Join(dataDir, segmentLedgerFilename),
+		meshEndpoint:           meshEndpoint,
 	}, nil
 }
 
