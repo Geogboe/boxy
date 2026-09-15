@@ -8,6 +8,21 @@ import (
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
+// meshInterface is the subset of *meshnet.Interface's API this driver
+// needs. Abstracted behind an interface (rather than using *meshnet.Interface
+// directly) so tests can inject a fake instead of creating a real OS TUN
+// device and performing an actual WireGuard handshake -- mirroring this
+// package's existing fake-guest-executor pattern for PowerShell Direct/SSH.
+type meshInterface interface {
+	PublicKeyHex() string
+	Name() (string, error)
+	AddPeer(pubKeyHex, endpoint string, allowedIPs []string) error
+	RemovePeer(pubKeyHex string) error
+	Close() error
+}
+
+var _ meshInterface = (*meshnet.Interface)(nil)
+
 // MeshIdentity satisfies providersdk.MeshPeerer. It lazily creates this
 // segment's meshnet.Interface on first call, routes the segment's own
 // subnet through it (New-NetRoute -- see Plan 2b's Global Constraints on
@@ -64,16 +79,20 @@ func (d *Driver) RemoveMeshPeer(_ context.Context, ref providersdk.SegmentRef, p
 	return iface.RemovePeer(peerPublicKey)
 }
 
-func (d *Driver) meshInterfaceFor(ref providersdk.SegmentRef) (*meshnet.Interface, error) {
+func (d *Driver) meshInterfaceFor(ref providersdk.SegmentRef) (meshInterface, error) {
 	d.meshMu.Lock()
 	defer d.meshMu.Unlock()
 	if d.meshInterfaces == nil {
-		d.meshInterfaces = make(map[providersdk.SegmentRef]*meshnet.Interface)
+		d.meshInterfaces = make(map[providersdk.SegmentRef]meshInterface)
 	}
 	if iface, ok := d.meshInterfaces[ref]; ok {
 		return iface, nil
 	}
-	iface, err := meshnet.New(string(ref), 0)
+	factory := d.newMeshInterface
+	if factory == nil {
+		factory = func(ifName string) (meshInterface, error) { return meshnet.New(ifName, 0) }
+	}
+	iface, err := factory(string(ref))
 	if err != nil {
 		return nil, fmt.Errorf("create mesh interface for segment %q: %w", ref, err)
 	}
@@ -81,7 +100,7 @@ func (d *Driver) meshInterfaceFor(ref providersdk.SegmentRef) (*meshnet.Interfac
 	return iface, nil
 }
 
-func (d *Driver) existingMeshInterface(ref providersdk.SegmentRef) (*meshnet.Interface, error) {
+func (d *Driver) existingMeshInterface(ref providersdk.SegmentRef) (meshInterface, error) {
 	d.meshMu.Lock()
 	defer d.meshMu.Unlock()
 	iface, ok := d.meshInterfaces[ref]

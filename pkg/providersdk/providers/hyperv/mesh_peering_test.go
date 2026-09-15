@@ -9,6 +9,49 @@ import (
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
 
+// fakeMeshInterface stands in for a real *meshnet.Interface in these unit
+// tests -- no real OS TUN device, no actual WireGuard handshake. Peer keys
+// here are not required to be valid Curve25519 hex, unlike the real
+// meshnet.Interface.AddPeer, which is exactly why this fake exists.
+type fakeMeshInterface struct {
+	name   string
+	pubKey string
+	peers  map[string]struct {
+		endpoint   string
+		allowedIPs []string
+	}
+	closed bool
+}
+
+func newFakeMeshInterface(ifName string) (meshInterface, error) {
+	return &fakeMeshInterface{
+		name:   ifName,
+		pubKey: "fake-pubkey-" + ifName,
+		peers: make(map[string]struct {
+			endpoint   string
+			allowedIPs []string
+		}),
+	}, nil
+}
+
+func (f *fakeMeshInterface) PublicKeyHex() string  { return f.pubKey }
+func (f *fakeMeshInterface) Name() (string, error) { return f.name, nil }
+func (f *fakeMeshInterface) AddPeer(pubKeyHex, endpoint string, allowedIPs []string) error {
+	f.peers[pubKeyHex] = struct {
+		endpoint   string
+		allowedIPs []string
+	}{endpoint, allowedIPs}
+	return nil
+}
+func (f *fakeMeshInterface) RemovePeer(pubKeyHex string) error {
+	delete(f.peers, pubKeyHex)
+	return nil
+}
+func (f *fakeMeshInterface) Close() error {
+	f.closed = true
+	return nil
+}
+
 func TestDriver_MeshIdentity_CreatesInterfaceLazilyAndReturnsCIDR(t *testing.T) {
 	var script string
 	d := mockDriver(func(_ context.Context, s string) (string, error) {
@@ -17,6 +60,7 @@ func TestDriver_MeshIdentity_CreatesInterfaceLazilyAndReturnsCIDR(t *testing.T) 
 	})
 	d.segmentLedgerPath = filepath.Join(t.TempDir(), "network-segments.json")
 	d.meshEndpoint = "203.0.113.5:51820"
+	d.newMeshInterface = newFakeMeshInterface
 	alloc, err := d.segments().allocate("sb-1")
 	if err != nil {
 		t.Fatalf("allocate: %v", err)
@@ -66,6 +110,7 @@ func TestDriver_AddMeshPeer_ConfiguresThePeer(t *testing.T) {
 	d := mockDriver(func(context.Context, string) (string, error) { return "", nil })
 	d.segmentLedgerPath = filepath.Join(t.TempDir(), "network-segments.json")
 	d.meshEndpoint = "203.0.113.5:51820"
+	d.newMeshInterface = newFakeMeshInterface
 	alloc, err := d.segments().allocate("sb-1")
 	if err != nil {
 		t.Fatalf("allocate: %v", err)

@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/Geogboe/boxy/pkg/eventstream"
-	"github.com/Geogboe/boxy/pkg/meshnet"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/providersdk/guestcred"
 	"github.com/Geogboe/boxy/pkg/psdirect"
@@ -134,13 +133,20 @@ type Driver struct {
 	// segmentLedgerPath is.
 	meshEndpoint string
 
-	// meshInterfaces holds this driver's live meshnet.Interface per
-	// segment, created lazily on first MeshIdentity call. In-memory only --
-	// a process restart loses these (and any peer must reconnect, which is
-	// expected WireGuard behavior after any endpoint goes down, not
-	// something this driver needs to special-case).
+	// meshInterfaces holds this driver's live mesh interfaces per segment,
+	// created lazily on first MeshIdentity call. In-memory only -- a process
+	// restart loses these (and any peer must reconnect, which is expected
+	// WireGuard behavior after any endpoint goes down, not something this
+	// driver needs to special-case).
 	meshMu         sync.Mutex
-	meshInterfaces map[providersdk.SegmentRef]*meshnet.Interface
+	meshInterfaces map[providersdk.SegmentRef]meshInterface
+
+	// newMeshInterface is the mesh interface factory, keyed only by ifName
+	// (always listenPort 0 -- an ephemeral port is fine for a mesh peer).
+	// nil in production, which meshInterfaceFor resolves to meshnet.New;
+	// tests inject a fake here to avoid needing a real OS TUN device and an
+	// actual WireGuard handshake.
+	newMeshInterface func(ifName string) (meshInterface, error)
 }
 
 // lockPersonalize serializes PersonalizeGuest invocations for the same VM
