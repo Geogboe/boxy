@@ -15,6 +15,15 @@ type ResourceDestroyer interface {
 	DestroyResource(ctx context.Context, res model.Resource) error
 }
 
+// SegmentDestroyer is an optional capability for a ResourceDestroyer that
+// also knows how to tear down network segments (see model.NetworkSegment).
+// Not every destroyer supports this -- a deployment with no
+// network-isolation-capable providers at all uses a plain
+// ResourceDestroyer with no segments to ever destroy.
+type SegmentDestroyer interface {
+	DestroySegment(ctx context.Context, agentID string, providerType string, ref string) error
+}
+
 // DeletionReconciler cleans up sandboxes that have been accepted for async
 // deletion, and promotes sandboxes past their Policies.AutoDestroyAfter
 // expiry into deletion.
@@ -111,6 +120,14 @@ func (r *DeletionReconciler) cleanupSandbox(ctx context.Context, id model.Sandbo
 		sb.Resources = removeResourceID(sb.Resources, rid)
 		if err := r.store.PutSandbox(ctx, sb); err != nil {
 			return fmt.Errorf("remove destroyed resource %q from sandbox %q: %w", rid, sb.ID, err)
+		}
+	}
+
+	if segmentDestroyer, ok := r.destroyer.(SegmentDestroyer); ok {
+		for _, seg := range sb.NetworkSegments {
+			if err := segmentDestroyer.DestroySegment(ctx, seg.AgentID, seg.ProviderType, seg.Ref); err != nil {
+				return fmt.Errorf("destroy network segment %q for sandbox %q: %w", seg.Ref, sb.ID, err)
+			}
 		}
 	}
 
