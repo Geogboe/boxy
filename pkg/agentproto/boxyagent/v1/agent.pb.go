@@ -1733,15 +1733,20 @@ func (*ListCommand) Descriptor() ([]byte, []int) {
 	return file_boxyagent_v1_agent_proto_rawDescGZIP(), []int{19}
 }
 
-// apply_network gates whether PersonalizeGuest may configure the guest's
-// network identity (static_ip/range-mode IP assignment) in addition to
-// rotating its credential. It defaults to false (proto3 zero value) so a
-// stale caller — or any code path that forgets to set it explicitly — gets
-// the safe, network-deferred behavior rather than silently reintroducing
-// #358's premature network exposure of preheated-but-unclaimed inventory.
-// Only allocation-time personalization (a sandbox actually claiming the
-// resource) should set this true; admission/promotion-time personalization
-// must leave it false. See ADR-0012's 2026-09 change note.
+// apply_network marks an allocation-time personalization — a sandbox is
+// actually claiming this resource — as opposed to an admission/promotion-time
+// one, which must leave it false. It no longer describes in-guest IP
+// assignment: a claimed guest is addressed from its sandbox's network segment
+// by AttachToSegment instead (#224). What it gates now is anything a driver
+// may only do because an allocation is in flight — concretely, the Hyper-V
+// driver retains the credential it rotated the guest onto just long enough
+// for that allocation's AttachToSegment to authenticate with it, and retains
+// nothing for a preheated resource nothing is going to attach. It defaults to
+// false (proto3 zero value) so a stale caller — or any code path that forgets
+// to set it explicitly — gets the conservative behavior rather than silently
+// reintroducing #358's premature provisioning for preheated-but-unclaimed
+// inventory. See ADR-0012's 2026-09 change note and ADR-0021's 2026-09-14
+// entry.
 type PersonalizeGuestCommand struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ResourceId    string                 `protobuf:"bytes,1,opt,name=resource_id,json=resourceId,proto3" json:"resource_id,omitempty"`

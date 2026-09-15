@@ -94,6 +94,44 @@ func TestAgentProvisioner_DestroySegmentUnregisteredAgentReturnsSentinel(t *test
 	}
 }
 
+// The teardown counterpart to CreateSegment's advertisement check: an agent
+// that is registered but no longer advertises isolation for this segment's
+// provider type (reconfigured or downgraded between allocation and deletion)
+// must be reported as ErrNetworkIsolationUnsupported, not as a hard error.
+// Without this, sandbox deletion fails permanently on that segment and --
+// because DeletionReconciler.Reconcile returns on the first cleanup error --
+// stalls every later sandbox in the same tick.
+func TestAgentProvisioner_DestroySegmentUnadvertisedAgentReturnsSentinel(t *testing.T) {
+	agent := newMockAgent("hyperv")
+	agent.info.NetworkIsolatingProviders = nil
+	ap := &AgentProvisioner{Registry: registryWith(t, agent)}
+
+	err := ap.DestroySegment(context.Background(), agent.Info().ID, "hyperv", "boxy-sb-sb-1")
+	if !errors.Is(err, ErrNetworkIsolationUnsupported) {
+		t.Fatalf("err = %v, want ErrNetworkIsolationUnsupported", err)
+	}
+	if errors.Is(err, ErrSegmentAgentUnavailable) {
+		t.Fatalf("err = %v must not claim the agent is unregistered; it is registered, just incapable", err)
+	}
+	if agent.gotDestroySegmentRef != "" {
+		t.Fatalf("agent was asked to destroy segment %q despite advertising no isolation support", agent.gotDestroySegmentRef)
+	}
+}
+
+// An agent advertising isolation for a DIFFERENT provider than the segment
+// records must be treated the same as advertising none -- the mirror of
+// CreateSegment's equivalent case.
+func TestAgentProvisioner_DestroySegmentAdvertisedForOtherProviderReturnsSentinel(t *testing.T) {
+	agent := newMockAgent("hyperv", "devfactory")
+	agent.info.NetworkIsolatingProviders = []providersdk.Type{"devfactory"}
+	ap := &AgentProvisioner{Registry: registryWith(t, agent)}
+
+	err := ap.DestroySegment(context.Background(), agent.Info().ID, "hyperv", "boxy-sb-sb-1")
+	if !errors.Is(err, ErrNetworkIsolationUnsupported) {
+		t.Fatalf("err = %v, want ErrNetworkIsolationUnsupported for a hyperv segment", err)
+	}
+}
+
 // A registered agent that really does fail teardown must NOT look like the
 // agent-gone case, or the deleter would swallow a genuine failure.
 func TestAgentProvisioner_DestroySegmentRealFailureIsNotTheSentinel(t *testing.T) {

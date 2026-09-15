@@ -113,19 +113,18 @@ type Driver struct {
 
 	// segmentLedgerPath is where the per-sandbox network-segment CIDR
 	// ledger is persisted (see network_isolation.go). New resolves it under
-	// Config.DataDir, the same way ledgerStore already is when a boxy config
-	// file's directory is known (RelativePathResolver). Empty falls back to
-	// a per-Driver ephemeral temp location — see segments().
+	// Config.DataDir when a boxy config file's directory is known
+	// (RelativePathResolver). Empty falls back to a per-Driver ephemeral temp
+	// location — see segments().
 	segmentLedgerPath string
 
 	// segmentLedger/segmentLedgerOnce cache the *segmentLedger instance so
 	// every CreateSegment/AttachToSegment/DestroySegment call on this Driver
 	// shares one diskjson.Store — and therefore one sync.Mutex — over
-	// segmentLedgerFilename. Mirrors ledgerStore/ledgerOnce above: building
-	// a fresh *segmentLedger (and fresh, unshared mutex) per call would
-	// defeat the ledger's own concurrency guarantee, letting two concurrent
-	// allocate() calls each read a stale snapshot and race their writes
-	// (task-2 code review finding 1).
+	// segmentLedgerFilename. Building a fresh *segmentLedger (and fresh,
+	// unshared mutex) per call would defeat the ledger's own concurrency
+	// guarantee, letting two concurrent allocate() calls each read a stale
+	// snapshot and race their writes (task-2 code review finding 1).
 	segmentLedger     *segmentLedger
 	segmentLedgerOnce sync.Once
 }
@@ -202,7 +201,14 @@ type rotatedGuestCredential struct {
 //
 // Called only after verify_credential succeeds -- an unverified rotation is
 // a password the guest cannot be proven to have accepted, and caching it
-// would mean confidently authenticating with something wrong.
+// would mean confidently authenticating with something wrong -- and only for
+// an allocation-time personalization (opts.ApplyNetwork). Admission-time
+// preheat rotations are deliberately not retained: nothing will attach those
+// resources to a segment until a sandbox claims them, so holding their
+// passwords would mean this process kept the plaintext credential of every
+// idle VM in every Hyper-V pool, indefinitely, to serve a call that may never
+// come. Retention is scoped to in-flight allocations, which is the only
+// window AttachToSegment occupies.
 func (d *Driver) rememberRotatedCredential(id, username, password string) {
 	d.rotatedCredsMu.Lock()
 	defer d.rotatedCredsMu.Unlock()
@@ -221,9 +227,15 @@ func (d *Driver) rememberRotatedCredential(id, username, password string) {
 // bootstrap is still current), and is reached in practice when this agent
 // restarted between allocation and attach, taking its in-memory record with
 // it. Keeping it costs nothing and turns one narrow crash window from a
-// certain failure into a possible success; when it does fail, it fails as a
-// clear authentication error against a guest that simply never got addressed
-// -- not as a silently mis-addressed one.
+// certain failure into a possible success.
+//
+// When it does fail it fails loudly, but not cheaply: the authentication
+// error propagates out of AttachToSegment, through
+// internal/sandbox.Manager.ensureNetworkSegment as a hard error, and fails
+// the allocation -- the fulfiller then rolls the sandbox back to `failed` and
+// quarantines the resource. That is still strictly better than a silently
+// mis-addressed guest, which is why the fallback stays, but it is a failed
+// sandbox, not merely an unaddressed VM.
 func (d *Driver) segmentGuestCredential(ctx context.Context, id string, notes map[string]string, guestUser string) (string, string, error) {
 	d.rotatedCredsMu.Lock()
 	rotated, ok := d.rotatedCreds[id]
@@ -1194,20 +1206,26 @@ func (d *Driver) Allocate(ctx context.Context, id string) (map[string]any, error
 // distinguishing which phase failed (see personalizeFailureStep) rather than
 // a single undifferentiated bucket.
 //
-// This driver no longer applies any network configuration of its own, so
-// opts.ApplyNetwork has no effect here (#224, Plan 1c): a pool's declared
-// static_ip/range config was removed, and a claimed VM is addressed from its
-// sandbox's network segment by AttachToSegment instead. Rotation and
-// verification use PowerShell Direct over VMBus, which needs no network, so
-// they run for an unclaimed preheated VM exactly as before — #358's
-// principle (a preheated-but-unclaimed VM must not become network-reachable
-// early) now holds for free, since nothing reachable is configured until a
-// sandbox claims it. See ADR-0021's 2026-09-14 change-log entry.
+// This driver no longer applies any network configuration of its own (#224,
+// Plan 1c): a pool's declared static_ip/range config was removed, and a
+// claimed VM is addressed from its sandbox's network segment by
+// AttachToSegment instead. Rotation and verification use PowerShell Direct
+// over VMBus, which needs no network, so they run for an unclaimed preheated
+// VM exactly as before — #358's principle (a preheated-but-unclaimed VM must
+// not become network-reachable early) now holds for free, since nothing
+// reachable is configured until a sandbox claims it.
+//
+// opts.ApplyNetwork still selects the phase, and gates one thing here: whether
+// the rotated credential is retained in memory for a subsequent
+// AttachToSegment (see rememberRotatedCredential). Only an allocation-time
+// call has an attach coming; an admission-time one must not leave a preheated
+// VM's password resident for the pool's whole preheat lifetime. See ADR-0021's
+// 2026-09-14 change-log entry.
 func (d *Driver) PersonalizeGuest(ctx context.Context, id string, opts providersdk.GuestPersonalizationOptions) (*providersdk.GuestPersonalizationResult, error) {
 	unlock := d.lockPersonalize(id)
 	defer unlock()
 	start := time.Now()
-	result, err := d.personalizeGuestLocked(ctx, id)
+	result, err := d.personalizeGuestLocked(ctx, id, opts)
 	elapsed := time.Since(start)
 	if err != nil {
 		step := personalizeFailureStep(err)
@@ -1293,13 +1311,13 @@ func personalizeFailureStep(err error) string {
 // personalizeGuestLocked is PersonalizeGuest's implementation, run only
 // while the caller holds this VM's personalize lock.
 //
-// It takes no GuestPersonalizationOptions: this driver applies no network
-// configuration of its own any more, so opts.ApplyNetwork — the only field
-// it ever consulted — has nothing left to gate here (#224, Plan 1c). The
-// option remains on the public PersonalizeGuest signature because it is part
-// of providersdk's provider-neutral contract, not because hyperv still acts
-// on it.
-func (d *Driver) personalizeGuestLocked(ctx context.Context, id string) (*providersdk.GuestPersonalizationResult, error) {
+// opts.ApplyNetwork no longer gates any in-guest network configuration —
+// this driver applies none of its own any more (#224, Plan 1c) — but it is
+// still what distinguishes an allocation-time call from an admission-time
+// one, and that distinction decides whether the rotated credential is
+// retained for a subsequent AttachToSegment. See the retention call at the
+// end of this function.
+func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts providersdk.GuestPersonalizationOptions) (*providersdk.GuestPersonalizationResult, error) {
 	timer := newPersonalizeStepTimer(id)
 
 	notes, err := d.readNotes(ctx, id)
@@ -1431,7 +1449,15 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string) (*provid
 	// Recorded only now that the guest has demonstrably accepted the new
 	// password, so AttachToSegment can still reach this guest after the
 	// control plane drops its copy. See rememberRotatedCredential.
-	d.rememberRotatedCredential(id, guestUser, newPassword)
+	//
+	// Allocation-time only (opts.ApplyNetwork). AttachToSegment is the sole
+	// consumer and runs only once a sandbox has claimed this resource; an
+	// admission-time preheat rotation has no attach coming, so retaining its
+	// password would just leave every unclaimed VM's plaintext credential
+	// resident in this process for the pool's whole preheat lifetime.
+	if opts.ApplyNetwork {
+		d.rememberRotatedCredential(id, guestUser, newPassword)
+	}
 
 	credentialData, err := json.Marshal(map[string]string{
 		"username": guestUser,

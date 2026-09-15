@@ -9,9 +9,11 @@ import (
 )
 
 // ErrNetworkIsolationUnsupported is the sentinel AgentProvisioner.CreateSegment
-// returns when the agent that owns a resource does not advertise
-// providersdk.NetworkIsolator support for that resource's resolved provider
-// type (see agentsdk.AgentInfo.NetworkIsolatingProviders).
+// and AgentProvisioner.DestroySegment return when the agent in question does
+// not advertise providersdk.NetworkIsolator support for the relevant provider
+// type (see agentsdk.AgentInfo.NetworkIsolatingProviders) -- for CreateSegment
+// the type the owning resource's pool resolves to, for DestroySegment the type
+// recorded on the model.NetworkSegment being torn down.
 //
 // It is not a failure. Per-sandbox network isolation is best-effort across a
 // heterogeneous fleet: a sandbox can mix resources from an isolation-capable
@@ -19,6 +21,14 @@ import (
 // concept at all. internal/sandbox.Manager.ensureNetworkSegment matches this
 // with errors.Is and skips segment creation for that resource, recording no
 // segment; every other error from CreateSegment stays a hard failure.
+//
+// The teardown side is the same judgment applied to an agent that has since
+// lost the capability it had at allocation time: there is nothing this daemon
+// can do to tear the segment down through an agent that no longer offers the
+// driver, and refusing to finish the sandbox's deletion over it would strand
+// that sandbox permanently. internal/sandbox.DeletionReconciler matches it
+// with errors.Is, logs, and moves on -- exactly as it does for
+// ErrSegmentAgentUnavailable below.
 //
 // Why it lives in internal/pool rather than in internal/sandbox, which is
 // where the sandbox.NetworkIsolatingAllocator contract this value is part of

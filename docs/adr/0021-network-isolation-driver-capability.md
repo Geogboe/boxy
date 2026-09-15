@@ -274,12 +274,60 @@ rediscovering them:
   is already described as opaque and process-local, and it never reaches
   resource properties, VM notes, logs, the API, or agent config. Routing
   makes it sound: `ProviderRef.AgentID` sends `Allocate` and
-  `AttachToSegment` for one resource to the same agent process. **Known
-  gap:** an agent restart between allocation and attach loses the retained
-  value; the fallback to the (stale) bootstrap will usually fail, surfacing
-  as a clear authentication error against a guest that simply never got
-  addressed — not a silently mis-addressed one. This was a judgment call made
-  during implementation and warrants a second look.
+  `AttachToSegment` for one resource to the same agent process.
+
+  **Retention is scoped to allocation-time personalization**
+  (`opts.ApplyNetwork`), which is the only phase an `AttachToSegment` can
+  follow. An admission-time preheat rotation retains nothing: holding those
+  passwords would mean the agent process kept the plaintext credential of
+  every idle, unclaimed VM in every Hyper-V pool for that pool's entire
+  preheat lifetime, to serve a call that may never come. This is #358's own
+  principle — a preheated-but-unclaimed resource gets nothing it has no use
+  for yet — applied to a secret rather than an address, and it is what makes
+  `ApplyNetwork` load-bearing again now that it gates no in-guest addressing.
+
+  **Known gap:** an agent restart between allocation and attach loses the
+  retained value; the fallback to the (stale) bootstrap will usually fail.
+  The failure is loud but not cheap — the authentication error propagates out
+  of `AttachToSegment`, through `ensureNetworkSegment` as a hard error, and
+  fails the allocation, after which the fulfiller rolls the sandbox back to
+  `failed` and quarantines the resource. Still better than a silently
+  mis-addressed guest, which is why the fallback stays, but the outcome is a
+  failed sandbox plus a quarantined resource, not merely an unaddressed VM.
+  This was a judgment call made during implementation and warrants a second
+  look. Scoping retention to allocation time (see the paragraph above, added
+  2026-09-15) does not widen this gap — the credential an attach needs is the
+  one rotated during that same allocation, which a restart loses either way —
+  but it does remove an accidental second chance, where a retained
+  admission-time credential could previously have happened to still be
+  current.
+
+- 2026-09-15 (Plan 1c, combined re-review fixes): three defects the combined
+  re-review of the fix round above found. Part of #224.
+
+  **Segments are keyed per (agent, provider type), not per agent.**
+  `ensureNetworkSegment`'s reuse branch matched only on `AgentID`, so a
+  sandbox spanning two pools of different provider types on one agent handed
+  the second provider the first's segment ref — a ref that provider cannot
+  address, failing the whole allocation. That is the *default* daemon shape,
+  not an edge case: `internal/cli/serve.go` builds one embedded agent over
+  every configured driver, so every mixed-provider sandbox shares one agent
+  ID. A segment is a provider-specific host object (a vSwitch, a Docker
+  network), so one agent hosting two drivers legitimately owns two segments
+  for the same sandbox. Reuse now matches `model.NetworkSegment.ProviderType`
+  against the resource's own `Provider.Name` as well.
+
+  **`DestroySegment` gained the advertisement check `CreateSegment` already
+  had**, returning the same `ErrNetworkIsolationUnsupported` sentinel for an
+  agent that is registered but no longer advertises isolation for the
+  segment's provider type. Without it, an agent reconfigured or downgraded
+  between allocation and deletion produced a hard error that blocked its
+  sandbox's deletion permanently and — since `Reconcile` returns on the first
+  cleanup error — stalled every later sandbox in the same tick, reproducing
+  the failure mode the unregistered-agent sentinel was added to prevent.
+
+  **Credential retention was scoped to allocation time**; see the retention
+  paragraph in the 2026-09-14 entry above for the reasoning.
 
 ## Open risks — status after Plan 1c
 

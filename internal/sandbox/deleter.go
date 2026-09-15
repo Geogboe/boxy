@@ -148,6 +148,24 @@ func (r *DeletionReconciler) cleanupSandbox(ctx context.Context, id model.Sandbo
 				)
 				continue
 			}
+			// The agent is here, but can no longer isolate this provider type
+			// -- reconfigured or downgraded since the segment was created.
+			// Same conclusion as above for a different reason: there is no
+			// route left to the host object, and blocking on it would strand
+			// this sandbox (and every later one in this tick) forever. Kept
+			// as its own branch rather than folded into the check above so
+			// the log line says which of the two actually happened.
+			if errors.Is(err, pool.ErrNetworkIsolationUnsupported) {
+				slog.Default().Warn("skipping network segment teardown; its agent no longer supports network isolation for this provider",
+					"operation", "sandbox_destroy_segment",
+					"sandbox_id", sb.ID,
+					"agent_id", seg.AgentID,
+					"provider_type", seg.ProviderType,
+					"segment_ref", seg.Ref,
+					"error", err,
+				)
+				continue
+			}
 			if err != nil {
 				return fmt.Errorf("destroy network segment %q for sandbox %q: %w", seg.Ref, sb.ID, err)
 			}

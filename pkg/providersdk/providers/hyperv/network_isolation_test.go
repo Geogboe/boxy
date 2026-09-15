@@ -430,6 +430,38 @@ func TestDriver_AttachToSegment_FallsBackToBootstrapWithoutRotatedCredential(t *
 	}
 }
 
+// TestDriver_PersonalizeGuest_RetainsRotatedCredentialOnlyAtAllocationTime
+// scopes the retained credential to the phase that actually needs it.
+// AttachToSegment is the only consumer, and it runs at allocation time; an
+// admission-time (preheat) personalization has no sandbox, no segment, and
+// therefore no attach to authenticate later. Retaining unconditionally left
+// this agent process holding the plaintext password of every preheated,
+// unclaimed VM in every Hyper-V pool for the pool's entire lifetime -- the
+// same thing #358's "a preheated-but-unclaimed VM has no reason to be
+// network-reachable" principle rejects, applied to credentials.
+func TestDriver_PersonalizeGuest_RetainsRotatedCredentialOnlyAtAllocationTime(t *testing.T) {
+	for name, applyNetwork := range map[string]bool{
+		"admission-time (preheat) retains nothing": false,
+		"allocation-time retains for the attach":   true,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var sessions []*recordingGuestExec
+			d := segmentDriver(t, windowsGuestNotes, &sessions)
+
+			if _, err := d.PersonalizeGuest(context.Background(), fakeGUID, providersdk.GuestPersonalizationOptions{ApplyNetwork: applyNetwork}); err != nil {
+				t.Fatalf("PersonalizeGuest: %v", err)
+			}
+
+			d.rotatedCredsMu.Lock()
+			_, held := d.rotatedCreds[fakeGUID]
+			d.rotatedCredsMu.Unlock()
+			if held != applyNetwork {
+				t.Fatalf("rotated credential retained = %v, want %v for ApplyNetwork=%v", held, applyNetwork, applyNetwork)
+			}
+		})
+	}
+}
+
 // TestDriver_AttachToSegment_ForgetsRotatedCredentialOnDelete pins the
 // retained credential's lifetime to the resource's own: once Delete confirms
 // the VM gone, the driver must not keep holding its guest password.

@@ -20,12 +20,13 @@ import (
 // advertises in AgentInfo.NetworkIsolatingProviders is set per test; that
 // advertisement, not the interface, is what the control plane must obey.
 type stubIsolatingAgent struct {
-	info              agentsdk.AgentInfo
-	createSegmentRef  providersdk.SegmentRef
-	createSegmentErr  error
-	attachErr         error
-	createSegmentCall int
-	attachCall        int
+	info               agentsdk.AgentInfo
+	createSegmentRef   providersdk.SegmentRef
+	createSegmentErr   error
+	attachErr          error
+	createSegmentCall  int
+	attachCall         int
+	destroySegmentCall int
 }
 
 func (s *stubIsolatingAgent) Info() agentsdk.AgentInfo { return s.info }
@@ -51,6 +52,7 @@ func (s *stubIsolatingAgent) AttachToSegment(_ context.Context, _ providersdk.Ty
 	return s.attachErr
 }
 func (s *stubIsolatingAgent) DestroySegment(context.Context, providersdk.Type, providersdk.SegmentRef) error {
+	s.destroySegmentCall++
 	return nil
 }
 
@@ -276,12 +278,64 @@ func TestDeletionReconciler_SkipsSegmentWhoseAgentIsGone(t *testing.T) {
 	}
 }
 
+// The combined re-review's residual gap (b): an agent that is still
+// registered but no longer advertises isolation for this segment's provider
+// type -- reconfigured or downgraded between allocation and deletion -- must
+// also be skipped rather than blocking deletion. Without the advertisement
+// check in AgentProvisioner.DestroySegment this reproduced I5's stall through
+// a different door.
+func TestDeletionReconciler_SkipsSegmentWhoseAgentNoLongerAdvertisesIsolation(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	for _, sb := range []model.Sandbox{
+		{
+			ID:              "sb-1",
+			Status:          model.SandboxStatusDeleting,
+			NetworkSegments: []model.NetworkSegment{{AgentID: "agent-1", ProviderType: "hyperv", Ref: "boxy-sb-sb-1"}},
+		},
+		{ID: "sb-2", Status: model.SandboxStatusDeleting},
+	} {
+		if err := st.CreateSandbox(ctx, sb); err != nil {
+			t.Fatalf("CreateSandbox: %v", err)
+		}
+	}
+
+	// Registered and reachable, but advertising no isolation for hyperv any
+	// more -- unlike TestDeletionReconciler_SkipsSegmentWhoseAgentIsGone,
+	// where the agent isn't in the registry at all.
+	agent := &stubIsolatingAgent{info: agentsdk.AgentInfo{ID: "agent-1", Providers: []providersdk.Type{"hyperv"}}}
+	registry := boxypool.NewAgentRegistry()
+	if err := registry.Register(agent); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	r := NewDeletionReconciler(st, &provisionerBackedDestroyer{ap: &boxypool.AgentProvisioner{Registry: registry}})
+
+	if err := r.Reconcile(ctx); err != nil {
+		t.Fatalf("Reconcile must not fail on an agent that no longer advertises isolation: %v", err)
+	}
+	if agent.destroySegmentCall != 0 {
+		t.Fatalf("agent was asked to destroy a segment (%d calls) despite advertising no isolation support", agent.destroySegmentCall)
+	}
+	for _, id := range []model.SandboxID{"sb-1", "sb-2"} {
+		if _, err := st.GetSandbox(ctx, id); err == nil {
+			t.Fatalf("sandbox %q should have been deleted", id)
+		}
+	}
+}
+
 // A genuine DestroySegment failure stays a hard error and still blocks
 // deletion -- the skip above must be narrow.
 func TestDeletionReconciler_RealSegmentFailureStillBlocksDeletion(t *testing.T) {
 	ctx := context.Background()
 	st := store.NewMemoryStore()
-	agent := &stubIsolatingAgent{info: agentsdk.AgentInfo{ID: "agent-1", Providers: []providersdk.Type{"hyperv"}}}
+	// Advertises hyperv: this agent really can isolate, so reaching its
+	// DestroySegment (and failing there) is the behavior under test, not the
+	// advertisement skip above.
+	agent := &stubIsolatingAgent{info: agentsdk.AgentInfo{
+		ID:                        "agent-1",
+		Providers:                 []providersdk.Type{"hyperv"},
+		NetworkIsolatingProviders: []providersdk.Type{"hyperv"},
+	}}
 	if err := st.CreateSandbox(ctx, model.Sandbox{
 		ID:              "sb-1",
 		Status:          model.SandboxStatusDeleting,

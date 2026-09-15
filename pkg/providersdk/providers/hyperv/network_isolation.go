@@ -83,7 +83,7 @@ const (
 )
 
 // segmentLedgerFilename is the JSON file name for the per-sandbox network
-// segment ledger, written under Config.DataDir next to ledgerFilename.
+// segment ledger, written under Config.DataDir.
 const segmentLedgerFilename = "network-segments.json"
 
 // errSegmentRangeExhausted reports that segmentBaseCIDR has no block left at
@@ -355,13 +355,11 @@ func switchNameForSandbox(sandboxID string) string {
 // defeat the ledger's own concurrency guarantee: two concurrent
 // CreateSegment/allocate calls would each lock their own independent mutex
 // over the same underlying file, both could read the same stale snapshot,
-// and the second Update's write would silently clobber the first's. Mirrors
-// the ledgerStore/ledgerOnce pattern already used for the IP-range ledger.
+// and the second Update's write would silently clobber the first's.
 //
 // When New wasn't used to set segmentLedgerPath explicitly (e.g. a Driver
 // built directly, as most tests in this package do), the ledger falls back to
-// an ephemeral temp directory -- the same shape as ledger()'s own fallback,
-// and for the same reason: a fixed relative filename resolved against the
+// an ephemeral temp directory: a fixed relative filename resolved against the
 // ambient process working directory would let unrelated Drivers converge on
 // one shared file and race on each other's state.
 func (d *Driver) segments() *segmentLedger {

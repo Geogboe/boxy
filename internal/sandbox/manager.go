@@ -503,10 +503,36 @@ func (m *Manager) ForgetGuestCredentials(sbID model.SandboxID) {
 	delete(m.guestCredentials, sbID)
 }
 
-// ensureNetworkSegment attaches res to sb's segment on res's agent,
-// creating that segment first if this is the first resource from that
-// agent this sandbox has seen. Mutates sb.NetworkSegments in place and,
-// on creating a new segment, persists sb immediately (see below).
+// ensureNetworkSegment attaches res to sb's segment for res's (agent,
+// provider type) pair, creating that segment first if this is the first
+// resource with that pairing this sandbox has seen. Mutates
+// sb.NetworkSegments in place and, on creating a new segment, persists sb
+// immediately (see below).
+//
+// Reuse is keyed on BOTH the agent and the provider type, never the agent
+// alone. A segment is a provider-specific host object -- a Hyper-V vSwitch, a
+// Docker network -- so one agent hosting two drivers owns two unrelated
+// segments for the same sandbox, and handing one driver's ref to the other is
+// a hard failure inside that driver, not a graceful degradation. This is the
+// ordinary daemon shape rather than an edge case: internal/cli/serve.go builds
+// one embedded agent over every configured driver, so every mixed-provider
+// sandbox shares a single agent ID across its pools.
+//
+// res.Provider.Name is the resolved provider type to match on:
+// pool.AgentProvisioner.ProvisionLocked stamps the pool's resolved driver
+// type onto each resource it creates, and CreateSegment returns that same
+// resolved type for the segment it records (see CompatibleWithPool, which
+// already treats the two as one value).
+//
+// That is an invariant, not a guarantee, and there is exactly one shape where
+// it can break: editing a pool's spec.Type/spec.Provider in config *after* its
+// resources were provisioned. The reuse key (res.Provider.Name, the old type)
+// would then miss the segment CreateSegment records (the new type), and each
+// resource would append its own duplicate segment record. Harmless in
+// practice -- DestroySegment is idempotent, so duplicates tear down cleanly --
+// and the same config drift already misroutes Allocate/Destroy upstream of
+// here, so it is not worth a defensive check on this path. Noted so a reader
+// does not have to reconstruct it.
 //
 // There are two distinct ways isolation is skipped rather than failed,
 // matching this plan's Global Constraints:
@@ -540,12 +566,18 @@ func (m *Manager) ensureNetworkSegment(ctx context.Context, sb *model.Sandbox, p
 		return nil
 	}
 	agentID := res.Provider.AgentID
+	providerType := res.Provider.Name
 	for _, seg := range sb.NetworkSegments {
-		if seg.AgentID == agentID {
+		if seg.AgentID == agentID && seg.ProviderType == providerType {
 			return isolator.AttachToSegment(ctx, pool, res, providersdk.SegmentRef(seg.Ref))
 		}
 	}
-	ref, providerType, err := isolator.CreateSegment(ctx, pool, res, sb.ID)
+	// createdType, not providerType: the allocator resolves the segment's
+	// provider type itself and is the authority on what was actually
+	// created. In production it equals providerType above (both are the
+	// pool's resolved driver type); recording what the allocator returned
+	// keeps the record true to the host object even if they ever diverge.
+	ref, createdType, err := isolator.CreateSegment(ctx, pool, res, sb.ID)
 	if errors.Is(err, boxypool.ErrNetworkIsolationUnsupported) {
 		return nil
 	}
@@ -554,7 +586,7 @@ func (m *Manager) ensureNetworkSegment(ctx context.Context, sb *model.Sandbox, p
 	}
 	sb.NetworkSegments = append(sb.NetworkSegments, model.NetworkSegment{
 		AgentID:      agentID,
-		ProviderType: string(providerType),
+		ProviderType: string(createdType),
 		Ref:          string(ref),
 	})
 	if err := m.store.PutSandbox(ctx, *sb); err != nil {
