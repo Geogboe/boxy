@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
@@ -366,5 +367,149 @@ func TestManager_RequestDelete_MarksDeletingAndIsIdempotent(t *testing.T) {
 	}
 	if second.Status != model.SandboxStatusDeleting || len(second.Resources) != 1 {
 		t.Fatalf("second sandbox = %+v, want deleting with resource", second)
+	}
+}
+
+// fakeSegmentTrackingAllocator adds NetworkIsolatingAllocator on top of a
+// plain SandboxAllocator, mirroring the "capability on top of a base" shape
+// used throughout this codebase's other optional-capability tests.
+type fakeSegmentTrackingAllocator struct {
+	createRef    providersdk.SegmentRef
+	createType   providersdk.Type
+	createErr    error
+	attachErr    error
+	createCalls  int
+	attachCalls  int
+	gotSandboxID model.SandboxID
+}
+
+func (f *fakeSegmentTrackingAllocator) Allocate(context.Context, model.Pool, model.Resource) (providersdk.AllocationResult, error) {
+	return providersdk.AllocationResult{}, nil
+}
+func (f *fakeSegmentTrackingAllocator) CreateSegment(_ context.Context, _ model.Pool, _ model.Resource, sandboxID model.SandboxID) (providersdk.SegmentRef, providersdk.Type, error) {
+	f.createCalls++
+	f.gotSandboxID = sandboxID
+	return f.createRef, f.createType, f.createErr
+}
+func (f *fakeSegmentTrackingAllocator) AttachToSegment(context.Context, model.Pool, model.Resource, providersdk.SegmentRef) error {
+	f.attachCalls++
+	return f.attachErr
+}
+
+func TestManager_CreateFromPool_CreatesAndRecordsSegmentOnce(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	if err := st.PutPool(ctx, model.Pool{
+		Name:      "pool-a",
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeVM, ExpectedProfile: model.ResourceProfileDefault},
+	}); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	for _, res := range []model.Resource{
+		{ID: "res-1", OriginPool: "pool-a", Type: model.ResourceTypeVM, Profile: model.ResourceProfileDefault, State: model.ResourceStateReady, Provider: model.ProviderRef{AgentID: "agent-1"}},
+		{ID: "res-2", OriginPool: "pool-a", Type: model.ResourceTypeVM, Profile: model.ResourceProfileDefault, State: model.ResourceStateReady, Provider: model.ProviderRef{AgentID: "agent-1"}},
+	} {
+		if err := st.PutResource(ctx, res); err != nil {
+			t.Fatalf("PutResource: %v", err)
+		}
+	}
+	pool, _ := st.GetPool(ctx, "pool-a")
+	pool.Inventory.Resources = []model.Resource{
+		{ID: "res-1", Type: model.ResourceTypeVM, Profile: model.ResourceProfileDefault, State: model.ResourceStateReady, Provider: model.ProviderRef{AgentID: "agent-1"}},
+		{ID: "res-2", Type: model.ResourceTypeVM, Profile: model.ResourceProfileDefault, State: model.ResourceStateReady, Provider: model.ProviderRef{AgentID: "agent-1"}},
+	}
+	if err := st.PutPool(ctx, pool); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+
+	allocator := &fakeSegmentTrackingAllocator{createRef: "boxy-sb-sb-1", createType: "hyperv"}
+	m := New(st, allocator)
+
+	sb, err := m.CreateFromPool(ctx, "pool-a", 2, "test-sandbox", model.SandboxPolicies{})
+	if err != nil {
+		t.Fatalf("CreateFromPool: %v", err)
+	}
+	if allocator.createCalls != 1 {
+		t.Fatalf("CreateSegment called %d times, want exactly 1 (same sandbox, same agent, must not create twice)", allocator.createCalls)
+	}
+	if allocator.attachCalls != 2 {
+		t.Fatalf("AttachToSegment called %d times, want 2 (once per resource)", allocator.attachCalls)
+	}
+	if len(sb.NetworkSegments) != 1 || sb.NetworkSegments[0].Ref != "boxy-sb-sb-1" || sb.NetworkSegments[0].ProviderType != "hyperv" || sb.NetworkSegments[0].AgentID != "agent-1" {
+		t.Fatalf("NetworkSegments = %+v, want exactly one entry for agent-1", sb.NetworkSegments)
+	}
+
+	// Persisted, not just returned.
+	persisted, err := st.GetSandbox(ctx, sb.ID)
+	if err != nil {
+		t.Fatalf("GetSandbox: %v", err)
+	}
+	if len(persisted.NetworkSegments) != 1 {
+		t.Fatalf("persisted sandbox NetworkSegments = %+v, want one entry", persisted.NetworkSegments)
+	}
+}
+
+func TestManager_AddFromPool_ReusesExistingSegmentForSameAgent(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	if err := st.CreateSandbox(ctx, model.Sandbox{
+		ID:              "sb-1",
+		Status:          model.SandboxStatusReady,
+		NetworkSegments: []model.NetworkSegment{{AgentID: "agent-1", ProviderType: "hyperv", Ref: "boxy-sb-sb-1"}},
+	}); err != nil {
+		t.Fatalf("CreateSandbox: %v", err)
+	}
+	if err := st.PutPool(ctx, model.Pool{
+		Name:      "pool-a",
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeVM, ExpectedProfile: model.ResourceProfileDefault, Resources: []model.Resource{{ID: "res-3", Type: model.ResourceTypeVM, Profile: model.ResourceProfileDefault, State: model.ResourceStateReady, Provider: model.ProviderRef{AgentID: "agent-1"}}}},
+	}); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	if err := st.PutResource(ctx, model.Resource{ID: "res-3", OriginPool: "pool-a", Type: model.ResourceTypeVM, Profile: model.ResourceProfileDefault, State: model.ResourceStateReady, Provider: model.ProviderRef{AgentID: "agent-1"}}); err != nil {
+		t.Fatalf("PutResource: %v", err)
+	}
+
+	allocator := &fakeSegmentTrackingAllocator{createRef: "should-not-be-used", createType: "hyperv"}
+	m := New(st, allocator)
+
+	sb, err := m.AddFromPool(ctx, "sb-1", "pool-a", 1)
+	if err != nil {
+		t.Fatalf("AddFromPool: %v", err)
+	}
+	if allocator.createCalls != 0 {
+		t.Fatalf("CreateSegment called %d times, want 0 (must reuse the sandbox's existing segment for agent-1)", allocator.createCalls)
+	}
+	if allocator.attachCalls != 1 {
+		t.Fatalf("AttachToSegment called %d times, want 1", allocator.attachCalls)
+	}
+	if len(sb.NetworkSegments) != 1 {
+		t.Fatalf("NetworkSegments = %+v, want the original single entry unchanged", sb.NetworkSegments)
+	}
+}
+
+func TestManager_CreateFromPool_PlainAllocatorSkipsSegmentsEntirely(t *testing.T) {
+	// A SandboxAllocator that does NOT implement NetworkIsolatingAllocator
+	// (e.g. devfactory-backed) must allocate exactly as it does today --
+	// no error, no segment, matching this plan's Global Constraints.
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	if err := st.PutPool(ctx, model.Pool{
+		Name:      "pool-a",
+		Inventory: model.ResourceCollection{ExpectedType: model.ResourceTypeVM, ExpectedProfile: model.ResourceProfileDefault, Resources: []model.Resource{{ID: "res-4", Type: model.ResourceTypeVM, Profile: model.ResourceProfileDefault, State: model.ResourceStateReady}}},
+	}); err != nil {
+		t.Fatalf("PutPool: %v", err)
+	}
+	if err := st.PutResource(ctx, model.Resource{ID: "res-4", OriginPool: "pool-a", Type: model.ResourceTypeVM, Profile: model.ResourceProfileDefault, State: model.ResourceStateReady}); err != nil {
+		t.Fatalf("PutResource: %v", err)
+	}
+
+	m := New(st, fakeAllocator{})
+
+	sb, err := m.CreateFromPool(ctx, "pool-a", 1, "plain-sandbox", model.SandboxPolicies{})
+	if err != nil {
+		t.Fatalf("CreateFromPool: %v", err)
+	}
+	if len(sb.NetworkSegments) != 0 {
+		t.Fatalf("NetworkSegments = %+v, want none for a plain allocator", sb.NetworkSegments)
 	}
 }

@@ -236,6 +236,9 @@ func (m *Manager) AddFromPoolWithPackages(
 			if len(allocation.AppliedPackages) != 0 {
 				res.AppliedPackages = append(res.AppliedPackages, allocation.AppliedPackages...)
 			}
+			if err := m.ensureNetworkSegment(ctx, &sb, pool, res); err != nil {
+				return model.Sandbox{}, fmt.Errorf("ensure network segment for resource %q: %w", res.ID, err)
+			}
 		}
 		res.State = model.ResourceStateAllocated
 		if err := m.store.PutResource(ctx, res); err != nil {
@@ -347,10 +350,19 @@ func (m *Manager) CreateFromPool(
 			if allocation.GuestCredential != nil {
 				m.rememberGuestCredential(sb.ID, res.ID, allocation.GuestCredential)
 			}
+			if err := m.ensureNetworkSegment(ctx, &sb, pool, res); err != nil {
+				return model.Sandbox{}, fmt.Errorf("ensure network segment for resource %q: %w", res.ID, err)
+			}
 		}
 		res.State = model.ResourceStateAllocated
 		if err := m.store.PutResource(ctx, res); err != nil {
 			return model.Sandbox{}, fmt.Errorf("put resource %q: %w", res.ID, err)
+		}
+	}
+
+	if len(sb.NetworkSegments) != 0 {
+		if err := m.store.PutSandbox(ctx, sb); err != nil {
+			return model.Sandbox{}, fmt.Errorf("put sandbox: %w", err)
 		}
 	}
 
@@ -486,6 +498,39 @@ func (m *Manager) ForgetGuestCredentials(sbID model.SandboxID) {
 	m.guestCredentialsMu.Lock()
 	defer m.guestCredentialsMu.Unlock()
 	delete(m.guestCredentials, sbID)
+}
+
+// ensureNetworkSegment attaches res to sb's segment on res's agent,
+// creating that segment first if this is the first resource from that
+// agent this sandbox has seen. Mutates sb.NetworkSegments in place --
+// callers persist sb themselves afterward, same as every other mutation
+// already made to sb in these allocation loops. A no-op (returns nil
+// immediately) when m.allocator doesn't implement NetworkIsolatingAllocator
+// -- see this plan's Global Constraints.
+func (m *Manager) ensureNetworkSegment(ctx context.Context, sb *model.Sandbox, pool model.Pool, res model.Resource) error {
+	isolator, ok := m.allocator.(NetworkIsolatingAllocator)
+	if !ok {
+		return nil
+	}
+	agentID := res.Provider.AgentID
+	for _, seg := range sb.NetworkSegments {
+		if seg.AgentID == agentID {
+			return isolator.AttachToSegment(ctx, pool, res, providersdk.SegmentRef(seg.Ref))
+		}
+	}
+	ref, providerType, err := isolator.CreateSegment(ctx, pool, res, sb.ID)
+	if err != nil {
+		return fmt.Errorf("create network segment for sandbox %q: %w", sb.ID, err)
+	}
+	if err := isolator.AttachToSegment(ctx, pool, res, ref); err != nil {
+		return fmt.Errorf("attach resource %q to network segment: %w", res.ID, err)
+	}
+	sb.NetworkSegments = append(sb.NetworkSegments, model.NetworkSegment{
+		AgentID:      agentID,
+		ProviderType: string(providerType),
+		Ref:          string(ref),
+	})
+	return nil
 }
 
 func wrapResources(rs []model.Resource) []keyedResource {
