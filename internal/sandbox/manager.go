@@ -8,6 +8,9 @@ import (
 	"sync"
 	"time"
 
+	// Aliased: this file's allocation helpers all take a `pool model.Pool`
+	// parameter, which would shadow an unaliased import of this package.
+	boxypool "github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/resourcepool"
@@ -502,11 +505,35 @@ func (m *Manager) ForgetGuestCredentials(sbID model.SandboxID) {
 
 // ensureNetworkSegment attaches res to sb's segment on res's agent,
 // creating that segment first if this is the first resource from that
-// agent this sandbox has seen. Mutates sb.NetworkSegments in place --
-// callers persist sb themselves afterward, same as every other mutation
-// already made to sb in these allocation loops. A no-op (returns nil
-// immediately) when m.allocator doesn't implement NetworkIsolatingAllocator
-// -- see this plan's Global Constraints.
+// agent this sandbox has seen. Mutates sb.NetworkSegments in place and,
+// on creating a new segment, persists sb immediately (see below).
+//
+// There are two distinct ways isolation is skipped rather than failed,
+// matching this plan's Global Constraints:
+//
+//   - m.allocator doesn't implement NetworkIsolatingAllocator at all — no
+//     isolation-capable provider is wired up in this deployment.
+//   - The allocator reports pool.ErrNetworkIsolationUnsupported, meaning
+//     the specific agent owning res advertises no providersdk.NetworkIsolator
+//     support for res's provider type. A sandbox may legitimately mix
+//     resources from an isolating pool and a non-isolating one; the latter
+//     get no segment and no error. Every other error is a hard failure.
+//
+// The new-segment branch persists sb between CreateSegment and
+// AttachToSegment, not at the caller's end-of-loop. CreateSegment has by
+// then made a real host object (a vSwitch, a NAT, a Docker network) that
+// only this ref can address, so any later error — a failing attach right
+// below, or a different resource failing on a subsequent loop iteration —
+// would otherwise discard the in-memory append along with the caller's
+// stack frame and strand that object with no record of it anywhere. Once
+// persisted, it is reachable by sandbox deletion's own segment teardown.
+//
+// store.PutSandbox writes the whole record, so this also lands whatever
+// else the caller has already staged on sb — notably the resource-ID list
+// AddFromPoolWithPackages appends before its loop. That is strictly safer
+// than persisting it later: those resources are already out of the pool's
+// ready inventory (PutPool ran first), and deletion tolerates a listed
+// resource that has no store record.
 func (m *Manager) ensureNetworkSegment(ctx context.Context, sb *model.Sandbox, pool model.Pool, res model.Resource) error {
 	isolator, ok := m.allocator.(NetworkIsolatingAllocator)
 	if !ok {
@@ -519,17 +546,23 @@ func (m *Manager) ensureNetworkSegment(ctx context.Context, sb *model.Sandbox, p
 		}
 	}
 	ref, providerType, err := isolator.CreateSegment(ctx, pool, res, sb.ID)
+	if errors.Is(err, boxypool.ErrNetworkIsolationUnsupported) {
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("create network segment for sandbox %q: %w", sb.ID, err)
-	}
-	if err := isolator.AttachToSegment(ctx, pool, res, ref); err != nil {
-		return fmt.Errorf("attach resource %q to network segment: %w", res.ID, err)
 	}
 	sb.NetworkSegments = append(sb.NetworkSegments, model.NetworkSegment{
 		AgentID:      agentID,
 		ProviderType: string(providerType),
 		Ref:          string(ref),
 	})
+	if err := m.store.PutSandbox(ctx, *sb); err != nil {
+		return fmt.Errorf("persist network segment for sandbox %q: %w", sb.ID, err)
+	}
+	if err := isolator.AttachToSegment(ctx, pool, res, ref); err != nil {
+		return fmt.Errorf("attach resource %q to network segment: %w", res.ID, err)
+	}
 	return nil
 }
 

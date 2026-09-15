@@ -95,9 +95,17 @@ type mockAllocateCall struct {
 func newMockAgent(providers ...providersdk.Type) *mockAgent {
 	return &mockAgent{
 		info: agentsdk.AgentInfo{
-			ID:        "mock-agent",
-			Name:      "Mock Agent",
-			Providers: providers,
+			ID:   "mock-agent",
+			Name: "Mock Agent",
+			// mockAgent implements agentsdk.NetworkIsolatingAgent
+			// unconditionally for every provider it hosts (see
+			// CreateSegment/AttachToSegment below), so its advertisement
+			// has to say so -- AgentProvisioner.CreateSegment now consults
+			// AgentInfo.NetworkIsolatingProviders before it will call the
+			// capability at all. Tests that want a non-advertising agent
+			// build one explicitly instead of using this constructor.
+			Providers:                 providers,
+			NetworkIsolatingProviders: providers,
 		},
 		nextResourceID: "mock-resource-1",
 	}

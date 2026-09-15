@@ -160,14 +160,28 @@ func RunSession(ctx context.Context, stream boxyagentv1.AgentTransportService_Co
 		providerTypes[i] = string(t)
 	}
 
+	// The remote half of AgentInfo.NetworkIsolatingProviders: this process
+	// holds the real driver instances, so it performs exactly the same
+	// providersdk.NetworkIsolator type assertion EmbeddedAgent's
+	// constructor does, and reports the answer as part of the registration
+	// frame the server already uses to build AgentInfo. The daemon can't
+	// type-assert a driver living on another host, so this is the only way
+	// it can know before calling CreateSegment.
+	isolating := NetworkIsolatingProviderTypes(cfg.Drivers, cfg.ProviderTypes)
+	isolatingTypes := make([]string, len(isolating))
+	for i, t := range isolating {
+		isolatingTypes[i] = string(t)
+	}
+
 	sess := &clientSession{stream: stream}
 
 	if err := sess.send(&boxyagentv1.AgentMessage{
 		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{
-			RegistrationToken: cfg.Token,
-			AgentName:         cfg.AgentName,
-			ProviderTypes:     providerTypes,
-			AgentVersion:      cfg.AgentVersion,
+			RegistrationToken:             cfg.Token,
+			AgentName:                     cfg.AgentName,
+			ProviderTypes:                 providerTypes,
+			AgentVersion:                  cfg.AgentVersion,
+			NetworkIsolatingProviderTypes: isolatingTypes,
 		}},
 	}); err != nil {
 		return fmt.Errorf("send register request: %w", err)

@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"time"
 
+	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/store"
 )
@@ -125,7 +127,28 @@ func (r *DeletionReconciler) cleanupSandbox(ctx context.Context, id model.Sandbo
 
 	if segmentDestroyer, ok := r.destroyer.(SegmentDestroyer); ok {
 		for _, seg := range sb.NetworkSegments {
-			if err := segmentDestroyer.DestroySegment(ctx, seg.AgentID, seg.ProviderType, seg.Ref); err != nil {
+			err := segmentDestroyer.DestroySegment(ctx, seg.AgentID, seg.ProviderType, seg.Ref)
+			// An agent that is simply gone is not a teardown failure to
+			// retry forever. Blocking here would keep this sandbox in
+			// `deleting` indefinitely and -- because Reconcile returns on
+			// the first cleanupSandbox error -- stall every later sandbox
+			// in the same tick behind a host that is never coming back.
+			// This mirrors the resource path's force-orphan escape hatch
+			// in spirit: the record is released here, and reclaiming the
+			// host-side object is the deferred segment orphan sweep's job.
+			// Any other DestroySegment failure remains a hard error.
+			if errors.Is(err, pool.ErrSegmentAgentUnavailable) {
+				slog.Default().Warn("skipping network segment teardown; its agent is no longer registered",
+					"operation", "sandbox_destroy_segment",
+					"sandbox_id", sb.ID,
+					"agent_id", seg.AgentID,
+					"provider_type", seg.ProviderType,
+					"segment_ref", seg.Ref,
+					"error", err,
+				)
+				continue
+			}
+			if err != nil {
 				return fmt.Errorf("destroy network segment %q for sandbox %q: %w", seg.Ref, sb.ID, err)
 			}
 		}

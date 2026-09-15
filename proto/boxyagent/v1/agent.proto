@@ -45,6 +45,19 @@ message RegisterRequest {
   string agent_name = 2;
   repeated string provider_types = 3;
   string agent_version = 4;
+
+  // network_isolating_provider_types is the subset of provider_types whose
+  // local driver on this agent actually implements
+  // providersdk.NetworkIsolator. It exists because the daemon cannot
+  // type-assert a remote agent's driver: agentsdk.NetworkIsolatingAgent is
+  // implemented unconditionally by both EmbeddedAgent and RemoteAgent, so
+  // without this advertisement the control plane only discovers "this
+  // driver can't isolate" as a hard error three layers down, after it has
+  // already committed to creating a segment. Empty means "none" — the
+  // correct default for an agent hosting only non-isolating drivers. The
+  // server trusts no entry here that is absent from provider_types, the
+  // same anti-spoofing posture Heartbeat.availability already uses.
+  repeated string network_isolating_provider_types = 5;
 }
 
 message Heartbeat {

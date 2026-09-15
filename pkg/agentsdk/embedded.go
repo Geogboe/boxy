@@ -41,6 +41,11 @@ func NewEmbeddedAgent(id, name string, drivers ...providersdk.Driver) (*Embedded
 			ID:        id,
 			Name:      name,
 			Providers: providers,
+			// Computed once, here: this process holds the real driver
+			// instances, so the capability check is a free type assertion
+			// and never has to be repeated per call. See
+			// AgentInfo.NetworkIsolatingProviders.
+			NetworkIsolatingProviders: NetworkIsolatingProviderTypes(dm, providers),
 		},
 		drivers: dm,
 	}, nil

@@ -16,6 +16,17 @@ import (
 	"github.com/Geogboe/boxy/internal/sandbox"
 )
 
+// Manager must satisfy sandbox.SegmentDestroyer, which internal/sandbox's
+// DeletionReconciler type-asserts for rather than requiring. That assertion
+// failing is invisible at runtime -- it just silently stops tearing segments
+// down -- and the two signatures are unusually easy to drift apart, because
+// sandbox.SegmentDestroyer is declared with plain strings while everything
+// on the pool side of the boundary speaks providersdk.Type/SegmentRef (see
+// Manager.DestroySegment's own doc comment on why the conversion happens
+// there). Pinning the pairing here turns any future drift into a build
+// failure instead.
+var _ sandbox.SegmentDestroyer = (*pool.Manager)(nil)
+
 func TestAgentProvisioner_IsANetworkIsolatingAllocator(t *testing.T) {
 	var a sandbox.SandboxAllocator = &pool.AgentProvisioner{}
 	if _, ok := a.(sandbox.NetworkIsolatingAllocator); !ok {

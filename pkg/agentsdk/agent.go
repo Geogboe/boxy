@@ -160,4 +160,55 @@ type AgentInfo struct {
 
 	// Providers lists the provider types this agent can handle.
 	Providers []providersdk.Type
+
+	// NetworkIsolatingProviders is the subset of Providers whose driver on
+	// this agent actually implements providersdk.NetworkIsolator. Empty or
+	// nil means none — the correct default for an agent hosting only
+	// non-isolating drivers (a devfactory-only agent, say).
+	//
+	// It exists because NetworkIsolatingAgent is implemented
+	// unconditionally by both EmbeddedAgent and RemoteAgent, so a
+	// type-assertion for that capability tells a caller nothing about
+	// whether the driver behind it can isolate anything. For a remote
+	// agent the daemon cannot type-assert the real driver at all. Without
+	// this advertisement the control plane only learns "unsupported" as a
+	// hard error from deep inside a CreateSegment call it had already
+	// committed to. Callers consult this BEFORE asking an agent to create a
+	// segment, and treat a provider's absence as "skip isolation for this
+	// resource", not as a failure.
+	//
+	// Both agent implementations compute it the same way, from their own
+	// local drivers, via NetworkIsolatingProviderTypes: EmbeddedAgent at
+	// construction, a remote agent at registration (carried in
+	// RegisterRequest.network_isolating_provider_types and filtered against
+	// Providers server-side).
+	NetworkIsolatingProviders []providersdk.Type
+}
+
+// NetworkIsolatingProviderTypes returns the subset of providers whose driver
+// in drivers implements providersdk.NetworkIsolator — the canonical way to
+// compute AgentInfo.NetworkIsolatingProviders, shared by EmbeddedAgent's
+// constructor and the remote agent client's registration frame so the two
+// can never drift apart.
+//
+// It iterates providers (an ordered slice) and looks each one up in drivers,
+// rather than ranging drivers directly, so the result is deterministic:
+// Go map iteration order is randomized, and this value goes both into wire
+// frames and into test assertions. A provider with no driver entry is
+// skipped rather than treated as isolating.
+func NetworkIsolatingProviderTypes(drivers DriverSet, providers []providersdk.Type) []providersdk.Type {
+	isolating := make([]providersdk.Type, 0, len(providers))
+	for _, p := range providers {
+		d, ok := drivers[p]
+		if !ok {
+			continue
+		}
+		if _, ok := d.(providersdk.NetworkIsolator); ok {
+			isolating = append(isolating, p)
+		}
+	}
+	if len(isolating) == 0 {
+		return nil
+	}
+	return isolating
 }

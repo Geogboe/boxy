@@ -241,8 +241,20 @@ type RegisterRequest struct {
 	AgentName         string   `protobuf:"bytes,2,opt,name=agent_name,json=agentName,proto3" json:"agent_name,omitempty"`
 	ProviderTypes     []string `protobuf:"bytes,3,rep,name=provider_types,json=providerTypes,proto3" json:"provider_types,omitempty"`
 	AgentVersion      string   `protobuf:"bytes,4,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// network_isolating_provider_types is the subset of provider_types whose
+	// local driver on this agent actually implements
+	// providersdk.NetworkIsolator. It exists because the daemon cannot
+	// type-assert a remote agent's driver: agentsdk.NetworkIsolatingAgent is
+	// implemented unconditionally by both EmbeddedAgent and RemoteAgent, so
+	// without this advertisement the control plane only discovers "this
+	// driver can't isolate" as a hard error three layers down, after it has
+	// already committed to creating a segment. Empty means "none" — the
+	// correct default for an agent hosting only non-isolating drivers. The
+	// server trusts no entry here that is absent from provider_types, the
+	// same anti-spoofing posture Heartbeat.availability already uses.
+	NetworkIsolatingProviderTypes []string `protobuf:"bytes,5,rep,name=network_isolating_provider_types,json=networkIsolatingProviderTypes,proto3" json:"network_isolating_provider_types,omitempty"`
+	unknownFields                 protoimpl.UnknownFields
+	sizeCache                     protoimpl.SizeCache
 }
 
 func (x *RegisterRequest) Reset() {
@@ -301,6 +313,13 @@ func (x *RegisterRequest) GetAgentVersion() string {
 		return x.AgentVersion
 	}
 	return ""
+}
+
+func (x *RegisterRequest) GetNetworkIsolatingProviderTypes() []string {
+	if x != nil {
+		return x.NetworkIsolatingProviderTypes
+	}
+	return nil
 }
 
 type Heartbeat struct {
@@ -2371,13 +2390,14 @@ const file_boxyagent_v1_agent_proto_rawDesc = "" +
 	"\theartbeat\x18\x02 \x01(\v2\x17.boxyagent.v1.HeartbeatH\x00R\theartbeat\x125\n" +
 	"\x06result\x18\x03 \x01(\v2\x1b.boxyagent.v1.CommandResultH\x00R\x06result\x125\n" +
 	"\tlog_batch\x18\x04 \x01(\v2\x16.boxyagent.v1.LogBatchH\x00R\blogBatchB\t\n" +
-	"\apayload\"\xab\x01\n" +
+	"\apayload\"\xf4\x01\n" +
 	"\x0fRegisterRequest\x12-\n" +
 	"\x12registration_token\x18\x01 \x01(\tR\x11registrationToken\x12\x1d\n" +
 	"\n" +
 	"agent_name\x18\x02 \x01(\tR\tagentName\x12%\n" +
 	"\x0eprovider_types\x18\x03 \x03(\tR\rproviderTypes\x12#\n" +
-	"\ragent_version\x18\x04 \x01(\tR\fagentVersion\"\xb2\x01\n" +
+	"\ragent_version\x18\x04 \x01(\tR\fagentVersion\x12G\n" +
+	" network_isolating_provider_types\x18\x05 \x03(\tR\x1dnetworkIsolatingProviderTypes\"\xb2\x01\n" +
 	"\tHeartbeat\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1b\n" +
 	"\tunix_time\x18\x02 \x01(\x03R\bunixTime\x12%\n" +

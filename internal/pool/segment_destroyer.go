@@ -19,10 +19,15 @@ type SegmentDestroyingProvisioner interface {
 }
 
 // DestroySegment satisfies SegmentDestroyingProvisioner.
+//
+// An unregistered agent is reported as ErrSegmentAgentUnavailable so
+// internal/sandbox.DeletionReconciler can tell "this segment's host is gone
+// for good" apart from "tearing this segment down failed" -- only the latter
+// should hold up a sandbox's deletion. See that sentinel's doc comment.
 func (ap *AgentProvisioner) DestroySegment(ctx context.Context, agentID string, providerType providersdk.Type, ref providersdk.SegmentRef) error {
 	agent, ok := ap.Registry.Get(agentID)
 	if !ok {
-		return fmt.Errorf("agent %q unavailable to destroy segment %q", agentID, ref)
+		return fmt.Errorf("agent %q unavailable to destroy segment %q: %w", agentID, ref, ErrSegmentAgentUnavailable)
 	}
 	isolator, ok := agent.(agentsdk.NetworkIsolatingAgent)
 	if !ok {
