@@ -125,6 +125,12 @@ func TestManager_CreateFromPool_NonAdvertisingAgentAllocatesWithNoSegments(t *te
 			NetworkIsolatingProviders: nil,
 		},
 		createSegmentRef: "must-not-be-created",
+		// The error shape EmbeddedAgent.CreateSegment really returns when
+		// its driver doesn't implement providersdk.NetworkIsolator. Set so
+		// a regression reproduces C1's ACTUAL symptom -- the allocation
+		// failing outright -- rather than only the weaker "a segment got
+		// recorded" proxy for it.
+		createSegmentErr: errors.New(`agent "agent-1": provider "hyperv" does not support network isolation`),
 	}
 	m, st := isolationFixture(t, agent, "res-1", "res-2")
 
