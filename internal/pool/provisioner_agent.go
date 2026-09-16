@@ -322,6 +322,44 @@ func (ap *AgentProvisioner) AttachToSegment(ctx context.Context, pool model.Pool
 	return isolator.AttachToSegment(ctx, driverType, string(res.ID), ref)
 }
 
+// MeshIdentity satisfies sandbox.MeshPeeringAllocator. Unlike
+// CreateSegment/AttachToSegment, no model.Resource is available here --
+// MeshIdentity/AddMeshPeer operate purely in terms of an already-known
+// agent ID and segment ref, so the agent is resolved directly from the
+// registry rather than via agentForResource.
+func (ap *AgentProvisioner) MeshIdentity(ctx context.Context, pool model.Pool, agentID string, ref providersdk.SegmentRef) (string, string, string, error) {
+	spec, ok := ap.Specs[pool.Name]
+	if !ok {
+		return "", "", "", fmt.Errorf("unknown pool %q", pool.Name)
+	}
+	agent, ok := ap.Registry.Get(agentID)
+	if !ok {
+		return "", "", "", fmt.Errorf("agent %q unavailable", agentID)
+	}
+	peerer, ok := agent.(agentsdk.MeshPeeringAgent)
+	if !ok {
+		return "", "", "", fmt.Errorf("agent %q does not support mesh peering", agentID)
+	}
+	return peerer.MeshIdentity(ctx, ap.driverTypeForPool(spec), ref)
+}
+
+// AddMeshPeer satisfies sandbox.MeshPeeringAllocator.
+func (ap *AgentProvisioner) AddMeshPeer(ctx context.Context, pool model.Pool, agentID string, ref providersdk.SegmentRef, peerPublicKey, peerEndpoint, peerCIDR string) error {
+	spec, ok := ap.Specs[pool.Name]
+	if !ok {
+		return fmt.Errorf("unknown pool %q", pool.Name)
+	}
+	agent, ok := ap.Registry.Get(agentID)
+	if !ok {
+		return fmt.Errorf("agent %q unavailable", agentID)
+	}
+	peerer, ok := agent.(agentsdk.MeshPeeringAgent)
+	if !ok {
+		return fmt.Errorf("agent %q does not support mesh peering", agentID)
+	}
+	return peerer.AddMeshPeer(ctx, ap.driverTypeForPool(spec), ref, peerPublicKey, peerEndpoint, peerCIDR)
+}
+
 // quarantineOnPersonalizeTimeout handles an allocation-time PersonalizeGuest
 // call that exceeded ap.Timeouts.PersonalizeGuest (#333). Per ADR-0010, a
 // timed-out guest rotation must never be treated like an ordinary allocation

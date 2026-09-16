@@ -637,3 +637,80 @@ func TestManager_CreateFromPool_PlainAllocatorSkipsSegmentsEntirely(t *testing.T
 		t.Fatalf("NetworkSegments = %+v, want none for a plain allocator", sb.NetworkSegments)
 	}
 }
+
+// fakeMeshPeeringAllocator adds MeshPeeringAllocator on top of
+// fakeSegmentTrackingAllocator, mirroring this file's existing
+// "capability on top of a base" fake shape.
+type fakeMeshPeeringAllocator struct {
+	*fakeSegmentTrackingAllocator
+	identities map[string]struct{ pub, endpoint, cidr string } // keyed by agentID
+	peerCalls  []struct{ toAgentID, peerPublicKey, peerEndpoint, peerCIDR string }
+}
+
+func (f *fakeMeshPeeringAllocator) MeshIdentity(_ context.Context, _ model.Pool, agentID string, _ providersdk.SegmentRef) (string, string, string, error) {
+	id := f.identities[agentID]
+	return id.pub, id.endpoint, id.cidr, nil
+}
+func (f *fakeMeshPeeringAllocator) AddMeshPeer(_ context.Context, _ model.Pool, agentID string, _ providersdk.SegmentRef, peerPublicKey, peerEndpoint, peerCIDR string) error {
+	f.peerCalls = append(f.peerCalls, struct{ toAgentID, peerPublicKey, peerEndpoint, peerCIDR string }{agentID, peerPublicKey, peerEndpoint, peerCIDR})
+	return nil
+}
+
+func TestManager_EnsureNetworkSegment_PeersWhenSandboxSpansTwoAgents(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	sb := model.Sandbox{
+		ID:     "sb-1",
+		Status: model.SandboxStatusReady,
+		NetworkSegments: []model.NetworkSegment{
+			{AgentID: "agent-1", ProviderType: "hyperv", Ref: "boxy-sb-sb-1"},
+		},
+	}
+
+	allocator := &fakeMeshPeeringAllocator{
+		fakeSegmentTrackingAllocator: &fakeSegmentTrackingAllocator{createRef: "boxy-sb-sb-1"},
+		identities: map[string]struct{ pub, endpoint, cidr string }{
+			"agent-1": {"pubkey-1", "203.0.113.1:51820", "10.250.0.0/29"},
+			"agent-2": {"pubkey-2", "203.0.113.2:51820", "10.250.0.8/29"},
+		},
+	}
+	m := New(st, allocator)
+
+	res := model.Resource{ID: "res-2", Provider: model.ProviderRef{Name: "hyperv", AgentID: "agent-2"}}
+	if err := m.ensureNetworkSegment(ctx, &sb, model.Pool{Name: "pool-b"}, res); err != nil {
+		t.Fatalf("ensureNetworkSegment: %v", err)
+	}
+
+	if len(sb.NetworkSegments) != 2 {
+		t.Fatalf("NetworkSegments = %+v, want 2 entries (sandbox now spans agent-1 and agent-2)", sb.NetworkSegments)
+	}
+	if len(allocator.peerCalls) != 2 {
+		t.Fatalf("expected exactly 2 AddMeshPeer calls (agent-1<-agent-2's identity, agent-2<-agent-1's identity), got %d: %+v", len(allocator.peerCalls), allocator.peerCalls)
+	}
+}
+
+func TestManager_EnsureNetworkSegment_SingleHostSandboxNeverTriggersMesh(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	sb := model.Sandbox{ID: "sb-1", Status: model.SandboxStatusReady}
+
+	allocator := &fakeMeshPeeringAllocator{
+		fakeSegmentTrackingAllocator: &fakeSegmentTrackingAllocator{createRef: "boxy-sb-sb-1"},
+		identities:                   map[string]struct{ pub, endpoint, cidr string }{},
+	}
+	m := New(st, allocator)
+
+	res := model.Resource{ID: "res-1", Provider: model.ProviderRef{Name: "hyperv", AgentID: "agent-1"}}
+	if err := m.ensureNetworkSegment(ctx, &sb, model.Pool{Name: "pool-a"}, res); err != nil {
+		t.Fatalf("ensureNetworkSegment: %v", err)
+	}
+	// A second resource from the SAME agent must not trigger mesh either.
+	res2 := model.Resource{ID: "res-2", Provider: model.ProviderRef{Name: "hyperv", AgentID: "agent-1"}}
+	if err := m.ensureNetworkSegment(ctx, &sb, model.Pool{Name: "pool-a"}, res2); err != nil {
+		t.Fatalf("ensureNetworkSegment (2nd resource, same agent): %v", err)
+	}
+
+	if len(allocator.peerCalls) != 0 {
+		t.Fatalf("expected 0 AddMeshPeer calls for a single-host sandbox, got %d: %+v", len(allocator.peerCalls), allocator.peerCalls)
+	}
+}

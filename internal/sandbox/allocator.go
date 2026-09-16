@@ -39,3 +39,13 @@ type NetworkIsolatingAllocator interface {
 	CreateSegment(ctx context.Context, pool model.Pool, res model.Resource, sandboxID model.SandboxID) (providersdk.SegmentRef, providersdk.Type, error)
 	AttachToSegment(ctx context.Context, pool model.Pool, res model.Resource, ref providersdk.SegmentRef) error
 }
+
+// MeshPeeringAllocator is an optional capability for allocators whose
+// underlying agent/driver supports cross-host mesh peering
+// (providersdk.MeshPeerer, via agentsdk.MeshPeeringAgent). Manager uses it
+// only when a sandbox's segments span more than one agent -- a single-host
+// sandbox never touches this.
+type MeshPeeringAllocator interface {
+	MeshIdentity(ctx context.Context, pool model.Pool, agentID string, ref providersdk.SegmentRef) (publicKey, endpoint, cidr string, err error)
+	AddMeshPeer(ctx context.Context, pool model.Pool, agentID string, ref providersdk.SegmentRef, peerPublicKey, peerEndpoint, peerCIDR string) error
+}
