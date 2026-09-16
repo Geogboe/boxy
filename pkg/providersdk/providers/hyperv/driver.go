@@ -912,10 +912,55 @@ type CapacityError = providersdk.CapacityError
 // already in MB and matches what Task Manager calls "Available" — deliberately
 // not Get-Counter '\Memory\Available MBytes', whose counter *path* is
 // localized on non-English Windows.
+//
+// The perf-counter WMI class itself is not always available: real hosts can
+// have a corrupted performance-counter registration (`lodctr /R` territory)
+// that makes Get-CimInstance fail with "Invalid class" (WBEM_E_INVALID_CLASS)
+// even though the host is otherwise healthy — reproduced on real hardware
+// (wks01, 2026-09-16) with Get-Counter failing identically, ruling out just
+// switching to it as the fallback. GlobalMemoryStatusEx (kernel32, via a
+// P/Invoke) reports the same "available" semantics (it's what Task Manager's
+// own figure is ultimately sourced from) without going through any WMI
+// performance-counter provider, so it's the fallback when the perf class
+// errors, not a second WMI query.
 func (d *Driver) queryAvailableMemoryMB(ctx context.Context) (int64, error) {
 	out, err := d.ps(ctx, `
 $ErrorActionPreference = 'Stop'
-(Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory).AvailableMBytes
+try {
+    (Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory).AvailableMBytes
+} catch {
+    $src = @'
+using System;
+using System.Runtime.InteropServices;
+public class BoxyMemInfo {
+    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Auto)]
+    public struct MEMORYSTATUSEX {
+        public uint dwLength;
+        public uint dwMemoryLoad;
+        public ulong ullTotalPhys;
+        public ulong ullAvailPhys;
+        public ulong ullTotalPageFile;
+        public ulong ullAvailPageFile;
+        public ulong ullTotalVirtual;
+        public ulong ullAvailVirtual;
+        public ulong ullAvailExtendedVirtual;
+    }
+    [DllImport("kernel32.dll", SetLastError=true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX lpBuffer);
+    public static ulong GetAvailablePhysicalMB() {
+        MEMORYSTATUSEX mem = new MEMORYSTATUSEX();
+        mem.dwLength = (uint)Marshal.SizeOf(typeof(MEMORYSTATUSEX));
+        if (!GlobalMemoryStatusEx(ref mem)) {
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        }
+        return mem.ullAvailPhys / (1024UL * 1024UL);
+    }
+}
+'@
+    Add-Type -TypeDefinition $src -Language CSharp
+    [BoxyMemInfo]::GetAvailablePhysicalMB()
+}
 `)
 	if err != nil {
 		return 0, fmt.Errorf("hyperv query available memory: %w", err)
