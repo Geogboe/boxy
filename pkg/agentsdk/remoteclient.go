@@ -760,6 +760,46 @@ func executeCommand(ctx context.Context, drivers DriverSet, cmd *boxyagentv1.Com
 			Outcome:   &boxyagentv1.CommandResult_DestroySegment{DestroySegment: &emptypb.Empty{}},
 		}
 
+	case *boxyagentv1.Command_MeshIdentity:
+		peerer, ok := d.(providersdk.MeshPeerer)
+		if !ok {
+			return errorResult(cmd.GetCommandId(), fmt.Sprintf("provider %q does not support mesh peering", cmd.GetProviderType()), nil)
+		}
+		pub, endpoint, cidr, err := peerer.MeshIdentity(ctx, providersdk.SegmentRef(op.MeshIdentity.GetSegmentRef()))
+		if err != nil {
+			return errorResult(cmd.GetCommandId(), err.Error(), err)
+		}
+		return &boxyagentv1.CommandResult{
+			CommandId: cmd.GetCommandId(),
+			Outcome:   &boxyagentv1.CommandResult_MeshIdentity{MeshIdentity: &boxyagentv1.MeshIdentityResult{PublicKey: pub, Endpoint: endpoint, Cidr: cidr}},
+		}
+
+	case *boxyagentv1.Command_AddMeshPeer:
+		peerer, ok := d.(providersdk.MeshPeerer)
+		if !ok {
+			return errorResult(cmd.GetCommandId(), fmt.Sprintf("provider %q does not support mesh peering", cmd.GetProviderType()), nil)
+		}
+		if err := peerer.AddMeshPeer(ctx, providersdk.SegmentRef(op.AddMeshPeer.GetSegmentRef()), op.AddMeshPeer.GetPeerPublicKey(), op.AddMeshPeer.GetPeerEndpoint(), op.AddMeshPeer.GetPeerCidr()); err != nil {
+			return errorResult(cmd.GetCommandId(), err.Error(), err)
+		}
+		return &boxyagentv1.CommandResult{
+			CommandId: cmd.GetCommandId(),
+			Outcome:   &boxyagentv1.CommandResult_AddMeshPeer{AddMeshPeer: &emptypb.Empty{}},
+		}
+
+	case *boxyagentv1.Command_RemoveMeshPeer:
+		peerer, ok := d.(providersdk.MeshPeerer)
+		if !ok {
+			return errorResult(cmd.GetCommandId(), fmt.Sprintf("provider %q does not support mesh peering", cmd.GetProviderType()), nil)
+		}
+		if err := peerer.RemoveMeshPeer(ctx, providersdk.SegmentRef(op.RemoveMeshPeer.GetSegmentRef()), op.RemoveMeshPeer.GetPeerPublicKey()); err != nil {
+			return errorResult(cmd.GetCommandId(), err.Error(), err)
+		}
+		return &boxyagentv1.CommandResult{
+			CommandId: cmd.GetCommandId(),
+			Outcome:   &boxyagentv1.CommandResult_RemoveMeshPeer{RemoveMeshPeer: &emptypb.Empty{}},
+		}
+
 	default:
 		return errorResult(cmd.GetCommandId(), "unknown command op", nil)
 	}

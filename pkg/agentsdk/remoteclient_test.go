@@ -600,6 +600,81 @@ func TestExecuteCommand(t *testing.T) {
 		}
 	})
 
+	t.Run("mesh identity success", func(t *testing.T) {
+		drivers := DriverSet{"hyperv": &fakeMeshPeeringDriver{
+			fakeDriver:  &fakeDriver{providerType: "hyperv"},
+			identityPub: "pub1", identityEndpoint: "203.0.113.5:51820", identityCIDR: "10.250.0.0/29",
+		}}
+		cmd := &boxyagentv1.Command{
+			CommandId:    "cmd-30",
+			ProviderType: "hyperv",
+			Op:           &boxyagentv1.Command_MeshIdentity{MeshIdentity: &boxyagentv1.MeshIdentityCommand{SegmentRef: "boxy-sb-sb-1"}},
+		}
+		res := executeCommand(context.Background(), drivers, cmd)
+		if res.GetError() != nil {
+			t.Fatalf("unexpected error: %s", res.GetError().GetMessage())
+		}
+		mi := res.GetMeshIdentity()
+		if mi.GetPublicKey() != "pub1" || mi.GetEndpoint() != "203.0.113.5:51820" || mi.GetCidr() != "10.250.0.0/29" {
+			t.Fatalf("unexpected MeshIdentityResult: %#v", mi)
+		}
+	})
+
+	t.Run("mesh identity unsupported by driver errors", func(t *testing.T) {
+		drivers := DriverSet{"docker": &fakeDriver{providerType: "docker"}}
+		cmd := &boxyagentv1.Command{
+			CommandId:    "cmd-31",
+			ProviderType: "docker",
+			Op:           &boxyagentv1.Command_MeshIdentity{MeshIdentity: &boxyagentv1.MeshIdentityCommand{SegmentRef: "net-1"}},
+		}
+		res := executeCommand(context.Background(), drivers, cmd)
+		if res.GetError() == nil {
+			t.Fatal("expected an error for a driver that does not implement MeshPeerer")
+		}
+	})
+
+	t.Run("add mesh peer success", func(t *testing.T) {
+		driver := &fakeMeshPeeringDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}}
+		drivers := DriverSet{"hyperv": driver}
+		cmd := &boxyagentv1.Command{
+			CommandId:    "cmd-32",
+			ProviderType: "hyperv",
+			Op: &boxyagentv1.Command_AddMeshPeer{AddMeshPeer: &boxyagentv1.AddMeshPeerCommand{
+				SegmentRef: "boxy-sb-sb-1", PeerPublicKey: "pub2", PeerEndpoint: "203.0.113.9:51820", PeerCidr: "10.250.0.8/29",
+			}},
+		}
+		res := executeCommand(context.Background(), drivers, cmd)
+		if res.GetError() != nil {
+			t.Fatalf("unexpected error: %s", res.GetError().GetMessage())
+		}
+		if res.GetAddMeshPeer() == nil {
+			t.Fatalf("expected an AddMeshPeer (empty) outcome, got %#v", res.GetOutcome())
+		}
+		if driver.gotAddPeerKey != "pub2" || driver.gotAddPeerEndpoint != "203.0.113.9:51820" || driver.gotAddPeerCIDR != "10.250.0.8/29" {
+			t.Fatalf("driver got (%q, %q, %q)", driver.gotAddPeerKey, driver.gotAddPeerEndpoint, driver.gotAddPeerCIDR)
+		}
+	})
+
+	t.Run("remove mesh peer success", func(t *testing.T) {
+		driver := &fakeMeshPeeringDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}}
+		drivers := DriverSet{"hyperv": driver}
+		cmd := &boxyagentv1.Command{
+			CommandId:    "cmd-33",
+			ProviderType: "hyperv",
+			Op:           &boxyagentv1.Command_RemoveMeshPeer{RemoveMeshPeer: &boxyagentv1.RemoveMeshPeerCommand{SegmentRef: "boxy-sb-sb-1", PeerPublicKey: "pub2"}},
+		}
+		res := executeCommand(context.Background(), drivers, cmd)
+		if res.GetError() != nil {
+			t.Fatalf("unexpected error: %s", res.GetError().GetMessage())
+		}
+		if res.GetRemoveMeshPeer() == nil {
+			t.Fatalf("expected a RemoveMeshPeer (empty) outcome, got %#v", res.GetOutcome())
+		}
+		if driver.gotRemovePeerKey != "pub2" {
+			t.Fatalf("driver got %q, want pub2", driver.gotRemovePeerKey)
+		}
+	})
+
 	t.Run("unknown provider type errors", func(t *testing.T) {
 		cmd := &boxyagentv1.Command{
 			CommandId:    "cmd-6",
