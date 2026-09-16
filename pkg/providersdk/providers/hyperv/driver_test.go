@@ -288,6 +288,8 @@ func TestDriver_Create_CleanupFailureSurfacedWhenNoGUIDResolved(t *testing.T) {
 		switch {
 		case strings.Contains(script, "Get-VMHost"):
 			return "OK\n", nil
+		case strings.Contains(script, "Get-VHD"):
+			return "False\n", nil
 		case strings.Contains(script, hyperVAvailableMemoryScript):
 			return "16384\n", nil
 		case strings.Contains(script, "New-VM"):
@@ -458,6 +460,58 @@ func TestDriver_Create_HealthCheckFailure(t *testing.T) {
 	}
 }
 
+// TestDriver_Create_RejectsAttachedTemplate pins the guard added after a
+// real-hardware failure (wks01, 2026-09-16): cloning a template VHD that a
+// running VM currently has open produces a torn child disk that can never
+// boot. Create must refuse before New-VHD/New-VM run at all.
+func TestDriver_Create_RejectsAttachedTemplate(t *testing.T) {
+	callCount := 0
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		callCount++
+		switch {
+		case strings.Contains(script, "Get-VMHost"):
+			return "OK\n", nil
+		case strings.Contains(script, "Get-VHD"):
+			return "True\n", nil
+		case strings.Contains(script, "New-VHD"), strings.Contains(script, "New-VM"):
+			t.Fatal("New-VHD/New-VM must not run when the template is attached to a running VM")
+			return "", nil
+		}
+		return "", fmt.Errorf("unexpected script: %s", script)
+	})
+
+	_, err := d.Create(context.Background(), &CreateConfig{TemplateVHD: `C:\t.vhdx`})
+	if err == nil {
+		t.Fatal("expected error when template_vhd is attached to a running VM")
+	}
+	if !strings.Contains(err.Error(), "currently attached to a running VM") {
+		t.Errorf("error %q should explain the template is attached", err.Error())
+	}
+	if callCount != 2 {
+		t.Errorf("callCount = %d, want 2 (health check + template-attachment check only)", callCount)
+	}
+}
+
+// TestDriver_Create_AllowsDetachedTemplate is the inverse of
+// TestDriver_Create_RejectsAttachedTemplate: a stopped template VM's VHD is
+// not Attached, so Create must proceed normally.
+func TestDriver_Create_AllowsDetachedTemplate(t *testing.T) {
+	d := mockDriver(func(_ context.Context, script string) (string, error) {
+		switch {
+		case strings.Contains(script, "Get-VHD"):
+			return "False\n", nil
+		case strings.Contains(script, hyperVAvailableMemoryScript):
+			return "16384\n", nil
+		}
+		return fakeGUID + "\n", nil
+	})
+
+	_, err := d.Create(context.Background(), &CreateConfig{TemplateVHD: `C:\t.vhdx`})
+	if err != nil {
+		t.Fatalf("unexpected error with a detached template: %v", err)
+	}
+}
+
 func TestDriver_Create_InsufficientMemoryRejectedBeforeNewVM(t *testing.T) {
 	callCount := 0
 	d := mockDriver(func(_ context.Context, script string) (string, error) {
@@ -465,6 +519,8 @@ func TestDriver_Create_InsufficientMemoryRejectedBeforeNewVM(t *testing.T) {
 		switch {
 		case strings.Contains(script, "Get-VMHost"):
 			return "OK\n", nil
+		case strings.Contains(script, "Get-VHD"):
+			return "False\n", nil
 		case strings.Contains(script, hyperVAvailableMemoryScript):
 			return "1024\n", nil // 1 GB free, minus 512 reserve = 512 MB available
 		case strings.Contains(script, "New-VM"):
@@ -485,8 +541,8 @@ func TestDriver_Create_InsufficientMemoryRejectedBeforeNewVM(t *testing.T) {
 	if capErr.RequestedMemoryMB != 2048 {
 		t.Errorf("RequestedMemoryMB = %d, want 2048", capErr.RequestedMemoryMB)
 	}
-	if callCount != 2 {
-		t.Errorf("callCount = %d, want 2 (health check + memory query only)", callCount)
+	if callCount != 3 {
+		t.Errorf("callCount = %d, want 3 (health check + template-attachment check + memory query only)", callCount)
 	}
 }
 

@@ -503,6 +503,10 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 		return nil, fmt.Errorf("hyperv host health check failed, refusing to provision: %w", err)
 	}
 
+	if err := d.checkTemplateNotAttached(ctx, cc.TemplateVHD); err != nil {
+		return nil, err
+	}
+
 	release, err := d.reserveMemory(ctx, int64(cc.MemoryMB))
 	if err != nil {
 		return nil, err
@@ -893,6 +897,38 @@ Get-VMHost | Out-Null
 `)
 	if err != nil {
 		return fmt.Errorf("hyperv host probe (Get-VMHost) failed, VMMS may be degraded: %w", err)
+	}
+	return nil
+}
+
+// checkTemplateNotAttached refuses to clone a template VHD that is currently
+// attached to a running VM. Cloning (New-VHD -Differencing) or copying the
+// backing file of a disk a live VM is actively writing to produces a
+// torn/inconsistent child image -- reproduced on real hardware (wks01,
+// 2026-09-16): every child cloned while the template VM was running failed
+// to boot an operating system (Hyper-V Worker-Admin event 18603) and never
+// established any Hyper-V integration-service contact, which surfaced many
+// steps downstream as a PersonalizeGuest/HvSocket connect failure with
+// nothing pointing back at the actual cause. Stopping the template VM
+// before cloning fixed it outright. Get-VHD's Attached property reflects
+// whether the virtual disk is currently in use by the hypervisor right
+// now (true only while its owning VM is running), which is exactly the
+// unsafe condition to catch -- a stopped VM's template VHD is not Attached
+// even though it still has an owning VM configured.
+func (d *Driver) checkTemplateNotAttached(ctx context.Context, templateVHD string) error {
+	probeCtx, cancel := context.WithTimeout(ctx, d.memQueryTimeout())
+	defer cancel()
+	out, err := d.ps(probeCtx, fmt.Sprintf(`
+$ErrorActionPreference = 'Stop'
+(Get-VHD -Path '%s').Attached
+`, psq(templateVHD)))
+	if err != nil {
+		return fmt.Errorf("hyperv check template_vhd %q attachment: %w", templateVHD, err)
+	}
+	if strings.EqualFold(strings.TrimSpace(out), "True") {
+		return fmt.Errorf("hyperv template_vhd %q is currently attached to a running VM; "+
+			"stop that VM before using its disk as a clone source -- cloning a live disk "+
+			"produces a torn child image that cannot boot", templateVHD)
 	}
 	return nil
 }
