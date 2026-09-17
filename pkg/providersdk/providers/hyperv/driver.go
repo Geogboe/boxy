@@ -901,26 +901,40 @@ Get-VMHost | Out-Null
 	return nil
 }
 
-// checkTemplateNotAttached refuses to clone a template VHD that is currently
-// attached to a running VM. Cloning (New-VHD -Differencing) or copying the
-// backing file of a disk a live VM is actively writing to produces a
-// torn/inconsistent child image -- reproduced on real hardware (wks01,
-// 2026-09-16): every child cloned while the template VM was running failed
-// to boot an operating system (Hyper-V Worker-Admin event 18603) and never
-// established any Hyper-V integration-service contact, which surfaced many
-// steps downstream as a PersonalizeGuest/HvSocket connect failure with
-// nothing pointing back at the actual cause. Stopping the template VM
-// before cloning fixed it outright. Get-VHD's Attached property reflects
-// whether the virtual disk is currently in use by the hypervisor right
-// now (true only while its owning VM is running), which is exactly the
-// unsafe condition to catch -- a stopped VM's template VHD is not Attached
-// even though it still has an owning VM configured.
+// checkTemplateNotAttached refuses to clone a template VHD that some VM is
+// directly using as its own attached disk right now. Cloning (New-VHD
+// -Differencing) or copying the backing file of a disk a live VM is
+// actively writing to produces a torn/inconsistent child image -- reproduced
+// on real hardware (wks01, 2026-09-16): every child cloned while the
+// template VM was running failed to boot an operating system (Hyper-V
+// Worker-Admin event 18603) and never established any Hyper-V
+// integration-service contact, which surfaced many steps downstream as a
+// PersonalizeGuest/HvSocket connect failure with nothing pointing back at
+// the actual cause. Stopping the template VM before cloning fixed it
+// outright.
+//
+// This deliberately checks Get-VMHardDiskDrive for a *running* VM whose disk
+// path is exactly templateVHD, not Get-VHD's Attached property: Attached is
+// true whenever *any* differencing child of templateVHD is running too,
+// since a running child holds a read handle on its parent for on-demand
+// block reads -- an expected, safe, core use of differencing disks, and not
+// a second pool's clone attempt racing this check into a false positive on
+// wks01 (reproduced 2026-09-16: two pools sharing one template, the second
+// pool's clone permanently blocked by the first pool's own healthy running
+// resource). The State filter matters just as much: Get-VMHardDiskDrive
+// returns a VM's *configured* disk regardless of power state, so without it
+// the template's own VM would always match this path check, running or not
+// -- also reproduced on wks01, immediately after fixing the Attached false
+// positive above, before the template VM was ever restarted. Only a running
+// VM using templateVHD as its own disk -- not as a parent, not merely
+// configured to use it while stopped -- is unsafe to clone from.
 func (d *Driver) checkTemplateNotAttached(ctx context.Context, templateVHD string) error {
 	probeCtx, cancel := context.WithTimeout(ctx, d.memQueryTimeout())
 	defer cancel()
 	out, err := d.ps(probeCtx, fmt.Sprintf(`
 $ErrorActionPreference = 'Stop'
-(Get-VHD -Path '%s').Attached
+$inUse = Get-VM | Where-Object { $_.State -eq 'Running' } | Get-VMHardDiskDrive | Where-Object { $_.Path -ieq '%s' }
+if ($inUse) { 'True' } else { 'False' }
 `, psq(templateVHD)))
 	if err != nil {
 		return fmt.Errorf("hyperv check template_vhd %q attachment: %w", templateVHD, err)
@@ -1329,9 +1343,9 @@ func (d *Driver) Allocate(ctx context.Context, id string) (map[string]any, error
 // VM's password resident for the pool's whole preheat lifetime. See ADR-0021's
 // 2026-09-14 change-log entry.
 func (d *Driver) PersonalizeGuest(ctx context.Context, id string, opts providersdk.GuestPersonalizationOptions) (*providersdk.GuestPersonalizationResult, error) {
+	start := time.Now()
 	unlock := d.lockPersonalize(id)
 	defer unlock()
-	start := time.Now()
 	result, err := d.personalizeGuestLocked(ctx, id, opts)
 	elapsed := time.Since(start)
 	if err != nil {
@@ -1351,7 +1365,7 @@ func (d *Driver) PersonalizeGuest(ctx context.Context, id string, opts providers
 }
 
 // personalizeStepTimer logs each major phase of guest personalization at
-// debug level with its own elapsed duration, so an operator watching normal
+// info level with its own elapsed duration, so an operator watching normal
 // (non-error, non-timeout) allocations can see exactly where time goes
 // instead of only learning about a step after it fails or times out (#355).
 // This is deliberately independent of the pool-reconcile PolicyController's
@@ -1381,7 +1395,7 @@ func (t *personalizeStepTimer) step(name string) {
 	// the structured attrs) so they remain visible in `boxy diagnostics
 	// logs`'s default table view, which prints only timestamp/level/
 	// component/message and not arbitrary attrs (#355).
-	slog.Debug(fmt.Sprintf("hyperv guest personalization step %q took %s (%s elapsed total)", name, stepElapsed, totalElapsed),
+	slog.Info(fmt.Sprintf("hyperv guest personalization step %q took %s (%s elapsed total)", name, stepElapsed, totalElapsed),
 		"component", "hyperv", "provider", "hyperv",
 		"operation", "personalize", "step", name,
 		"resource", t.id,
@@ -1463,7 +1477,6 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts pro
 	if err != nil {
 		return nil, fmt.Errorf("resolve VM name for %s: %w", id, err)
 	}
-	timer.step("resolve_vm_name")
 
 	// PersonalizeGuest no longer applies any address of its own. A pool's
 	// declared static_ip/range config was removed with #224's Plan 1c: every
@@ -1515,8 +1528,7 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts pro
 		}
 	}()
 
-	rotationCmd, rotationArgs := rotationCommand(guestOS, guestUser, newPassword)
-	rotationResult, err := oldSession.Exec(ctx, rotationCmd, rotationArgs...)
+	rotationResult, err := rotateGuestCredential(ctx, oldSession, guestOS, guestUser, newPassword)
 	if err != nil {
 		return nil, fmt.Errorf("rotate guest credential for %s: %w", id, err)
 	}
@@ -1525,12 +1537,10 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts pro
 		return nil, fmt.Errorf("rotate guest credential for %s failed with exit code %d: %s", id, resultExitCode(rotationResult), resultOutput(rotationResult))
 	}
 
-	// rotate_credential was the last old-credential step; release the
-	// connection now instead of waiting for the deferred fallback so it
-	// isn't held open across verify_credential's separate, new-credential
-	// connection below.
+	// Release the session after the checked rotation command completes.
 	closeErr := oldSession.Close(ctx)
 	oldSession = nil
+	timer.step("close_current_credential")
 	if closeErr != nil {
 		slog.Warn("hyperv: close guest session after rotation", "resource_id", id, "error", closeErr)
 	}
@@ -1871,6 +1881,16 @@ func (d *Driver) assignGuestIP(ctx context.Context, exec vmsdk.GuestExec, guestO
 	}
 	gateway = strings.TrimSpace(gateway)
 	dns = strings.TrimSpace(dns)
+	if scriptExec, ok := exec.(vmsdk.GuestExecScript); ok {
+		result, err := scriptExec.ExecScript(ctx, assignIPScript, ip, prefix, gateway, dns)
+		if err != nil {
+			return fmt.Errorf("run static IP script: %w", err)
+		}
+		if result == nil || result.ExitCode != 0 {
+			return fmt.Errorf("static IP script exited %d", resultExitCode(result))
+		}
+		return nil
+	}
 
 	// Build the PowerShell script to assign the address inside the guest.
 	// We target the first non-disabled adapter ordered by interface index.

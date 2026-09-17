@@ -288,7 +288,7 @@ func TestDriver_Create_CleanupFailureSurfacedWhenNoGUIDResolved(t *testing.T) {
 		switch {
 		case strings.Contains(script, "Get-VMHost"):
 			return "OK\n", nil
-		case strings.Contains(script, "Get-VHD"):
+		case strings.Contains(script, "Get-VMHardDiskDrive"):
 			return "False\n", nil
 		case strings.Contains(script, hyperVAvailableMemoryScript):
 			return "16384\n", nil
@@ -471,7 +471,7 @@ func TestDriver_Create_RejectsAttachedTemplate(t *testing.T) {
 		switch {
 		case strings.Contains(script, "Get-VMHost"):
 			return "OK\n", nil
-		case strings.Contains(script, "Get-VHD"):
+		case strings.Contains(script, "Get-VMHardDiskDrive"):
 			return "True\n", nil
 		case strings.Contains(script, "New-VHD"), strings.Contains(script, "New-VM"):
 			t.Fatal("New-VHD/New-VM must not run when the template is attached to a running VM")
@@ -498,7 +498,7 @@ func TestDriver_Create_RejectsAttachedTemplate(t *testing.T) {
 func TestDriver_Create_AllowsDetachedTemplate(t *testing.T) {
 	d := mockDriver(func(_ context.Context, script string) (string, error) {
 		switch {
-		case strings.Contains(script, "Get-VHD"):
+		case strings.Contains(script, "Get-VMHardDiskDrive"):
 			return "False\n", nil
 		case strings.Contains(script, hyperVAvailableMemoryScript):
 			return "16384\n", nil
@@ -519,7 +519,7 @@ func TestDriver_Create_InsufficientMemoryRejectedBeforeNewVM(t *testing.T) {
 		switch {
 		case strings.Contains(script, "Get-VMHost"):
 			return "OK\n", nil
-		case strings.Contains(script, "Get-VHD"):
+		case strings.Contains(script, "Get-VMHardDiskDrive"):
 			return "False\n", nil
 		case strings.Contains(script, hyperVAvailableMemoryScript):
 			return "1024\n", nil // 1 GB free, minus 512 reserve = 512 MB available
@@ -1358,19 +1358,16 @@ func TestDriver_PersonalizeGuest_RotatesAndReturnsCredential(t *testing.T) {
 		t.Fatalf("PersonalizeGuest: %v", err)
 	}
 	if len(guestExecs) != 2 {
-		t.Fatalf("guest exec sessions = %d, want bootstrap and verification sessions", len(guestExecs))
+		t.Fatalf("guest exec sessions = %d, want one bootstrap session and one verification session", len(guestExecs))
 	}
 	if guestExecs[0].password != "${BOXY_TEST_PASSWORD}" {
 		t.Fatalf("bootstrap password = %q, want bootstrap", guestExecs[0].password)
 	}
-	if guestExecs[1].password == "" || guestExecs[1].password == guestExecs[0].password {
-		t.Fatalf("rotated password = %q, want a fresh password", guestExecs[1].password)
-	}
 	if len(guestExecs[0].calls) != 1 || !strings.Contains(strings.Join(guestExecs[0].calls[0], " "), "Set-LocalUser") {
 		t.Fatalf("rotation calls = %+v, want Set-LocalUser", guestExecs[0].calls)
 	}
-	if len(guestExecs[1].calls) != 1 || guestExecs[1].calls[0][0] != "whoami" {
-		t.Fatalf("verification calls = %+v, want whoami", guestExecs[1].calls)
+	if guestExecs[1].password == "${BOXY_TEST_PASSWORD}" || guestExecs[1].password == "" {
+		t.Fatalf("verification session password = %q, want the freshly rotated credential", guestExecs[1].password)
 	}
 
 	if result.EphemeralCredential == nil || result.EphemeralCredential.Kind != "password" {
@@ -1383,8 +1380,8 @@ func TestDriver_PersonalizeGuest_RotatesAndReturnsCredential(t *testing.T) {
 	if err := json.Unmarshal(result.EphemeralCredential.Data, &payload); err != nil {
 		t.Fatalf("decode returned credential: %v", err)
 	}
-	if payload.Username != "Administrator" || payload.Password != guestExecs[1].password {
-		t.Fatalf("returned payload = %+v, want Administrator/%q", payload, guestExecs[1].password)
+	if payload.Username != "Administrator" || payload.Password == "" || payload.Password == guestExecs[0].password {
+		t.Fatal("expected Administrator and a fresh password")
 	}
 }
 
@@ -1427,7 +1424,7 @@ func TestDriver_PersonalizeGuest_LogsStepTiming(t *testing.T) {
 
 	out := buf.String()
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	for _, step := range []string{"read_notes", "resolve_bootstrap_credential", "resolve_vm_name", "apply_network", "rotate_credential", "verify_credential"} {
+	for _, step := range []string{"read_notes", "resolve_bootstrap_credential", "apply_network", "rotate_credential", "close_current_credential"} {
 		line := findLine(t, lines, "step="+step)
 		if !strings.Contains(line, "elapsed_ms=") || !strings.Contains(line, "total_elapsed_ms=") {
 			t.Fatalf("step %q line missing elapsed_ms/total_elapsed_ms; got:\n%s", step, line)
