@@ -97,7 +97,7 @@ require (
 // the HvSocket backend, deferring to the caller's own ctx deadline instead.
 // See AGENTS.md's Architectural Notes for the full trace and the fork-vs-
 // upstream decision. Revisit if/when either fix lands upstream.
-replace github.com/smnsjas/go-psrpcore => github.com/Geogboe/go-psrpcore v0.0.0-20260828053523-50f4720fbe2b
+replace github.com/smnsjas/go-psrpcore => github.com/Geogboe/go-psrpcore v0.0.0-20260914145953-9a07cca346ca
 
 // go-psrp's fork also carries v0.2.2-boxy244 (#244): adds Client.
 // ExecuteCommand/ExecuteCommandStream, which build a pipeline via
@@ -106,4 +106,4 @@ replace github.com/smnsjas/go-psrpcore => github.com/Geogboe/go-psrpcore v0.0.0-
 // quoted PowerShell command line at all. No go-psrpcore change was needed
 // for this one -- CreatePipelineBuilder/AddCommand/AddArgument already
 // existed on the pinned commit above.
-replace github.com/smnsjas/go-psrp => github.com/Geogboe/go-psrp v0.2.2-boxy244
+replace github.com/smnsjas/go-psrp => github.com/Geogboe/go-psrp v0.2.2-boxy244.0.20260914150011-54f3ad5e4f0e

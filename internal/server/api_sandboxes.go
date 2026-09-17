@@ -99,6 +99,9 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 		httpjson.Error(w, http.StatusInternalServerError, "failed to create sandbox")
 		return
 	}
+	if s.notifyWork != nil {
+		s.notifyWork()
+	}
 	httpjson.Write(w, http.StatusAccepted, sb)
 }
 
@@ -128,6 +131,9 @@ func (s *Server) handleDeleteSandbox(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpjson.Error(w, http.StatusInternalServerError, "failed to request sandbox deletion")
 		return
+	}
+	if s.notifyWork != nil {
+		s.notifyWork()
 	}
 	httpjson.Write(w, http.StatusAccepted, sb)
 }
