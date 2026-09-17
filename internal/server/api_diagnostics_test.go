@@ -147,8 +147,12 @@ func TestAPI_DiagnosticsLogsRequiresAdmin(t *testing.T) {
 func TestAPI_DiagnosticsExportIsSanitizedAndBounded(t *testing.T) {
 	st := store.NewMemoryStore()
 	logs := diagnostics.NewMemoryStore()
+	// Anchored to time.Now, not a fixed date: see the identical comment in
+	// TestAPI_DiagnosticsLogsFiltersAndAudits. This instance was missed by
+	// that same 2026-09-14 fix and aged out of retention 14 days after its
+	// own fixed date (2026-09-03), on 2026-09-17.
 	if err := logs.Append(context.Background(), diagnostics.Event{
-		Timestamp: time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC),
+		Timestamp: time.Now().UTC(),
 		Level:     "ERROR",
 		Component: "agent",
 		Message:   "host=worker.example.test password=secret ip=203.0.113.40",
