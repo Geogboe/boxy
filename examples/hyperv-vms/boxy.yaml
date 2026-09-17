@@ -1,0 +1,56 @@
+---
+# hyperv-vms — a real Hyper-V pool of 2 VMs (1 kept preheated) with automatic
+# per-sandbox network isolation. Requires a real Windows Hyper-V host running
+# `boxy serve` as (or as an agent of) a local Administrator.
+#
+# Prerequisites:
+#   - Hyper-V enabled, PowerShell 5.1+, boxy running with Administrator rights
+#   - A generalized (sysprepped) template VHDX for TEMPLATE_VHD below —
+#     see README.md's "Preparing the template" section. A template that is
+#     still running its own out-of-box setup on first boot will make every
+#     clone fail PersonalizeGuest; this is the most common setup mistake.
+#   - "Default Switch" (present on a default Hyper-V install) or another
+#     switch with outbound internet access, for the pool-level `switch:`
+#     below. Per-sandbox isolation (see README.md) supersedes this at
+#     allocation time — it is only the network a preheated, unclaimed VM
+#     sits on.
+#   - BOXY_EXAMPLE_HYPERV_PASSWORD set in the environment boxy serve runs in,
+#     matching the template's local Administrator password.
+#
+# Run: ./serve.ps1
+server:
+  listen: "127.0.0.1:9090"
+
+providers:
+  - name: hyperv-local
+    type: hyperv
+    config:
+      # Aggregate startup memory boxy may assign to boxy-* VMs on this host.
+      # Two VMs at 2048 MB each (below) plus the 512 MB host reserve fits
+      # comfortably under 8192 MB with room for both to run concurrently.
+      memory_budget_mb: 8192
+      # Per-sandbox network segment ledger (ADR-0021) and, if this host ever
+      # peers with another (ADR-0022), the mesh device state. Defaults to
+      # .boxy-agent/hyperv next to this file if left unset.
+      data_dir: ".boxy-agent/hyperv"
+
+pools:
+  - name: win-lab
+    type: vm
+    provider: hyperv-local
+    policy:
+      preheat:
+        min_ready: 1
+        max_total: 2
+      recycle:
+        max_age: 4h
+    config:
+      template_vhd: "C:\\HyperV\\Templates\\windows-server-template.vhdx"
+      vhd_dir: "C:\\HyperV\\boxy-vms"
+      generation: 2
+      cpu_count: 2
+      memory_mb: 2048
+      switch: "Default Switch"
+      guest_os: windows
+      guest_user: Administrator
+      guest_password_ref: "env:BOXY_EXAMPLE_HYPERV_PASSWORD"

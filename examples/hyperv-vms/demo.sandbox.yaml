@@ -1,0 +1,11 @@
+---
+# Claim one VM from win-lab. Each sandbox gets its own network segment
+# (its own vSwitch + NAT on this host) automatically -- see README.md.
+#
+# Run: boxy sandbox create -f demo.sandbox.yaml
+name: hyperv-sandbox
+resources:
+  - pool: win-lab
+    count: 1
+policies:
+  auto_destroy_after: 30m
