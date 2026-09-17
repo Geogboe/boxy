@@ -14,12 +14,22 @@
 #     below. Per-sandbox isolation (see README.md) supersedes this at
 #     allocation time — it is only the network a preheated, unclaimed VM
 #     sits on.
-#   - BOXY_EXAMPLE_HYPERV_PASSWORD set in the environment boxy serve runs in,
-#     matching the template's local Administrator password.
+#   - The pool's guest bootstrap credential (the template's local
+#     Administrator password) is set separately after boxy serve starts,
+#     via `boxy pool set-guest-credential win-lab --value -` — see
+#     README.md. There is no config field for it: once server.secrets.backend
+#     is configured (required below, for any guest-personalizable pool), the
+#     bootstrap credential is always resolved from that secrets store, never
+#     from pool config -- a config-level guest_password_ref is a legacy
+#     fallback that only applies when no secrets backend is configured at
+#     all, which is not a valid state for a Hyper-V pool.
 #
 # Run: ./serve.ps1
 server:
   listen: "127.0.0.1:9090"
+  secrets:
+    backend: dpapi
+    path: "C:\\ProgramData\\Boxy\\hyperv-vms\\secrets.dpapi.json"
 
 providers:
   - name: hyperv-local
@@ -53,4 +63,3 @@ pools:
       switch: "Default Switch"
       guest_os: windows
       guest_user: Administrator
-      guest_password_ref: "env:BOXY_EXAMPLE_HYPERV_PASSWORD"

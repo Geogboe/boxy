@@ -331,6 +331,62 @@ after #244's `AddCommand`/`AddArgument` migration.
 
 ## Lessons Learned
 
+- **This primary dev host is Windows ARM64, not x64** — `go build` here
+  produces an ARM64 binary. Any x64 Windows deployment target (wks01
+  included) needs an explicit cross-compile:
+  `GOOS=windows GOARCH=amd64 go build -o boxy-amd64.exe ./cmd/boxy`. An
+  ARM64 binary copied to an x64 host fails immediately at launch with
+  "This version of ... is not compatible with the version of Windows
+  you're running" — easy to mistake for a deployment/copy problem rather
+  than an architecture mismatch. Confirm with `go env GOARCH` before
+  chasing a launch failure on a cross-machine deployment.
+- **`hyperv.CreateConfig.GuestPasswordRef` (pool config) is effectively
+  dead code for any actually-runnable Hyper-V pool, found validating
+  `examples/hyperv-vms` end to end on wks01 (2026-09-17).**
+  `resolveGuestBootstrap` (`internal/cli/secrets.go`) only falls back to
+  it when `server.secrets` has no backend configured at all — but
+  `boxy serve` hard-errors at startup ("server.secrets.backend is
+  required for guest-personalizable pools") for any pool type that needs
+  guest personalization, including every Hyper-V/`vm` pool, if no secrets
+  backend is set. So the branch that reads `GuestPasswordRef` can never
+  be reached by a config that passes `boxy config validate` and actually
+  starts. The real, current mechanism is `boxy pool set-guest-credential
+  <pool> --value -`, which writes the bootstrap credential into the
+  configured secrets backend at `PoolBootstrapKey`, checked *before* the
+  legacy fallback in `resolveGuestBootstrap`. Don't reach for
+  `guest_password_ref` in a new pool config; use the CLI command, after
+  `boxy serve` is running.
+- **`boxy login`'s OS-keyring credential store needs a real interactive
+  desktop logon session on Windows — this is not SSH-exec-specific.**
+  The existing note (see `[[reference_wks01_ssh_1password]]`-style
+  guidance) already covered a plain non-interactive `ssh host "boxy login
+  ..."` failing with `A specified logon session does not exist`. Testing
+  `examples/hyperv-vms` (2026-09-17) found a **WMI-launched process**
+  (`Invoke-CimMethod -ClassName Win32_Process -MethodName Create`, used
+  elsewhere in this workflow specifically to survive SSH session close)
+  hits the identical DPAPI error for `boxy login` and
+  `boxy pool set-guest-credential`, even though the same launch mechanism
+  works fine for `boxy serve` itself (its own secrets backend, opening an
+  already-created DPAPI file, apparently doesn't hit the same failure
+  mode as `go-keyring`'s credential *write* path). Run any
+  credential-*storing* CLI command (`login`, anything that calls
+  `internal/credentials`) from a genuine interactive session — console,
+  RDP, or a local machine talking through an SSH `-L` port-forward tunnel
+  — never from a raw SSH exec or a WMI-launched process on Windows.
+- **`sandbox exec`'s error message is deliberately opaque** ("provider
+  execution failed", `internal/server/execution_manager.go`'s
+  `safeExecutionError`) **and this currently also hides "you forgot
+  `--save-guest-cred`" as a diagnosable case** — confirmed hitting this
+  for real running `examples/hyperv-vms`'s validation loop without the
+  flag on `sandbox create`. The sanitization itself is intentional
+  (provider error text may repeat command args/credentials, so it's never
+  persisted) but the missing-credential case specifically is exactly
+  #351's tracked gap ("sandbox exec: fail fast on missing guest
+  credential; add safe error categories for real transport failures") —
+  not yet fixed. If `sandbox exec` fails opaquely right after a
+  `sandbox create` that didn't pass `--save-guest-cred`, that's almost
+  certainly the cause; don't spend time chasing it as a provider/transport
+  bug without checking that first.
 - **Line endings**: `.gitattributes` declares `* text=auto eol=lf` for the whole
   repo, but that only normalizes files as they're touched — it does not
   retroactively rewrite existing blobs. Several files (e.g. `release.yml`
