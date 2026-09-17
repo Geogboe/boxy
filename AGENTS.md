@@ -253,13 +253,38 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   doesn't is skipped, not failed), and `hyperv`'s `AttachToSegment` also
   assigns the guest's in-guest address from the segment's own block — which
   is why hyperv's pool-level `network` config (`static_ip`/`range`) is gone;
-  the segment is now always the guest's real network. **One risk remains open
-  and unverified from this dev host: `New-NetNat` may be effectively
-  one-instance-per-host, which would break the second sandbox on a Hyper-V
-  host.** Verify on real hardware before trusting this in production. See
+  the segment is now always the guest's real network. Real-hardware
+  validation (wks01, 2026-09-16) confirmed the single-host case end-to-end
+  (switch, NAT, segment addressing, exec, teardown). **One risk remains open
+  and unverified: `New-NetNat` may be effectively one-instance-per-host,
+  which would break the second sandbox on a Hyper-V host.** A follow-up
+  attempt to verify it was blocked by an unrelated topology gap before
+  reaching a second `New-NetNat` call — see ADR-0021's 2026-09-16 entry.
+  Verify on real hardware before trusting this in production for more than
+  one concurrent sandbox per host. See
   [ADR-0021](docs/adr/0021-network-isolation-driver-capability.md) for that
   risk, the credential-retention decision `AttachToSegment` needed, and the
   cost it adds to the allocation hot path.
+- **`providersdk.MeshPeerer`** (`MeshIdentity`/`AddMeshPeer`/`RemoveMeshPeer`)
+  is the optional cross-host connectivity capability layered on
+  `NetworkIsolator`'s `SegmentRef` (2026-09-16, #224 Decision 2). `pkg/meshnet`
+  owns the agent-side `wireguard-go` device lifecycle (one interface per
+  sandbox per host it touches, never shared across sandboxes); private keys
+  never leave the agent process. Peer introduction rides the existing
+  ADR-0005 gRPC transport — `boxy serve` relays each host's public
+  key/endpoint/CIDR to the other, then gets out of the data path, the same
+  coordinator-not-relay role Headscale plays for Tailscale. `hyperv` and
+  `docker` implement it; `devfactory` deliberately does not, same reasoning
+  as `NetworkIsolator` above. Wired end-to-end: a sandbox spanning N hosts
+  gets a full pairwise mesh among exactly those N agents' segments; a
+  single-host sandbox never touches this capability at all. **Cross-host
+  behavior is entirely unverified against live infrastructure** — a wks01
+  validation attempt using two agent processes on one physical host hit a
+  real two-agents-one-host topology gap (`queryBoxyMemoryMB` sums
+  host-wide, orphan-adoption isn't agent-scoped) before mesh peering itself
+  could be exercised. See
+  [ADR-0022](docs/adr/0022-cross-host-mesh-peering.md) for the design and
+  that open risk.
 
 ### PSRP Transport Dependency Fork (go-psrp / go-psrpcore)
 
@@ -563,6 +588,23 @@ after #244's `AddCommand`/`AddArgument` migration.
   moving the sequence into backticks does not protect it. A non-doc comment
   (one not immediately preceding a declaration) is not affected; this is
   specific to doc comments.
+- **Fixing a known bug pattern by name (the two tests it was reported
+  against) instead of by grep (every place the pattern actually occurs)
+  leaves instances behind.** `00da11e` (2026-09-14) fixed
+  `diagnostics.MemoryStore`'s "hardcoded past `time.Date` fixture ages out
+  of the store's own real-clock 14-day retention on its exact 14-day
+  anniversary" bug for the two tests it was found in
+  (`TestAPI_DiagnosticsLogsFiltersAndAudits`/`...FiltersByProvider`), with a
+  doc comment explaining the mechanism clearly. A third instance in the
+  same file, `TestAPI_DiagnosticsExportIsSanitizedAndBounded`, used the
+  identical anti-pattern and was missed — it aged out and failed
+  `task ci:validate`'s race-matrix step exactly 14 days after its own fixed
+  date, on 2026-09-17, three days after the "fix". Once a bug is understood
+  as a *pattern* (not a one-off), grep for the pattern's shape across the
+  whole tree (`time\.Date\(2026` was enough here) before considering it
+  fixed, not just re-run the specific tests that originally failed — and
+  double-check any sibling test in the same file that shares fixture setup
+  style, since that is exactly where a missed instance tends to hide.
 
 ## ADRs
 

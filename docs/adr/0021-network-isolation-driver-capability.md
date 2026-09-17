@@ -360,3 +360,37 @@ Hyper-V VMs (see AGENTS.md), so everything below rests on fakes.
    `AttachToSegment` converges. If a real host does show intermittent
    `New-NetIPAddress` failures on a fresh switch, the fix belongs in
    `CreateSegment` and should be recorded here.
+
+## Change log (continued)
+
+- 2026-09-16: Real-hardware validation on wks01, for the **single-host**
+  case only. A real sandbox went `ready` with a genuine segment IP, and the
+  host-side artifacts were confirmed directly: Internal vSwitch created,
+  `New-NetNat` bound with a real `/29` block, the VM moved onto the segment
+  at allocation time, the guest addressed from the segment, a real command
+  executed successfully through the full pipeline, and both switch and NAT
+  torn down correctly on sandbox deletion (pool reconciler then
+  auto-replenished `min_ready`). This resolves risk 2 above in practice —
+  no `New-NetIPAddress` timing failure was observed across repeated runs —
+  and is treated as closed. **Risk 1 (`New-NetNat` one-instance-per-host)
+  remains open and unverified**: the follow-up attempt to test a *second*
+  concurrent `New-NetNat` on the same host (see ADR-0022's Open Risks) was
+  blocked by an unrelated two-agents-one-host topology gap before it could
+  reach a second `New-NetNat` call, so this specific risk is neither
+  confirmed nor refuted by this session. It still must be verified on real
+  hardware — either a second sandbox on the same single-agent host, or a
+  genuine second host — before this feature is trusted in production for
+  more than one concurrent sandbox per Hyper-V host.
+
+  Also fixed this session, found while setting up the above:
+  `checkTemplateNotAttached`'s guard (see `pkg/providersdk/providers/
+  hyperv/driver.go`) went through two rounds of real false positives —
+  `Get-VHD.Attached` is true whenever *any* running differencing child has
+  an open read handle on the template, not just when the template's own VM
+  is running, which permanently blocked a second pool's legitimate clone
+  when sharing a template with a first pool's healthy running resource; and
+  the first fix (`Get-VMHardDiskDrive`) ignored VM power state entirely,
+  matching the template's own (stopped) VM. The guard now checks
+  `Get-VMHardDiskDrive` filtered to VMs in the `Running` state, matched
+  against the template's own disk path — this is unrelated to network
+  isolation itself but was found and fixed in the course of validating it.

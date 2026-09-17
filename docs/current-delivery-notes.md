@@ -49,6 +49,24 @@ A running log of recently-landed feature batches and their supporting decisions.
   count) and #363 (reconsider the pools UI's "unassigned" sentinel design —
   its literal name is now reserved at config validation as a narrow fix, not
   a redesign).
+- Cross-host mesh peering (#224, Decision 2) landed 2026-09-16: `pkg/meshnet`
+  (WireGuard-go device lifecycle), `providersdk.MeshPeerer` on `hyperv` and
+  `docker`, full `agentproto`/`agentsdk` wiring, and sandbox-triggered
+  full-pairwise mesh peering whenever a sandbox's resources actually span
+  more than one host. See [ADR-0022](adr/0022-cross-host-mesh-peering.md).
+  `#224` itself stays open — Decisions 3 (JIT native-protocol access) and 4
+  (`AccessBroker` extension point) are still separate, unimplemented plans.
+- PR #369 (2026-09-17) batched the above with several real-hardware bug
+  fixes found validating both on wks01 (`GlobalMemoryStatusEx` memory-query
+  fallback, `psdirect` HvSocket dial retry, the `checkTemplateNotAttached`
+  guard's two false-positive rounds, guest credential rotation/static-IP
+  moved onto `vmsdk.GuestExecScript`), plus #368 (coalesced reconcile
+  wakeups, `pkg/diagnostics` fast-append, `pkg/psdirect.ExecScript`, CI
+  draft-PR gating). Real-hardware validation confirmed `NetworkIsolator`
+  end-to-end for the single-host case (see ADR-0021's 2026-09-16 entry);
+  cross-host `MeshPeerer` remains unverified against live infrastructure —
+  see ADR-0022's Open Risks, including a newly-found two-agents-one-host
+  topology gap unrelated to mesh peering itself.
 - Per-sandbox network isolation (#224, Decision 1) landed 2026-09-14 across
   Plans 1a/1b/1c. Every sandbox now gets its own provider-level network —
   a Docker bridge, or a Hyper-V Internal vSwitch plus NAT over a `/29` from
