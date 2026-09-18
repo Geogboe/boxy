@@ -4,7 +4,11 @@ Use this workflow when sandbox fulfillment is slow, stuck in `pending`, or ends 
 
 ## Steps
 
-1. Check top-level daemon health with `boxy status`.
+1. Check top-level daemon health with `boxy status`. Its `Pools:` line reads
+   "unavailable (viewing pool inventory requires an administrator or auditor
+   role)" for a user-role key -- that is expected access-scoping (GET
+   `/api/v1/pools` is auditor/admin-only by design), not a bug; the
+   `Sandboxes:` line still reports normally for a user-role key.
 2. Inspect the specific sandbox with `boxy sandbox get <id>`.
 3. Check whether the backing pools have ready capacity or are continuously failing to warm.
 4. Inspect daemon state in `.boxy/state.json` when runtime state details matter.
