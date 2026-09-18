@@ -13,7 +13,16 @@ import (
 
 func TestClientSessionDispatchesOnDemandLogsSinceTimestamp(t *testing.T) {
 	store := diagnostics.NewMemoryStore()
-	now := time.Date(2026, time.September, 3, 18, 40, 0, 0, time.UTC)
+	// Anchored to time.Now, not a fixed date: diagnostics.MemoryStore prunes
+	// on every Append using its own real clock against DefaultMaxAge (14
+	// days), and this package has no way to inject a fixed one (the field
+	// is unexported, diagnostics-package-internal). A fixed past date ages
+	// out of retention 14 days later and this test starts failing with no
+	// code change involved -- reproduced for real on 2026-09-18, the fixed
+	// 2026-09-03 date this replaced having aged out days earlier. See the
+	// identical, already-documented pattern in AGENTS.md's Lessons Learned
+	// and internal/server/api_diagnostics_test.go's sibling tests.
+	now := time.Now().UTC()
 	if err := store.Append(context.Background(), diagnostics.Event{
 		Timestamp: now.Add(-2 * time.Minute), Component: "agent", Message: "old",
 	}); err != nil {

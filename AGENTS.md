@@ -661,6 +661,23 @@ after #244's `AddCommand`/`AddArgument` migration.
   fixed, not just re-run the specific tests that originally failed — and
   double-check any sibling test in the same file that shares fixture setup
   style, since that is exactly where a missed instance tends to hide.
+  **A fourth instance, `pkg/agentsdk/remoteclient_logs_test.go`'s
+  `TestClientSessionDispatchesOnDemandLogsSinceTimestamp`, was still missed
+  the next day (2026-09-18)** despite that "grep the whole tree" advice
+  being written the day before — the grep was scoped to the files already
+  suspected (`internal/server`, `pkg/diagnostics`), not actually run
+  tree-wide, and it failed the exact same way (a hardcoded 2026-09-03 date,
+  15 days stale) inside a completely different package that constructs its
+  own `diagnostics.NewMemoryStore()`. Two things generalize from this:
+  first, "grep the whole tree" has to mean *the actual repo root*, every
+  package, not just the files a symptom pointed at, since the vulnerable
+  pattern (a literal `time.Date(2026, ...)` fed into `diagnostics.Event
+  .Timestamp` then `Append`ed to a `MemoryStore`/`FileStore` with no
+  injected clock) can appear in any consumer package, not just
+  `diagnostics`'s own tests; second, a consumer package outside
+  `pkg/diagnostics` has *no way* to inject a fixed clock at all (`now` is
+  an unexported field with no constructor param or setter), so
+  `time.Now().UTC()` is the only available fix there, not a design choice.
 
 ## ADRs
 
