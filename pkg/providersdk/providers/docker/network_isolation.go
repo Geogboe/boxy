@@ -58,6 +58,12 @@ func (d *Driver) CreateSegment(ctx context.Context, sandboxID string) (providers
 // findSegmentNetwork resolves a segment network by its deterministic name.
 // found is false with a nil error when no such network exists -- the normal
 // first-call case, not a failure.
+//
+// A name match alone is not enough: the deterministic name is predictable,
+// so an unrelated, unmanaged network happening to share it would otherwise
+// be silently adopted as this sandbox's segment -- and later torn down by
+// DestroySegment, which is not this driver's to remove. The managed label
+// CreateSegment sets is checked before a found network is trusted.
 func (d *Driver) findSegmentNetwork(ctx context.Context, name string) (id string, found bool, err error) {
 	inspect, err := d.cli.NetworkInspect(ctx, name, network.InspectOptions{})
 	if err != nil {
@@ -65,6 +71,9 @@ func (d *Driver) findSegmentNetwork(ctx context.Context, name string) (id string
 			return "", false, nil
 		}
 		return "", false, fmt.Errorf("inspect docker network %q: %w", name, err)
+	}
+	if inspect.Labels[managedLabel] != managedLabelValue {
+		return "", false, fmt.Errorf("network %q already exists and is not a boxy-managed network", name)
 	}
 	return inspect.ID, true, nil
 }
@@ -136,10 +145,9 @@ func (d *Driver) AttachToSegment(ctx context.Context, providerResourceID string,
 // for an already-gone network, matching Driver.Delete's contract.
 func (d *Driver) DestroySegment(ctx context.Context, ref providersdk.SegmentRef) error {
 	if err := d.cli.NetworkRemove(ctx, string(ref)); err != nil {
-		if cerrdefs.IsNotFound(err) {
-			return nil
+		if !cerrdefs.IsNotFound(err) {
+			return fmt.Errorf("remove docker network %q: %w", ref, err)
 		}
-		return fmt.Errorf("remove docker network %q: %w", ref, err)
 	}
-	return nil
+	return d.closeMeshInterface(ref)
 }

@@ -166,6 +166,24 @@ func TestDriver_AddMeshPeer_NoInterfaceYetErrors(t *testing.T) {
 	}
 }
 
+// TestDriver_MeshIdentity_RejectsUnparsableMeshEndpoint covers the listen-port
+// derivation added to the default interface factory: MeshIdentity must fail
+// fast with a clear error rather than silently listening on an ephemeral
+// port that never matches what MeshIdentity advertises as d.meshEndpoint --
+// the bug that made every cross-host handshake fail (neither side listens
+// on the port the other one dials).
+func TestDriver_MeshIdentity_RejectsUnparsableMeshEndpoint(t *testing.T) {
+	d := &Driver{cli: &mockDockerClient{
+		networkInspect: func(_ context.Context, networkID string, _ network.InspectOptions) (network.Inspect, error) {
+			return network.Inspect{Name: networkID, IPAM: network.IPAM{Config: []network.IPAMConfig{{Subnet: "10.250.0.0/29"}}}}, nil
+		},
+	}, meshEndpoint: "not-a-valid-endpoint"}
+
+	if _, _, _, err := d.MeshIdentity(context.Background(), providersdk.SegmentRef("net-abc123")); err == nil {
+		t.Fatal("expected MeshIdentity to fail fast on an unparsable mesh endpoint, want an error")
+	}
+}
+
 func TestDriver_IsAMeshPeerer(t *testing.T) {
 	var d providersdk.Driver = &Driver{cli: &mockDockerClient{}}
 	if _, ok := d.(providersdk.MeshPeerer); !ok {

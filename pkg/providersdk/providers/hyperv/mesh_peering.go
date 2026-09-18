@@ -62,12 +62,32 @@ if (-not (Get-NetRoute -InterfaceAlias '%s' -DestinationPrefix '%s' -ErrorAction
 // there is no lazy-create path here, since a caller adding a peer without
 // first asking for this side's own identity is a genuine ordering bug, not
 // something to paper over.
-func (d *Driver) AddMeshPeer(_ context.Context, ref providersdk.SegmentRef, peerPublicKey, peerEndpoint, peerCIDR string) error {
+func (d *Driver) AddMeshPeer(ctx context.Context, ref providersdk.SegmentRef, peerPublicKey, peerEndpoint, peerCIDR string) error {
 	iface, err := d.existingMeshInterface(ref)
 	if err != nil {
 		return err
 	}
-	return iface.AddPeer(peerPublicKey, peerEndpoint, []string{peerCIDR})
+	if err := iface.AddPeer(peerPublicKey, peerEndpoint, []string{peerCIDR}); err != nil {
+		return err
+	}
+	// AllowedIPs above only configures WireGuard's own crypto-routing; it
+	// does not make the kernel hand cross-host traffic to this interface in
+	// the first place -- the identical bug fixed for the Docker driver (see
+	// docker.Driver.AddMeshPeer's comment). A repeat call for an
+	// already-routed peer is tolerated as a legitimate outcome, not an error.
+	ifName, err := iface.Name()
+	if err != nil {
+		return fmt.Errorf("get mesh interface name for segment %q: %w", ref, err)
+	}
+	if _, err := d.ps(ctx, fmt.Sprintf(`
+$ErrorActionPreference = 'Stop'
+if (-not (Get-NetRoute -InterfaceAlias '%s' -DestinationPrefix '%s' -ErrorAction SilentlyContinue)) {
+    New-NetRoute -InterfaceAlias '%s' -DestinationPrefix '%s' | Out-Null
+}
+`, psq(ifName), psq(peerCIDR), psq(ifName), psq(peerCIDR))); err != nil {
+		return fmt.Errorf("route peer subnet %q through mesh interface: %w", peerCIDR, err)
+	}
+	return nil
 }
 
 // RemoveMeshPeer satisfies providersdk.MeshPeerer.
@@ -90,7 +110,16 @@ func (d *Driver) meshInterfaceFor(ref providersdk.SegmentRef) (meshInterface, er
 	}
 	factory := d.newMeshInterface
 	if factory == nil {
-		factory = func(ifName string) (meshInterface, error) { return meshnet.New(ifName, 0) }
+		factory = func(ifName string) (meshInterface, error) {
+			// The interface must bind the exact port MeshIdentity advertises
+			// as d.meshEndpoint -- see meshnet.ListenPortFromEndpoint's doc
+			// comment for why listen port 0 breaks every handshake.
+			port, err := meshnet.ListenPortFromEndpoint(d.meshEndpoint)
+			if err != nil {
+				return nil, fmt.Errorf("resolve listen port from mesh endpoint: %w", err)
+			}
+			return meshnet.New(ifName, port)
+		}
 	}
 	iface, err := factory(string(ref))
 	if err != nil {
@@ -110,11 +139,28 @@ func (d *Driver) existingMeshInterface(ref providersdk.SegmentRef) (meshInterfac
 	return iface, nil
 }
 
+// closeMeshInterface closes and forgets the mesh interface for one segment,
+// if one was ever created for it. Called from DestroySegment so a torn-down
+// sandbox's WireGuard/TUN interface never outlives it -- without this, every
+// cross-host sandbox leaked an OS interface for the life of the daemon.
+// A no-op (nil error) when no mesh interface exists for ref, matching this
+// package's Delete/Destroy idempotency convention.
+func (d *Driver) closeMeshInterface(ref providersdk.SegmentRef) error {
+	d.meshMu.Lock()
+	defer d.meshMu.Unlock()
+	iface, ok := d.meshInterfaces[ref]
+	if !ok {
+		return nil
+	}
+	if err := iface.Close(); err != nil {
+		return fmt.Errorf("close mesh interface for segment %q: %w", ref, err)
+	}
+	delete(d.meshInterfaces, ref)
+	return nil
+}
+
 // closeMeshInterfaces closes every live mesh interface this driver owns.
-// Test-only for now (referenced from mesh_peering_test.go); DestroySegment
-// should call this for a specific ref once a segment is torn down -- left
-// as a follow-up wiring note for whichever change next touches
-// DestroySegment, not built as part of this plan's scope.
+// Test-only; DestroySegment uses the single-ref closeMeshInterface above.
 func (d *Driver) closeMeshInterfaces() error {
 	d.meshMu.Lock()
 	defer d.meshMu.Unlock()

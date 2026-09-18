@@ -188,6 +188,24 @@ func TestDriver_AttachToSegment_RecognizesTargetByNetworkName(t *testing.T) {
 	}
 }
 
+// TestDriver_CreateSegment_RejectsNameCollisionWithUnmanagedNetwork covers
+// findSegmentNetwork's managed-label check: the deterministic segment name
+// is predictable, so an unrelated, unmanaged network happening to already
+// own that name must not be silently adopted (and later torn down by
+// DestroySegment, which does not belong to this driver).
+func TestDriver_CreateSegment_RejectsNameCollisionWithUnmanagedNetwork(t *testing.T) {
+	cli := &mockDockerClient{
+		networkInspect: func(_ context.Context, networkID string, _ network.InspectOptions) (network.Inspect, error) {
+			return network.Inspect{Name: networkID, ID: "net-unrelated"}, nil
+		},
+	}
+	d := &Driver{cli: cli}
+
+	if _, err := d.CreateSegment(context.Background(), "sb-1"); err == nil {
+		t.Fatal("CreateSegment succeeded against an unmanaged name collision, want an error")
+	}
+}
+
 // TestDriver_CreateSegment_IdempotentForSameSandboxID covers the interface's
 // per-sandbox idempotency contract: a second call must return the first
 // call's SegmentRef rather than creating a second network that nothing would
@@ -201,7 +219,7 @@ func TestDriver_CreateSegment_IdempotentForSameSandboxID(t *testing.T) {
 			if created == 0 {
 				return network.Inspect{}, notFoundError{msg: "network not found"}
 			}
-			return network.Inspect{Name: networkID, ID: "net-abc123"}, nil
+			return network.Inspect{Name: networkID, ID: "net-abc123", Labels: map[string]string{managedLabel: managedLabelValue}}, nil
 		},
 		networkCreate: func(_ context.Context, _ string, _ network.CreateOptions) (network.CreateResponse, error) {
 			created++
@@ -242,7 +260,7 @@ func TestDriver_CreateSegment_ResolvesNetworkWhenCreateLosesARace(t *testing.T) 
 			if inspects == 1 {
 				return network.Inspect{}, notFoundError{msg: "network not found"}
 			}
-			return network.Inspect{Name: "boxy-sb-sb-1", ID: "net-winner"}, nil
+			return network.Inspect{Name: "boxy-sb-sb-1", ID: "net-winner", Labels: map[string]string{managedLabel: managedLabelValue}}, nil
 		},
 		networkCreate: func(_ context.Context, _ string, _ network.CreateOptions) (network.CreateResponse, error) {
 			return network.CreateResponse{}, errors.New("network with name boxy-sb-sb-1 already exists")

@@ -597,5 +597,5 @@ if (Get-VMSwitch -Name '%s' -ErrorAction SilentlyContinue) {
 	if err := d.segments().releaseBySwitchName(switchName); err != nil {
 		return fmt.Errorf("release segment ledger entry for %q: %w", ref, err)
 	}
-	return nil
+	return d.closeMeshInterface(ref)
 }

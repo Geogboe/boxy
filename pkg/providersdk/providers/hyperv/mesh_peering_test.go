@@ -107,7 +107,11 @@ func TestDriver_MeshIdentity_MissingSegmentErrors(t *testing.T) {
 }
 
 func TestDriver_AddMeshPeer_ConfiguresThePeer(t *testing.T) {
-	d := mockDriver(func(context.Context, string) (string, error) { return "", nil })
+	var scripts []string
+	d := mockDriver(func(_ context.Context, s string) (string, error) {
+		scripts = append(scripts, s)
+		return "", nil
+	})
 	d.segmentLedgerPath = filepath.Join(t.TempDir(), "network-segments.json")
 	d.meshEndpoint = "203.0.113.5:51820"
 	d.newMeshInterface = newFakeMeshInterface
@@ -123,6 +127,14 @@ func TestDriver_AddMeshPeer_ConfiguresThePeer(t *testing.T) {
 	if err := d.AddMeshPeer(context.Background(), ref, "deadbeef", "203.0.113.9:51820", "10.250.0.8/29"); err != nil {
 		t.Fatalf("AddMeshPeer: %v", err)
 	}
+	// Without a kernel route for the peer's subnet through this interface,
+	// WireGuard's own crypto-routing (allowed_ips) never sees any traffic to
+	// encrypt -- the kernel never hands it any. Confirms the same fix
+	// already applied to the Docker driver.
+	last := scripts[len(scripts)-1]
+	if !strings.Contains(last, "New-NetRoute") || !strings.Contains(last, "10.250.0.8/29") {
+		t.Fatalf("expected AddMeshPeer to install a route for the peer's CIDR, got script: %s", last)
+	}
 	if err := d.closeMeshInterfaces(); err != nil {
 		t.Fatalf("closeMeshInterfaces: %v", err)
 	}
@@ -134,6 +146,27 @@ func TestDriver_AddMeshPeer_NoInterfaceYetErrors(t *testing.T) {
 	err := d.AddMeshPeer(context.Background(), providersdk.SegmentRef("never-created"), "deadbeef", "203.0.113.9:51820", "10.250.0.8/29")
 	if err == nil {
 		t.Fatal("expected an error -- AddMeshPeer before any MeshIdentity call for this segment is a caller error")
+	}
+}
+
+// TestDriver_MeshIdentity_RejectsUnparsableMeshEndpoint covers the listen-port
+// derivation added to the default interface factory: MeshIdentity must fail
+// fast with a clear error rather than silently listening on an ephemeral
+// port that never matches what MeshIdentity advertises as d.meshEndpoint --
+// the bug that made every cross-host handshake fail (neither side listens
+// on the port the other one dials). Mirrors the identical Docker driver test.
+func TestDriver_MeshIdentity_RejectsUnparsableMeshEndpoint(t *testing.T) {
+	d := mockDriver(func(context.Context, string) (string, error) { return "", nil })
+	d.segmentLedgerPath = filepath.Join(t.TempDir(), "network-segments.json")
+	d.meshEndpoint = "not-a-valid-endpoint"
+	alloc, err := d.segments().allocate("sb-1")
+	if err != nil {
+		t.Fatalf("allocate: %v", err)
+	}
+	ref := providersdk.SegmentRef(alloc.SwitchName)
+
+	if _, _, _, err := d.MeshIdentity(context.Background(), ref); err == nil {
+		t.Fatal("expected MeshIdentity to fail fast on an unparsable mesh endpoint, want an error")
 	}
 }
 

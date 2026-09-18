@@ -120,7 +120,16 @@ func (d *Driver) meshInterfaceFor(ref providersdk.SegmentRef) (meshInterface, er
 	}
 	factory := d.newMeshInterface
 	if factory == nil {
-		factory = func(ifName string) (meshInterface, error) { return meshnet.New(ifName, 0) }
+		factory = func(ifName string) (meshInterface, error) {
+			// The interface must bind the exact port MeshIdentity advertises
+			// as d.meshEndpoint -- see meshnet.ListenPortFromEndpoint's doc
+			// comment for why listen port 0 breaks every handshake.
+			port, err := meshnet.ListenPortFromEndpoint(d.meshEndpoint)
+			if err != nil {
+				return nil, fmt.Errorf("resolve listen port from mesh endpoint: %w", err)
+			}
+			return meshnet.New(ifName, port)
+		}
 	}
 	// Docker's SegmentRef is a full network ID (64 hex characters) -- far
 	// longer than Linux's IFNAMSIZ allows for a real TUN device name
@@ -145,9 +154,28 @@ func (d *Driver) existingMeshInterface(ref providersdk.SegmentRef) (meshInterfac
 	return iface, nil
 }
 
+// closeMeshInterface closes and forgets the mesh interface for one segment,
+// if one was ever created for it. Called from DestroySegment so a torn-down
+// sandbox's WireGuard/TUN interface never outlives it -- without this, every
+// cross-host sandbox leaked an OS interface for the life of the daemon.
+// A no-op (nil error) when no mesh interface exists for ref, matching this
+// package's Delete/Destroy idempotency convention.
+func (d *Driver) closeMeshInterface(ref providersdk.SegmentRef) error {
+	d.meshMu.Lock()
+	defer d.meshMu.Unlock()
+	iface, ok := d.meshInterfaces[ref]
+	if !ok {
+		return nil
+	}
+	if err := iface.Close(); err != nil {
+		return fmt.Errorf("close mesh interface for segment %q: %w", ref, err)
+	}
+	delete(d.meshInterfaces, ref)
+	return nil
+}
+
 // closeMeshInterfaces closes every live mesh interface this driver owns.
-// Test-only for now -- see hyperv's identical method for the same
-// DestroySegment-wiring follow-up note.
+// Test-only; DestroySegment uses the single-ref closeMeshInterface above.
 func (d *Driver) closeMeshInterfaces() error {
 	d.meshMu.Lock()
 	defer d.meshMu.Unlock()
