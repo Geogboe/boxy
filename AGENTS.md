@@ -1,7 +1,10 @@
 # AGENTS.md
 
-If `AGENTS.override.md` exists, read it after this file for host-specific
-development guidance. It is intentionally gitignored and must not be committed.
+If `AGENTS.local.md` exists, read it after this file for host-specific
+development guidance (e.g. this machine's OS/architecture quirks). It is
+supplementary, not a conflicting override -- it never contradicts a rule in
+this file, only adds detail specific to the local machine. It is
+intentionally gitignored and must not be committed.
 
 Periodically update this document with guidelines, architectural decisions, lessons learned, and development workflows for AI assistants contributing to the Boxy project.
 

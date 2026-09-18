@@ -73,7 +73,7 @@ bin/
 .archive/
 
 # Host-specific agent guidance is local-only.
-AGENTS.override.md
+AGENTS.local.md
 
 # Logs
 logs
