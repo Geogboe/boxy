@@ -485,3 +485,13 @@ fd1645bd9b0877a4d38e4795e49141d14adf23bf:pkg/providersdk/providers/hyperv/networ
 fd1645bd9b0877a4d38e4795e49141d14adf23bf:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:274
 fd1645bd9b0877a4d38e4795e49141d14adf23bf:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:378
 fd1645bd9b0877a4d38e4795e49141d14adf23bf:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:379
+# Reviewed 2026-09-18: private-IPv4 test fixtures from the real-hardware
+# Docker cross-host mesh peering session (segment CIDRs, peer-route test
+# args) and the ADR-0022 write-up documenting it. Same category as the
+# 2026-09-17 batch above.
+13fc3433c7b0668ac0a874dadb8d965325b96cc3:docs/adr/0022-cross-host-mesh-peering.md:boxy-pii-private-ipv4:218
+b8e9481dd13a458365bb598a4d1d67c9db1de4df:pkg/providersdk/providers/docker/mesh_peering_test.go:boxy-pii-private-ipv4:111
+b8e9481dd13a458365bb598a4d1d67c9db1de4df:pkg/providersdk/providers/docker/mesh_peering_test.go:boxy-pii-private-ipv4:133
+b8e9481dd13a458365bb598a4d1d67c9db1de4df:pkg/providersdk/providers/docker/mesh_peering_test.go:boxy-pii-private-ipv4:146
+b8e9481dd13a458365bb598a4d1d67c9db1de4df:pkg/providersdk/providers/docker/mesh_peering_test.go:boxy-pii-private-ipv4:152
+b8e9481dd13a458365bb598a4d1d67c9db1de4df:pkg/providersdk/providers/docker/mesh_peering_test.go:boxy-pii-private-ipv4:95
