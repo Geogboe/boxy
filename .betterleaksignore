@@ -495,3 +495,10 @@ b8e9481dd13a458365bb598a4d1d67c9db1de4df:pkg/providersdk/providers/docker/mesh_p
 b8e9481dd13a458365bb598a4d1d67c9db1de4df:pkg/providersdk/providers/docker/mesh_peering_test.go:boxy-pii-private-ipv4:146
 b8e9481dd13a458365bb598a4d1d67c9db1de4df:pkg/providersdk/providers/docker/mesh_peering_test.go:boxy-pii-private-ipv4:152
 b8e9481dd13a458365bb598a4d1d67c9db1de4df:pkg/providersdk/providers/docker/mesh_peering_test.go:boxy-pii-private-ipv4:95
+
+# Reviewed 2026-09-18: private-IPv4 test fixtures added fixing real
+# mesh-peering bugs found in PR #369's Copilot review (listen-port
+# derivation, Hyper-V's missing peer route). Same category as the batches
+# above.
+4cef4490a97975cd0cd30cd8f06c35dce4a99ccc:pkg/providersdk/providers/hyperv/mesh_peering_test.go:boxy-pii-private-ipv4:135
+4cef4490a97975cd0cd30cd8f06c35dce4a99ccc:pkg/providersdk/providers/docker/mesh_peering_test.go:boxy-pii-private-ipv4:178
