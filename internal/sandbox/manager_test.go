@@ -647,11 +647,11 @@ type fakeMeshPeeringAllocator struct {
 	peerCalls  []struct{ toAgentID, peerPublicKey, peerEndpoint, peerCIDR string }
 }
 
-func (f *fakeMeshPeeringAllocator) MeshIdentity(_ context.Context, _ model.Pool, agentID string, _ providersdk.SegmentRef) (string, string, string, error) {
+func (f *fakeMeshPeeringAllocator) MeshIdentity(_ context.Context, _ providersdk.Type, agentID string, _ providersdk.SegmentRef) (string, string, string, error) {
 	id := f.identities[agentID]
 	return id.pub, id.endpoint, id.cidr, nil
 }
-func (f *fakeMeshPeeringAllocator) AddMeshPeer(_ context.Context, _ model.Pool, agentID string, _ providersdk.SegmentRef, peerPublicKey, peerEndpoint, peerCIDR string) error {
+func (f *fakeMeshPeeringAllocator) AddMeshPeer(_ context.Context, _ providersdk.Type, agentID string, _ providersdk.SegmentRef, peerPublicKey, peerEndpoint, peerCIDR string) error {
 	f.peerCalls = append(f.peerCalls, struct{ toAgentID, peerPublicKey, peerEndpoint, peerCIDR string }{agentID, peerPublicKey, peerEndpoint, peerCIDR})
 	return nil
 }

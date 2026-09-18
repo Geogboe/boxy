@@ -595,7 +595,7 @@ func (m *Manager) ensureNetworkSegment(ctx context.Context, sb *model.Sandbox, p
 	if err := isolator.AttachToSegment(ctx, pool, res, ref); err != nil {
 		return fmt.Errorf("attach resource %q to network segment: %w", res.ID, err)
 	}
-	if err := m.triggerMeshPeering(ctx, sb, pool, agentID); err != nil {
+	if err := m.triggerMeshPeering(ctx, sb, agentID); err != nil {
 		return fmt.Errorf("establish mesh peering for sandbox %q: %w", sb.ID, err)
 	}
 	return nil
@@ -606,7 +606,7 @@ func (m *Manager) ensureNetworkSegment(ctx context.Context, sb *model.Sandbox, p
 // pairwise. A no-op if m.allocator doesn't support MeshPeeringAllocator, or
 // if this is the sandbox's first (and so far only) segment (nothing to peer
 // with yet) -- so a single-host sandbox never reaches the mesh path at all.
-func (m *Manager) triggerMeshPeering(ctx context.Context, sb *model.Sandbox, pool model.Pool, newAgentID string) error {
+func (m *Manager) triggerMeshPeering(ctx context.Context, sb *model.Sandbox, newAgentID string) error {
 	peerer, ok := m.allocator.(MeshPeeringAllocator)
 	if !ok {
 		return nil
@@ -615,13 +615,15 @@ func (m *Manager) triggerMeshPeering(ctx context.Context, sb *model.Sandbox, poo
 		return nil
 	}
 	var newRef providersdk.SegmentRef
+	var newProviderType providersdk.Type
 	for _, seg := range sb.NetworkSegments {
 		if seg.AgentID == newAgentID {
 			newRef = providersdk.SegmentRef(seg.Ref)
+			newProviderType = providersdk.Type(seg.ProviderType)
 			break
 		}
 	}
-	newPub, newEndpoint, newCIDR, err := peerer.MeshIdentity(ctx, pool, newAgentID, newRef)
+	newPub, newEndpoint, newCIDR, err := peerer.MeshIdentity(ctx, newProviderType, newAgentID, newRef)
 	if err != nil {
 		return err
 	}
@@ -629,14 +631,15 @@ func (m *Manager) triggerMeshPeering(ctx context.Context, sb *model.Sandbox, poo
 		if seg.AgentID == newAgentID {
 			continue
 		}
-		existingPub, existingEndpoint, existingCIDR, err := peerer.MeshIdentity(ctx, pool, seg.AgentID, providersdk.SegmentRef(seg.Ref))
+		existingProviderType := providersdk.Type(seg.ProviderType)
+		existingPub, existingEndpoint, existingCIDR, err := peerer.MeshIdentity(ctx, existingProviderType, seg.AgentID, providersdk.SegmentRef(seg.Ref))
 		if err != nil {
 			return err
 		}
-		if err := peerer.AddMeshPeer(ctx, pool, seg.AgentID, providersdk.SegmentRef(seg.Ref), newPub, newEndpoint, newCIDR); err != nil {
+		if err := peerer.AddMeshPeer(ctx, existingProviderType, seg.AgentID, providersdk.SegmentRef(seg.Ref), newPub, newEndpoint, newCIDR); err != nil {
 			return err
 		}
-		if err := peerer.AddMeshPeer(ctx, pool, newAgentID, newRef, existingPub, existingEndpoint, existingCIDR); err != nil {
+		if err := peerer.AddMeshPeer(ctx, newProviderType, newAgentID, newRef, existingPub, existingEndpoint, existingCIDR); err != nil {
 			return err
 		}
 	}

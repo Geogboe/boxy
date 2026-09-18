@@ -45,7 +45,13 @@ type NetworkIsolatingAllocator interface {
 // (providersdk.MeshPeerer, via agentsdk.MeshPeeringAgent). Manager uses it
 // only when a sandbox's segments span more than one agent -- a single-host
 // sandbox never touches this.
+//
+// providerType is the target segment's own recorded model.NetworkSegment.
+// ProviderType, not the pool currently being processed: a sandbox can hold
+// segments for different provider types on the same agent, and dispatching
+// by the caller's pool instead of the segment's own type would route the
+// call to the wrong driver.
 type MeshPeeringAllocator interface {
-	MeshIdentity(ctx context.Context, pool model.Pool, agentID string, ref providersdk.SegmentRef) (publicKey, endpoint, cidr string, err error)
-	AddMeshPeer(ctx context.Context, pool model.Pool, agentID string, ref providersdk.SegmentRef, peerPublicKey, peerEndpoint, peerCIDR string) error
+	MeshIdentity(ctx context.Context, providerType providersdk.Type, agentID string, ref providersdk.SegmentRef) (publicKey, endpoint, cidr string, err error)
+	AddMeshPeer(ctx context.Context, providerType providersdk.Type, agentID string, ref providersdk.SegmentRef, peerPublicKey, peerEndpoint, peerCIDR string) error
 }

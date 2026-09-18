@@ -327,11 +327,7 @@ func (ap *AgentProvisioner) AttachToSegment(ctx context.Context, pool model.Pool
 // MeshIdentity/AddMeshPeer operate purely in terms of an already-known
 // agent ID and segment ref, so the agent is resolved directly from the
 // registry rather than via agentForResource.
-func (ap *AgentProvisioner) MeshIdentity(ctx context.Context, pool model.Pool, agentID string, ref providersdk.SegmentRef) (string, string, string, error) {
-	spec, ok := ap.Specs[pool.Name]
-	if !ok {
-		return "", "", "", fmt.Errorf("unknown pool %q", pool.Name)
-	}
+func (ap *AgentProvisioner) MeshIdentity(ctx context.Context, providerType providersdk.Type, agentID string, ref providersdk.SegmentRef) (string, string, string, error) {
 	agent, ok := ap.Registry.Get(agentID)
 	if !ok {
 		return "", "", "", fmt.Errorf("agent %q unavailable", agentID)
@@ -340,15 +336,11 @@ func (ap *AgentProvisioner) MeshIdentity(ctx context.Context, pool model.Pool, a
 	if !ok {
 		return "", "", "", fmt.Errorf("agent %q does not support mesh peering", agentID)
 	}
-	return peerer.MeshIdentity(ctx, ap.driverTypeForPool(spec), ref)
+	return peerer.MeshIdentity(ctx, providerType, ref)
 }
 
 // AddMeshPeer satisfies sandbox.MeshPeeringAllocator.
-func (ap *AgentProvisioner) AddMeshPeer(ctx context.Context, pool model.Pool, agentID string, ref providersdk.SegmentRef, peerPublicKey, peerEndpoint, peerCIDR string) error {
-	spec, ok := ap.Specs[pool.Name]
-	if !ok {
-		return fmt.Errorf("unknown pool %q", pool.Name)
-	}
+func (ap *AgentProvisioner) AddMeshPeer(ctx context.Context, providerType providersdk.Type, agentID string, ref providersdk.SegmentRef, peerPublicKey, peerEndpoint, peerCIDR string) error {
 	agent, ok := ap.Registry.Get(agentID)
 	if !ok {
 		return fmt.Errorf("agent %q unavailable", agentID)
@@ -357,7 +349,7 @@ func (ap *AgentProvisioner) AddMeshPeer(ctx context.Context, pool model.Pool, ag
 	if !ok {
 		return fmt.Errorf("agent %q does not support mesh peering", agentID)
 	}
-	return peerer.AddMeshPeer(ctx, ap.driverTypeForPool(spec), ref, peerPublicKey, peerEndpoint, peerCIDR)
+	return peerer.AddMeshPeer(ctx, providerType, ref, peerPublicKey, peerEndpoint, peerCIDR)
 }
 
 // quarantineOnPersonalizeTimeout handles an allocation-time PersonalizeGuest
