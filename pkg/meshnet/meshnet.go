@@ -31,7 +31,25 @@ type tunFactory func(ifName string, mtu int) (tun.Device, error)
 // package), and brings the interface up listening on listenPort (0 lets
 // the OS/WireGuard choose an ephemeral port).
 func New(ifName string, listenPort int) (*Interface, error) {
-	return newWithTUNFactory(ifName, listenPort, tun.CreateTUN)
+	iface, err := newWithTUNFactory(ifName, listenPort, tun.CreateTUN)
+	if err != nil {
+		return nil, err
+	}
+	// dev.Up() above only starts WireGuard's own packet-processing loop; it
+	// never touches the interface's kernel link state (see bringLinkUp's
+	// doc comment). newWithTUNFactory itself stays free of this -- tests
+	// call it directly with a netstack-backed fake tun.Device that has no
+	// real kernel interface to bring up at all.
+	osName, err := iface.Name()
+	if err != nil {
+		_ = iface.Close()
+		return nil, fmt.Errorf("get OS interface name for %q: %w", ifName, err)
+	}
+	if err := bringLinkUp(osName); err != nil {
+		_ = iface.Close()
+		return nil, fmt.Errorf("bring up interface %q: %w", osName, err)
+	}
+	return iface, nil
 }
 
 func newWithTUNFactory(ifName string, listenPort int, factory tunFactory) (*Interface, error) {

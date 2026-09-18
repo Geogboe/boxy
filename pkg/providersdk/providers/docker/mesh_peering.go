@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/docker/docker/api/types/network"
 
@@ -48,7 +49,15 @@ func (d *Driver) MeshIdentity(ctx context.Context, ref providersdk.SegmentRef) (
 	if err != nil {
 		return "", "", "", fmt.Errorf("get mesh interface name for segment %q: %w", ref, err)
 	}
-	if _, err := d.runHost(ctx, "ip", "route", "add", cidr, "dev", ifName); err != nil {
+	// A Docker bridge network already owns a local, directly-connected route
+	// to its own subnet the moment its gateway address is assigned -- this
+	// call is only needed on setups where that isn't already true. On any
+	// ordinary Docker host it always fails with "RTNETLINK answers: File
+	// exists" (confirmed running this end to end): the desired route already
+	// exists via the bridge, so that specific failure is the success case,
+	// not an error, matching this driver's existing idempotency convention
+	// (see AttachToSegment's tolerated not-found on disconnect).
+	if out, err := d.runHost(ctx, "ip", "route", "add", cidr, "dev", ifName); err != nil && !strings.Contains(out, "File exists") {
 		return "", "", "", fmt.Errorf("route segment %q's subnet through mesh interface: %w", ref, err)
 	}
 	return iface.PublicKeyHex(), d.meshEndpoint, cidr, nil
@@ -56,15 +65,42 @@ func (d *Driver) MeshIdentity(ctx context.Context, ref providersdk.SegmentRef) (
 
 // AddMeshPeer satisfies providersdk.MeshPeerer. The segment's mesh
 // interface must already exist (created by a prior MeshIdentity call).
-func (d *Driver) AddMeshPeer(_ context.Context, ref providersdk.SegmentRef, peerPublicKey, peerEndpoint, peerCIDR string) error {
+func (d *Driver) AddMeshPeer(ctx context.Context, ref providersdk.SegmentRef, peerPublicKey, peerEndpoint, peerCIDR string) error {
 	iface, err := d.existingMeshInterface(ref)
 	if err != nil {
 		return err
 	}
-	return iface.AddPeer(peerPublicKey, peerEndpoint, []string{peerCIDR})
+	if err := iface.AddPeer(peerPublicKey, peerEndpoint, []string{peerCIDR}); err != nil {
+		return err
+	}
+	// AllowedIPs above only configures WireGuard's own crypto-routing --
+	// which peer a packet already handed to this interface gets encrypted
+	// for. It does not make the kernel hand cross-host traffic to this
+	// interface in the first place: confirmed running this end to end,
+	// containers on this host could not reach the peer's segment at all
+	// without this route, even though the tunnel itself was correctly
+	// established and MeshIdentity/AddMeshPeer both reported success.
+	ifName, err := iface.Name()
+	if err != nil {
+		return fmt.Errorf("get mesh interface name for segment %q: %w", ref, err)
+	}
+	if out, err := d.runHost(ctx, "ip", "route", "add", peerCIDR, "dev", ifName); err != nil && !strings.Contains(out, "File exists") {
+		return fmt.Errorf("route peer subnet %q through mesh interface: %w", peerCIDR, err)
+	}
+	return nil
 }
 
 // RemoveMeshPeer satisfies providersdk.MeshPeerer.
+//
+// Known gap, not fixed here: this does not remove the kernel route
+// AddMeshPeer added for the departing peer's subnet -- the MeshPeerer
+// interface passes only peerPublicKey, not the CIDR that route needs. For a
+// two-host mesh this is harmless (DestroySegment closes the whole interface
+// when the sandbox goes away, taking every route on it with it), but a
+// mesh spanning three or more hosts that removes exactly one peer while
+// keeping the interface up for the others would leave a stale route
+// silently blackholing traffic to the removed peer instead of failing
+// fast. Revisit if/when a mesh larger than two hosts is actually exercised.
 func (d *Driver) RemoveMeshPeer(_ context.Context, ref providersdk.SegmentRef, peerPublicKey string) error {
 	iface, err := d.existingMeshInterface(ref)
 	if err != nil {
@@ -86,7 +122,12 @@ func (d *Driver) meshInterfaceFor(ref providersdk.SegmentRef) (meshInterface, er
 	if factory == nil {
 		factory = func(ifName string) (meshInterface, error) { return meshnet.New(ifName, 0) }
 	}
-	iface, err := factory(string(ref))
+	// Docker's SegmentRef is a full network ID (64 hex characters) -- far
+	// longer than Linux's IFNAMSIZ allows for a real TUN device name
+	// (MaxLinuxInterfaceName), so it cannot be used directly. Verified by
+	// running this end to end on a real Linux host: an unmodified ref failed
+	// TUN creation with "invalid argument" every time.
+	iface, err := factory(meshnet.SafeInterfaceName(string(ref), meshnet.MaxLinuxInterfaceName))
 	if err != nil {
 		return nil, fmt.Errorf("create mesh interface for segment %q: %w", ref, err)
 	}

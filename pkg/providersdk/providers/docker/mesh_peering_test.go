@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -9,6 +10,10 @@ import (
 
 	"github.com/Geogboe/boxy/pkg/providersdk"
 )
+
+// errExitStatus2 stands in for the *exec.ExitError "ip route add" returns on
+// a real host; only the combined-output text matters to the fix under test.
+var errExitStatus2 = errors.New("exit status 2")
 
 // fakeMeshInterface stands in for a real *meshnet.Interface in these unit
 // tests -- no real OS TUN device, no actual WireGuard handshake. Peer keys
@@ -75,6 +80,81 @@ func TestDriver_MeshIdentity_DiscoversSubnetAndInstallsRoute(t *testing.T) {
 	}
 	if err := d.closeMeshInterfaces(); err != nil {
 		t.Fatalf("closeMeshInterfaces: %v", err)
+	}
+}
+
+// TestDriver_MeshIdentity_TreatsRouteAlreadyExistsAsSuccess reproduces a real
+// failure found running this end to end on a real Linux host: a Docker
+// bridge network already owns a directly-connected route to its own subnet,
+// so "ip route add <that subnet>" always fails with "RTNETLINK answers:
+// File exists" -- the desired route already exists, so this must not fail
+// MeshIdentity.
+func TestDriver_MeshIdentity_TreatsRouteAlreadyExistsAsSuccess(t *testing.T) {
+	cli := &mockDockerClient{
+		networkInspect: func(context.Context, string, network.InspectOptions) (network.Inspect, error) {
+			return network.Inspect{IPAM: network.IPAM{Config: []network.IPAMConfig{{Subnet: "172.30.0.0/24"}}}}, nil
+		},
+	}
+	d := &Driver{cli: cli, meshEndpoint: "203.0.113.5:51820", newMeshInterface: newFakeMeshInterface}
+	d.hostExec = func(context.Context, string, ...string) (string, error) {
+		return "RTNETLINK answers: File exists\n", errExitStatus2
+	}
+
+	if _, _, _, err := d.MeshIdentity(context.Background(), providersdk.SegmentRef("net-abc123")); err != nil {
+		t.Fatalf("MeshIdentity: %v, want success on an already-existing route", err)
+	}
+}
+
+func TestDriver_MeshIdentity_FailsOnARealRouteError(t *testing.T) {
+	cli := &mockDockerClient{
+		networkInspect: func(context.Context, string, network.InspectOptions) (network.Inspect, error) {
+			return network.Inspect{IPAM: network.IPAM{Config: []network.IPAMConfig{{Subnet: "172.30.0.0/24"}}}}, nil
+		},
+	}
+	d := &Driver{cli: cli, meshEndpoint: "203.0.113.5:51820", newMeshInterface: newFakeMeshInterface}
+	d.hostExec = func(context.Context, string, ...string) (string, error) {
+		return "ip: command not found\n", errExitStatus2
+	}
+
+	if _, _, _, err := d.MeshIdentity(context.Background(), providersdk.SegmentRef("net-abc123")); err == nil {
+		t.Fatal("expected MeshIdentity to fail on a real (non-\"File exists\") route error")
+	}
+}
+
+// TestDriver_AddMeshPeer_RoutesThePeerSubnet reproduces a real gap found
+// running this end to end on a real Linux host: AddPeer alone configures
+// WireGuard's own crypto-routing (allowed_ips) but the kernel never hands
+// cross-host traffic to the interface without an explicit route for the
+// peer's subnet -- containers could not reach a peer's segment at all
+// without it, even though MeshIdentity/AddMeshPeer both reported success.
+func TestDriver_AddMeshPeer_RoutesThePeerSubnet(t *testing.T) {
+	cli := &mockDockerClient{
+		networkInspect: func(context.Context, string, network.InspectOptions) (network.Inspect, error) {
+			return network.Inspect{IPAM: network.IPAM{Config: []network.IPAMConfig{{Subnet: "172.30.0.0/24"}}}}, nil
+		},
+	}
+	var gotArgs []string
+	d := &Driver{cli: cli, meshEndpoint: "203.0.113.5:51820", newMeshInterface: newFakeMeshInterface}
+	d.hostExec = func(_ context.Context, name string, args ...string) (string, error) {
+		gotArgs = append(gotArgs, strings.Join(append([]string{name}, args...), " "))
+		return "", nil
+	}
+	if _, _, _, err := d.MeshIdentity(context.Background(), providersdk.SegmentRef("net-abc123")); err != nil {
+		t.Fatalf("MeshIdentity: %v", err)
+	}
+
+	if err := d.AddMeshPeer(context.Background(), providersdk.SegmentRef("net-abc123"), "deadbeef", "203.0.113.9:51820", "10.250.0.8/29"); err != nil {
+		t.Fatalf("AddMeshPeer: %v", err)
+	}
+
+	found := false
+	for _, call := range gotArgs {
+		if strings.Contains(call, "ip route add 10.250.0.8/29") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected an ip route add call for the peer's subnet, got calls: %v", gotArgs)
 	}
 }
 

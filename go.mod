@@ -17,6 +17,7 @@ require (
 	github.com/smnsjas/go-psrp v0.2.0
 	github.com/smnsjas/go-psrpcore v0.0.0-20260211164949-dace42c5b6a8
 	github.com/spf13/cobra v1.10.1
+	github.com/vishvananda/netlink v1.3.1
 	github.com/yuin/goldmark v1.7.8
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/crypto v0.50.0
@@ -74,6 +75,7 @@ require (
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
+	github.com/vishvananda/netns v0.0.5 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.67.0 // indirect
