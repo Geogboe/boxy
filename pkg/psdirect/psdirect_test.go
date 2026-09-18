@@ -15,6 +15,15 @@ import (
 	"github.com/Geogboe/boxy/pkg/vmsdk"
 )
 
+// init speeds up connectExecutor's retry loop (psdirect.go) for this whole
+// test package -- production paces retries at hvsocketConnectRetryDelay's
+// real-time default (3s) against a real guest's boot window, which would
+// make every ConnectError test in this file either hang past a bounded ctx
+// too slowly or (worse, with an unbounded ctx) forever.
+func init() {
+	hvsocketConnectRetryDelay = time.Millisecond
+}
+
 // mockExecutor is a test double for psrpExecutor.
 type mockExecutor struct {
 	connectErr error
@@ -103,7 +112,9 @@ func TestExec_Exec_ConnectError(t *testing.T) {
 		},
 	}
 
-	_, err := makeExec(mock).Exec(context.Background(), "echo", "hi")
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, err := makeExec(mock).Exec(ctx, "echo", "hi")
 	if err == nil {
 		t.Fatal("expected error when Connect fails")
 	}
@@ -862,7 +873,9 @@ func TestOpenSession_ConnectError(t *testing.T) {
 	mock := &mockExecutor{connectErr: fmt.Errorf("vm not running")}
 	e := makeExec(mock)
 
-	_, err := e.OpenSession(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, err := e.OpenSession(ctx)
 	if err == nil {
 		t.Fatal("expected error when Connect fails")
 	}

@@ -340,3 +340,31 @@ added to any agent.
   and no CLI/REST surface exposes it yet, deliberately, to avoid the
   CLI Change Checklist churn a wireframe/skill/API-doc update would force
   for a field with no consumer yet.
+
+## Update (2026-09-10)
+
+**A remote-agent deployment's `providers[].config` is a separate,
+independently-maintained file from the server's own pool/provider config,
+even though both are shaped by the same provider config schema (#349).**
+This was already true structurally (the "Update 2026-08-14" section above
+covers how a remote agent loads provider instances from its own `--config`
+or `--service-config`), but the wording above and in v0.1.65's release notes
+read as describing one config value rather than two copies of it — a
+real deployment nearly shipped a release where a new required field
+(`memory_budget_mb`) was added to the server's pool config but not to the
+separate config file passed to `boxy agent service install --config` for
+the Windows Hyper-V remote agent, which would have failed that agent's own
+startup validation on next install/restart. The server accepting its own
+config change and starting successfully gives no signal that a remote
+agent's independent config copy is now stale.
+
+`boxy agent service install` now validates provider config (building the
+same drivers `agent serve` would, from the resolved `--config`/`--providers`)
+*before* writing `service.yaml` or registering the OS service, and reports
+the offending config file's path alongside the underlying validation error
+(e.g. `invalid provider config in /path/to/boxy.yaml: create driver for
+provider type "hyperv": memory_budget_mb is required`) — install fails fast
+instead of silently succeeding and only discovering the gap when the
+installed service next starts. `boxy agent serve` (the direct, non-service
+invocation) already validated eagerly via the same `buildAgentDrivers` path
+and needed no change.

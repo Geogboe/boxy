@@ -52,6 +52,9 @@ tmp/
 .tmp/
 temp/
 
+# Local git worktrees for isolated feature work
+.worktrees/
+
 # Local binaries
 bin/
 .bin/
@@ -70,7 +73,7 @@ bin/
 .archive/
 
 # Host-specific agent guidance is local-only.
-AGENTS.override.md
+AGENTS.local.md
 
 # Logs
 logs

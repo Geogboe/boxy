@@ -24,3 +24,34 @@ type PackageSandboxAllocator interface {
 	SandboxAllocator
 	AllocateWithPackages(ctx context.Context, pool model.Pool, res model.Resource, packages []string) (providersdk.AllocationResult, error)
 }
+
+// NetworkIsolatingAllocator is an optional capability for allocators whose
+// underlying agent/driver supports per-sandbox network isolation
+// (providersdk.NetworkIsolator, via agentsdk.NetworkIsolatingAgent). Not
+// every provider implements it (devfactory deliberately does not -- see
+// the design spec's Decision 1), so Manager must type-assert.
+//
+// CreateSegment also returns the resolved provider type (needed by Manager
+// to record model.NetworkSegment.ProviderType for later destroy calls,
+// which have no model.Pool/model.Resource in scope to re-resolve it from).
+type NetworkIsolatingAllocator interface {
+	SandboxAllocator
+	CreateSegment(ctx context.Context, pool model.Pool, res model.Resource, sandboxID model.SandboxID) (providersdk.SegmentRef, providersdk.Type, error)
+	AttachToSegment(ctx context.Context, pool model.Pool, res model.Resource, ref providersdk.SegmentRef) error
+}
+
+// MeshPeeringAllocator is an optional capability for allocators whose
+// underlying agent/driver supports cross-host mesh peering
+// (providersdk.MeshPeerer, via agentsdk.MeshPeeringAgent). Manager uses it
+// only when a sandbox's segments span more than one agent -- a single-host
+// sandbox never touches this.
+//
+// providerType is the target segment's own recorded model.NetworkSegment.
+// ProviderType, not the pool currently being processed: a sandbox can hold
+// segments for different provider types on the same agent, and dispatching
+// by the caller's pool instead of the segment's own type would route the
+// call to the wrong driver.
+type MeshPeeringAllocator interface {
+	MeshIdentity(ctx context.Context, providerType providersdk.Type, agentID string, ref providersdk.SegmentRef) (publicKey, endpoint, cidr string, err error)
+	AddMeshPeer(ctx context.Context, providerType providersdk.Type, agentID string, ref providersdk.SegmentRef, peerPublicKey, peerEndpoint, peerCIDR string) error
+}

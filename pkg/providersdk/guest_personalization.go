@@ -107,16 +107,26 @@ type GuestPersonalizationResult struct {
 // future phase-dependent step gets a new field instead of another
 // positional argument.
 type GuestPersonalizationOptions struct {
-	// ApplyNetwork, when true, allows PersonalizeGuest to configure the
-	// guest's network identity (static_ip/range-mode IP assignment) in
-	// addition to rotating its credential. Credential rotation and
-	// verification always run regardless of this flag — PowerShell
-	// Direct/VMBus guest exec needs no network. Only allocation-time
-	// personalization (a sandbox actually claiming the resource) should set
-	// this true; admission-time (pool preheat) and promotion-time
-	// personalization must leave it false so a preheated-but-unclaimed VM
-	// never becomes network-reachable for no reason (#358). See ADR-0012's
-	// 2026-09 change note.
+	// ApplyNetwork marks an allocation-time personalization — a sandbox is
+	// actually claiming this resource — as opposed to an admission-time (pool
+	// preheat) or promotion-time one, which must leave it false.
+	//
+	// It no longer describes in-guest IP assignment. A driver declaring
+	// NetworkIsolator addresses a claimed guest from its sandbox's segment in
+	// AttachToSegment instead, so there is no pool-declared address left for
+	// PersonalizeGuest to apply (#224). What the flag gates now is anything a
+	// driver may only do because an allocation is in flight — concretely, the
+	// Hyper-V driver retains the credential it rotated the guest onto just
+	// long enough for that allocation's AttachToSegment to authenticate with
+	// it, and retains nothing for a preheated resource nothing is going to
+	// attach.
+	//
+	// Credential rotation and verification themselves always run regardless
+	// of this flag — PowerShell Direct/VMBus guest exec needs no network.
+	// The underlying principle is unchanged from #358: a
+	// preheated-but-unclaimed resource gets nothing it has no use for yet,
+	// whether that is an address or a retained secret. See ADR-0012's 2026-09
+	// change note and ADR-0021's 2026-09-14 entry.
 	ApplyNetwork bool
 }
 

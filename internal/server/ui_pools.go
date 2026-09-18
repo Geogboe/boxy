@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -9,8 +10,10 @@ import (
 	"strconv"
 
 	"github.com/Geogboe/boxy/internal/pool"
+	"github.com/Geogboe/boxy/pkg/httpjson"
 	"github.com/Geogboe/boxy/pkg/jobs"
 	"github.com/Geogboe/boxy/pkg/model"
+	"github.com/Geogboe/boxy/pkg/store"
 )
 
 func buildPoolViews(pools []model.Pool, resources []model.Resource, poolJobs []jobs.Job) []poolView {
@@ -101,6 +104,7 @@ func makePoolView(configured model.Pool, resources []model.Resource, active jobs
 		ConfigDrain:         configured.Drain.ConfigDeclared,
 		OperatorDrain:       configured.Drain.Operator,
 		Resources:           make([]poolResourceView, 0, len(resources)),
+		AllocatedResources:  make([]poolResourceView, 0),
 		HistoricalResources: make([]poolResourceView, 0),
 	}
 	providerNames := make(map[string]struct{})
@@ -118,10 +122,20 @@ func makePoolView(configured model.Pool, resources []model.Resource, active jobs
 			ID: string(resource.ID), Type: resource.Type, Profile: resource.Profile,
 			State: resource.State, Provider: resource.Provider.Name, UpdatedAt: resource.UpdatedAt,
 		}
-		if isHistoricalResource(resource) {
+		switch {
+		case isHistoricalResource(resource):
 			view.HistoricalResources = append(view.HistoricalResources, resourceView)
 			view.HistoricalCount++
-		} else {
+		case resource.State == model.ResourceStateAllocated:
+			// #366: an allocated resource has left the pool for a sandbox —
+			// it still counts toward TotalCount/max_total (the pool can't
+			// provision a replacement past that cap until this one is
+			// destroyed or released), but showing it inline among Ready/
+			// Provisioning inventory reads as if it's still idle in the
+			// pool. Keep it visually distinct instead.
+			view.AllocatedResources = append(view.AllocatedResources, resourceView)
+			view.AllocatedCount++
+		default:
 			view.Resources = append(view.Resources, resourceView)
 		}
 		if resource.Provider.Name != "" {
@@ -169,6 +183,30 @@ func poolStatus(view poolView, resources []model.Resource, active jobs.Job, hasA
 
 func isHistoricalResource(resource model.Resource) bool {
 	return resource.State == model.ResourceStateReleased || resource.State == model.ResourceStateDestroyed
+}
+
+// handleInspectResourceUI is the session-authenticated counterpart to
+// GET /api/v1/resources/{id} (#352). The pools/sandboxes templates' "Inspect"
+// links used to point straight at the bearer-token-only API route, which a
+// cookie-authenticated UI session cannot call — a browser hitting that link
+// while signed into the dashboard sees "missing or invalid bearer token"
+// even though the operator is authenticated. This route reuses the same
+// admin-only visibility as the pool resource tables it's linked from.
+func (s *Server) handleInspectResourceUI(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireUIAdmin(w, r); !ok {
+		return
+	}
+	id := model.ResourceID(r.PathValue("id"))
+	res, err := s.store.GetResource(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		httpjson.Error(w, http.StatusNotFound, "resource not found")
+		return
+	}
+	if err != nil {
+		httpjson.Error(w, http.StatusInternalServerError, "failed to get resource")
+		return
+	}
+	httpjson.Write(w, http.StatusOK, res)
 }
 
 func requireUIAdmin(w http.ResponseWriter, r *http.Request) (string, bool) {

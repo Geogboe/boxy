@@ -249,6 +249,109 @@ func (ap *AgentProvisioner) Allocate(ctx context.Context, pool model.Pool, res m
 	return providersdk.AllocationResult{Properties: properties}, err
 }
 
+// CreateSegment satisfies sandbox.NetworkIsolatingAllocator. It resolves
+// the exact agent that owns res (never re-resolving by provider type --
+// see AgentProvisioner's own doc comment on why Allocate/Destroy must route
+// back to res.Provider.AgentID) and asks it to create (or, per
+// providersdk.NetworkIsolator's contract, idempotently return an existing)
+// segment for sandboxID.
+//
+// The agent's advertised capability (agentsdk.AgentInfo.NetworkIsolatingProviders)
+// is checked BEFORE the agentsdk.NetworkIsolatingAgent type assertion and
+// the call itself, and a provider the agent doesn't advertise yields
+// ErrNetworkIsolationUnsupported so the caller can skip isolation for this
+// resource instead of failing the whole allocation. The type assertion alone
+// can't carry that decision: both EmbeddedAgent and RemoteAgent implement
+// NetworkIsolatingAgent unconditionally, so it always succeeds, and the real
+// providersdk.NetworkIsolator check happens inside the agent -- too late,
+// and as a hard error. For a remote agent there is no local driver to
+// assert against at all.
+func (ap *AgentProvisioner) CreateSegment(ctx context.Context, pool model.Pool, res model.Resource, sandboxID model.SandboxID) (providersdk.SegmentRef, providersdk.Type, error) {
+	spec, ok := ap.Specs[pool.Name]
+	if !ok {
+		return "", "", fmt.Errorf("unknown pool %q", pool.Name)
+	}
+	driverType := ap.driverTypeForPool(spec)
+	agent, err := ap.agentForResource(res)
+	if err != nil {
+		return "", "", err
+	}
+	if !advertisesNetworkIsolation(agent, driverType) {
+		return "", "", fmt.Errorf("agent %q, provider %q: %w", res.Provider.AgentID, driverType, ErrNetworkIsolationUnsupported)
+	}
+	isolator, ok := agent.(agentsdk.NetworkIsolatingAgent)
+	if !ok {
+		return "", "", fmt.Errorf("agent %q does not support network isolation", res.Provider.AgentID)
+	}
+	ref, err := isolator.CreateSegment(ctx, driverType, string(sandboxID))
+	if err != nil {
+		return "", "", err
+	}
+	// agentsdk.NetworkIsolatingAgent's own doc comment assigns this
+	// validation to this layer: neither agent implementation rejects an
+	// empty SegmentRef returned without an error, because this is the
+	// layer that decides whether to persist a ref and what an unusable one
+	// means. A blank ref would be recorded on the sandbox and later handed
+	// back to AttachToSegment/DestroySegment, which cannot address
+	// anything with it -- a real host object silently orphaned. Note this
+	// is deliberately NOT ErrNetworkIsolationUnsupported: a driver that
+	// advertised the capability and then answered with nothing is
+	// misbehaving, and must not be silently skipped like an honest
+	// non-isolating provider.
+	if strings.TrimSpace(string(ref)) == "" {
+		return "", "", fmt.Errorf("agent %q returned an empty network segment ref for sandbox %q", res.Provider.AgentID, sandboxID)
+	}
+	return ref, driverType, nil
+}
+
+// AttachToSegment satisfies sandbox.NetworkIsolatingAllocator.
+func (ap *AgentProvisioner) AttachToSegment(ctx context.Context, pool model.Pool, res model.Resource, ref providersdk.SegmentRef) error {
+	spec, ok := ap.Specs[pool.Name]
+	if !ok {
+		return fmt.Errorf("unknown pool %q", pool.Name)
+	}
+	driverType := ap.driverTypeForPool(spec)
+	agent, err := ap.agentForResource(res)
+	if err != nil {
+		return err
+	}
+	isolator, ok := agent.(agentsdk.NetworkIsolatingAgent)
+	if !ok {
+		return fmt.Errorf("agent %q does not support network isolation", res.Provider.AgentID)
+	}
+	return isolator.AttachToSegment(ctx, driverType, string(res.ID), ref)
+}
+
+// MeshIdentity satisfies sandbox.MeshPeeringAllocator. Unlike
+// CreateSegment/AttachToSegment, no model.Resource is available here --
+// MeshIdentity/AddMeshPeer operate purely in terms of an already-known
+// agent ID and segment ref, so the agent is resolved directly from the
+// registry rather than via agentForResource.
+func (ap *AgentProvisioner) MeshIdentity(ctx context.Context, providerType providersdk.Type, agentID string, ref providersdk.SegmentRef) (string, string, string, error) {
+	agent, ok := ap.Registry.Get(agentID)
+	if !ok {
+		return "", "", "", fmt.Errorf("agent %q unavailable", agentID)
+	}
+	peerer, ok := agent.(agentsdk.MeshPeeringAgent)
+	if !ok {
+		return "", "", "", fmt.Errorf("agent %q does not support mesh peering", agentID)
+	}
+	return peerer.MeshIdentity(ctx, providerType, ref)
+}
+
+// AddMeshPeer satisfies sandbox.MeshPeeringAllocator.
+func (ap *AgentProvisioner) AddMeshPeer(ctx context.Context, providerType providersdk.Type, agentID string, ref providersdk.SegmentRef, peerPublicKey, peerEndpoint, peerCIDR string) error {
+	agent, ok := ap.Registry.Get(agentID)
+	if !ok {
+		return fmt.Errorf("agent %q unavailable", agentID)
+	}
+	peerer, ok := agent.(agentsdk.MeshPeeringAgent)
+	if !ok {
+		return fmt.Errorf("agent %q does not support mesh peering", agentID)
+	}
+	return peerer.AddMeshPeer(ctx, providerType, ref, peerPublicKey, peerEndpoint, peerCIDR)
+}
+
 // quarantineOnPersonalizeTimeout handles an allocation-time PersonalizeGuest
 // call that exceeded ap.Timeouts.PersonalizeGuest (#333). Per ADR-0010, a
 // timed-out guest rotation must never be treated like an ordinary allocation

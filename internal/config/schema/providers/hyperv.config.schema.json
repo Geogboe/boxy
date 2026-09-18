@@ -19,8 +19,13 @@
       "default": 512
     },
     "data_dir": {
-      "description": "Directory where this provider's restart-safe state is persisted, currently the range-based IP allocation ledger (see network.range on a pool's config, ADR-0012). Relative paths resolve against the boxy config file's own directory when one is known, and against the process's working directory otherwise. Defaults to \".boxy-agent/hyperv\".",
+      "description": "Directory where this provider's restart-safe state is persisted, currently the per-sandbox network segment ledger (ADR-0021). Relative paths resolve against the boxy config file's own directory when one is known, and against the process's working directory otherwise. Defaults to \".boxy-agent/hyperv\".",
       "type": "string"
+    },
+    "mesh_endpoint": {
+      "description": "host:port this agent should be dialed at by a peer agent's WireGuard interface for cross-host sandbox traffic. Required only when a sandbox spans this host and another.",
+      "type": "string",
+      "minLength": 1
     }
   }
 }

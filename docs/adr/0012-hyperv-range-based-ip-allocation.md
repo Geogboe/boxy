@@ -369,3 +369,41 @@ scope for this change and remains open.
   `Allocate` (a fail-fast regression, found and fixed the same day). The
   check is now split from the apply and runs unconditionally, restoring
   admission-time quarantine for this case.
+
+- 2026-09-14: **superseded.** The entire mechanism this ADR describes —
+  `NetworkConfig.Range`, the per-agent `hyperv-ip-ledger.json` allocation
+  ledger, `reserveRangeEntry`/`reserveAddress`/`releaseAddress`, and
+  `applyRangeIP`'s in-guest apply — has been removed from the Hyper-V driver
+  as part of #224's Plan 1c. `NetworkConfig.StaticIP` went with it.
+  `ledger.go`/`ledger_test.go` now live under `.archive/pkg/hyperv/` per this
+  repo's no-delete convention.
+
+  The reason is a change in what owns a guest's address, not a defect in this
+  design. Per-sandbox network isolation
+  ([ADR-0021](0021-network-isolation-driver-capability.md)) is automatic and
+  universal for every isolation-capable Hyper-V pool, with no opt-out: at
+  allocation time each claimed VM is moved onto its sandbox's own Internal
+  vSwitch and addressed from that segment's `/29` block by `AttachToSegment`.
+  A pool-declared address can therefore never be the guest's real, final
+  network — whatever this ledger handed out would be overwritten moments
+  later — so keeping it would have meant maintaining a second, always-losing
+  address allocator alongside the segment ledger. Extending #358's principle
+  ("don't configure a network the guest won't end up on") to segments is what
+  made it dead code.
+
+  Two pieces of this ADR outlive it. `Config.DataDir` is unchanged and still
+  anchors per-agent restart-safe state, now the segment ledger rather than
+  this one; its `RelativePathResolver` reasoning (a lost ledger is worse than
+  a lost debug store) applies verbatim to the replacement. `assignGuestIP`
+  — the idempotent, self-verifying in-guest apply this ADR and #235 shaped —
+  survives unchanged as `AttachToSegment`'s single caller.
+
+  Behavior change worth noting for anyone tracing an old range-mode pool:
+  `PersonalizeGuest` no longer skips the `vmIP` read for such pools, because
+  the mode that skipped it no longer exists. That read is now best-effort —
+  it warns and reports no address rather than failing — specifically so a VM
+  on a DHCP-less Internal switch is not quarantined over a provisional
+  address its segment is about to replace.
+
+  See `docs/superpowers/specs/2026-09-14-plan-1c-review-fix-addendum.md` for
+  the decision, and ADR-0021's 2026-09-14 entry for what replaced this.

@@ -62,6 +62,19 @@ type mockAgent struct {
 	// AgentProvisioner.Allocate wraps around it.
 	personalizeEntered chan struct{}
 	personalizeGate    chan struct{}
+
+	// createSegmentRef/createSegmentErr/attachSegmentErr and the got*
+	// fields below give mockAgent the agentsdk.NetworkIsolatingAgent
+	// capability on top of its existing base-Agent methods, mirroring the
+	// personalize* capability-on-top-of-base pattern above.
+	createSegmentRef           providersdk.SegmentRef
+	createSegmentErr           error
+	attachSegmentErr           error
+	destroySegmentErr          error
+	gotCreateSegmentSandboxID  string
+	gotAttachSegmentResourceID string
+	gotAttachSegmentRef        providersdk.SegmentRef
+	gotDestroySegmentRef       providersdk.SegmentRef
 }
 
 type mockCreateCall struct {
@@ -82,9 +95,17 @@ type mockAllocateCall struct {
 func newMockAgent(providers ...providersdk.Type) *mockAgent {
 	return &mockAgent{
 		info: agentsdk.AgentInfo{
-			ID:        "mock-agent",
-			Name:      "Mock Agent",
-			Providers: providers,
+			ID:   "mock-agent",
+			Name: "Mock Agent",
+			// mockAgent implements agentsdk.NetworkIsolatingAgent
+			// unconditionally for every provider it hosts (see
+			// CreateSegment/AttachToSegment below), so its advertisement
+			// has to say so -- AgentProvisioner.CreateSegment now consults
+			// AgentInfo.NetworkIsolatingProviders before it will call the
+			// capability at all. Tests that want a non-advertising agent
+			// build one explicitly instead of using this constructor.
+			Providers:                 providers,
+			NetworkIsolatingProviders: providers,
 		},
 		nextResourceID: "mock-resource-1",
 	}
@@ -162,6 +183,24 @@ func (m *mockAgent) PersonalizeGuest(ctx context.Context, provider providersdk.T
 		return nil, m.personalizeErr
 	}
 	return m.personalized, nil
+}
+
+// CreateSegment and AttachToSegment give mockAgent the
+// agentsdk.NetworkIsolatingAgent capability, unconditionally, the same way
+// PersonalizeGuest above unconditionally gives it GuestPersonalizingAgent.
+func (m *mockAgent) CreateSegment(_ context.Context, _ providersdk.Type, sandboxID string) (providersdk.SegmentRef, error) {
+	m.gotCreateSegmentSandboxID = sandboxID
+	return m.createSegmentRef, m.createSegmentErr
+}
+
+func (m *mockAgent) AttachToSegment(_ context.Context, _ providersdk.Type, providerResourceID string, ref providersdk.SegmentRef) error {
+	m.gotAttachSegmentResourceID, m.gotAttachSegmentRef = providerResourceID, ref
+	return m.attachSegmentErr
+}
+
+func (m *mockAgent) DestroySegment(_ context.Context, _ providersdk.Type, ref providersdk.SegmentRef) error {
+	m.gotDestroySegmentRef = ref
+	return m.destroySegmentErr
 }
 
 // nonPersonalizingAgent implements only the base agentsdk.Agent methods —
@@ -1216,5 +1255,42 @@ func TestAgentProvisioner_UnknownPool(t *testing.T) {
 	}
 	if err := provisioner.Destroy(context.Background(), pool, model.Resource{ID: "res-1"}); err == nil {
 		t.Fatal("expected destroy error for unknown pool")
+	}
+}
+
+func TestAgentProvisioner_CreateSegment(t *testing.T) {
+	agent := newMockAgent("hyperv")
+	agent.createSegmentRef = "boxy-sb-sb-1"
+	ap := &AgentProvisioner{
+		Registry: registryWith(t, agent),
+		Specs:    map[model.PoolName]boxyconfig.PoolSpec{"pool-a": {Type: "hyperv"}},
+	}
+	res := model.Resource{ID: "res-1", Provider: model.ProviderRef{AgentID: agent.Info().ID}}
+
+	ref, providerType, err := ap.CreateSegment(context.Background(), model.Pool{Name: "pool-a"}, res, "sb-1")
+	if err != nil {
+		t.Fatalf("CreateSegment: %v", err)
+	}
+	if ref != "boxy-sb-sb-1" || providerType != "hyperv" {
+		t.Fatalf("got (%q, %q), want (boxy-sb-sb-1, hyperv)", ref, providerType)
+	}
+	if agent.gotCreateSegmentSandboxID != "sb-1" {
+		t.Fatalf("agent got sandboxID = %q, want sb-1", agent.gotCreateSegmentSandboxID)
+	}
+}
+
+func TestAgentProvisioner_AttachToSegment(t *testing.T) {
+	agent := newMockAgent("hyperv")
+	ap := &AgentProvisioner{
+		Registry: registryWith(t, agent),
+		Specs:    map[model.PoolName]boxyconfig.PoolSpec{"pool-a": {Type: "hyperv"}},
+	}
+	res := model.Resource{ID: "res-1", Provider: model.ProviderRef{AgentID: agent.Info().ID}}
+
+	if err := ap.AttachToSegment(context.Background(), model.Pool{Name: "pool-a"}, res, "boxy-sb-sb-1"); err != nil {
+		t.Fatalf("AttachToSegment: %v", err)
+	}
+	if agent.gotAttachSegmentResourceID != "res-1" || agent.gotAttachSegmentRef != "boxy-sb-sb-1" {
+		t.Fatalf("agent got (%q, %q)", agent.gotAttachSegmentResourceID, agent.gotAttachSegmentRef)
 	}
 }

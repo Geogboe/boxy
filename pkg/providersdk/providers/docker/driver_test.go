@@ -133,6 +133,11 @@ type mockDockerClient struct {
 	containerExecInspect func(ctx context.Context, execID string) (container.ExecInspect, error)
 	containerRemove      func(ctx context.Context, containerID string, options container.RemoveOptions) error
 	info                 func(ctx context.Context) (systemtypes.Info, error)
+	networkCreate        func(ctx context.Context, name string, options network.CreateOptions) (network.CreateResponse, error)
+	networkInspect       func(ctx context.Context, networkID string, options network.InspectOptions) (network.Inspect, error)
+	networkConnect       func(ctx context.Context, networkID, containerID string, config *network.EndpointSettings) error
+	networkDisconnect    func(ctx context.Context, networkID, containerID string, force bool) error
+	networkRemove        func(ctx context.Context, networkID string) error
 }
 
 func (m *mockDockerClient) ImageInspect(ctx context.Context, imageID string, opts ...client.ImageInspectOption) (imagetypes.InspectResponse, error) {
@@ -185,6 +190,29 @@ func (m *mockDockerClient) Info(ctx context.Context) (systemtypes.Info, error) {
 		return m.info(ctx)
 	}
 	return systemtypes.Info{}, nil
+}
+func (m *mockDockerClient) NetworkCreate(ctx context.Context, name string, options network.CreateOptions) (network.CreateResponse, error) {
+	return m.networkCreate(ctx, name, options)
+}
+
+// NetworkInspect defaults to reporting the network as absent rather than
+// returning a zero-value Inspect, which would read as "found" with an empty
+// ID. An empty mock represents a Docker host with none of this driver's
+// networks on it yet -- the state every first CreateSegment call sees.
+func (m *mockDockerClient) NetworkInspect(ctx context.Context, networkID string, options network.InspectOptions) (network.Inspect, error) {
+	if m.networkInspect != nil {
+		return m.networkInspect(ctx, networkID, options)
+	}
+	return network.Inspect{}, notFoundError{msg: "network " + networkID + " not found"}
+}
+func (m *mockDockerClient) NetworkConnect(ctx context.Context, networkID, containerID string, config *network.EndpointSettings) error {
+	return m.networkConnect(ctx, networkID, containerID, config)
+}
+func (m *mockDockerClient) NetworkDisconnect(ctx context.Context, networkID, containerID string, force bool) error {
+	return m.networkDisconnect(ctx, networkID, containerID, force)
+}
+func (m *mockDockerClient) NetworkRemove(ctx context.Context, networkID string) error {
+	return m.networkRemove(ctx, networkID)
 }
 
 // runningInspect returns an InspectResponse that looks like a running container.

@@ -505,6 +505,176 @@ func TestExecuteCommand(t *testing.T) {
 		}
 	})
 
+	t.Run("create segment success", func(t *testing.T) {
+		drivers := DriverSet{"hyperv": &fakeIsolatingDriver{
+			fakeDriver:       &fakeDriver{providerType: "hyperv"},
+			createSegmentRef: "boxy-sb-sb-1",
+		}}
+		cmd := &boxyagentv1.Command{
+			CommandId:    "cmd-20",
+			ProviderType: "hyperv",
+			Op:           &boxyagentv1.Command_CreateSegment{CreateSegment: &boxyagentv1.CreateSegmentCommand{SandboxId: "sb-1"}},
+		}
+		res := executeCommand(context.Background(), drivers, cmd)
+		if res.GetError() != nil {
+			t.Fatalf("unexpected error: %s", res.GetError().GetMessage())
+		}
+		if got := res.GetCreateSegment().GetSegmentRef(); got != "boxy-sb-sb-1" {
+			t.Fatalf("segment_ref = %q, want %q", got, "boxy-sb-sb-1")
+		}
+		fid := drivers["hyperv"].(*fakeIsolatingDriver)
+		if fid.gotSandboxID != "sb-1" {
+			t.Fatalf("driver got sandboxID = %q, want %q", fid.gotSandboxID, "sb-1")
+		}
+	})
+
+	t.Run("create segment driver error is surfaced as AgentError", func(t *testing.T) {
+		drivers := DriverSet{"hyperv": &fakeIsolatingDriver{
+			fakeDriver:       &fakeDriver{providerType: "hyperv"},
+			createSegmentErr: errors.New("no free CIDR blocks"),
+		}}
+		cmd := &boxyagentv1.Command{
+			CommandId:    "cmd-21",
+			ProviderType: "hyperv",
+			Op:           &boxyagentv1.Command_CreateSegment{CreateSegment: &boxyagentv1.CreateSegmentCommand{SandboxId: "sb-1"}},
+		}
+		res := executeCommand(context.Background(), drivers, cmd)
+		if res.GetError() == nil {
+			t.Fatal("expected an AgentError")
+		}
+	})
+
+	t.Run("create segment unsupported by driver errors", func(t *testing.T) {
+		drivers := DriverSet{"docker": &fakeDriver{providerType: "docker"}}
+		cmd := &boxyagentv1.Command{
+			CommandId:    "cmd-22",
+			ProviderType: "docker",
+			Op:           &boxyagentv1.Command_CreateSegment{CreateSegment: &boxyagentv1.CreateSegmentCommand{SandboxId: "sb-1"}},
+		}
+		res := executeCommand(context.Background(), drivers, cmd)
+		if res.GetError() == nil {
+			t.Fatal("expected an error for a driver that does not implement NetworkIsolator")
+		}
+	})
+
+	t.Run("attach to segment success", func(t *testing.T) {
+		drivers := DriverSet{"hyperv": &fakeIsolatingDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}}}
+		cmd := &boxyagentv1.Command{
+			CommandId:    "cmd-23",
+			ProviderType: "hyperv",
+			Op: &boxyagentv1.Command_AttachToSegment{AttachToSegment: &boxyagentv1.AttachToSegmentCommand{
+				ResourceId: "vm-1",
+				SegmentRef: "boxy-sb-sb-1",
+			}},
+		}
+		res := executeCommand(context.Background(), drivers, cmd)
+		if res.GetError() != nil {
+			t.Fatalf("unexpected error: %s", res.GetError().GetMessage())
+		}
+		if res.GetAttachToSegment() == nil {
+			t.Fatalf("expected an AttachToSegment (empty) outcome, got %#v", res.GetOutcome())
+		}
+		fid := drivers["hyperv"].(*fakeIsolatingDriver)
+		if fid.gotResourceID != "vm-1" || fid.gotAttachRef != "boxy-sb-sb-1" {
+			t.Fatalf("driver got (%q, %q)", fid.gotResourceID, fid.gotAttachRef)
+		}
+	})
+
+	t.Run("destroy segment success", func(t *testing.T) {
+		drivers := DriverSet{"hyperv": &fakeIsolatingDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}}}
+		cmd := &boxyagentv1.Command{
+			CommandId:    "cmd-24",
+			ProviderType: "hyperv",
+			Op:           &boxyagentv1.Command_DestroySegment{DestroySegment: &boxyagentv1.DestroySegmentCommand{SegmentRef: "boxy-sb-sb-1"}},
+		}
+		res := executeCommand(context.Background(), drivers, cmd)
+		if res.GetError() != nil {
+			t.Fatalf("unexpected error: %s", res.GetError().GetMessage())
+		}
+		if res.GetDestroySegment() == nil {
+			t.Fatalf("expected a DestroySegment (empty) outcome, got %#v", res.GetOutcome())
+		}
+		fid := drivers["hyperv"].(*fakeIsolatingDriver)
+		if fid.gotDestroyRef != "boxy-sb-sb-1" {
+			t.Fatalf("driver got destroy ref = %q, want %q", fid.gotDestroyRef, "boxy-sb-sb-1")
+		}
+	})
+
+	t.Run("mesh identity success", func(t *testing.T) {
+		drivers := DriverSet{"hyperv": &fakeMeshPeeringDriver{
+			fakeDriver:  &fakeDriver{providerType: "hyperv"},
+			identityPub: "pub1", identityEndpoint: "203.0.113.5:51820", identityCIDR: "10.250.0.0/29",
+		}}
+		cmd := &boxyagentv1.Command{
+			CommandId:    "cmd-30",
+			ProviderType: "hyperv",
+			Op:           &boxyagentv1.Command_MeshIdentity{MeshIdentity: &boxyagentv1.MeshIdentityCommand{SegmentRef: "boxy-sb-sb-1"}},
+		}
+		res := executeCommand(context.Background(), drivers, cmd)
+		if res.GetError() != nil {
+			t.Fatalf("unexpected error: %s", res.GetError().GetMessage())
+		}
+		mi := res.GetMeshIdentity()
+		if mi.GetPublicKey() != "pub1" || mi.GetEndpoint() != "203.0.113.5:51820" || mi.GetCidr() != "10.250.0.0/29" {
+			t.Fatalf("unexpected MeshIdentityResult: %#v", mi)
+		}
+	})
+
+	t.Run("mesh identity unsupported by driver errors", func(t *testing.T) {
+		drivers := DriverSet{"docker": &fakeDriver{providerType: "docker"}}
+		cmd := &boxyagentv1.Command{
+			CommandId:    "cmd-31",
+			ProviderType: "docker",
+			Op:           &boxyagentv1.Command_MeshIdentity{MeshIdentity: &boxyagentv1.MeshIdentityCommand{SegmentRef: "net-1"}},
+		}
+		res := executeCommand(context.Background(), drivers, cmd)
+		if res.GetError() == nil {
+			t.Fatal("expected an error for a driver that does not implement MeshPeerer")
+		}
+	})
+
+	t.Run("add mesh peer success", func(t *testing.T) {
+		driver := &fakeMeshPeeringDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}}
+		drivers := DriverSet{"hyperv": driver}
+		cmd := &boxyagentv1.Command{
+			CommandId:    "cmd-32",
+			ProviderType: "hyperv",
+			Op: &boxyagentv1.Command_AddMeshPeer{AddMeshPeer: &boxyagentv1.AddMeshPeerCommand{
+				SegmentRef: "boxy-sb-sb-1", PeerPublicKey: "pub2", PeerEndpoint: "203.0.113.9:51820", PeerCidr: "10.250.0.8/29",
+			}},
+		}
+		res := executeCommand(context.Background(), drivers, cmd)
+		if res.GetError() != nil {
+			t.Fatalf("unexpected error: %s", res.GetError().GetMessage())
+		}
+		if res.GetAddMeshPeer() == nil {
+			t.Fatalf("expected an AddMeshPeer (empty) outcome, got %#v", res.GetOutcome())
+		}
+		if driver.gotAddPeerKey != "pub2" || driver.gotAddPeerEndpoint != "203.0.113.9:51820" || driver.gotAddPeerCIDR != "10.250.0.8/29" {
+			t.Fatalf("driver got (%q, %q, %q)", driver.gotAddPeerKey, driver.gotAddPeerEndpoint, driver.gotAddPeerCIDR)
+		}
+	})
+
+	t.Run("remove mesh peer success", func(t *testing.T) {
+		driver := &fakeMeshPeeringDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}}
+		drivers := DriverSet{"hyperv": driver}
+		cmd := &boxyagentv1.Command{
+			CommandId:    "cmd-33",
+			ProviderType: "hyperv",
+			Op:           &boxyagentv1.Command_RemoveMeshPeer{RemoveMeshPeer: &boxyagentv1.RemoveMeshPeerCommand{SegmentRef: "boxy-sb-sb-1", PeerPublicKey: "pub2"}},
+		}
+		res := executeCommand(context.Background(), drivers, cmd)
+		if res.GetError() != nil {
+			t.Fatalf("unexpected error: %s", res.GetError().GetMessage())
+		}
+		if res.GetRemoveMeshPeer() == nil {
+			t.Fatalf("expected a RemoveMeshPeer (empty) outcome, got %#v", res.GetOutcome())
+		}
+		if driver.gotRemovePeerKey != "pub2" {
+			t.Fatalf("driver got %q, want pub2", driver.gotRemovePeerKey)
+		}
+	})
+
 	t.Run("unknown provider type errors", func(t *testing.T) {
 		cmd := &boxyagentv1.Command{
 			CommandId:    "cmd-6",
@@ -883,4 +1053,169 @@ func TestErrorResult_ClassifiesTypedErrors(t *testing.T) {
 			t.Errorf("error_type = %q, want empty for an untyped error", result.GetError().GetErrorType())
 		}
 	})
+}
+
+// fakeIsolatingDriver adds providersdk.NetworkIsolator on top of a minimal
+// driver, mirroring fakePersonalizingDriver's "capability on top of a base
+// driver" shape used for the analogous GuestPersonalizer tests in this file.
+type fakeIsolatingDriver struct {
+	*fakeDriver
+	createSegmentRef providersdk.SegmentRef
+	createSegmentErr error
+	attachErr        error
+	destroyErr       error
+	gotSandboxID     string
+	gotResourceID    string
+	gotAttachRef     providersdk.SegmentRef
+	gotDestroyRef    providersdk.SegmentRef
+}
+
+func (f *fakeIsolatingDriver) CreateSegment(_ context.Context, sandboxID string) (providersdk.SegmentRef, error) {
+	f.gotSandboxID = sandboxID
+	if f.createSegmentErr != nil {
+		return "", f.createSegmentErr
+	}
+	return f.createSegmentRef, nil
+}
+func (f *fakeIsolatingDriver) AttachToSegment(_ context.Context, providerResourceID string, ref providersdk.SegmentRef) error {
+	f.gotResourceID, f.gotAttachRef = providerResourceID, ref
+	return f.attachErr
+}
+func (f *fakeIsolatingDriver) DestroySegment(_ context.Context, ref providersdk.SegmentRef) error {
+	f.gotDestroyRef = ref
+	return f.destroyErr
+}
+
+func TestEmbeddedAgent_CreateSegment(t *testing.T) {
+	driver := &fakeIsolatingDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}, createSegmentRef: "boxy-sb-sb-1"}
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", driver)
+	if err != nil {
+		t.Fatalf("NewEmbeddedAgent: %v", err)
+	}
+	ref, err := agent.CreateSegment(context.Background(), "hyperv", "sb-1")
+	if err != nil {
+		t.Fatalf("CreateSegment: %v", err)
+	}
+	if ref != "boxy-sb-sb-1" {
+		t.Fatalf("ref = %q, want %q", ref, "boxy-sb-sb-1")
+	}
+	if driver.gotSandboxID != "sb-1" {
+		t.Fatalf("driver got sandboxID = %q, want %q", driver.gotSandboxID, "sb-1")
+	}
+}
+
+func TestEmbeddedAgent_AttachToSegment(t *testing.T) {
+	driver := &fakeIsolatingDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}}
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", driver)
+	if err != nil {
+		t.Fatalf("NewEmbeddedAgent: %v", err)
+	}
+	if err := agent.AttachToSegment(context.Background(), "hyperv", "vm-1", "boxy-sb-sb-1"); err != nil {
+		t.Fatalf("AttachToSegment: %v", err)
+	}
+	if driver.gotResourceID != "vm-1" || driver.gotAttachRef != "boxy-sb-sb-1" {
+		t.Fatalf("driver got (%q, %q)", driver.gotResourceID, driver.gotAttachRef)
+	}
+}
+
+func TestEmbeddedAgent_DestroySegment(t *testing.T) {
+	driver := &fakeIsolatingDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}}
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", driver)
+	if err != nil {
+		t.Fatalf("NewEmbeddedAgent: %v", err)
+	}
+	if err := agent.DestroySegment(context.Background(), "hyperv", "boxy-sb-sb-1"); err != nil {
+		t.Fatalf("DestroySegment: %v", err)
+	}
+	if driver.gotDestroyRef != "boxy-sb-sb-1" {
+		t.Fatalf("driver got destroy ref = %q, want %q", driver.gotDestroyRef, "boxy-sb-sb-1")
+	}
+}
+
+func TestEmbeddedAgent_CreateSegmentUnsupportedDriverErrors(t *testing.T) {
+	driver := &fakeDriver{providerType: "docker"}
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", driver)
+	if err != nil {
+		t.Fatalf("NewEmbeddedAgent: %v", err)
+	}
+	if _, err := agent.CreateSegment(context.Background(), "docker", "sb-1"); err == nil {
+		t.Fatal("expected an error for a driver that does not implement NetworkIsolator")
+	}
+}
+
+// fakeMeshPeeringDriver adds providersdk.MeshPeerer on top of a minimal
+// driver, mirroring fakeIsolatingDriver's shape.
+type fakeMeshPeeringDriver struct {
+	*fakeDriver
+	identityPub, identityEndpoint, identityCIDR       string
+	identityErr                                       error
+	addPeerErr, removePeerErr                         error
+	gotAddPeerKey, gotAddPeerEndpoint, gotAddPeerCIDR string
+	gotRemovePeerKey                                  string
+}
+
+func (f *fakeMeshPeeringDriver) MeshIdentity(_ context.Context, _ providersdk.SegmentRef) (string, string, string, error) {
+	return f.identityPub, f.identityEndpoint, f.identityCIDR, f.identityErr
+}
+func (f *fakeMeshPeeringDriver) AddMeshPeer(_ context.Context, _ providersdk.SegmentRef, peerPublicKey, peerEndpoint, peerCIDR string) error {
+	f.gotAddPeerKey, f.gotAddPeerEndpoint, f.gotAddPeerCIDR = peerPublicKey, peerEndpoint, peerCIDR
+	return f.addPeerErr
+}
+func (f *fakeMeshPeeringDriver) RemoveMeshPeer(_ context.Context, _ providersdk.SegmentRef, peerPublicKey string) error {
+	f.gotRemovePeerKey = peerPublicKey
+	return f.removePeerErr
+}
+
+func TestEmbeddedAgent_MeshIdentity(t *testing.T) {
+	driver := &fakeMeshPeeringDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}, identityPub: "pub1", identityEndpoint: "203.0.113.5:51820", identityCIDR: "10.250.0.0/29"}
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", driver)
+	if err != nil {
+		t.Fatalf("NewEmbeddedAgent: %v", err)
+	}
+	pub, endpoint, cidr, err := agent.MeshIdentity(context.Background(), "hyperv", "boxy-sb-sb-1")
+	if err != nil {
+		t.Fatalf("MeshIdentity: %v", err)
+	}
+	if pub != "pub1" || endpoint != "203.0.113.5:51820" || cidr != "10.250.0.0/29" {
+		t.Fatalf("got (%q, %q, %q)", pub, endpoint, cidr)
+	}
+}
+
+func TestEmbeddedAgent_AddMeshPeer(t *testing.T) {
+	driver := &fakeMeshPeeringDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}}
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", driver)
+	if err != nil {
+		t.Fatalf("NewEmbeddedAgent: %v", err)
+	}
+	if err := agent.AddMeshPeer(context.Background(), "hyperv", "boxy-sb-sb-1", "pub2", "203.0.113.9:51820", "10.250.0.8/29"); err != nil {
+		t.Fatalf("AddMeshPeer: %v", err)
+	}
+	if driver.gotAddPeerKey != "pub2" || driver.gotAddPeerEndpoint != "203.0.113.9:51820" || driver.gotAddPeerCIDR != "10.250.0.8/29" {
+		t.Fatalf("driver got (%q, %q, %q)", driver.gotAddPeerKey, driver.gotAddPeerEndpoint, driver.gotAddPeerCIDR)
+	}
+}
+
+func TestEmbeddedAgent_RemoveMeshPeer(t *testing.T) {
+	driver := &fakeMeshPeeringDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}}
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", driver)
+	if err != nil {
+		t.Fatalf("NewEmbeddedAgent: %v", err)
+	}
+	if err := agent.RemoveMeshPeer(context.Background(), "hyperv", "boxy-sb-sb-1", "pub2"); err != nil {
+		t.Fatalf("RemoveMeshPeer: %v", err)
+	}
+	if driver.gotRemovePeerKey != "pub2" {
+		t.Fatalf("driver got %q, want pub2", driver.gotRemovePeerKey)
+	}
+}
+
+func TestEmbeddedAgent_MeshIdentityUnsupportedDriverErrors(t *testing.T) {
+	driver := &fakeDriver{providerType: "docker"}
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", driver)
+	if err != nil {
+		t.Fatalf("NewEmbeddedAgent: %v", err)
+	}
+	if _, _, _, err := agent.MeshIdentity(context.Background(), "docker", "net-1"); err == nil {
+		t.Fatal("expected an error for a driver that does not implement MeshPeerer")
+	}
 }

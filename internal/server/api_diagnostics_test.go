@@ -34,7 +34,14 @@ func TestAPI_DiagnosticsLogsFiltersAndAudits(t *testing.T) {
 	st := store.NewMemoryStore()
 	logs := diagnostics.NewMemoryStore()
 	audit := &captureDiagnosticsAudit{}
-	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
+	// Anchored to time.Now, not a fixed date: diagnostics.MemoryStore prunes
+	// on every Append using its own (unexported, not test-injectable from
+	// this package) real clock against DefaultMaxAge (14 days) -- a fixed
+	// past date silently ages out of retention and this test starts failing
+	// the moment wall-clock time crosses that 14-day mark, with no code
+	// change involved. (Found 2026-09-14: the original fixture date,
+	// 2026-08-31, aged out exactly 14 days later.)
+	now := time.Now().UTC()
 	for _, event := range []diagnostics.Event{
 		{ID: "log-1", Timestamp: now.Add(-time.Minute), Level: "WARN", Component: "reconcile", Message: "pool warning", Pool: "pool-a"},
 		{ID: "log-2", Timestamp: now, Level: "ERROR", Component: "reconcile", Message: "agent failure", Pool: "pool-a", Agent: "agent-a", Job: "job-a", Status: "failed"},
@@ -72,7 +79,8 @@ func TestAPI_DiagnosticsLogsFiltersAndAudits(t *testing.T) {
 func TestAPI_DiagnosticsLogsFiltersByProvider(t *testing.T) {
 	st := store.NewMemoryStore()
 	logs := diagnostics.NewMemoryStore()
-	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
+	// See the identical comment in TestAPI_DiagnosticsLogsFiltersAndAudits.
+	now := time.Now().UTC()
 	for _, event := range []diagnostics.Event{
 		{ID: "hyperv-1", Timestamp: now, Provider: "hyperv"},
 		{ID: "docker-1", Timestamp: now, Provider: "docker"},
@@ -139,8 +147,12 @@ func TestAPI_DiagnosticsLogsRequiresAdmin(t *testing.T) {
 func TestAPI_DiagnosticsExportIsSanitizedAndBounded(t *testing.T) {
 	st := store.NewMemoryStore()
 	logs := diagnostics.NewMemoryStore()
+	// Anchored to time.Now, not a fixed date: see the identical comment in
+	// TestAPI_DiagnosticsLogsFiltersAndAudits. This instance was missed by
+	// that same 2026-09-14 fix and aged out of retention 14 days after its
+	// own fixed date (2026-09-03), on 2026-09-17.
 	if err := logs.Append(context.Background(), diagnostics.Event{
-		Timestamp: time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC),
+		Timestamp: time.Now().UTC(),
 		Level:     "ERROR",
 		Component: "agent",
 		Message:   "host=worker.example.test password=secret ip=203.0.113.40",

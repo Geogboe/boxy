@@ -395,3 +395,110 @@ b986f6b870df8cfe01b235eccb1f8edd3017ce96:pkg/providersdk/providers/hyperv/driver
 # followed the file's existing convention rather than introducing a new
 # one. Recorded per the same precedent, not a new decision.
 4de2810da65564c2259603e0f91abe0410874e4c:pkg/providersdk/providers/hyperv/driver_test.go:boxy-pii-private-ipv4:1353
+
+# Reviewed 2026-09-17: RFC1918 private IPv4 addresses used as deliberate test
+# fixtures for the #224 network-isolation / cross-host mesh-peering feature
+# (NetworkIsolator segment CIDRs, WireGuard mesh peer addresses). Private
+# ranges are the realistic input this feature actually operates on; not a
+# real host/user IP leak.
+02601b48447154ba32d9c6a32cca5dc0b5025535:pkg/providersdk/providers/docker/mesh_peering_test.go:boxy-pii-private-ipv4:45
+02601b48447154ba32d9c6a32cca5dc0b5025535:pkg/providersdk/providers/docker/mesh_peering_test.go:boxy-pii-private-ipv4:64
+02601b48447154ba32d9c6a32cca5dc0b5025535:pkg/providersdk/providers/docker/mesh_peering_test.go:boxy-pii-private-ipv4:69
+02601b48447154ba32d9c6a32cca5dc0b5025535:pkg/providersdk/providers/docker/mesh_peering_test.go:boxy-pii-private-ipv4:83
+07c643fcc6b9a845de5f22fc0a1cca6e30927732:docs/superpowers/plans/2026-09-10-overlay-network-jit-access-plan.md:boxy-pii-private-ipv4:510
+07c643fcc6b9a845de5f22fc0a1cca6e30927732:docs/superpowers/plans/2026-09-10-overlay-network-jit-access-plan.md:boxy-pii-private-ipv4:515
+0f4bb5c507b7b44e29f369a91918086ade1f1598:pkg/providersdk/providers/hyperv/driver_test.go:boxy-pii-private-ipv4:1709
+0f4bb5c507b7b44e29f369a91918086ade1f1598:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:312
+0f4bb5c507b7b44e29f369a91918086ade1f1598:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:360
+0f4bb5c507b7b44e29f369a91918086ade1f1598:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:364
+0f4bb5c507b7b44e29f369a91918086ade1f1598:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:366
+0f4bb5c507b7b44e29f369a91918086ade1f1598:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:491
+351071b6fcd2cf56db085307ed15a1159a777ee9:docs/superpowers/plans/2026-09-10-overlay-network-isolation-driver-plan.md:boxy-pii-private-ipv4:224
+351071b6fcd2cf56db085307ed15a1159a777ee9:docs/superpowers/plans/2026-09-10-overlay-network-isolation-driver-plan.md:boxy-pii-private-ipv4:227
+351071b6fcd2cf56db085307ed15a1159a777ee9:docs/superpowers/plans/2026-09-10-overlay-network-isolation-driver-plan.md:boxy-pii-private-ipv4:312
+351071b6fcd2cf56db085307ed15a1159a777ee9:docs/superpowers/plans/2026-09-10-overlay-network-isolation-driver-plan.md:boxy-pii-private-ipv4:313
+351071b6fcd2cf56db085307ed15a1159a777ee9:docs/superpowers/plans/2026-09-10-overlay-network-isolation-driver-plan.md:boxy-pii-private-ipv4:315
+351071b6fcd2cf56db085307ed15a1159a777ee9:docs/superpowers/plans/2026-09-10-overlay-network-isolation-driver-plan.md:boxy-pii-private-ipv4:561
+364bbe6355bde62daa701c096e9da04325fbc729:docs/adr/0013-hyperv-network-range-reporter.md:boxy-pii-private-ipv4:285
+364bbe6355bde62daa701c096e9da04325fbc729:docs/adr/0021-network-isolation-driver-capability.md:boxy-pii-private-ipv4:295
+364bbe6355bde62daa701c096e9da04325fbc729:docs/current-delivery-notes.md:boxy-pii-private-ipv4:55
+553a38df06371edea617442f30467de01bbdddca:pkg/providersdk/mesh_peering_test.go:boxy-pii-private-ipv4:32
+553a38df06371edea617442f30467de01bbdddca:pkg/providersdk/mesh_peering_test.go:boxy-pii-private-ipv4:42
+6e545e82f1555225dd4174930add70b6e44e6db5:docs/superpowers/plans/2026-09-10-overlay-network-mesh-wiring-plan.md:boxy-pii-private-ipv4:1085
+6e545e82f1555225dd4174930add70b6e44e6db5:docs/superpowers/plans/2026-09-10-overlay-network-mesh-wiring-plan.md:boxy-pii-private-ipv4:1094
+6e545e82f1555225dd4174930add70b6e44e6db5:docs/superpowers/plans/2026-09-10-overlay-network-mesh-wiring-plan.md:boxy-pii-private-ipv4:1109
+6e545e82f1555225dd4174930add70b6e44e6db5:docs/superpowers/plans/2026-09-10-overlay-network-mesh-wiring-plan.md:boxy-pii-private-ipv4:1114
+6e545e82f1555225dd4174930add70b6e44e6db5:docs/superpowers/plans/2026-09-10-overlay-network-mesh-wiring-plan.md:boxy-pii-private-ipv4:1249
+6e545e82f1555225dd4174930add70b6e44e6db5:docs/superpowers/plans/2026-09-10-overlay-network-mesh-wiring-plan.md:boxy-pii-private-ipv4:1261
+6e545e82f1555225dd4174930add70b6e44e6db5:docs/superpowers/plans/2026-09-10-overlay-network-mesh-wiring-plan.md:boxy-pii-private-ipv4:1286
+6e545e82f1555225dd4174930add70b6e44e6db5:docs/superpowers/plans/2026-09-10-overlay-network-mesh-wiring-plan.md:boxy-pii-private-ipv4:1296
+6e545e82f1555225dd4174930add70b6e44e6db5:docs/superpowers/plans/2026-09-10-overlay-network-mesh-wiring-plan.md:boxy-pii-private-ipv4:1449
+6e545e82f1555225dd4174930add70b6e44e6db5:docs/superpowers/plans/2026-09-10-overlay-network-mesh-wiring-plan.md:boxy-pii-private-ipv4:1450
+6e545e82f1555225dd4174930add70b6e44e6db5:docs/superpowers/plans/2026-09-10-overlay-network-mesh-wiring-plan.md:boxy-pii-private-ipv4:313
+6e545e82f1555225dd4174930add70b6e44e6db5:docs/superpowers/plans/2026-09-10-overlay-network-mesh-wiring-plan.md:boxy-pii-private-ipv4:322
+6e545e82f1555225dd4174930add70b6e44e6db5:docs/superpowers/plans/2026-09-10-overlay-network-mesh-wiring-plan.md:boxy-pii-private-ipv4:607
+6e545e82f1555225dd4174930add70b6e44e6db5:docs/superpowers/plans/2026-09-10-overlay-network-mesh-wiring-plan.md:boxy-pii-private-ipv4:626
+6e545e82f1555225dd4174930add70b6e44e6db5:docs/superpowers/plans/2026-09-10-overlay-network-mesh-wiring-plan.md:boxy-pii-private-ipv4:631
+6e545e82f1555225dd4174930add70b6e44e6db5:docs/superpowers/plans/2026-09-10-overlay-network-mesh-wiring-plan.md:boxy-pii-private-ipv4:643
+6e545e82f1555225dd4174930add70b6e44e6db5:docs/superpowers/plans/2026-09-10-overlay-network-mesh-wiring-plan.md:boxy-pii-private-ipv4:66
+6e545e82f1555225dd4174930add70b6e44e6db5:docs/superpowers/plans/2026-09-10-overlay-network-mesh-wiring-plan.md:boxy-pii-private-ipv4:76
+6e545e82f1555225dd4174930add70b6e44e6db5:docs/superpowers/plans/2026-09-10-overlay-network-mesh-wiring-plan.md:boxy-pii-private-ipv4:921
+6e545e82f1555225dd4174930add70b6e44e6db5:docs/superpowers/plans/2026-09-10-overlay-network-mesh-wiring-plan.md:boxy-pii-private-ipv4:930
+6e545e82f1555225dd4174930add70b6e44e6db5:docs/superpowers/plans/2026-09-10-overlay-network-mesh-wiring-plan.md:boxy-pii-private-ipv4:941
+6e545e82f1555225dd4174930add70b6e44e6db5:docs/superpowers/plans/2026-09-10-overlay-network-mesh-wiring-plan.md:boxy-pii-private-ipv4:944
+77c8c8237d8ad9479545f4c39ffb2d864e7f9e4c:pkg/providersdk/providers/hyperv/network_isolation.go:boxy-pii-private-ipv4:34
+77c8c8237d8ad9479545f4c39ffb2d864e7f9e4c:pkg/providersdk/providers/hyperv/network_isolation.go:boxy-pii-private-ipv4:35
+77c8c8237d8ad9479545f4c39ffb2d864e7f9e4c:pkg/providersdk/providers/hyperv/network_isolation.go:boxy-pii-private-ipv4:37
+77c8c8237d8ad9479545f4c39ffb2d864e7f9e4c:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:28
+77c8c8237d8ad9479545f4c39ffb2d864e7f9e4c:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:31
+77c8c8237d8ad9479545f4c39ffb2d864e7f9e4c:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:91
+7ae572b3ab31248357c90c42ac80fd64b2ed90c1:pkg/agentsdk/remoteclient_test.go:boxy-pii-private-ipv4:606
+7ae572b3ab31248357c90c42ac80fd64b2ed90c1:pkg/agentsdk/remoteclient_test.go:boxy-pii-private-ipv4:618
+7ae572b3ab31248357c90c42ac80fd64b2ed90c1:pkg/agentsdk/remoteclient_test.go:boxy-pii-private-ipv4:643
+7ae572b3ab31248357c90c42ac80fd64b2ed90c1:pkg/agentsdk/remoteclient_test.go:boxy-pii-private-ipv4:653
+9c11ecd49755604e9880bb78e10b5e80786fdb42:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:152
+a675b44a72d1bac0a0ba0c3d4e6edd52981aff04:pkg/agentsdk/remote_test.go:boxy-pii-private-ipv4:1236
+a675b44a72d1bac0a0ba0c3d4e6edd52981aff04:pkg/agentsdk/remote_test.go:boxy-pii-private-ipv4:1245
+a675b44a72d1bac0a0ba0c3d4e6edd52981aff04:pkg/agentsdk/remote_test.go:boxy-pii-private-ipv4:1260
+a675b44a72d1bac0a0ba0c3d4e6edd52981aff04:pkg/agentsdk/remote_test.go:boxy-pii-private-ipv4:1265
+a91d914b194e6ec3a0599483b87a86717cdb1e40:pkg/providersdk/providers/hyperv/mesh_peering_test.go:boxy-pii-private-ipv4:78
+a91d914b194e6ec3a0599483b87a86717cdb1e40:pkg/providersdk/providers/hyperv/mesh_peering_test.go:boxy-pii-private-ipv4:89
+c7f9725d3c826b9acd78689e95e18b7d8d966ccf:internal/sandbox/manager_test.go:boxy-pii-private-ipv4:673
+c7f9725d3c826b9acd78689e95e18b7d8d966ccf:internal/sandbox/manager_test.go:boxy-pii-private-ipv4:674
+d0ee691ff439797ce3ff733e1f9ed015c1979164:docs/adr/0021-network-isolation-driver-capability.md:boxy-pii-private-ipv4:188
+d0ee691ff439797ce3ff733e1f9ed015c1979164:docs/adr/0021-network-isolation-driver-capability.md:boxy-pii-private-ipv4:81
+d0ee691ff439797ce3ff733e1f9ed015c1979164:docs/adr/0021-network-isolation-driver-capability.md:boxy-pii-private-ipv4:82
+e002c8045e73e893bb1ac7073f05fde07f99713a:pkg/agentsdk/remoteclient_test.go:boxy-pii-private-ipv4:1095
+e002c8045e73e893bb1ac7073f05fde07f99713a:pkg/agentsdk/remoteclient_test.go:boxy-pii-private-ipv4:1104
+e002c8045e73e893bb1ac7073f05fde07f99713a:pkg/agentsdk/remoteclient_test.go:boxy-pii-private-ipv4:1115
+e002c8045e73e893bb1ac7073f05fde07f99713a:pkg/agentsdk/remoteclient_test.go:boxy-pii-private-ipv4:1118
+fd1645bd9b0877a4d38e4795e49141d14adf23bf:pkg/providersdk/providers/hyperv/network_isolation.go:boxy-pii-private-ipv4:36
+fd1645bd9b0877a4d38e4795e49141d14adf23bf:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:154
+fd1645bd9b0877a4d38e4795e49141d14adf23bf:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:159
+fd1645bd9b0877a4d38e4795e49141d14adf23bf:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:200
+fd1645bd9b0877a4d38e4795e49141d14adf23bf:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:201
+fd1645bd9b0877a4d38e4795e49141d14adf23bf:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:226
+fd1645bd9b0877a4d38e4795e49141d14adf23bf:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:246
+fd1645bd9b0877a4d38e4795e49141d14adf23bf:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:250
+fd1645bd9b0877a4d38e4795e49141d14adf23bf:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:253
+fd1645bd9b0877a4d38e4795e49141d14adf23bf:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:258
+fd1645bd9b0877a4d38e4795e49141d14adf23bf:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:274
+fd1645bd9b0877a4d38e4795e49141d14adf23bf:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:378
+fd1645bd9b0877a4d38e4795e49141d14adf23bf:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:379
+# Reviewed 2026-09-18: private-IPv4 test fixtures from the real-hardware
+# Docker cross-host mesh peering session (segment CIDRs, peer-route test
+# args) and the ADR-0022 write-up documenting it. Same category as the
+# 2026-09-17 batch above.
+13fc3433c7b0668ac0a874dadb8d965325b96cc3:docs/adr/0022-cross-host-mesh-peering.md:boxy-pii-private-ipv4:218
+b8e9481dd13a458365bb598a4d1d67c9db1de4df:pkg/providersdk/providers/docker/mesh_peering_test.go:boxy-pii-private-ipv4:111
+b8e9481dd13a458365bb598a4d1d67c9db1de4df:pkg/providersdk/providers/docker/mesh_peering_test.go:boxy-pii-private-ipv4:133
+b8e9481dd13a458365bb598a4d1d67c9db1de4df:pkg/providersdk/providers/docker/mesh_peering_test.go:boxy-pii-private-ipv4:146
+b8e9481dd13a458365bb598a4d1d67c9db1de4df:pkg/providersdk/providers/docker/mesh_peering_test.go:boxy-pii-private-ipv4:152
+b8e9481dd13a458365bb598a4d1d67c9db1de4df:pkg/providersdk/providers/docker/mesh_peering_test.go:boxy-pii-private-ipv4:95
+
+# Reviewed 2026-09-18: private-IPv4 test fixtures added fixing real
+# mesh-peering bugs found in PR #369's Copilot review (listen-port
+# derivation, Hyper-V's missing peer route). Same category as the batches
+# above.
+4cef4490a97975cd0cd30cd8f06c35dce4a99ccc:pkg/providersdk/providers/hyperv/mesh_peering_test.go:boxy-pii-private-ipv4:135
+4cef4490a97975cd0cd30cd8f06c35dce4a99ccc:pkg/providersdk/providers/docker/mesh_peering_test.go:boxy-pii-private-ipv4:178

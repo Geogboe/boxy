@@ -121,8 +121,8 @@ type ResourceCleanupAuditSink interface {
 	RecordResourceCleanup(context.Context, ResourceCleanupAudit) error
 }
 
-// FileStore is a bounded JSONL store. It reads the file for each query so a
-// second daemon process or a restart sees the same durable snapshot.
+// FileStore is a bounded JSONL store. File metadata invalidates cached
+// snapshots when another store or process changes the durable history.
 type FileStore struct {
 	mu       sync.Mutex
 	path     string
@@ -132,6 +132,12 @@ type FileStore struct {
 	cache    []Event
 	cacheKey fileCacheKey
 	cacheOK  bool
+	// Keep the append snapshot separate: queries can filter expired events
+	// without removing them from disk. Fast appends need the disk snapshot.
+	appendCache  []Event
+	appendKey    fileCacheKey
+	appendOK     bool
+	appendExpiry time.Time
 }
 
 type fileCacheKey struct {
@@ -158,11 +164,68 @@ func (s *FileStore) Append(_ context.Context, event Event) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	event = normalizeEvent(event, s.currentTime())
+	now := s.currentTime()
+	event = normalizeEvent(event, now)
+	info, err := os.Stat(s.path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("stat diagnostics store: %w", err)
+	}
+	key := fileCacheKey{}
+	if info != nil {
+		key = fileCacheKey{size: info.Size(), modTime: info.ModTime()}
+	}
+	reload := !s.appendOK || s.appendKey != key
+	events := s.appendCache
+	if reload {
+		events, err = s.readLocked()
+		if err != nil {
+			return err
+		}
+	}
+	previousCount := len(events)
 	line, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("encode diagnostic event: %w", err)
 	}
+	expiry := event.Timestamp.Add(s.maxAge)
+	fast := !reload && key.size+int64(len(line)+1) <= s.maxBytes && !now.After(expiry) && (previousCount == 0 || !now.After(s.appendExpiry))
+	// Invalidate before mutating the snapshot or disk so failures force a reload.
+	s.appendOK = false
+	s.cacheOK = false
+	events = append(events, event)
+	retained := events
+	if !fast {
+		retained = retainEvents(retained, now, s.maxAge, s.maxBytes)
+	}
+	if len(retained) != previousCount+1 || (reload && previousCount != 0) {
+		if err := s.writeRetainedLocked(retained); err != nil {
+			return err
+		}
+	} else if err := s.appendEventLocked(line); err != nil {
+		return err
+	}
+	info, err = os.Stat(s.path)
+	if err != nil {
+		return fmt.Errorf("stat appended diagnostics: %w", err)
+	}
+	s.appendCache = retained
+	s.appendKey = fileCacheKey{size: info.Size(), modTime: info.ModTime()}
+	switch {
+	case fast:
+		if previousCount == 0 || expiry.Before(s.appendExpiry) {
+			s.appendExpiry = expiry
+		}
+	case len(retained) != 0:
+		// Retention orders newest first; the final event expires first.
+		s.appendExpiry = retained[len(retained)-1].Timestamp.Add(s.maxAge)
+	default:
+		s.appendExpiry = time.Time{}
+	}
+	s.appendOK = true
+	return nil
+}
+
+func (s *FileStore) appendEventLocked(line []byte) error {
 	line = append(line, '\n')
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return fmt.Errorf("create diagnostics directory: %w", err)
@@ -182,9 +245,6 @@ func (s *FileStore) Append(_ context.Context, event Event) error {
 	}
 	if closeErr != nil {
 		return fmt.Errorf("close diagnostics store: %w", closeErr)
-	}
-	if err := s.compactLocked(); err != nil {
-		return err
 	}
 	return nil
 }
@@ -267,12 +327,7 @@ func (s *FileStore) readLocked() ([]Event, error) {
 	return events, nil
 }
 
-func (s *FileStore) compactLocked() error {
-	events, err := s.readLocked()
-	if err != nil {
-		return err
-	}
-	events = retainEvents(events, s.currentTime(), s.maxAge, s.maxBytes)
+func (s *FileStore) writeRetainedLocked(events []Event) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return fmt.Errorf("create diagnostics directory: %w", err)
 	}
@@ -286,6 +341,7 @@ func (s *FileStore) compactLocked() error {
 		_ = tmp.Close()
 		return fmt.Errorf("protect diagnostics temp file: %w", err)
 	}
+	writer := bufio.NewWriterSize(tmp, 64<<10)
 	for _, event := range events {
 		line, err := json.Marshal(event)
 		if err != nil {
@@ -293,10 +349,14 @@ func (s *FileStore) compactLocked() error {
 			return fmt.Errorf("encode compacted diagnostic event: %w", err)
 		}
 		line = append(line, '\n')
-		if _, err := tmp.Write(line); err != nil {
+		if _, err := writer.Write(line); err != nil {
 			_ = tmp.Close()
 			return fmt.Errorf("write compacted diagnostics: %w", err)
 		}
+	}
+	if err := writer.Flush(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("flush compacted diagnostics: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close compacted diagnostics: %w", err)

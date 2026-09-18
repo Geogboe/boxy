@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -330,10 +331,19 @@ func (s *Server) Connect(stream boxyagentv1.AgentTransportService_ConnectServer)
 		return fmt.Errorf("authenticate: %w", err)
 	}
 
+	providers := toProviderTypes(reg.GetProviderTypes())
 	info := agentsdk.AgentInfo{
 		ID:        agentID,
 		Name:      reg.GetAgentName(),
-		Providers: toProviderTypes(reg.GetProviderTypes()),
+		Providers: providers,
+		// Filtered against the providers this connection actually
+		// registered, for the same reason RemoteAgent.updateAvailability
+		// drops availability entries for unregistered provider types: a
+		// buggy or compromised agent must not be able to claim an
+		// isolation capability for a provider it was never registered to
+		// serve. Narrowing only — an agent can never advertise more here
+		// than it advertised above.
+		NetworkIsolatingProviders: retainProviderTypes(toProviderTypes(reg.GetNetworkIsolatingProviderTypes()), providers),
 	}
 	remote := agentsdk.NewRemoteAgent(info, stream)
 	remote.SetLogSink(s.storeAgentLogs)
@@ -674,6 +684,24 @@ func toProviderTypes(in []string) []providersdk.Type {
 	out := make([]providersdk.Type, len(in))
 	for i, t := range in {
 		out[i] = providersdk.Type(t)
+	}
+	return out
+}
+
+// retainProviderTypes returns the entries of claimed that also appear in
+// allowed, preserving claimed's order and dropping duplicates. It is the
+// server-side narrowing applied to any per-provider capability a remote
+// agent self-reports, so such a claim can never widen the provider set the
+// same registration frame already declared.
+func retainProviderTypes(claimed, allowed []providersdk.Type) []providersdk.Type {
+	out := make([]providersdk.Type, 0, len(claimed))
+	for _, t := range claimed {
+		if slices.Contains(allowed, t) && !slices.Contains(out, t) {
+			out = append(out, t)
+		}
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

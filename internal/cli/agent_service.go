@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/Geogboe/boxy/internal/svcmgr"
+	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/spf13/cobra"
 )
 
@@ -92,6 +93,19 @@ func runAgentServiceInstall(cmd *cobra.Command, opts agentServiceInstallOpts) er
 		return err
 	}
 	opts.agentOpts = resolvedAgentOpts
+
+	// #349: fail fast on an invalid provider config instead of installing a
+	// service that will only discover the problem when it next starts. A
+	// remote-agent deployment carries its own copy of providers[].config,
+	// separate from the server's -- a new required field (e.g. hyperv's
+	// memory_budget_mb) is easy to update in one file and forget in the
+	// other. This builds the same drivers `agent serve` would, using the
+	// resolved --config/--providers, purely to surface that validation error
+	// here with the offending config file's path attached.
+	if err := validateAgentProviderConfig(opts.agentOpts); err != nil {
+		return err
+	}
+
 	svcName := serviceInstanceName(agentServiceName, opts.instanceName)
 
 	if !opts.userMode {
@@ -177,6 +191,27 @@ func runAgentServiceInstall(cmd *cobra.Command, opts agentServiceInstallOpts) er
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ %s installed and started (config: %s, log: %s)\n", svcName, cfgPath, logFile)
+	return nil
+}
+
+// validateAgentProviderConfig builds the same drivers `agent serve` would
+// from the resolved agent options, purely to surface a provider config
+// validation error (e.g. hyperv's required memory_budget_mb) at install
+// time rather than at the installed service's next start. It attaches the
+// originating --config path when one was given, since the bare underlying
+// error (e.g. "memory_budget_mb is required") on its own does not say which
+// of the (potentially several, per-host) provider config files needs fixing.
+func validateAgentProviderConfig(opts agentServeOpts) error {
+	providerTypes := make([]providersdk.Type, 0, len(opts.providers))
+	for _, p := range opts.providers {
+		providerTypes = append(providerTypes, providersdk.Type(p))
+	}
+	if _, err := buildAgentDrivers(providerTypes, opts.providerConfigs, opts.providerConfigsBaseDir); err != nil {
+		if opts.configPath != "" {
+			return fmt.Errorf("invalid provider config in %s: %w", opts.configPath, err)
+		}
+		return fmt.Errorf("invalid provider config: %w", err)
+	}
 	return nil
 }
 

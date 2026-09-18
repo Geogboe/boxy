@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Geogboe/boxy/pkg/diskjson"
 	"github.com/Geogboe/boxy/pkg/eventstream"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/providersdk/guestcred"
@@ -25,6 +24,8 @@ import (
 var (
 	_ providersdk.Driver            = (*Driver)(nil)
 	_ providersdk.GuestPersonalizer = (*Driver)(nil)
+	_ providersdk.NetworkIsolator   = (*Driver)(nil)
+	_ providersdk.MeshPeerer        = (*Driver)(nil)
 )
 
 // Driver implements providersdk.Driver for local Hyper-V.
@@ -92,13 +93,6 @@ type Driver struct {
 	mu         sync.Mutex
 	reservedMB int64
 
-	// ledgerStore persists the range-based IP allocation ledger (see
-	// ADR-0012). nil when a Driver is constructed directly rather than via
-	// New (e.g. most existing tests in this package) — ledger() lazily
-	// builds an ephemeral temp-backed store in that case.
-	ledgerStore *diskjson.Store[ledgerData]
-	ledgerOnce  sync.Once
-
 	// personalizeLocksMu guards personalizeLocks, one per-resource mutex per
 	// VM ID currently (or previously) personalizing. PersonalizeGuest is
 	// called at least twice per resource (preheat and allocation) and any
@@ -110,6 +104,49 @@ type Driver struct {
 	// mirrors internal/pool.Manager.lockPool's per-key mutex-map pattern.
 	personalizeLocksMu sync.Mutex
 	personalizeLocks   map[string]*sync.Mutex
+
+	// rotatedCredsMu guards rotatedCreds, the in-memory record of the
+	// credential personalizeGuestLocked most recently rotated a guest onto.
+	// See rememberRotatedCredential for why this exists and why it is not a
+	// violation of ADR-0010.
+	rotatedCredsMu sync.Mutex
+	rotatedCreds   map[string]rotatedGuestCredential
+
+	// segmentLedgerPath is where the per-sandbox network-segment CIDR
+	// ledger is persisted (see network_isolation.go). New resolves it under
+	// Config.DataDir when a boxy config file's directory is known
+	// (RelativePathResolver). Empty falls back to a per-Driver ephemeral temp
+	// location — see segments().
+	segmentLedgerPath string
+
+	// segmentLedger/segmentLedgerOnce cache the *segmentLedger instance so
+	// every CreateSegment/AttachToSegment/DestroySegment call on this Driver
+	// shares one diskjson.Store — and therefore one sync.Mutex — over
+	// segmentLedgerFilename. Building a fresh *segmentLedger (and fresh,
+	// unshared mutex) per call would defeat the ledger's own concurrency
+	// guarantee, letting two concurrent allocate() calls each read a stale
+	// snapshot and race their writes (task-2 code review finding 1).
+	segmentLedger     *segmentLedger
+	segmentLedgerOnce sync.Once
+
+	// meshEndpoint is Config.MeshEndpoint, threaded through the same way
+	// segmentLedgerPath is.
+	meshEndpoint string
+
+	// meshInterfaces holds this driver's live mesh interfaces per segment,
+	// created lazily on first MeshIdentity call. In-memory only -- a process
+	// restart loses these (and any peer must reconnect, which is expected
+	// WireGuard behavior after any endpoint goes down, not something this
+	// driver needs to special-case).
+	meshMu         sync.Mutex
+	meshInterfaces map[providersdk.SegmentRef]meshInterface
+
+	// newMeshInterface is the mesh interface factory, keyed only by ifName
+	// (always listenPort 0 -- an ephemeral port is fine for a mesh peer).
+	// nil in production, which meshInterfaceFor resolves to meshnet.New;
+	// tests inject a fake here to avoid needing a real OS TUN device and an
+	// actual WireGuard handshake.
+	newMeshInterface func(ifName string) (meshInterface, error)
 }
 
 // lockPersonalize serializes PersonalizeGuest invocations for the same VM
@@ -129,14 +166,117 @@ func (d *Driver) lockPersonalize(id string) func() {
 	return lock.Unlock
 }
 
-// forgetPersonalizeLock drops id's entry from personalizeLocks once Delete
-// has confirmed the VM gone, so the map doesn't grow unboundedly over a
-// long-running daemon's lifetime as pools recycle resources. Safe to call
-// even if no lock was ever created for id.
+// forgetPersonalizeLock drops id's entry from personalizeLocks -- and its
+// retained rotated credential -- once Delete has confirmed the VM gone, so
+// neither map grows unboundedly over a long-running daemon's lifetime as
+// pools recycle resources. Safe to call even if no lock or credential was
+// ever recorded for id.
+//
+// The credential is cleared here, at the resource's end of life, rather than
+// at its last known consumer (a successful AttachToSegment): the sandbox
+// allocation loop can re-run AttachToSegment for an already-attached
+// resource when a *later* resource in the same sandbox fails, and dropping
+// the credential on first success would leave that retry with only the stale
+// pool bootstrap to authenticate with. One cleanup site tied to Delete is
+// also one lifecycle to reason about rather than two.
 func (d *Driver) forgetPersonalizeLock(id string) {
 	d.personalizeLocksMu.Lock()
 	delete(d.personalizeLocks, id)
 	d.personalizeLocksMu.Unlock()
+
+	d.rotatedCredsMu.Lock()
+	delete(d.rotatedCreds, id)
+	d.rotatedCredsMu.Unlock()
+}
+
+// rotatedGuestCredential is the credential a guest was most recently rotated
+// onto by this driver, held in memory only.
+type rotatedGuestCredential struct {
+	username string
+	password string
+}
+
+// rememberRotatedCredential records the credential personalizeGuestLocked
+// just rotated id's guest onto, so a later same-process guest-exec step for
+// the same resource can still authenticate.
+//
+// This exists because of a real ordering gap found implementing #224's Plan
+// 1c. AttachToSegment must run an in-guest command (assignGuestIP) at
+// allocation time, and by then the guest's password is neither of the values
+// the driver can look up: PersonalizeGuest rotated it off the pool bootstrap
+// at admission, and internal/pool's allocation path deletes the server-side
+// per-resource credential immediately after the allocation-time rotation,
+// one-time-delivering the new value to the sandbox caller instead (ADR-0010).
+// So resolveBootstrapCredential at attach time returns the *pool* bootstrap,
+// which the guest was rotated off long before. The driver that generated the
+// password is the only party that still has it, and it is the same driver
+// that needs it: ProviderRef.AgentID routes Allocate and AttachToSegment for
+// one resource back to the same agent process.
+//
+// This does not widen ADR-0010's boundary. The rotated credential is already
+// described there as opaque and process-local; this value never reaches
+// model.Resource.Properties, VM notes, logs, the API, or remote agent
+// configuration, and is dropped when the resource is deleted
+// (forgetPersonalizeLock).
+//
+// Called only after verify_credential succeeds -- an unverified rotation is
+// a password the guest cannot be proven to have accepted, and caching it
+// would mean confidently authenticating with something wrong -- and only for
+// an allocation-time personalization (opts.ApplyNetwork). Admission-time
+// preheat rotations are deliberately not retained: nothing will attach those
+// resources to a segment until a sandbox claims them, so holding their
+// passwords would mean this process kept the plaintext credential of every
+// idle VM in every Hyper-V pool, indefinitely, to serve a call that may never
+// come. Retention is scoped to in-flight allocations, which is the only
+// window AttachToSegment occupies.
+func (d *Driver) rememberRotatedCredential(id, username, password string) {
+	d.rotatedCredsMu.Lock()
+	defer d.rotatedCredsMu.Unlock()
+	if d.rotatedCreds == nil {
+		d.rotatedCreds = make(map[string]rotatedGuestCredential)
+	}
+	d.rotatedCreds[id] = rotatedGuestCredential{username: username, password: password}
+}
+
+// segmentGuestCredential resolves the credential AttachToSegment should use
+// to reach id's guest, preferring the credential this process rotated the
+// guest onto and falling back to resolveBootstrapCredential.
+//
+// The fallback is genuinely best-effort, not a second reliable path: it is
+// correct only for a guest that has never been rotated (so the pool
+// bootstrap is still current), and is reached in practice when this agent
+// restarted between allocation and attach, taking its in-memory record with
+// it. Keeping it costs nothing and turns one narrow crash window from a
+// certain failure into a possible success.
+//
+// When it does fail it fails loudly, but not cheaply: the authentication
+// error propagates out of AttachToSegment, through
+// internal/sandbox.Manager.ensureNetworkSegment as a hard error, and fails
+// the allocation -- the fulfiller then rolls the sandbox back to `failed` and
+// quarantines the resource. That is still strictly better than a silently
+// mis-addressed guest, which is why the fallback stays, but it is a failed
+// sandbox, not merely an unaddressed VM.
+func (d *Driver) segmentGuestCredential(ctx context.Context, id string, notes map[string]string, guestUser string) (string, string, error) {
+	d.rotatedCredsMu.Lock()
+	rotated, ok := d.rotatedCreds[id]
+	d.rotatedCredsMu.Unlock()
+	if ok {
+		username := rotated.username
+		if strings.TrimSpace(username) == "" {
+			username = guestUser
+		}
+		return username, rotated.password, nil
+	}
+
+	bootstrap, err := d.resolveBootstrapCredential(ctx, id, notes, guestUser)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve guest credential: %w", err)
+	}
+	username := bootstrap.Username
+	if strings.TrimSpace(username) == "" {
+		username = guestUser
+	}
+	return username, bootstrap.Password, nil
 }
 
 // ErrVMBusy indicates a VM is stuck transitioning between power states and
@@ -286,12 +426,18 @@ func New(cfg *Config) (*Driver, error) {
 		dataDir = filepath.Join(wd, dataDir)
 	}
 
+	meshEndpoint := ""
+	if cfg != nil {
+		meshEndpoint = cfg.MeshEndpoint
+	}
+
 	return &Driver{
 		hostReserveMB:          reserve,
 		hostReserveConfigured:  true,
 		memoryBudgetMB:         budget,
 		memoryBudgetConfigured: true,
-		ledgerStore:            diskjson.New(filepath.Join(dataDir, ledgerFilename), newLedgerData),
+		segmentLedgerPath:      filepath.Join(dataDir, segmentLedgerFilename),
+		meshEndpoint:           meshEndpoint,
 	}, nil
 }
 
@@ -344,20 +490,6 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 	if strings.TrimSpace(cc.GuestPassword) != "" {
 		return nil, fmt.Errorf("config.guest_password is no longer supported; use config.guest_password_ref")
 	}
-	if err := cc.Network.validate(); err != nil {
-		return nil, fmt.Errorf("config.network: %w", err)
-	}
-	if cc.Network != nil && strings.TrimSpace(cc.Switch) != "" &&
-		(strings.TrimSpace(cc.Network.Range) != "" || strings.TrimSpace(cc.Network.StaticIP) != "") {
-		// Only meaningful when a switch is declared — with none, there's no
-		// live switch state to validate against, matching pools that predate
-		// this capability (#223, ADR-0013). Applies to both network modes:
-		// static_ip is exactly as exposed to a typo/drifted address as
-		// range mode is.
-		if err := d.validateNetworkRange(ctx, cc.Switch, cc.Network); err != nil {
-			return nil, err
-		}
-	}
 	guestUser := cc.GuestUser
 	if guestUser == "" {
 		if strings.EqualFold(cc.GuestOS, "linux") {
@@ -369,6 +501,10 @@ func (d *Driver) Create(ctx context.Context, cfg any) (*providersdk.Resource, er
 
 	if err := d.checkHostHealth(ctx); err != nil {
 		return nil, fmt.Errorf("hyperv host health check failed, refusing to provision: %w", err)
+	}
+
+	if err := d.checkTemplateNotAttached(ctx, cc.TemplateVHD); err != nil {
+		return nil, err
 	}
 
 	release, err := d.reserveMemory(ctx, int64(cc.MemoryMB))
@@ -400,19 +536,11 @@ Connect-VMNetworkAdapter -VMName '%s' -SwitchName '%s' | Out-Null`,
 
 	// Store only non-sensitive Boxy guest metadata in VM Notes. Bootstrap and
 	// rotated credentials are delivered out-of-band and never written to the VM.
+	//
+	// No network fields are written here any more: a claimed VM's address
+	// comes from its sandbox's segment ledger entry at attach time, not from
+	// anything recorded per-VM at Create time. See AttachToSegment.
 	notes := fmt.Sprintf("boxy_guest_os=%s;boxy_guest_user=%s", cc.GuestOS, guestUser)
-	// Range-mode networking never goes into Notes — the ledger carries it
-	// instead (see ADR-0012). Only static_ip mode writes these fields.
-	if cc.Network != nil && strings.TrimSpace(cc.Network.StaticIP) != "" {
-		notes += fmt.Sprintf(";boxy_net_static_ip=%s;boxy_net_prefix=%d",
-			cc.Network.StaticIP, cc.Network.effectivePrefixLength())
-		if strings.TrimSpace(cc.Network.DefaultGateway) != "" {
-			notes += fmt.Sprintf(";boxy_net_gw=%s", cc.Network.DefaultGateway)
-		}
-		if len(cc.Network.DNSServers) > 0 {
-			notes += fmt.Sprintf(";boxy_net_dns=%s", strings.Join(cc.Network.DNSServers, ","))
-		}
-	}
 
 	createScript := fmt.Sprintf(`
 $ErrorActionPreference = 'Stop'
@@ -450,18 +578,6 @@ Start-VM -Name '%s' | Out-Null
 		// lookup hiccup. Leave it for the periodic ResourceLister sweep
 		// (#174, Task 7) to pick up later.
 		return nil, fmt.Errorf("hyperv create VM %q: resolve id: %w", vmName, err)
-	}
-
-	if cc.Network != nil && strings.TrimSpace(cc.Network.Range) != "" {
-		if err := d.reserveRangeEntry(vmGUID, cc.Network); err != nil {
-			// The VM is healthy and running (Start-VM already succeeded).
-			// Same rationale as the ID-resolution failure above: do NOT
-			// clean up a good VM over a ledger write hiccup. Leave it for
-			// the periodic ResourceLister sweep (#174, Task 7) — it will
-			// simply have no ledger entry, which PersonalizeGuest treats
-			// the same as "no network config at all" (see ADR-0012).
-			return nil, fmt.Errorf("hyperv create VM %q: reserve IP range entry: %w", vmName, err)
-		}
 	}
 
 	return &providersdk.Resource{
@@ -785,6 +901,52 @@ Get-VMHost | Out-Null
 	return nil
 }
 
+// checkTemplateNotAttached refuses to clone a template VHD that some VM is
+// directly using as its own attached disk right now. Cloning (New-VHD
+// -Differencing) or copying the backing file of a disk a live VM is
+// actively writing to produces a torn/inconsistent child image -- reproduced
+// on real hardware (wks01, 2026-09-16): every child cloned while the
+// template VM was running failed to boot an operating system (Hyper-V
+// Worker-Admin event 18603) and never established any Hyper-V
+// integration-service contact, which surfaced many steps downstream as a
+// PersonalizeGuest/HvSocket connect failure with nothing pointing back at
+// the actual cause. Stopping the template VM before cloning fixed it
+// outright.
+//
+// This deliberately checks Get-VMHardDiskDrive for a *running* VM whose disk
+// path is exactly templateVHD, not Get-VHD's Attached property: Attached is
+// true whenever *any* differencing child of templateVHD is running too,
+// since a running child holds a read handle on its parent for on-demand
+// block reads -- an expected, safe, core use of differencing disks, and not
+// a second pool's clone attempt racing this check into a false positive on
+// wks01 (reproduced 2026-09-16: two pools sharing one template, the second
+// pool's clone permanently blocked by the first pool's own healthy running
+// resource). The State filter matters just as much: Get-VMHardDiskDrive
+// returns a VM's *configured* disk regardless of power state, so without it
+// the template's own VM would always match this path check, running or not
+// -- also reproduced on wks01, immediately after fixing the Attached false
+// positive above, before the template VM was ever restarted. Only a running
+// VM using templateVHD as its own disk -- not as a parent, not merely
+// configured to use it while stopped -- is unsafe to clone from.
+func (d *Driver) checkTemplateNotAttached(ctx context.Context, templateVHD string) error {
+	probeCtx, cancel := context.WithTimeout(ctx, d.memQueryTimeout())
+	defer cancel()
+	out, err := d.ps(probeCtx, fmt.Sprintf(`
+$ErrorActionPreference = 'Stop'
+$inUse = Get-VM | Where-Object { $_.State -eq 'Running' } | Get-VMHardDiskDrive | Where-Object { $_.Path -ieq '%s' }
+if ($inUse) { 'True' } else { 'False' }
+`, psq(templateVHD)))
+	if err != nil {
+		return fmt.Errorf("hyperv check template_vhd %q attachment: %w", templateVHD, err)
+	}
+	if strings.EqualFold(strings.TrimSpace(out), "True") {
+		return fmt.Errorf("hyperv template_vhd %q is currently attached to a running VM; "+
+			"stop that VM before using its disk as a clone source -- cloning a live disk "+
+			"produces a torn child image that cannot boot", templateVHD)
+	}
+	return nil
+}
+
 // CapacityError is providersdk.CapacityError under this package's existing
 // name — see #185's design spec for why the type moved.
 type CapacityError = providersdk.CapacityError
@@ -800,10 +962,55 @@ type CapacityError = providersdk.CapacityError
 // already in MB and matches what Task Manager calls "Available" — deliberately
 // not Get-Counter '\Memory\Available MBytes', whose counter *path* is
 // localized on non-English Windows.
+//
+// The perf-counter WMI class itself is not always available: real hosts can
+// have a corrupted performance-counter registration (`lodctr /R` territory)
+// that makes Get-CimInstance fail with "Invalid class" (WBEM_E_INVALID_CLASS)
+// even though the host is otherwise healthy — reproduced on real hardware
+// (wks01, 2026-09-16) with Get-Counter failing identically, ruling out just
+// switching to it as the fallback. GlobalMemoryStatusEx (kernel32, via a
+// P/Invoke) reports the same "available" semantics (it's what Task Manager's
+// own figure is ultimately sourced from) without going through any WMI
+// performance-counter provider, so it's the fallback when the perf class
+// errors, not a second WMI query.
 func (d *Driver) queryAvailableMemoryMB(ctx context.Context) (int64, error) {
 	out, err := d.ps(ctx, `
 $ErrorActionPreference = 'Stop'
-(Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory).AvailableMBytes
+try {
+    (Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory).AvailableMBytes
+} catch {
+    $src = @'
+using System;
+using System.Runtime.InteropServices;
+public class BoxyMemInfo {
+    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Auto)]
+    public struct MEMORYSTATUSEX {
+        public uint dwLength;
+        public uint dwMemoryLoad;
+        public ulong ullTotalPhys;
+        public ulong ullAvailPhys;
+        public ulong ullTotalPageFile;
+        public ulong ullAvailPageFile;
+        public ulong ullTotalVirtual;
+        public ulong ullAvailVirtual;
+        public ulong ullAvailExtendedVirtual;
+    }
+    [DllImport("kernel32.dll", SetLastError=true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX lpBuffer);
+    public static ulong GetAvailablePhysicalMB() {
+        MEMORYSTATUSEX mem = new MEMORYSTATUSEX();
+        mem.dwLength = (uint)Marshal.SizeOf(typeof(MEMORYSTATUSEX));
+        if (!GlobalMemoryStatusEx(ref mem)) {
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        }
+        return mem.ullAvailPhys / (1024UL * 1024UL);
+    }
+}
+'@
+    Add-Type -TypeDefinition $src -Language CSharp
+    [BoxyMemInfo]::GetAvailablePhysicalMB()
+}
 `)
 	if err != nil {
 		return 0, fmt.Errorf("hyperv query available memory: %w", err)
@@ -1011,22 +1218,16 @@ func (d *Driver) Delete(ctx context.Context, id string) (err error) {
 		return fmt.Errorf("resource id is required")
 	}
 
-	// Release id's IP ledger entry (if any) whenever Delete confirms the
-	// VM gone or successfully removes it — its two nil-return paths below.
-	// Deferred so both paths release without duplicating the call, and so
-	// a non-nil return (e.g. ErrVMBusy) does NOT release: the VM may still
-	// be alive with that address configured, and a later retry of Delete
-	// (recycle backoff, drain, the orphan sweep) will reach a nil return
-	// and release then. This matters in practice: the orphan sweep and a
-	// crash-then-recycle both call Delete on a VM already gone from
-	// Hyper-V (the NOT_FOUND path below) with a live ledger entry — release
-	// must not sit only behind the branch that actually runs Remove-VM.
-	// See ADR-0012.
+	// Drop id's per-resource in-memory state (its personalize lock and the
+	// guest credential this driver rotated it onto) whenever Delete confirms
+	// the VM gone or successfully removes it — its two nil-return paths
+	// below. Deferred so both paths clean up without duplicating the call,
+	// and so a non-nil return (e.g. ErrVMBusy) does NOT: the VM may still be
+	// alive and reachable with that credential, and a later retry of Delete
+	// (recycle backoff, drain, the orphan sweep) will reach a nil return and
+	// clean up then.
 	defer func() {
 		if err == nil {
-			if relErr := d.releaseAddress(id); relErr != nil {
-				err = relErr
-			}
 			d.forgetPersonalizeLock(id)
 		}
 	}()
@@ -1118,24 +1319,33 @@ func (d *Driver) Allocate(ctx context.Context, id string) (map[string]any, error
 }
 
 // PersonalizeGuest rotates the guest's admin credential for the VM
-// identified by id and, when opts.ApplyNetwork is true, also applies its
-// static_ip/range-mode network configuration. It holds a per-resource lock
-// for the duration (see lockPersonalize) so that overlapping invocations for
-// the same VM — admission (opts.ApplyNetwork=false) and allocation
-// (opts.ApplyNetwork=true) both call this, and either can retry — cannot
-// interleave their PowerShell Direct sessions against the same guest.
-// Failures emit a structured event distinguishing which phase failed (see
-// personalizeFailureStep) rather than a single undifferentiated bucket.
+// identified by id and reports whatever address that VM currently holds. It
+// holds a per-resource lock for the duration (see lockPersonalize) so that
+// overlapping invocations for the same VM — admission and allocation both
+// call this, and either can retry — cannot interleave their PowerShell
+// Direct sessions against the same guest. Failures emit a structured event
+// distinguishing which phase failed (see personalizeFailureStep) rather than
+// a single undifferentiated bucket.
 //
-// Deferring network application to allocation time is deliberate (#358): a
-// preheated-but-unclaimed pool VM should not become network-reachable just
-// because it reached Ready. Credential rotation and verification always run
-// regardless of opts.ApplyNetwork — they use PowerShell Direct over VMBus,
-// which needs no network. See ADR-0012's 2026-09 change note.
+// This driver no longer applies any network configuration of its own (#224,
+// Plan 1c): a pool's declared static_ip/range config was removed, and a
+// claimed VM is addressed from its sandbox's network segment by
+// AttachToSegment instead. Rotation and verification use PowerShell Direct
+// over VMBus, which needs no network, so they run for an unclaimed preheated
+// VM exactly as before — #358's principle (a preheated-but-unclaimed VM must
+// not become network-reachable early) now holds for free, since nothing
+// reachable is configured until a sandbox claims it.
+//
+// opts.ApplyNetwork still selects the phase, and gates one thing here: whether
+// the rotated credential is retained in memory for a subsequent
+// AttachToSegment (see rememberRotatedCredential). Only an allocation-time
+// call has an attach coming; an admission-time one must not leave a preheated
+// VM's password resident for the pool's whole preheat lifetime. See ADR-0021's
+// 2026-09-14 change-log entry.
 func (d *Driver) PersonalizeGuest(ctx context.Context, id string, opts providersdk.GuestPersonalizationOptions) (*providersdk.GuestPersonalizationResult, error) {
+	start := time.Now()
 	unlock := d.lockPersonalize(id)
 	defer unlock()
-	start := time.Now()
 	result, err := d.personalizeGuestLocked(ctx, id, opts)
 	elapsed := time.Since(start)
 	if err != nil {
@@ -1155,7 +1365,7 @@ func (d *Driver) PersonalizeGuest(ctx context.Context, id string, opts providers
 }
 
 // personalizeStepTimer logs each major phase of guest personalization at
-// debug level with its own elapsed duration, so an operator watching normal
+// info level with its own elapsed duration, so an operator watching normal
 // (non-error, non-timeout) allocations can see exactly where time goes
 // instead of only learning about a step after it fails or times out (#355).
 // This is deliberately independent of the pool-reconcile PolicyController's
@@ -1185,7 +1395,7 @@ func (t *personalizeStepTimer) step(name string) {
 	// the structured attrs) so they remain visible in `boxy diagnostics
 	// logs`'s default table view, which prints only timestamp/level/
 	// component/message and not arbitrary attrs (#355).
-	slog.Debug(fmt.Sprintf("hyperv guest personalization step %q took %s (%s elapsed total)", name, stepElapsed, totalElapsed),
+	slog.Info(fmt.Sprintf("hyperv guest personalization step %q took %s (%s elapsed total)", name, stepElapsed, totalElapsed),
 		"component", "hyperv", "provider", "hyperv",
 		"operation", "personalize", "step", name,
 		"resource", t.id,
@@ -1195,20 +1405,24 @@ func (t *personalizeStepTimer) step(name string) {
 }
 
 // personalizeFailureStep classifies a personalizeGuestLocked failure by
-// which phase it came from, so diagnostics distinguish "network apply
-// failed" from "rotation failed" from "verification failed" instead of one
-// generic bucket (see #336's suggested fix direction).
+// which phase it came from, so diagnostics distinguish "rotation failed"
+// from "verification failed" instead of one generic bucket (see #336's
+// suggested fix direction).
+//
+// The "network_apply" bucket is gone along with the in-guest addressing this
+// method used to do: the address read that replaced it no longer fails the
+// call at all (it warns and reports no address), and segment addressing
+// happens in AttachToSegment, which reports its own errors on the allocation
+// path rather than through this classifier.
 func personalizeFailureStep(err error) string {
 	msg := err.Error()
 	switch {
-	case strings.Contains(msg, "apply range IP"), strings.Contains(msg, "apply static IP"), strings.Contains(msg, "get IP for VM"):
-		return "network_apply"
 	case strings.Contains(msg, "rotate guest credential"):
 		return "rotate"
 	case strings.Contains(msg, "verify rotated guest credential"), strings.Contains(msg, "reconnect with rotated guest credential"):
 		return "verify"
 	case strings.Contains(msg, "resolve guest bootstrap credential"), strings.Contains(msg, "generate guest credential"),
-		strings.Contains(msg, "resolve VM name"), strings.Contains(msg, "read IP ledger"), strings.Contains(msg, "read VM notes"):
+		strings.Contains(msg, "resolve VM name"), strings.Contains(msg, "read VM notes"):
 		return "prepare"
 	default:
 		return "guest_personalize"
@@ -1217,6 +1431,13 @@ func personalizeFailureStep(err error) string {
 
 // personalizeGuestLocked is PersonalizeGuest's implementation, run only
 // while the caller holds this VM's personalize lock.
+//
+// opts.ApplyNetwork no longer gates any in-guest network configuration —
+// this driver applies none of its own any more (#224, Plan 1c) — but it is
+// still what distinguishes an allocation-time call from an admission-time
+// one, and that distinction decides whether the rotated credential is
+// retained for a subsequent AttachToSegment. See the retention call at the
+// end of this function.
 func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts providersdk.GuestPersonalizationOptions) (*providersdk.GuestPersonalizationResult, error) {
 	timer := newPersonalizeStepTimer(id)
 
@@ -1256,128 +1477,58 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts pro
 	if err != nil {
 		return nil, fmt.Errorf("resolve VM name for %s: %w", id, err)
 	}
-	timer.step("resolve_vm_name")
 
-	// Apply network configuration inside the guest via PowerShell Direct
-	// (VMBus — no network required) before querying the IP. This is the
-	// primary hook for Windows Server hosts where Hyper-V does not DHCP.
-	// The IP ledger's own presence for id is the mode discriminator: if a
-	// range-mode entry exists, it wins; otherwise fall back to today's
-	// static_ip Notes check, unchanged. See ADR-0012.
+	// PersonalizeGuest no longer applies any address of its own. A pool's
+	// declared static_ip/range config was removed with #224's Plan 1c: every
+	// isolation-capable Hyper-V pool gets a per-sandbox segment at allocation
+	// time, and AttachToSegment addresses the guest from that segment's own
+	// block, so anything applied here could only ever be superseded. What
+	// remains is an observation — the address the VM currently holds on the
+	// pool's switch, from DHCP or a pre-baked image — reported so a resource
+	// that is never claimed still advertises however it is reachable today.
 	//
-	// opts.ApplyNetwork gates the two boxy-managed modes (range and
-	// static_ip) only (#358): a preheated-but-unclaimed resource must not
-	// have its network identity applied and become reachable. The ledger
-	// entry itself (reserveRangeEntry) is written at Create time, so
-	// hasRangeEntry — the mode discriminator — is unaffected by deferring
-	// the actual address reservation/apply to allocation time; it still
-	// selects the same branch on both calls. DHCP-mode resources (neither
-	// range nor static_ip configured) are unaffected either way: reading
-	// the address Hyper-V/DHCP already assigned via vmIP is not "applying"
-	// anything boxy-managed, so it always runs.
-	rangeEntry, hasRangeEntry, err := d.ledgerLookup(id)
+	// That value is provisional for a claimed resource: AttachToSegment
+	// replaces it. opts.ApplyNetwork is therefore no longer consulted here;
+	// reading an address Hyper-V already assigned is not "applying"
+	// boxy-managed configuration, which is exactly the distinction #358 drew
+	// for DHCP-mode resources, now the only mode this driver has.
+	//
+	// A VM with no readable address is no longer a hard failure. Before Plan
+	// 1c a pool could declare its own address and skip this read entirely;
+	// with that config gone, every pool reaches it — including pools on an
+	// Internal switch that issues no DHCP, which are precisely the ones this
+	// isolation work targets. Quarantining such a resource over a value that
+	// is about to be superseded by its segment address would be the wrong
+	// trade, so the read degrades to a warning and no advertised address,
+	// the same shape #358 already established for a deferred one.
+	ip, err := d.vmIP(ctx, vmName)
 	if err != nil {
-		return nil, fmt.Errorf("read IP ledger for %s: %w", id, err)
+		slog.Default().WarnContext(ctx, "hyperv: no pre-segment address readable for VM; reporting none (a claimed resource is addressed from its sandbox segment instead)",
+			"resource_id", id, "vm_name", vmName, "error", err)
+		ip = ""
 	}
+	timer.step("apply_network")
 
-	// oldSession holds one guest connection under the guest's current (old,
-	// pre-rotation) credential, shared by apply_network (when it runs) and
-	// rotate_credential -- both run under this same credential (see #361:
-	// each PSRP/WinRM session negotiation is a real multi-second guest-side
-	// round trip, and personalizeGuestLocked previously paid that cost once
-	// per step instead of once per credential). openOld is idempotent so
-	// whichever step needs the connection first opens it, and every
-	// subsequent step before the rotation boundary reuses the same one.
-	// verify_credential inherently needs a *new* connection under the
-	// just-rotated credential -- it is never merged into this session; see
-	// its own openGuestSession call below.
-	var oldSession vmsdk.GuestSession
-	openOld := func(sshHost string) error {
-		if oldSession != nil {
-			return nil
-		}
-		session, err := d.openGuestSession(ctx, id, guestOS, guestUser, bootstrap.Password, sshHost)
-		if err != nil {
-			return fmt.Errorf("open guest session for %s: %w", id, err)
-		}
-		oldSession = session
-		return nil
+	// One guest connection under the guest's current (old, pre-rotation)
+	// credential. verify_credential inherently needs a *new* connection
+	// under the just-rotated credential and is never merged into this one;
+	// see its own openGuestSession call below. Before Plan 1c this session
+	// was also shared with an apply_network step under the same credential
+	// (#361); that step is gone, so rotation is now its only user.
+	oldSession, err := d.openGuestSession(ctx, id, guestOS, guestUser, bootstrap.Password, ip)
+	if err != nil {
+		return nil, fmt.Errorf("open guest session for %s: %w", id, err)
 	}
-	// Registered immediately after openOld is defined -- not after the
-	// switch below -- so a failure in apply_network itself (applyRangeIP,
-	// applyStaticIP, or the vmIP read-back that follows it), which returns
-	// before ever reaching the switch's own timer.step, does not strand the
-	// connection openOld already established. The `if oldSession != nil`
-	// guard makes this a no-op both before openOld's first call and again
-	// after the explicit Close + nil-out on the rotate_credential success
-	// path below, so it never double-closes.
+	// The `if oldSession != nil` guard makes this a no-op after the explicit
+	// Close + nil-out on the rotate_credential success path below, so it
+	// never double-closes.
 	defer func() {
 		if oldSession != nil {
 			oldSession.Close(ctx) //nolint:errcheck,gosec // best-effort fallback close on an early-return path; the success path closes explicitly and checks the error below.
 		}
 	}()
 
-	var ip string
-	switch {
-	case hasRangeEntry:
-		// The Linux-unsupported check runs unconditionally — not gated by
-		// opts.ApplyNetwork — because it does no guest-side network work
-		// (it's a pure guestOS check, same one applyRangeIP itself performs
-		// before reserving an address). Without this, a Linux+range-mode
-		// misconfiguration would pass admission silently after #358 (which
-		// gated the actual reservation/apply behind ApplyNetwork) and only
-		// surface, repeatedly, on every subsequent Allocate — a fail-fast
-		// regression relative to pre-#358 behavior.
-		if strings.EqualFold(guestOS, "linux") {
-			return nil, fmt.Errorf("apply range IP for VM %s: %w", id, guestIPUnsupportedOnLinux("range-based IP assignment"))
-		}
-		if opts.ApplyNetwork {
-			// Range mode trusts the address it just reserved and applied as
-			// authoritative — it does NOT re-read it back via vmIP below the
-			// way static_ip mode does. Get-VMNetworkAdapter's IPAddresses is
-			// populated by guest integration services and can lag a fresh
-			// New-NetIPAddress by several seconds, returning a stale
-			// pre-assignment address or an empty list; the ledger's own
-			// AssignedAddress has no such lag. See ADR-0012.
-			if err := openOld(""); err != nil {
-				return nil, err
-			}
-			ip, err = d.applyRangeIP(ctx, oldSession, id, guestOS, rangeEntry)
-			if err != nil {
-				return nil, fmt.Errorf("apply range IP for VM %s: %w", id, err)
-			}
-		}
-	case strings.TrimSpace(notes["boxy_net_static_ip"]) != "":
-		// See the hasRangeEntry case above for why this runs unconditionally.
-		if strings.EqualFold(guestOS, "linux") {
-			return nil, fmt.Errorf("apply static IP for VM %s: %w", id, guestIPUnsupportedOnLinux("static IP"))
-		}
-		if opts.ApplyNetwork {
-			if err := openOld(""); err != nil {
-				return nil, err
-			}
-			if err := d.applyStaticIP(ctx, oldSession, guestOS, notes); err != nil {
-				return nil, fmt.Errorf("apply static IP for VM %s: %w", id, err)
-			}
-			ip, err = d.vmIP(ctx, vmName)
-			if err != nil {
-				return nil, fmt.Errorf("get IP for VM %q: %w", vmName, err)
-			}
-		}
-	default:
-		ip, err = d.vmIP(ctx, vmName)
-		if err != nil {
-			return nil, fmt.Errorf("get IP for VM %q: %w", vmName, err)
-		}
-	}
-	timer.step("apply_network")
-
-	if err := openOld(ip); err != nil {
-		return nil, err
-	}
-
-	rotationCmd, rotationArgs := rotationCommand(guestOS, guestUser, newPassword)
-	rotationResult, err := oldSession.Exec(ctx, rotationCmd, rotationArgs...)
+	rotationResult, err := rotateGuestCredential(ctx, oldSession, guestOS, guestUser, newPassword)
 	if err != nil {
 		return nil, fmt.Errorf("rotate guest credential for %s: %w", id, err)
 	}
@@ -1386,12 +1537,10 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts pro
 		return nil, fmt.Errorf("rotate guest credential for %s failed with exit code %d: %s", id, resultExitCode(rotationResult), resultOutput(rotationResult))
 	}
 
-	// rotate_credential was the last old-credential step; release the
-	// connection now instead of waiting for the deferred fallback so it
-	// isn't held open across verify_credential's separate, new-credential
-	// connection below.
+	// Release the session after the checked rotation command completes.
 	closeErr := oldSession.Close(ctx)
 	oldSession = nil
+	timer.step("close_current_credential")
 	if closeErr != nil {
 		slog.Warn("hyperv: close guest session after rotation", "resource_id", id, "error", closeErr)
 	}
@@ -1414,6 +1563,19 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts pro
 		return nil, fmt.Errorf("verify rotated guest credential for %s failed with exit code %d: %s", id, resultExitCode(verificationResult), resultOutput(verificationResult))
 	}
 
+	// Recorded only now that the guest has demonstrably accepted the new
+	// password, so AttachToSegment can still reach this guest after the
+	// control plane drops its copy. See rememberRotatedCredential.
+	//
+	// Allocation-time only (opts.ApplyNetwork). AttachToSegment is the sole
+	// consumer and runs only once a sandbox has claimed this resource; an
+	// admission-time preheat rotation has no attach coming, so retaining its
+	// password would just leave every unclaimed VM's plaintext credential
+	// resident in this process for the pool's whole preheat lifetime.
+	if opts.ApplyNetwork {
+		d.rememberRotatedCredential(id, guestUser, newPassword)
+	}
+
 	credentialData, err := json.Marshal(map[string]string{
 		"username": guestUser,
 		"password": newPassword,
@@ -1422,11 +1584,11 @@ func (d *Driver) personalizeGuestLocked(ctx context.Context, id string, opts pro
 		return nil, fmt.Errorf("encode guest credential for %s: %w", id, err)
 	}
 
-	// ip is empty when opts.ApplyNetwork was false and this resource uses a
-	// boxy-managed network mode (range or static_ip): no network-reachable
-	// address was applied, so none is reported here (#358) — advertising a
-	// blank "host"/"ssh_host" on a Ready-but-unclaimed resource would be
-	// worse than advertising nothing.
+	// ip is empty when the VM had no readable address (see the vmIP read
+	// above): none is reported here rather than a blank "host"/"ssh_host"
+	// (#358 — advertising an address a resource does not have is worse than
+	// advertising none). A claimed resource gets its real address from its
+	// sandbox's segment at attach time regardless.
 	var access map[string]string
 
 	if strings.EqualFold(guestOS, "linux") {
@@ -1668,45 +1830,6 @@ $ErrorActionPreference = 'Stop'
 	return ip, nil
 }
 
-// applyStaticIP configures static_ip mode's fixed address inside the guest,
-// reading it out of the VM's Notes exactly as before, over exec -- an
-// already-connected guest session (#361) shared with the caller's other
-// old-credential steps rather than a connection this function opens itself.
-// See assignGuestIP for the shared mechanism.
-func (d *Driver) applyStaticIP(ctx context.Context, exec vmsdk.GuestExec, guestOS string, notes map[string]string) error {
-	staticIP := strings.TrimSpace(notes["boxy_net_static_ip"])
-	if staticIP == "" {
-		return nil
-	}
-	prefix := notes["boxy_net_prefix"]
-	gateway := notes["boxy_net_gw"]
-	dns := notes["boxy_net_dns"]
-	return d.assignGuestIP(ctx, exec, guestOS, staticIP, prefix, gateway, dns)
-}
-
-// applyRangeIP reserves (if not already reserved — see reserveAddress's
-// idempotency) and applies entry's range-mode address inside the guest over
-// exec (an already-connected guest session, #361), returning the reserved
-// address. PersonalizeGuest trusts this return value as authoritative for
-// the guest's reachable IP rather than re-reading it back via vmIP — see
-// the call site's comment and ADR-0012 for why.
-func (d *Driver) applyRangeIP(ctx context.Context, exec vmsdk.GuestExec, id, guestOS string, entry *ledgerEntry) (string, error) {
-	if strings.EqualFold(guestOS, "linux") {
-		// Checked before reserveAddress so an unsupported Linux guest
-		// doesn't burn a reservation it can never apply.
-		return "", guestIPUnsupportedOnLinux("range-based IP assignment")
-	}
-	address, err := d.reserveAddress(id)
-	if err != nil {
-		return "", fmt.Errorf("reserve address for %s: %w", id, err)
-	}
-	dns := strings.Join(entry.DNSServers, ",")
-	if err := d.assignGuestIP(ctx, exec, guestOS, address, strconv.Itoa(entry.PrefixLength), entry.DefaultGateway, dns); err != nil {
-		return "", err
-	}
-	return address, nil
-}
-
 // guestIPUnsupportedOnLinux builds the shared "not supported for Linux"
 // error, parameterized by which mode (mechanism) was being attempted.
 func guestIPUnsupportedOnLinux(mechanism string) error {
@@ -1717,28 +1840,29 @@ func guestIPUnsupportedOnLinux(mechanism string) error {
 // PowerShell Direct (VMBus — no guest network required). This is the primary
 // mechanism for Windows Server Hyper-V hosts where the virtual switch does not
 // issue DHCP leases. Only Windows guests are supported; Linux guests must
-// obtain their address via another mechanism (e.g. cloud-init). Shared by
-// applyStaticIP (static_ip mode) and applyRangeIP (range mode, ADR-0012) —
-// ip/prefix/gateway/dns is all either needs to source, from Notes or the
-// ledger respectively.
+// obtain their address via another mechanism (e.g. cloud-init).
+//
+// Its sole caller is AttachToSegment, which sources ip/prefix/gateway from
+// the sandbox's own segment ledger entry (#224, Plan 1c). It was previously
+// shared by two pool-declared addressing modes (static_ip and ADR-0012's
+// range mode); both were removed when segment addressing made them dead —
+// see config.go's note.
 //
 // The script is idempotent and self-verifying (#235, fixed 2026-08-26):
-// before #358 (2026-09-08), a preheated resource was always personalized a
-// second time on its first Allocate, making re-application to an
-// already-configured guest the normal path rather than an edge case. #358
-// deferred the actual apply to allocation time, so a resource's network
-// configuration is now normally applied exactly once — but a retry after a
-// crash or transient failure (or a second Allocate of the same resource,
-// e.g. after a rollback) still re-applies to an already-configured guest,
-// so idempotency remains required, not just historically motivated. The
-// original script removed the guest's existing
+// a resource's address is normally applied exactly once, but a retry after
+// a crash or transient failure (AttachToSegment is contractually
+// retryable — see providersdk.NetworkIsolator) still re-applies to an
+// already-configured guest, so idempotency remains required, not just
+// historically motivated. The original script removed the guest's existing
 // IPv4 address but left its default route in place; New-NetIPAddress's own
 // -DefaultGateway then rejected the reapply ("Instance DefaultGateway
 // already exists") *after* the working address was already torn out,
 // leaving the guest on APIPA while the driver still reported success. The
 // script now clears the interface's existing default route alongside its
-// address before reapplying, and — since ADR-0012 deliberately trusts this
-// return value over a host-side Get-VMNetworkAdapter read-back — re-queries
+// address before reapplying, and — since no host-side
+// Get-VMNetworkAdapter read-back confirms this apply (that view is populated
+// by guest integration services and lags a fresh New-NetIPAddress by
+// seconds) — re-queries
 // the guest's own state immediately after and throws if it doesn't confirm
 // the apply: the address must be present in a usable state (Preferred or
 // Tentative, not Duplicate/Invalid — a bare presence check would pass on
@@ -1757,6 +1881,16 @@ func (d *Driver) assignGuestIP(ctx context.Context, exec vmsdk.GuestExec, guestO
 	}
 	gateway = strings.TrimSpace(gateway)
 	dns = strings.TrimSpace(dns)
+	if scriptExec, ok := exec.(vmsdk.GuestExecScript); ok {
+		result, err := scriptExec.ExecScript(ctx, assignIPScript, ip, prefix, gateway, dns)
+		if err != nil {
+			return fmt.Errorf("run static IP script: %w", err)
+		}
+		if result == nil || result.ExitCode != 0 {
+			return fmt.Errorf("static IP script exited %d", resultExitCode(result))
+		}
+		return nil
+	}
 
 	// Build the PowerShell script to assign the address inside the guest.
 	// We target the first non-disabled adapter ordered by interface index.

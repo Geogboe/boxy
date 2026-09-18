@@ -67,7 +67,7 @@ func (r *fakeServeSandboxReconciler) Reconcile(ctx context.Context) error {
 	return nil
 }
 
-func TestServeReconcilePass_ReconcilesPoolsBeforeAndAfterSandboxFulfillment(t *testing.T) {
+func TestServeReconcilePass_ReconcilesPoolsAfterSandboxFulfillment(t *testing.T) {
 	t.Parallel()
 
 	pools := &fakeServePoolReconciler{}
@@ -79,7 +79,7 @@ func TestServeReconcilePass_ReconcilesPoolsBeforeAndAfterSandboxFulfillment(t *t
 		t.Fatalf("sandbox reconcile calls = %d, want 1", sandboxes.calls)
 	}
 
-	want := []model.PoolName{"web", "win", "web", "win"}
+	want := []model.PoolName{"web", "win"}
 	if len(pools.calls) != len(want) {
 		t.Fatalf("pool reconcile calls = %v, want %v", pools.calls, want)
 	}
@@ -461,7 +461,7 @@ func TestServeReconcilePass_RunsPostFulfillmentPoolReconcileEvenAfterSandboxErro
 
 	serveReconcilePass(context.Background(), pools, nil, sandboxes, nil, []model.PoolName{"web"}, newServeUI(false))
 
-	want := []model.PoolName{"web", "web"}
+	want := []model.PoolName{"web"}
 	if len(pools.calls) != len(want) {
 		t.Fatalf("pool reconcile calls = %v, want %v", pools.calls, want)
 	}
@@ -494,7 +494,7 @@ func TestServeReconcilePass_DeletesSandboxesBeforePoolRefill(t *testing.T) {
 
 	serveReconcilePass(context.Background(), pools, deleter, fulfiller, nil, []model.PoolName{"web"}, newServeUI(false))
 
-	want := []string{"delete", "pool:web", "fulfill", "pool:web"}
+	want := []string{"delete", "fulfill", "pool:web"}
 	if len(order) != len(want) {
 		t.Fatalf("order = %v, want %v", order, want)
 	}

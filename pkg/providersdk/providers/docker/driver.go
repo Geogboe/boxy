@@ -9,9 +9,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types"
@@ -53,12 +55,48 @@ type dockerClient interface {
 	ContainerExecAttach(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error)
 	ContainerExecInspect(ctx context.Context, execID string) (container.ExecInspect, error)
 	ContainerRemove(ctx context.Context, containerID string, options container.RemoveOptions) error
+	NetworkCreate(ctx context.Context, name string, options network.CreateOptions) (network.CreateResponse, error)
+	NetworkInspect(ctx context.Context, networkID string, options network.InspectOptions) (network.Inspect, error)
+	NetworkConnect(ctx context.Context, networkID, containerID string, config *network.EndpointSettings) error
+	NetworkDisconnect(ctx context.Context, networkID, containerID string, force bool) error
+	NetworkRemove(ctx context.Context, networkID string) error
 	Info(ctx context.Context) (systemtypes.Info, error)
 }
 
 // Driver implements providersdk.Driver using the Docker Engine API.
 type Driver struct {
 	cli dockerClient
+
+	// meshEndpoint is Config.MeshEndpoint, threaded through the same way
+	// hyperv.Driver.meshEndpoint is.
+	meshEndpoint string
+
+	// hostExec runs a shell command on the Docker host, used only for
+	// installing the mesh route (ip route add) -- everything else this
+	// driver does goes through the Docker Engine API, never a host shell.
+	// nil -> a real os/exec-backed implementation; inject a fake in tests.
+	hostExec func(ctx context.Context, name string, args ...string) (string, error)
+
+	// meshInterfaces holds this driver's live mesh interfaces per segment,
+	// created lazily on first MeshIdentity call. See hyperv.Driver's
+	// identical field for why this is in-memory only.
+	meshMu         sync.Mutex
+	meshInterfaces map[providersdk.SegmentRef]meshInterface
+
+	// newMeshInterface is the mesh interface factory; nil in production
+	// (meshInterfaceFor resolves it to meshnet.New), tests inject a fake to
+	// avoid needing a real OS TUN device and an actual WireGuard handshake.
+	newMeshInterface func(ifName string) (meshInterface, error)
+}
+
+// runHost executes name/args on the Docker host, via hostExec if injected
+// (tests) or a real os/exec call otherwise.
+func (d *Driver) runHost(ctx context.Context, name string, args ...string) (string, error) {
+	if d.hostExec != nil {
+		return d.hostExec(ctx, name, args...)
+	}
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	return string(out), err
 }
 
 // New creates a Docker driver using the given config.
@@ -74,7 +112,7 @@ func New(cfg *Config) (*Driver, error) {
 	if err != nil {
 		return nil, fmt.Errorf("docker client: %w", err)
 	}
-	return &Driver{cli: cli}, nil
+	return &Driver{cli: cli, meshEndpoint: cfg.MeshEndpoint}, nil
 }
 
 func (d *Driver) Type() providersdk.Type { return ProviderType }

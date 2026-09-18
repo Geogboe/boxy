@@ -17,6 +17,13 @@ linters:
         - G304  # file inclusion via variable (intentional in loaders)
 
   exclusions:
+    paths:
+      # Nested git worktrees under .worktrees/ (see AGENTS.md's
+      # using-git-worktrees convention) are gitignored scratch checkouts of
+      # this same module -- golangci-lint's directory walk isn't gitignore-
+      # aware, so a lint run from the repo root while a worktree exists would
+      # otherwise re-scan its files as if they belonged to this module tree.
+      - ^\.worktrees/
     rules:
       - path: _test\.go
         linters:

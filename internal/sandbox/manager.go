@@ -8,6 +8,9 @@ import (
 	"sync"
 	"time"
 
+	// Aliased: this file's allocation helpers all take a `pool model.Pool`
+	// parameter, which would shadow an unaliased import of this package.
+	boxypool "github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/resourcepool"
@@ -236,6 +239,9 @@ func (m *Manager) AddFromPoolWithPackages(
 			if len(allocation.AppliedPackages) != 0 {
 				res.AppliedPackages = append(res.AppliedPackages, allocation.AppliedPackages...)
 			}
+			if err := m.ensureNetworkSegment(ctx, &sb, pool, res); err != nil {
+				return model.Sandbox{}, fmt.Errorf("ensure network segment for resource %q: %w", res.ID, err)
+			}
 		}
 		res.State = model.ResourceStateAllocated
 		if err := m.store.PutResource(ctx, res); err != nil {
@@ -347,10 +353,19 @@ func (m *Manager) CreateFromPool(
 			if allocation.GuestCredential != nil {
 				m.rememberGuestCredential(sb.ID, res.ID, allocation.GuestCredential)
 			}
+			if err := m.ensureNetworkSegment(ctx, &sb, pool, res); err != nil {
+				return model.Sandbox{}, fmt.Errorf("ensure network segment for resource %q: %w", res.ID, err)
+			}
 		}
 		res.State = model.ResourceStateAllocated
 		if err := m.store.PutResource(ctx, res); err != nil {
 			return model.Sandbox{}, fmt.Errorf("put resource %q: %w", res.ID, err)
+		}
+	}
+
+	if len(sb.NetworkSegments) != 0 {
+		if err := m.store.PutSandbox(ctx, sb); err != nil {
+			return model.Sandbox{}, fmt.Errorf("put sandbox: %w", err)
 		}
 	}
 
@@ -486,6 +501,149 @@ func (m *Manager) ForgetGuestCredentials(sbID model.SandboxID) {
 	m.guestCredentialsMu.Lock()
 	defer m.guestCredentialsMu.Unlock()
 	delete(m.guestCredentials, sbID)
+}
+
+// ensureNetworkSegment attaches res to sb's segment for res's (agent,
+// provider type) pair, creating that segment first if this is the first
+// resource with that pairing this sandbox has seen. Mutates
+// sb.NetworkSegments in place and, on creating a new segment, persists sb
+// immediately (see below).
+//
+// Reuse is keyed on BOTH the agent and the provider type, never the agent
+// alone. A segment is a provider-specific host object -- a Hyper-V vSwitch, a
+// Docker network -- so one agent hosting two drivers owns two unrelated
+// segments for the same sandbox, and handing one driver's ref to the other is
+// a hard failure inside that driver, not a graceful degradation. This is the
+// ordinary daemon shape rather than an edge case: internal/cli/serve.go builds
+// one embedded agent over every configured driver, so every mixed-provider
+// sandbox shares a single agent ID across its pools.
+//
+// res.Provider.Name is the resolved provider type to match on:
+// pool.AgentProvisioner.ProvisionLocked stamps the pool's resolved driver
+// type onto each resource it creates, and CreateSegment returns that same
+// resolved type for the segment it records (see CompatibleWithPool, which
+// already treats the two as one value).
+//
+// That is an invariant, not a guarantee, and there is exactly one shape where
+// it can break: editing a pool's spec.Type/spec.Provider in config *after* its
+// resources were provisioned. The reuse key (res.Provider.Name, the old type)
+// would then miss the segment CreateSegment records (the new type), and each
+// resource would append its own duplicate segment record. Harmless in
+// practice -- DestroySegment is idempotent, so duplicates tear down cleanly --
+// and the same config drift already misroutes Allocate/Destroy upstream of
+// here, so it is not worth a defensive check on this path. Noted so a reader
+// does not have to reconstruct it.
+//
+// There are two distinct ways isolation is skipped rather than failed,
+// matching this plan's Global Constraints:
+//
+//   - m.allocator doesn't implement NetworkIsolatingAllocator at all — no
+//     isolation-capable provider is wired up in this deployment.
+//   - The allocator reports pool.ErrNetworkIsolationUnsupported, meaning
+//     the specific agent owning res advertises no providersdk.NetworkIsolator
+//     support for res's provider type. A sandbox may legitimately mix
+//     resources from an isolating pool and a non-isolating one; the latter
+//     get no segment and no error. Every other error is a hard failure.
+//
+// The new-segment branch persists sb between CreateSegment and
+// AttachToSegment, not at the caller's end-of-loop. CreateSegment has by
+// then made a real host object (a vSwitch, a NAT, a Docker network) that
+// only this ref can address, so any later error — a failing attach right
+// below, or a different resource failing on a subsequent loop iteration —
+// would otherwise discard the in-memory append along with the caller's
+// stack frame and strand that object with no record of it anywhere. Once
+// persisted, it is reachable by sandbox deletion's own segment teardown.
+//
+// store.PutSandbox writes the whole record, so this also lands whatever
+// else the caller has already staged on sb — notably the resource-ID list
+// AddFromPoolWithPackages appends before its loop. That is strictly safer
+// than persisting it later: those resources are already out of the pool's
+// ready inventory (PutPool ran first), and deletion tolerates a listed
+// resource that has no store record.
+func (m *Manager) ensureNetworkSegment(ctx context.Context, sb *model.Sandbox, pool model.Pool, res model.Resource) error {
+	isolator, ok := m.allocator.(NetworkIsolatingAllocator)
+	if !ok {
+		return nil
+	}
+	agentID := res.Provider.AgentID
+	providerType := res.Provider.Name
+	for _, seg := range sb.NetworkSegments {
+		if seg.AgentID == agentID && seg.ProviderType == providerType {
+			return isolator.AttachToSegment(ctx, pool, res, providersdk.SegmentRef(seg.Ref))
+		}
+	}
+	// createdType, not providerType: the allocator resolves the segment's
+	// provider type itself and is the authority on what was actually
+	// created. In production it equals providerType above (both are the
+	// pool's resolved driver type); recording what the allocator returned
+	// keeps the record true to the host object even if they ever diverge.
+	ref, createdType, err := isolator.CreateSegment(ctx, pool, res, sb.ID)
+	if errors.Is(err, boxypool.ErrNetworkIsolationUnsupported) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("create network segment for sandbox %q: %w", sb.ID, err)
+	}
+	sb.NetworkSegments = append(sb.NetworkSegments, model.NetworkSegment{
+		AgentID:      agentID,
+		ProviderType: string(createdType),
+		Ref:          string(ref),
+	})
+	if err := m.store.PutSandbox(ctx, *sb); err != nil {
+		return fmt.Errorf("persist network segment for sandbox %q: %w", sb.ID, err)
+	}
+	if err := isolator.AttachToSegment(ctx, pool, res, ref); err != nil {
+		return fmt.Errorf("attach resource %q to network segment: %w", res.ID, err)
+	}
+	if err := m.triggerMeshPeering(ctx, sb, agentID); err != nil {
+		return fmt.Errorf("establish mesh peering for sandbox %q: %w", sb.ID, err)
+	}
+	return nil
+}
+
+// triggerMeshPeering peers the sandbox's newly-added agent (identified by
+// newAgentID) with every agent already in sb.NetworkSegments -- full mesh,
+// pairwise. A no-op if m.allocator doesn't support MeshPeeringAllocator, or
+// if this is the sandbox's first (and so far only) segment (nothing to peer
+// with yet) -- so a single-host sandbox never reaches the mesh path at all.
+func (m *Manager) triggerMeshPeering(ctx context.Context, sb *model.Sandbox, newAgentID string) error {
+	peerer, ok := m.allocator.(MeshPeeringAllocator)
+	if !ok {
+		return nil
+	}
+	if len(sb.NetworkSegments) < 2 {
+		return nil
+	}
+	var newRef providersdk.SegmentRef
+	var newProviderType providersdk.Type
+	for _, seg := range sb.NetworkSegments {
+		if seg.AgentID == newAgentID {
+			newRef = providersdk.SegmentRef(seg.Ref)
+			newProviderType = providersdk.Type(seg.ProviderType)
+			break
+		}
+	}
+	newPub, newEndpoint, newCIDR, err := peerer.MeshIdentity(ctx, newProviderType, newAgentID, newRef)
+	if err != nil {
+		return err
+	}
+	for _, seg := range sb.NetworkSegments {
+		if seg.AgentID == newAgentID {
+			continue
+		}
+		existingProviderType := providersdk.Type(seg.ProviderType)
+		existingPub, existingEndpoint, existingCIDR, err := peerer.MeshIdentity(ctx, existingProviderType, seg.AgentID, providersdk.SegmentRef(seg.Ref))
+		if err != nil {
+			return err
+		}
+		if err := peerer.AddMeshPeer(ctx, existingProviderType, seg.AgentID, providersdk.SegmentRef(seg.Ref), newPub, newEndpoint, newCIDR); err != nil {
+			return err
+		}
+		if err := peerer.AddMeshPeer(ctx, newProviderType, newAgentID, newRef, existingPub, existingEndpoint, existingCIDR); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func wrapResources(rs []model.Resource) []keyedResource {

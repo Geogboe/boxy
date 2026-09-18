@@ -399,3 +399,65 @@ func TestDeletionReconciler_UnsticksSandboxAfterResourceForceOrphaned(t *testing
 		t.Fatalf("sandbox after unsticking err = %v, want ErrNotFound (deletion completed)", err)
 	}
 }
+
+// fakeSegmentDestroyer adds SegmentDestroyer on top of the existing
+// fakeDestroyer (ResourceDestroyer), mirroring this codebase's established
+// "capability on top of a base fake" shape.
+type fakeSegmentDestroyer struct {
+	*fakeDestroyer
+	destroyedSegments []model.NetworkSegment
+	destroySegmentErr error
+}
+
+func (f *fakeSegmentDestroyer) DestroySegment(_ context.Context, agentID string, providerType string, ref string) error {
+	f.destroyedSegments = append(f.destroyedSegments, model.NetworkSegment{AgentID: agentID, ProviderType: providerType, Ref: ref})
+	return f.destroySegmentErr
+}
+
+func TestDeletionReconciler_DestroysNetworkSegmentsBeforeDeletingSandbox(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	sb := model.Sandbox{
+		ID:     "sb-1",
+		Status: model.SandboxStatusDeleting,
+		NetworkSegments: []model.NetworkSegment{
+			{AgentID: "agent-1", ProviderType: "hyperv", Ref: "boxy-sb-sb-1"},
+		},
+	}
+	if err := st.CreateSandbox(ctx, sb); err != nil {
+		t.Fatalf("CreateSandbox: %v", err)
+	}
+
+	destroyer := &fakeSegmentDestroyer{fakeDestroyer: &fakeDestroyer{}}
+	r := NewDeletionReconciler(st, destroyer)
+
+	if err := r.Reconcile(ctx); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(destroyer.destroyedSegments) != 1 || destroyer.destroyedSegments[0].Ref != "boxy-sb-sb-1" {
+		t.Fatalf("destroyed segments = %+v, want one entry for boxy-sb-sb-1", destroyer.destroyedSegments)
+	}
+	if _, err := st.GetSandbox(ctx, "sb-1"); err == nil {
+		t.Fatal("expected sandbox to be deleted after its segments were torn down")
+	}
+}
+
+func TestDeletionReconciler_PlainDestroyerSkipsSegmentsEntirely(t *testing.T) {
+	// A ResourceDestroyer that does NOT implement SegmentDestroyer (matches
+	// this plan's Global Constraints -- a devfactory-only deployment, or
+	// any existing caller/test with no segment concept at all).
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	sb := model.Sandbox{ID: "sb-1", Status: model.SandboxStatusDeleting}
+	if err := st.CreateSandbox(ctx, sb); err != nil {
+		t.Fatalf("CreateSandbox: %v", err)
+	}
+
+	r := NewDeletionReconciler(st, &fakeDestroyer{})
+	if err := r.Reconcile(ctx); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if _, err := st.GetSandbox(ctx, "sb-1"); err == nil {
+		t.Fatal("expected sandbox to be deleted")
+	}
+}

@@ -62,6 +62,66 @@ type GuestPersonalizingAgent interface {
 	PersonalizeGuest(ctx context.Context, provider providersdk.Type, id string, opts providersdk.GuestPersonalizationOptions) (*providersdk.GuestPersonalizationResult, error)
 }
 
+// NetworkIsolatingAgent is an optional agent capability for providers that
+// implement providersdk.NetworkIsolator. Unlike GuestPersonalizingAgent
+// (which degrades to nil, nil for an unsupported driver so callers fall
+// back to the generic Allocate path), there is no fallback here: a caller
+// that reaches CreateSegment/AttachToSegment/DestroySegment already
+// type-asserted for this capability specifically, so an unsupported
+// driver is a caller bug, not an expected degrade path — it should error.
+//
+// A SegmentRef is only meaningful to the agent that returned it. A segment is
+// a host-local object — a vSwitch on one specific Hyper-V host, a network on
+// one specific Docker daemon — so all three calls for a given segment
+// (CreateSegment, then every later AttachToSegment/DestroySegment against the
+// ref it returned) must be routed to the same agent instance that created it.
+// Re-resolving by provider type is not sufficient: resolution round-robins
+// across agents advertising the same type, so a second call could land on a
+// different host where the segment simply does not exist. This is the same
+// per-agent-provenance constraint model.ProviderRef.AgentID already codifies
+// for regular resource operations — see
+// docs/adr/0005-remote-agent-transport-and-registration.md.
+type NetworkIsolatingAgent interface {
+	// CreateSegment creates a new, empty private network segment for the
+	// given sandbox on the agent's driver for provider.
+	//
+	// Idempotent per sandboxID: repeated calls for the same sandbox return
+	// the same SegmentRef without erroring, rather than creating a second
+	// segment. Callers therefore retry a failed or interrupted CreateSegment
+	// freely; an implementation that created a fresh segment each time would
+	// strand the earlier ones, since only the ref the caller ends up holding
+	// is ever passed to DestroySegment. This mirrors
+	// providersdk.NetworkIsolator.CreateSegment's contract, which is where a
+	// driver actually has to honor it.
+	//
+	// An empty SegmentRef returned without an error is not currently rejected
+	// by either agent implementation: EmbeddedAgent returns whatever the
+	// driver gave it and RemoteAgent returns whatever arrived on the wire,
+	// both verbatim. Validating that case is deliberately deferred to the
+	// caller (Plan 1c), which is the layer that decides whether to persist a
+	// ref and what to do when one is unusable.
+	CreateSegment(ctx context.Context, provider providersdk.Type, sandboxID string) (providersdk.SegmentRef, error)
+
+	// AttachToSegment moves an already-created resource onto a segment. Must
+	// be routed to the agent that returned ref.
+	AttachToSegment(ctx context.Context, provider providersdk.Type, providerResourceID string, ref providersdk.SegmentRef) error
+
+	// DestroySegment tears down a segment created by CreateSegment. Must be
+	// routed to the agent that returned ref, and is idempotent for an
+	// already-gone segment.
+	DestroySegment(ctx context.Context, provider providersdk.Type, ref providersdk.SegmentRef) error
+}
+
+// MeshPeeringAgent is an optional agent capability for providers that
+// implement providersdk.MeshPeerer. Like NetworkIsolatingAgent, an
+// unsupported driver is a caller error (no fallback path), since a caller
+// reaching these methods already type-asserted for this capability.
+type MeshPeeringAgent interface {
+	MeshIdentity(ctx context.Context, provider providersdk.Type, ref providersdk.SegmentRef) (publicKey, endpoint, cidr string, err error)
+	AddMeshPeer(ctx context.Context, provider providersdk.Type, ref providersdk.SegmentRef, peerPublicKey, peerEndpoint, peerCIDR string) error
+	RemoveMeshPeer(ctx context.Context, provider providersdk.Type, ref providersdk.SegmentRef, peerPublicKey string) error
+}
+
 // ResourceListingAgent is an optional agent capability for providers whose
 // underlying driver implements providersdk.ResourceLister. Not every driver
 // supports enumeration, so callers must type-assert for this rather than
@@ -110,4 +170,55 @@ type AgentInfo struct {
 
 	// Providers lists the provider types this agent can handle.
 	Providers []providersdk.Type
+
+	// NetworkIsolatingProviders is the subset of Providers whose driver on
+	// this agent actually implements providersdk.NetworkIsolator. Empty or
+	// nil means none — the correct default for an agent hosting only
+	// non-isolating drivers (a devfactory-only agent, say).
+	//
+	// It exists because NetworkIsolatingAgent is implemented
+	// unconditionally by both EmbeddedAgent and RemoteAgent, so a
+	// type-assertion for that capability tells a caller nothing about
+	// whether the driver behind it can isolate anything. For a remote
+	// agent the daemon cannot type-assert the real driver at all. Without
+	// this advertisement the control plane only learns "unsupported" as a
+	// hard error from deep inside a CreateSegment call it had already
+	// committed to. Callers consult this BEFORE asking an agent to create a
+	// segment, and treat a provider's absence as "skip isolation for this
+	// resource", not as a failure.
+	//
+	// Both agent implementations compute it the same way, from their own
+	// local drivers, via NetworkIsolatingProviderTypes: EmbeddedAgent at
+	// construction, a remote agent at registration (carried in
+	// RegisterRequest.network_isolating_provider_types and filtered against
+	// Providers server-side).
+	NetworkIsolatingProviders []providersdk.Type
+}
+
+// NetworkIsolatingProviderTypes returns the subset of providers whose driver
+// in drivers implements providersdk.NetworkIsolator — the canonical way to
+// compute AgentInfo.NetworkIsolatingProviders, shared by EmbeddedAgent's
+// constructor and the remote agent client's registration frame so the two
+// can never drift apart.
+//
+// It iterates providers (an ordered slice) and looks each one up in drivers,
+// rather than ranging drivers directly, so the result is deterministic:
+// Go map iteration order is randomized, and this value goes both into wire
+// frames and into test assertions. A provider with no driver entry is
+// skipped rather than treated as isolating.
+func NetworkIsolatingProviderTypes(drivers DriverSet, providers []providersdk.Type) []providersdk.Type {
+	isolating := make([]providersdk.Type, 0, len(providers))
+	for _, p := range providers {
+		d, ok := drivers[p]
+		if !ok {
+			continue
+		}
+		if _, ok := d.(providersdk.NetworkIsolator); ok {
+			isolating = append(isolating, p)
+		}
+	}
+	if len(isolating) == 0 {
+		return nil
+	}
+	return isolating
 }

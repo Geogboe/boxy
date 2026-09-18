@@ -80,6 +80,10 @@ type streamWaiter struct {
 
 var _ GuestPersonalizingAgent = (*RemoteAgent)(nil)
 var _ AvailabilityReportingAgent = (*RemoteAgent)(nil)
+var (
+	_ NetworkIsolatingAgent = (*RemoteAgent)(nil)
+	_ MeshPeeringAgent      = (*RemoteAgent)(nil)
+)
 
 // reconstructAgentError rebuilds a typed error from an AgentError's
 // error_type/error_detail_json when recognized, falling back to today's
@@ -647,4 +651,98 @@ func (a *RemoteAgent) PersonalizeGuest(ctx context.Context, provider providersdk
 		AccessDetails:       providersdk.GuestAccessDetails{Properties: pg.GetProperties()},
 		EphemeralCredential: credential,
 	}, nil
+}
+
+func (a *RemoteAgent) CreateSegment(ctx context.Context, provider providersdk.Type, sandboxID string) (providersdk.SegmentRef, error) {
+	res, err := a.call(ctx, &boxyagentv1.Command{
+		ProviderType: string(provider),
+		Op:           &boxyagentv1.Command_CreateSegment{CreateSegment: &boxyagentv1.CreateSegmentCommand{SandboxId: sandboxID}},
+	})
+	if err != nil {
+		return "", err
+	}
+	if agentErr := res.GetError(); agentErr != nil {
+		return "", reconstructAgentError(a.info.ID, agentErr)
+	}
+	cs := res.GetCreateSegment()
+	if cs == nil {
+		return "", fmt.Errorf("agent %q: unexpected result for create segment", a.info.ID)
+	}
+	return providersdk.SegmentRef(cs.GetSegmentRef()), nil
+}
+
+func (a *RemoteAgent) AttachToSegment(ctx context.Context, provider providersdk.Type, providerResourceID string, ref providersdk.SegmentRef) error {
+	res, err := a.call(ctx, &boxyagentv1.Command{
+		ProviderType: string(provider),
+		Op: &boxyagentv1.Command_AttachToSegment{AttachToSegment: &boxyagentv1.AttachToSegmentCommand{
+			ResourceId: providerResourceID,
+			SegmentRef: string(ref),
+		}},
+	})
+	if err != nil {
+		return err
+	}
+	if agentErr := res.GetError(); agentErr != nil {
+		return reconstructAgentError(a.info.ID, agentErr)
+	}
+	return nil
+}
+
+func (a *RemoteAgent) DestroySegment(ctx context.Context, provider providersdk.Type, ref providersdk.SegmentRef) error {
+	res, err := a.call(ctx, &boxyagentv1.Command{
+		ProviderType: string(provider),
+		Op:           &boxyagentv1.Command_DestroySegment{DestroySegment: &boxyagentv1.DestroySegmentCommand{SegmentRef: string(ref)}},
+	})
+	if err != nil {
+		return err
+	}
+	if agentErr := res.GetError(); agentErr != nil {
+		return reconstructAgentError(a.info.ID, agentErr)
+	}
+	return nil
+}
+
+func (a *RemoteAgent) MeshIdentity(ctx context.Context, provider providersdk.Type, ref providersdk.SegmentRef) (string, string, string, error) {
+	res, err := a.call(ctx, &boxyagentv1.Command{
+		ProviderType: string(provider),
+		Op:           &boxyagentv1.Command_MeshIdentity{MeshIdentity: &boxyagentv1.MeshIdentityCommand{SegmentRef: string(ref)}},
+	})
+	if err != nil {
+		return "", "", "", err
+	}
+	if agentErr := res.GetError(); agentErr != nil {
+		return "", "", "", reconstructAgentError(a.info.ID, agentErr)
+	}
+	mi := res.GetMeshIdentity()
+	return mi.GetPublicKey(), mi.GetEndpoint(), mi.GetCidr(), nil
+}
+
+func (a *RemoteAgent) AddMeshPeer(ctx context.Context, provider providersdk.Type, ref providersdk.SegmentRef, peerPublicKey, peerEndpoint, peerCIDR string) error {
+	res, err := a.call(ctx, &boxyagentv1.Command{
+		ProviderType: string(provider),
+		Op: &boxyagentv1.Command_AddMeshPeer{AddMeshPeer: &boxyagentv1.AddMeshPeerCommand{
+			SegmentRef: string(ref), PeerPublicKey: peerPublicKey, PeerEndpoint: peerEndpoint, PeerCidr: peerCIDR,
+		}},
+	})
+	if err != nil {
+		return err
+	}
+	if agentErr := res.GetError(); agentErr != nil {
+		return reconstructAgentError(a.info.ID, agentErr)
+	}
+	return nil
+}
+
+func (a *RemoteAgent) RemoveMeshPeer(ctx context.Context, provider providersdk.Type, ref providersdk.SegmentRef, peerPublicKey string) error {
+	res, err := a.call(ctx, &boxyagentv1.Command{
+		ProviderType: string(provider),
+		Op:           &boxyagentv1.Command_RemoveMeshPeer{RemoveMeshPeer: &boxyagentv1.RemoveMeshPeerCommand{SegmentRef: string(ref), PeerPublicKey: peerPublicKey}},
+	})
+	if err != nil {
+		return err
+	}
+	if agentErr := res.GetError(); agentErr != nil {
+		return reconstructAgentError(a.info.ID, agentErr)
+	}
+	return nil
 }

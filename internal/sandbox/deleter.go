@@ -4,15 +4,26 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"time"
 
+	"github.com/Geogboe/boxy/internal/pool"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
 type ResourceDestroyer interface {
 	DestroyResource(ctx context.Context, res model.Resource) error
+}
+
+// SegmentDestroyer is an optional capability for a ResourceDestroyer that
+// also knows how to tear down network segments (see model.NetworkSegment).
+// Not every destroyer supports this -- a deployment with no
+// network-isolation-capable providers at all uses a plain
+// ResourceDestroyer with no segments to ever destroy.
+type SegmentDestroyer interface {
+	DestroySegment(ctx context.Context, agentID string, providerType string, ref string) error
 }
 
 // DeletionReconciler cleans up sandboxes that have been accepted for async
@@ -111,6 +122,53 @@ func (r *DeletionReconciler) cleanupSandbox(ctx context.Context, id model.Sandbo
 		sb.Resources = removeResourceID(sb.Resources, rid)
 		if err := r.store.PutSandbox(ctx, sb); err != nil {
 			return fmt.Errorf("remove destroyed resource %q from sandbox %q: %w", rid, sb.ID, err)
+		}
+	}
+
+	if segmentDestroyer, ok := r.destroyer.(SegmentDestroyer); ok {
+		for _, seg := range sb.NetworkSegments {
+			err := segmentDestroyer.DestroySegment(ctx, seg.AgentID, seg.ProviderType, seg.Ref)
+			// An agent that is simply gone is not a teardown failure to
+			// retry forever. Blocking here would keep this sandbox in
+			// `deleting` indefinitely and -- because Reconcile returns on
+			// the first cleanupSandbox error -- stall every later sandbox
+			// in the same tick behind a host that is never coming back.
+			// This mirrors the resource path's force-orphan escape hatch
+			// in spirit: the record is released here, and reclaiming the
+			// host-side object is the deferred segment orphan sweep's job.
+			// Any other DestroySegment failure remains a hard error.
+			if errors.Is(err, pool.ErrSegmentAgentUnavailable) {
+				slog.Default().Warn("skipping network segment teardown; its agent is no longer registered",
+					"operation", "sandbox_destroy_segment",
+					"sandbox_id", sb.ID,
+					"agent_id", seg.AgentID,
+					"provider_type", seg.ProviderType,
+					"segment_ref", seg.Ref,
+					"error", err,
+				)
+				continue
+			}
+			// The agent is here, but can no longer isolate this provider type
+			// -- reconfigured or downgraded since the segment was created.
+			// Same conclusion as above for a different reason: there is no
+			// route left to the host object, and blocking on it would strand
+			// this sandbox (and every later one in this tick) forever. Kept
+			// as its own branch rather than folded into the check above so
+			// the log line says which of the two actually happened.
+			if errors.Is(err, pool.ErrNetworkIsolationUnsupported) {
+				slog.Default().Warn("skipping network segment teardown; its agent no longer supports network isolation for this provider",
+					"operation", "sandbox_destroy_segment",
+					"sandbox_id", sb.ID,
+					"agent_id", seg.AgentID,
+					"provider_type", seg.ProviderType,
+					"segment_ref", seg.Ref,
+					"error", err,
+				)
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("destroy network segment %q for sandbox %q: %w", seg.Ref, sb.ID, err)
+			}
 		}
 	}
 
