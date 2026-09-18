@@ -27,6 +27,11 @@
       "type": "object",
       "additionalProperties": { "type": "string" }
     },
+    "mesh_endpoint": {
+      "description": "host:port this agent should be dialed at by a peer agent's WireGuard interface for cross-host sandbox traffic. Required only when a sandbox spans this host and another.",
+      "type": "string",
+      "minLength": 1
+    },
     "tls": {
       "description": "TLS settings for tcp:// hosts.",
       "type": "object",
