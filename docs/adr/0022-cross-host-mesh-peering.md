@@ -149,13 +149,15 @@ agents ended up reconciling each other's VMs as orphans (switches and NAT
 are also host-global, compounding this). This is a real gap in two-agents-
 sharing-one-host support, not a mesh-peering defect, but it means:
 
-1. **Cross-host `MeshPeerer` behavior is entirely unverified against live
-   infrastructure.** Everything above rests on `pkg/meshnet`'s loopback
-   tests and fake-executor driver tests. This needs a genuine second
-   physical host (or a real multi-host lab) to validate the actual
-   `AddMeshPeer`/WireGuard handshake path, the `boxy serve` introduction
-   relay, and end-to-end connectivity between two sandboxed resources on
-   different hosts.
+1. **Cross-host `MeshPeerer` behavior was unverified against live
+   infrastructure — now partially resolved for Docker, see the 2026-09-18
+   change-log entry below.** Two independent Docker daemons proved the
+   `boxy serve` introduction relay and the `AddMeshPeer`/WireGuard handshake
+   path for real, and found three real bugs along the way (all fixed).
+   Packet-level connectivity itself was not conclusively proven (test-harness
+   network collisions, not a known product bug). **Hyper-V's `MeshPeerer`
+   remains entirely unverified** — this still needs a genuine second
+   physical Hyper-V host.
 2. **Two agents sharing one physical host is not currently a supported
    topology**, independent of mesh peering — `queryBoxyMemoryMB` and
    orphan-adoption both need to become agent-scoped before it would be.
@@ -175,3 +177,62 @@ sharing-one-host support, not a mesh-peering defect, but it means:
   `agentsdk` wiring, sandbox-triggered full-mesh peering). Real-hardware
   validation attempted on wks01 but blocked by the two-agents-one-host
   topology gap recorded above before reaching mesh peering itself.
+- 2026-09-18: **Docker `MeshPeerer` exercised end to end for real** — not on
+  a second Hyper-V host (still unavailable), but with two genuinely
+  independent Docker daemons (a Linux/WSL host and a nested `docker:dind`
+  container, each with its own network namespace) standing in for two
+  hosts, sidestepping the Hyper-V two-agents-one-host topology gap above
+  entirely since Docker's per-daemon resource listing has no shared-state
+  ambiguity to begin with. Three real, previously-undiscovered bugs were
+  found and fixed this way — unit tests use fakes for the interface/route
+  layer and had no way to catch any of them:
+  1. Docker's `SegmentRef` (a 64-character network ID) used directly as a
+     Linux TUN device name, which the kernel rejects (`IFNAMSIZ` allows at
+     most 15 usable characters) — every cross-host attempt failed
+     immediately with "invalid argument". Fixed: `pkg/meshnet.
+     SafeInterfaceName` derives a short, deterministic name from a hash
+     when the id is too long, unchanged otherwise.
+  2. `wireguard-go`'s `device.Device.Up` never touches the interface's
+     kernel link state (only wg-quick's own separate `ip link set up` step
+     normally does that) — the TUN device stayed administratively down, so
+     every route through it failed with "Network is down". Fixed: bring
+     the interface up via `github.com/vishvananda/netlink` on Linux
+     (`pkg/meshnet/ifup_linux.go`); a documented no-op on other platforms.
+  3. `AddMeshPeer` configured WireGuard's own crypto-routing (`allowed_ips`)
+     but never added a kernel route for the peer's subnet through the local
+     interface, so the kernel never handed cross-host traffic to WireGuard
+     at all — sandboxes reached `ready` (the control-plane handshake
+     succeeded) while containers genuinely could not reach each other.
+     Fixed: `AddMeshPeer` now adds that route too.
+
+  With all three fixed, a real cross-host sandbox reaches `ready` and the
+  route tables/interface state on both sides confirm the tunnel is live and
+  correctly configured. **A full packet-level ping proof was inconclusive**,
+  not from a further product bug but from this test session's own harness
+  cruft: the same two Docker daemons reused across ~18 iterations had
+  accumulated leftover networks whose default-allocated subnets happened to
+  collide across hosts, and re-chasing that within remaining session budget
+  wasn't pursued. This is itself worth flagging as a real open question,
+  independent of the three bugs above: **two Docker hosts with overlapping
+  default address pools is a plausible production scenario** (most fresh
+  Docker installs allocate from the same starting `172.17.0.0/16` upward),
+  and nothing here currently detects or resolves that collision — a route
+  added on top of a pre-existing local route for the same CIDR (this ADR's
+  own `MeshIdentity`/`AddMeshPeer` "File exists" idempotency tolerance) is
+  not necessarily *the peer's* route, it may just as easily be a different,
+  unrelated local network that happens to share the same subnet.
+
+  Also confirmed as a real, separate gap while implementing the fix above
+  (not itself fixed): `RemoveMeshPeer` cannot remove the specific route
+  `AddMeshPeer` added, since the `MeshPeerer` interface only passes the
+  departing peer's public key, not its CIDR. Harmless for a two-host mesh
+  (`DestroySegment` closes the whole interface, taking every route on it
+  with it) but would leak a stale route in a mesh spanning three or more
+  hosts that removes exactly one peer while keeping the interface up for
+  the others. Revisit if/when a mesh larger than two hosts is exercised.
+
+  Hyper-V's `MeshPeerer` implementation was not touched by any of this —
+  its `SafeInterfaceName` call was deliberately left as a no-op (its
+  switch-name-derived refs are short today) and it has its own separate
+  interface bring-up path this session did not exercise or verify.
+  **Hyper-V cross-host mesh peering remains entirely unverified.**
