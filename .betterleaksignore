@@ -502,3 +502,8 @@ b8e9481dd13a458365bb598a4d1d67c9db1de4df:pkg/providersdk/providers/docker/mesh_p
 # above.
 4cef4490a97975cd0cd30cd8f06c35dce4a99ccc:pkg/providersdk/providers/hyperv/mesh_peering_test.go:boxy-pii-private-ipv4:135
 4cef4490a97975cd0cd30cd8f06c35dce4a99ccc:pkg/providersdk/providers/docker/mesh_peering_test.go:boxy-pii-private-ipv4:178
+
+# Reviewed 2026-09-21: private-IPv4 address in the ADR-0022 write-up
+# documenting the real address-pool collision (docker0 vs. a segment
+# CIDR) reproduced live re-validating PR #369's fixes.
+fab80b51683cd3d64d308ce3d84b7e7b91cada1e:docs/adr/0022-cross-host-mesh-peering.md:boxy-pii-private-ipv4:266
