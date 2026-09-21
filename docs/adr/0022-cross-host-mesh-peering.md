@@ -236,3 +236,54 @@ sharing-one-host support, not a mesh-peering defect, but it means:
   switch-name-derived refs are short today) and it has its own separate
   interface bring-up path this session did not exercise or verify.
   **Hyper-V cross-host mesh peering remains entirely unverified.**
+
+- 2026-09-18 (second session, re-validating PR #369's Copilot-review fixes):
+  Copilot's review of #369 flagged, among other things, a listen-port
+  mismatch (both drivers created their WireGuard interface with
+  `listen_port=0` while advertising a fixed `mesh_endpoint`) and a missing
+  peer-route install on Hyper-V's `AddMeshPeer` (the identical bug the
+  2026-09-18 entry above already fixed for Docker). Both were fixed
+  (`meshnet.ListenPortFromEndpoint`, wired into both drivers' interface
+  factories) and re-validated live using the same WSL-host +
+  `docker:dind`-container harness as the entry above.
+
+  **Confirmed fixed and working:** the interface now binds the exact
+  advertised port (`ss -ulnp` on the receiving side shows `boxy` genuinely
+  listening on the configured port, not an ephemeral one), and
+  handshake-init packets correctly reach that port — `tcpdump` on both
+  hosts shows the UDP handshake packet leaving the sender's mesh interface
+  addressed to the peer's advertised `endpoint` and arriving intact at the
+  peer's listening socket. Before this fix, the sender would have listened
+  on a random ephemeral port while advertising a fixed one, so the peer's
+  handshake-response could never reach it — this session did not verify
+  that failure mode directly (the fix was already applied before testing),
+  but the port-binding mismatch was independently confirmed as the root
+  cause by reading the code.
+
+  **A CIDR-collision instance of the risk already flagged above was
+  independently reproduced live**, unprompted, purely from normal iterative
+  testing: host B's own `docker0` default bridge and host A's segment both
+  landed on `172.18.0.0/16` (Docker's per-daemon auto-IPAM starting from the
+  same address pool on both independently-run daemons). `AddMeshPeer`'s
+  route-add got `EEXIST` against the wrong (local, unrelated) route and
+  treated it as success, exactly the failure mode this ADR's addendum
+  above already described in the abstract — now concretely observed:
+  `ip route get` on the affected host resolved to `docker0`, not the mesh
+  interface, so traffic to the peer's subnet would never reach the tunnel.
+
+  **A new, distinct blocker was found**: even with the port fixed and the
+  CIDR collision cleared (manually, to isolate the two issues), the
+  handshake still does not complete — host B's WireGuard device is
+  confirmed listening on the correct port and receiving the peer's
+  handshake-init packets (via `tcpdump`), with the correct peer public key
+  configured (verified via temporary debug logging of the exact
+  `MeshIdentity`/`AddMeshPeer` arguments exchanged), yet never sends a
+  handshake response. `pkg/meshnet`'s own unit test proves the same
+  primitive completes a real handshake correctly in isolation, so this
+  looks topology-specific (WSL2 host network namespace <-> Docker
+  container network namespace) rather than a `pkg/meshnet` regression, but
+  it was not root-caused within this session's budget. See #372. This
+  means **a full packet-level Docker `MeshPeerer` connectivity proof is
+  still outstanding** — two sessions in a row have gotten closer (from "no
+  handshake possible at all" to "handshake reaches the right place but
+  isn't completed") without reaching a live ping proof.
