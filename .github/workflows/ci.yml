@@ -21,8 +21,53 @@ permissions:
   contents: read
 
 jobs:
-  lint:
+  changes:
+    # Detects whether a push/PR touches anything besides prose docs, so the
+    # expensive Go jobs below (lint/test/build/installer-smoke) can skip for
+    # a docs-only change instead of running the full multi-platform matrix
+    # for, say, one ADR file. Betterleaks/Betterleaks PII stay unconditional
+    # below -- they're cheap (sub-second full-history scans) and are exactly
+    # the tool that needs to see prose/doc content, so skipping them for
+    # docs changes would be backwards.
+    #
+    # `non_code` uses only negative patterns, which dorny/paths-filter
+    # documents as implicitly matching everything (`**`) first and then
+    # excluding the listed paths -- so it's true (meaning "something beyond
+    # the safe list changed") whenever ANY changed file falls outside this
+    # explicit, conservative allow-list, including any doc path not listed
+    # here. That's deliberate: an unlisted path defaults to running full CI
+    # (today's status quo), never to silently skipping it. The list is
+    # deliberately narrower than "all of docs/" -- docs/ui-design-language.md,
+    # docs/help/index.md, docs/api.md, and README.md are read directly by Go
+    # tests (internal/server/ui_design_test.go, cmd/help-gen/main_test.go,
+    # cmd/api-doc-gen/main_test.go, internal/server/dashboard_asset_test.go)
+    # and must keep triggering the Test job.
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    name: Detect non-docs changes
+    runs-on: ubuntu-latest
+    outputs:
+      non_code: ${{ steps.filter.outputs.non_code }}
+    steps:
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            non_code:
+              - '!docs/adr/**'
+              - '!docs/superpowers/**'
+              - '!docs/current-delivery-notes.md'
+              - '!docs/ci-cd-workflow.md'
+              - '!docs/cli-wireframe.md'
+              - '!docs/windows-allocation-performance.md'
+              - '!docs/diagnostics-performance.md'
+              - '!AGENTS.md'
+              - '!CHANGELOG.md'
+              - '!CONTRIBUTING.md'
+              - '!LICENSE'
+
+  lint:
+    if: needs.changes.outputs.non_code == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    needs: changes
     name: Lint
     runs-on: ubuntu-latest
     steps:
@@ -42,7 +87,8 @@ jobs:
         run: golangci-lint run ./...
 
   test:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: needs.changes.outputs.non_code == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    needs: changes
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -65,7 +111,8 @@ jobs:
         run: go test -race -short -tags devtools ./internal/cli/...
 
   installer-smoke:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: needs.changes.outputs.non_code == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    needs: changes
     name: Installer Smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -83,7 +130,8 @@ jobs:
         run: go test ./scripts -count=1
 
   build:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: needs.changes.outputs.non_code == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    needs: changes
     name: Build
     runs-on: ubuntu-latest
     steps:
