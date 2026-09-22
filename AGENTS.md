@@ -681,6 +681,40 @@ after #244's `AddCommand`/`AddArgument` migration.
   `pkg/diagnostics` has *no way* to inject a fixed clock at all (`now` is
   an unexported field with no constructor param or setter), so
   `time.Now().UTC()` is the only available fix there, not a design choice.
+- **Squash-merging a PR breaks `.betterleaksignore` for every fixture that
+  file already allowlisted on that PR's branch — always use a regular
+  merge commit for a PR carrying prior betterleaksignore entries.**
+  Discovered 2026-09-22 merging #369: `gh pr merge --squash` collapsed the
+  branch's commits into one brand-new commit SHA on `main`
+  (`d8a4d562...`). Betterleaks' allowlist fingerprint is
+  `commit:file:rule:line` — since the allowlisted findings' original
+  commit SHAs no longer existed on `main`, none of them matched anymore,
+  and 90 already-reviewed fixtures (none new) started failing
+  `Betterleaks PII` on `main` and on *every* subsequent PR (the scan walks
+  full `HEAD` ancestry). This repo's existing convention is a regular
+  merge commit (`Merge pull request #N from ...`, see the git log) for
+  exactly this kind of tooling-stability reason, not just the other
+  documented reasons (release-please categorization, `git blame`
+  legibility). Fixed in #373 by re-pointing the affected entries at the
+  squash commit's SHA — but the real fix is not squashing a branch this
+  file has entries for in the first place. If a squash already happened,
+  re-run `task pii:scan` (or the WSL `betterleaks ... --report-format json`
+  invocation this fix used) against the *now-current* `main`, confirm
+  every new finding is a byte-for-byte match to something already
+  reviewed, and re-point the fingerprints at the new commit SHA in a
+  follow-up PR merged normally.
+- **A GitHub Actions `environment` deployment approval gate (e.g. this
+  repo's `release-signing` environment gating GoReleaser, ADR-0014) can be
+  approved via `gh api repos/<owner>/<repo>/actions/runs/<run_id>/
+  pending_deployments -X POST -F 'environment_ids[]=<id>' -f
+  state=approved -f comment=<text>`** — note `-F` (typed) not `-f`
+  (string) for `environment_ids[]`, or the API rejects it with "is not an
+  integer". Get the environment id and run id from
+  `gh api repos/<owner>/<repo>/actions/runs/<run_id>/pending_deployments`
+  first. This is a real production-deploy action (it lets GoReleaser
+  build, sign, and publish binaries) — only run it with the user's
+  explicit go-ahead for that specific release, the same bar as any other
+  irreversible/production action in this project.
 
 ## ADRs
 
