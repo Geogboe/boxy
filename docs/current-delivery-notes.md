@@ -56,17 +56,41 @@ A running log of recently-landed feature batches and their supporting decisions.
   more than one host. See [ADR-0022](adr/0022-cross-host-mesh-peering.md).
   `#224` itself stays open — Decisions 3 (JIT native-protocol access) and 4
   (`AccessBroker` extension point) are still separate, unimplemented plans.
-- PR #369 (2026-09-17) batched the above with several real-hardware bug
-  fixes found validating both on wks01 (`GlobalMemoryStatusEx` memory-query
-  fallback, `psdirect` HvSocket dial retry, the `checkTemplateNotAttached`
-  guard's two false-positive rounds, guest credential rotation/static-IP
-  moved onto `vmsdk.GuestExecScript`), plus #368 (coalesced reconcile
-  wakeups, `pkg/diagnostics` fast-append, `pkg/psdirect.ExecScript`, CI
-  draft-PR gating). Real-hardware validation confirmed `NetworkIsolator`
-  end-to-end for the single-host case (see ADR-0021's 2026-09-16 entry);
-  cross-host `MeshPeerer` remains unverified against live infrastructure —
-  see ADR-0022's Open Risks, including a newly-found two-agents-one-host
-  topology gap unrelated to mesh peering itself.
+- PR #369 (opened 2026-09-17, merged 2026-09-22 as v0.1.68) batched the
+  above with several real-hardware bug fixes found validating both on
+  wks01 (`GlobalMemoryStatusEx` memory-query fallback, `psdirect` HvSocket
+  dial retry, the `checkTemplateNotAttached` guard's two false-positive
+  rounds, guest credential rotation/static-IP moved onto
+  `vmsdk.GuestExecScript`), plus #368 (coalesced reconcile wakeups,
+  `pkg/diagnostics` fast-append, `pkg/psdirect.ExecScript`, CI draft-PR
+  gating). Real-hardware validation confirmed `NetworkIsolator` end-to-end
+  for the single-host case (see ADR-0021's 2026-09-16 entry).
+  Before merging, a Copilot review round (2026-09-21/22) fixed several
+  more real `MeshPeerer` bugs it found: both drivers' WireGuard interface
+  bound an ephemeral port while advertising a fixed one (handshakes could
+  never reach the right port), Hyper-V's `AddMeshPeer` was missing the
+  peer-route install Docker's already had, both drivers leaked their
+  mesh interface on `DestroySegment`, mesh-peering calls dispatched by
+  the caller's pool instead of the target segment's own recorded
+  provider type, and Docker's segment-network lookup trusted a name match
+  without checking the managed label. A WireGuard key-encoding claim from
+  the same review was checked and rejected as a false positive (verified
+  against `wireguard-go`'s actual UAPI source, which uses hex).
+  Re-validated live afterward (WSL host + `docker:dind` container
+  standing in for a second host — see ADR-0022's 2026-09-18 entries): the
+  port fix is confirmed working (interface binds the advertised port,
+  handshake-init reaches the peer's listening socket) and the
+  CIDR-collision risk ADR-0022 already flagged was independently
+  reproduced live, not just theorized. **Cross-host `MeshPeerer`
+  connectivity is still not proven end-to-end** — even with port and
+  routing correct, the handshake doesn't complete in that test topology
+  (#372, not yet root-caused; `pkg/meshnet`'s own unit test proves the
+  primitive works in isolation, so this looks topology-specific rather
+  than a regression). Also filed: #370 (Hyper-V per-host CIDR collision,
+  design-level) and #371 (mesh reconciliation gaps — reused-segment
+  retry, peer cleanup on delete, restart recovery), both multi-host-only
+  and non-blocking for the release. See ADR-0022's Open Risks and
+  2026-09-18 change-log entries for the full detail.
 - Per-sandbox network isolation (#224, Decision 1) landed 2026-09-14 across
   Plans 1a/1b/1c. Every sandbox now gets its own provider-level network —
   a Docker bridge, or a Hyper-V Internal vSwitch plus NAT over a `/29` from
