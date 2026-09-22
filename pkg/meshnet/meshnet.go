@@ -28,10 +28,16 @@ import (
 // and on the daemon it also flows through diagnostics.NewHandler into
 // `boxy diagnostics logs`. No new provider config surface, and an embedder
 // outside boxy gets whatever their own slog default is.
+//
+// The interface name goes in the message text, not a structured attr,
+// because the daemon's durable diagnostics path keeps a strict field
+// allowlist (diagnostics.safeField) that has no "interface" field -- an
+// attr would render fine under a plain text handler and then be silently
+// dropped in `boxy diagnostics logs`, leaving several concurrent sandbox
+// interfaces indistinguishable there. The message is always preserved, so
+// prefixing it keeps per-interface identity on every path. This is also
+// what wireguard-go's own NewLogger does with its `prepend` argument.
 func deviceLogger(ifName string) *device.Logger {
-	attrs := func(msg string) (string, []any) {
-		return msg, []any{"component", "meshnet", "interface", ifName}
-	}
 	return &device.Logger{
 		Verbosef: func(format string, args ...any) {
 			// Guard before Sprintf: wireguard-go calls Verbosef per
@@ -40,12 +46,10 @@ func deviceLogger(ifName string) *device.Logger {
 			if !slog.Default().Enabled(context.Background(), slog.LevelDebug) {
 				return
 			}
-			msg, kv := attrs(fmt.Sprintf(format, args...))
-			slog.Debug(msg, kv...)
+			slog.Debug(ifName+": "+fmt.Sprintf(format, args...), "component", "meshnet")
 		},
 		Errorf: func(format string, args ...any) {
-			msg, kv := attrs(fmt.Sprintf(format, args...))
-			slog.Error(msg, kv...)
+			slog.Error(ifName+": "+fmt.Sprintf(format, args...), "component", "meshnet")
 		},
 	}
 }
