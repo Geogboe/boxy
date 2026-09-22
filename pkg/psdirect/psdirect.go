@@ -117,17 +117,48 @@ func (e *Exec) OpenSession(ctx context.Context) (vmsdk.GuestSession, error) {
 	return &Session{vmID: e.VMID, executor: executor}, nil
 }
 
+// hvsocketConnectRetryDelay paces connectExecutor's retry loop below.
+var hvsocketConnectRetryDelay = 3 * time.Second
+
 // connectExecutor creates and connects a psrpExecutor, wrapping both error
 // paths identically for every caller (Exec, ExecText, OpenSession).
+//
+// A freshly booted VM's PowerShell Direct listener (the vmicvmsession
+// integration service) is not necessarily up the instant Hyper-V reports the
+// VM as Running -- reproduced against real hardware (wks01, 2026-09-16): a
+// single HvSocket dial attempted right after Start-VM fails with a raw
+// connect error (Windows' hvsocket refuses immediately rather than queuing,
+// unlike a normal TCP SYN backlog) even though the guest reaches an
+// interactive logon screen moments later. Native `Invoke-Command -VMName`
+// tolerates this by retrying the dial internally; this package's dial was a
+// single attempt with no retry, so it failed outright inside a caller's
+// (e.g. PersonalizeGuest's multi-minute, see AgentOperationTimeouts) far
+// larger timeout budget -- most of that budget went unused. Retrying the
+// dial here, bounded by ctx, uses that same budget instead of discarding it
+// on the first early attempt. A fresh executor is built per attempt rather
+// than reusing one whose Connect failed, since a partially-failed connect
+// may leave transport state that isn't safe to retry on.
 func (e *Exec) connectExecutor(ctx context.Context) (psrpExecutor, error) {
-	executor, err := e.newExecutor(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("psdirect: create client for VM %s: %w", e.VMID, err)
+	var lastErr error
+	for {
+		executor, err := e.newExecutor(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("psdirect: create client for VM %s: %w", e.VMID, err)
+		}
+		err = executor.Connect(ctx)
+		if err == nil {
+			return executor, nil
+		}
+		lastErr = err
+
+		timer := time.NewTimer(hvsocketConnectRetryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, fmt.Errorf("psdirect: connect to VM %s: %w", e.VMID, lastErr)
+		case <-timer.C:
+		}
 	}
-	if err := executor.Connect(ctx); err != nil {
-		return nil, fmt.Errorf("psdirect: connect to VM %s: %w", e.VMID, err)
-	}
-	return executor, nil
 }
 
 // Session is a vmsdk.GuestSession bound to one already-connected PSRP

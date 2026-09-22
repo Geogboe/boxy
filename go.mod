@@ -17,6 +17,7 @@ require (
 	github.com/smnsjas/go-psrp v0.2.0
 	github.com/smnsjas/go-psrpcore v0.0.0-20260211164949-dace42c5b6a8
 	github.com/spf13/cobra v1.10.1
+	github.com/vishvananda/netlink v1.3.1
 	github.com/yuin/goldmark v1.7.8
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/crypto v0.50.0
@@ -24,6 +25,7 @@ require (
 	golang.org/x/sync v0.20.0
 	golang.org/x/sys v0.43.0
 	golang.org/x/term v0.42.0
+	golang.zx2c4.com/wireguard v0.0.0-20260522210424-ecfc5a8d5446
 	google.golang.org/grpc v1.82.0
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
@@ -50,7 +52,6 @@ require (
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/containerd/console v1.0.5 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
-	github.com/containerd/log v0.1.0 // indirect
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
@@ -62,6 +63,7 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
+	github.com/google/btree v1.1.2 // indirect
 	github.com/gookit/color v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/lithammer/fuzzysearch v1.1.8 // indirect
@@ -73,6 +75,7 @@ require (
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
+	github.com/vishvananda/netns v0.0.5 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.67.0 // indirect
@@ -83,8 +86,10 @@ require (
 	golang.org/x/net v0.53.0 // indirect
 	golang.org/x/text v0.36.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
+	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
 	gotest.tools/v3 v3.5.2 // indirect
+	gvisor.dev/gvisor v0.0.0-20250503011706-39ed1f5ac29c // indirect
 )
 
 // Forked from upstream to fix #242 (sandbox exec --timeout ignored: PSRP's
@@ -94,7 +99,7 @@ require (
 // the HvSocket backend, deferring to the caller's own ctx deadline instead.
 // See AGENTS.md's Architectural Notes for the full trace and the fork-vs-
 // upstream decision. Revisit if/when either fix lands upstream.
-replace github.com/smnsjas/go-psrpcore => github.com/Geogboe/go-psrpcore v0.0.0-20260828053523-50f4720fbe2b
+replace github.com/smnsjas/go-psrpcore => github.com/Geogboe/go-psrpcore v0.0.0-20260914145953-9a07cca346ca
 
 // go-psrp's fork also carries v0.2.2-boxy244 (#244): adds Client.
 // ExecuteCommand/ExecuteCommandStream, which build a pipeline via
@@ -103,4 +108,4 @@ replace github.com/smnsjas/go-psrpcore => github.com/Geogboe/go-psrpcore v0.0.0-
 // quoted PowerShell command line at all. No go-psrpcore change was needed
 // for this one -- CreatePipelineBuilder/AddCommand/AddArgument already
 // existed on the pinned commit above.
-replace github.com/smnsjas/go-psrp => github.com/Geogboe/go-psrp v0.2.2-boxy244
+replace github.com/smnsjas/go-psrp => github.com/Geogboe/go-psrp v0.2.2-boxy244.0.20260914150011-54f3ad5e4f0e

@@ -257,3 +257,39 @@ added here.
   a real Hyper-V host's `Get-NetIPAddress`/`Get-NetNat` output shape before
   relying on this in production; see AGENTS.md's Lessons Learned for the
   standing caveat this repeats.
+
+## Change log
+
+- 2026-09-14: **superseded.** `hyperv.Driver`'s `NetworkRanges`
+  implementation and its `validateNetworkRange` caller have been removed as
+  part of #224's Plan 1c; `networkrange.go`/`networkrange_test.go` now live
+  under `.archive/pkg/hyperv/` per this repo's no-delete convention.
+
+  This capability existed for exactly one purpose: cross-checking a pool's
+  declared `network.range`/`network.static_ip` against the real IPv4 range
+  discovered on a switch's host vNIC, so an operator typo or host-network
+  drift failed `Create` instead of producing an unreachable guest. That
+  declared config no longer exists — it was removed in the same change (see
+  [ADR-0012](0012-hyperv-range-based-ip-allocation.md)'s 2026-09-14 entry),
+  because per-sandbox isolation
+  ([ADR-0021](0021-network-isolation-driver-capability.md)) now always
+  supplies a claimed guest's address from its segment's own block. With
+  nothing declared, there is nothing to validate, so this became a discovery
+  query with no consumer rather than a safety net worth keeping.
+
+  The class of mistake #223 guarded against is largely designed away rather
+  than merely unguarded: a segment's CIDR is carved by the driver out of
+  `segmentBaseCIDR` and its gateway is assigned by the driver to a switch the
+  driver just created, so there is no operator-supplied address left to
+  mistype. What is *not* covered is a collision between `segmentBaseCIDR`
+  (`10.250.0.0/16`) and an operator's own LAN; that range was chosen to make
+  it unlikely (see ADR-0021) but nothing verifies it against host reality.
+
+  `providersdk.NetworkRangeReporter` — the interface in
+  `pkg/providersdk/networkrange.go` — is deliberately left in place, and now
+  has **zero implementations**. It stays because it is a provider-neutral
+  optional capability in a public SDK package, not boxy-internal glue, and
+  because the discovery it describes is the obvious mechanism if segment-base
+  collision detection is ever built. Anyone auditing unused SDK surface
+  should read this entry before assuming it was overlooked; the archived
+  Hyper-V implementation is the starting point for reviving it.

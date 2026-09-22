@@ -59,6 +59,14 @@ type Sandbox struct {
 	// destroyed, computed from Policies.AutoDestroyAfter at creation time.
 	// Nil means no automatic expiry.
 	ExpiresAt *time.Time `json:"expires_at,omitempty" yaml:"expires_at,omitempty"`
+
+	// NetworkSegments records the private network segment(s) this sandbox
+	// was given, one per agent/host its resources landed on (see
+	// providersdk.NetworkIsolator / internal/sandbox.NetworkIsolatingAllocator).
+	// Empty for any sandbox whose allocator doesn't support network
+	// isolation (e.g. devfactory-backed) -- this is the expected steady
+	// state for such sandboxes, not a partial/incomplete one.
+	NetworkSegments []NetworkSegment `json:"network_segments,omitempty" yaml:"network_segments,omitempty"`
 }
 
 // SandboxPolicies captures sandbox-level behavior without prescribing a specific
@@ -71,4 +79,15 @@ type SandboxPolicies struct {
 	// SecurityProfile is an optional label for sandbox hardening posture.
 	// Examples: "default", "lab", "pentest", "vdi".
 	SecurityProfile string `json:"security_profile,omitempty" yaml:"security_profile,omitempty"`
+}
+
+// NetworkSegment is one per-host private network segment a sandbox was
+// given. Ref is an opaque provider-defined identifier (mirrors
+// providersdk.SegmentRef as a plain string, so this package doesn't import
+// providersdk) -- callers pass it back to the same agent/provider type
+// unchanged, never interpreting it themselves.
+type NetworkSegment struct {
+	AgentID      string `json:"agent_id" yaml:"agent_id"`
+	ProviderType string `json:"provider_type" yaml:"provider_type"`
+	Ref          string `json:"ref" yaml:"ref"`
 }

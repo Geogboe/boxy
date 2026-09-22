@@ -160,14 +160,28 @@ func RunSession(ctx context.Context, stream boxyagentv1.AgentTransportService_Co
 		providerTypes[i] = string(t)
 	}
 
+	// The remote half of AgentInfo.NetworkIsolatingProviders: this process
+	// holds the real driver instances, so it performs exactly the same
+	// providersdk.NetworkIsolator type assertion EmbeddedAgent's
+	// constructor does, and reports the answer as part of the registration
+	// frame the server already uses to build AgentInfo. The daemon can't
+	// type-assert a driver living on another host, so this is the only way
+	// it can know before calling CreateSegment.
+	isolating := NetworkIsolatingProviderTypes(cfg.Drivers, cfg.ProviderTypes)
+	isolatingTypes := make([]string, len(isolating))
+	for i, t := range isolating {
+		isolatingTypes[i] = string(t)
+	}
+
 	sess := &clientSession{stream: stream}
 
 	if err := sess.send(&boxyagentv1.AgentMessage{
 		Payload: &boxyagentv1.AgentMessage_Register{Register: &boxyagentv1.RegisterRequest{
-			RegistrationToken: cfg.Token,
-			AgentName:         cfg.AgentName,
-			ProviderTypes:     providerTypes,
-			AgentVersion:      cfg.AgentVersion,
+			RegistrationToken:             cfg.Token,
+			AgentName:                     cfg.AgentName,
+			ProviderTypes:                 providerTypes,
+			AgentVersion:                  cfg.AgentVersion,
+			NetworkIsolatingProviderTypes: isolatingTypes,
 		}},
 	}); err != nil {
 		return fmt.Errorf("send register request: %w", err)
@@ -704,6 +718,86 @@ func executeCommand(ctx context.Context, drivers DriverSet, cmd *boxyagentv1.Com
 				Properties:          result.AccessDetails.Properties,
 				GuestCredentialJson: credentialJSON,
 			}},
+		}
+
+	case *boxyagentv1.Command_CreateSegment:
+		isolator, ok := d.(providersdk.NetworkIsolator)
+		if !ok {
+			return errorResult(cmd.GetCommandId(), fmt.Sprintf("provider %q does not support network isolation", cmd.GetProviderType()), nil)
+		}
+		ref, err := isolator.CreateSegment(ctx, op.CreateSegment.GetSandboxId())
+		if err != nil {
+			return errorResult(cmd.GetCommandId(), err.Error(), err)
+		}
+		return &boxyagentv1.CommandResult{
+			CommandId: cmd.GetCommandId(),
+			Outcome:   &boxyagentv1.CommandResult_CreateSegment{CreateSegment: &boxyagentv1.CreateSegmentResult{SegmentRef: string(ref)}},
+		}
+
+	case *boxyagentv1.Command_AttachToSegment:
+		isolator, ok := d.(providersdk.NetworkIsolator)
+		if !ok {
+			return errorResult(cmd.GetCommandId(), fmt.Sprintf("provider %q does not support network isolation", cmd.GetProviderType()), nil)
+		}
+		if err := isolator.AttachToSegment(ctx, op.AttachToSegment.GetResourceId(), providersdk.SegmentRef(op.AttachToSegment.GetSegmentRef())); err != nil {
+			return errorResult(cmd.GetCommandId(), err.Error(), err)
+		}
+		return &boxyagentv1.CommandResult{
+			CommandId: cmd.GetCommandId(),
+			Outcome:   &boxyagentv1.CommandResult_AttachToSegment{AttachToSegment: &emptypb.Empty{}},
+		}
+
+	case *boxyagentv1.Command_DestroySegment:
+		isolator, ok := d.(providersdk.NetworkIsolator)
+		if !ok {
+			return errorResult(cmd.GetCommandId(), fmt.Sprintf("provider %q does not support network isolation", cmd.GetProviderType()), nil)
+		}
+		if err := isolator.DestroySegment(ctx, providersdk.SegmentRef(op.DestroySegment.GetSegmentRef())); err != nil {
+			return errorResult(cmd.GetCommandId(), err.Error(), err)
+		}
+		return &boxyagentv1.CommandResult{
+			CommandId: cmd.GetCommandId(),
+			Outcome:   &boxyagentv1.CommandResult_DestroySegment{DestroySegment: &emptypb.Empty{}},
+		}
+
+	case *boxyagentv1.Command_MeshIdentity:
+		peerer, ok := d.(providersdk.MeshPeerer)
+		if !ok {
+			return errorResult(cmd.GetCommandId(), fmt.Sprintf("provider %q does not support mesh peering", cmd.GetProviderType()), nil)
+		}
+		pub, endpoint, cidr, err := peerer.MeshIdentity(ctx, providersdk.SegmentRef(op.MeshIdentity.GetSegmentRef()))
+		if err != nil {
+			return errorResult(cmd.GetCommandId(), err.Error(), err)
+		}
+		return &boxyagentv1.CommandResult{
+			CommandId: cmd.GetCommandId(),
+			Outcome:   &boxyagentv1.CommandResult_MeshIdentity{MeshIdentity: &boxyagentv1.MeshIdentityResult{PublicKey: pub, Endpoint: endpoint, Cidr: cidr}},
+		}
+
+	case *boxyagentv1.Command_AddMeshPeer:
+		peerer, ok := d.(providersdk.MeshPeerer)
+		if !ok {
+			return errorResult(cmd.GetCommandId(), fmt.Sprintf("provider %q does not support mesh peering", cmd.GetProviderType()), nil)
+		}
+		if err := peerer.AddMeshPeer(ctx, providersdk.SegmentRef(op.AddMeshPeer.GetSegmentRef()), op.AddMeshPeer.GetPeerPublicKey(), op.AddMeshPeer.GetPeerEndpoint(), op.AddMeshPeer.GetPeerCidr()); err != nil {
+			return errorResult(cmd.GetCommandId(), err.Error(), err)
+		}
+		return &boxyagentv1.CommandResult{
+			CommandId: cmd.GetCommandId(),
+			Outcome:   &boxyagentv1.CommandResult_AddMeshPeer{AddMeshPeer: &emptypb.Empty{}},
+		}
+
+	case *boxyagentv1.Command_RemoveMeshPeer:
+		peerer, ok := d.(providersdk.MeshPeerer)
+		if !ok {
+			return errorResult(cmd.GetCommandId(), fmt.Sprintf("provider %q does not support mesh peering", cmd.GetProviderType()), nil)
+		}
+		if err := peerer.RemoveMeshPeer(ctx, providersdk.SegmentRef(op.RemoveMeshPeer.GetSegmentRef()), op.RemoveMeshPeer.GetPeerPublicKey()); err != nil {
+			return errorResult(cmd.GetCommandId(), err.Error(), err)
+		}
+		return &boxyagentv1.CommandResult{
+			CommandId: cmd.GetCommandId(),
+			Outcome:   &boxyagentv1.CommandResult_RemoveMeshPeer{RemoveMeshPeer: &emptypb.Empty{}},
 		}
 
 	default:

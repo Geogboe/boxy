@@ -10,6 +10,12 @@ const ProviderType = "docker"
 // This is the provider-level config from boxy.yaml providers[].config.
 type Config struct {
 	Host string `json:"host" yaml:"host"`
+
+	// MeshEndpoint is the host:port this agent should be dialed at by a
+	// peer agent's WireGuard interface for cross-host sandbox traffic. See
+	// hyperv.Config.MeshEndpoint's doc comment for why this is explicit,
+	// operator-declared config rather than auto-detected.
+	MeshEndpoint string `json:"mesh_endpoint,omitempty" yaml:"mesh_endpoint,omitempty"`
 }
 
 // CreateConfig holds pool-level config for creating a container.

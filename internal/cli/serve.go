@@ -350,6 +350,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 	if !ok {
 		return fmt.Errorf("state store does not support lifecycle events")
 	}
+	wake, notify := newReconcileWakeup()
 	admissionPublisher := &pool.EventPublisher{Events: eventStore}
 	admissionHandler := &pool.AdmissionHandler{
 		Store:        st,
@@ -357,6 +358,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		Personalizer: provisioner,
 		Failures:     poolMgr,
 		Packages:     provisioner,
+		NotifyReady:  notify,
 	}
 	admissionDispatcher := lifecycle.NewDispatcher(eventStore, admissionHandler)
 	poolMgr.SetAdmissionPublisher(admissionPublisher)
@@ -442,6 +444,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 
 	srv := server.NewWithOptions(st, sandboxMgr, poolMgr, agentSrv, listenAddr, uiEnabled, server.ServerOptions{
 		AuthRequired:     true,
+		NotifyWork:       notify,
 		InsecureHTTP:     opts.insecure,
 		TLSCertPEM:       httpCertPEM,
 		TLSKeyPEM:        httpKeyPEM,
@@ -471,7 +474,7 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		return admissionDispatcher.Run(ctx)
 	})
 	g.Go(func() error {
-		return serveLoop(ctx, poolMgr, sandboxDeleter, sandboxFulfiller, sessionSweeper, poolNames, ui)
+		return serveLoop(ctx, poolMgr, sandboxDeleter, sandboxFulfiller, sessionSweeper, poolNames, ui, wake)
 	})
 
 	printServeBanner(listenAddr, uiEnabled, len(poolSpecs), opts.insecure)
@@ -903,21 +906,18 @@ func serveLoop(
 	sessionSweeper serveSandboxReconciler,
 	poolNames []model.PoolName,
 	ui *serveUI,
+	wake <-chan struct{},
 ) error {
 	const tickEvery = 10 * time.Second
 
 	ticker := time.NewTicker(tickEvery)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ctx.Done():
-			ui.shutdown()
-			return nil
-		case <-ticker.C:
-			serveReconcilePass(ctx, poolMgr, sandboxDeleter, sandboxFulfiller, sessionSweeper, poolNames, ui)
-		}
-	}
+	runReconcileLoop(ctx, wake, ticker.C, func() {
+		serveReconcilePass(ctx, poolMgr, sandboxDeleter, sandboxFulfiller, sessionSweeper, poolNames, ui)
+	})
+	ui.shutdown()
+	return nil
 }
 
 type servePoolReconciler interface {
@@ -956,7 +956,9 @@ func serveReconcilePass(
 			ui.printErr(err)
 		}
 	}
-	reconcilePools()
+	// Fulfillment calls EnsureReady for its requested pools. Serve accepted
+	// work before discretionary preheating of unrelated pools, which can
+	// otherwise hold a warmed request behind slow provider creation.
 	if sandboxFulfiller != nil {
 		if err := sandboxFulfiller.Reconcile(ctx); err != nil {
 			ui.printErr(err)

@@ -1,7 +1,10 @@
 # AGENTS.md
 
-If `AGENTS.override.md` exists, read it after this file for host-specific
-development guidance. It is intentionally gitignored and must not be committed.
+If `AGENTS.local.md` exists, read it after this file for host-specific
+development guidance (e.g. this machine's OS/architecture quirks). It is
+supplementary, not a conflicting override -- it never contradicts a rule in
+this file, only adds detail specific to the local machine. It is
+intentionally gitignored and must not be committed.
 
 Periodically update this document with guidelines, architectural decisions, lessons learned, and development workflows for AI assistants contributing to the Boxy project.
 
@@ -45,27 +48,12 @@ repository's Taskfile commands when one of them is unavailable.
 
 ## Project Structure
 
-```
-cmd/
-  boxy/               # Main CLI entry point
-  devfactory/         # DevFactory provider standalone CLI (reference/testing)
-  schema-gen/         # JSON schema generator for config files
-internal/
-  cli/                # CLI command implementations
-  config/             # Configuration parsing and pool/sandbox specs
-  pool/               # Pool manager and provisioner
-  sandbox/            # Sandbox manager and ID generation
-  skills/             # Bundled coding-agent skill assets and installer/link logic
-pkg/
-  agentsdk/           # Agent interface (embedded or remote)
-  model/              # Core domain models (Resource, Pool, Sandbox, Profile)
-  policycontroller/   # Reconciler that maintains desired pool state
-  providersdk/        # Provider driver SDK, registry, and built-in drivers
-  resourcepool/       # Resource pool primitives
-  store/              # Data persistence (memory and disk backends)
-examples/             # Example configuration files
-docs/adr/             # Architecture Decision Records
-```
+Standard Go layout: `cmd/` (entry points), `internal/` (application/daemon/CLI
+glue), `pkg/` (general-purpose contracts and SDKs — see AI-First Workflow
+Notes below for the `pkg/` vs `internal/` split), `examples/` (sample
+configs), `docs/adr/` (Architecture Decision Records). List a directory
+directly rather than trusting a static tree here — it goes stale the moment
+a package moves.
 
 ## Architectural Notes (Living)
 
@@ -75,7 +63,7 @@ docs/adr/             # Architecture Decision Records
 - **Resources are single-use:** when a resource is allocated into a sandbox, it is never returned to a pool. (ADR-0002)
 - Docker pool provisioning auto-pulls a configured image when it is missing locally; first-run Docker pools should not require a manual `docker pull`.
 - `model.Resource.OriginPool` is immutable provenance: it records which pool provisioned the resource, and `pool.preheat.max_total` is enforced against all non-destroyed resources with that origin, not just current ready inventory.
-- The daemon reconcile loop runs pool reconciliation both before and after sandbox fulfillment so preheat targets are restored in the same tick after allocations drain a pool.
+- The daemon reconciles deletions and sandbox fulfillment before background pool reconciliation. Fulfillment uses EnsureReady for its requested pools; preheat targets are restored afterward without delaying warmed requests behind unrelated provisioning. Accepted sandbox requests and completed admission send bounded, coalesced wakeups; the periodic ticker remains the recovery path.
 - `computeToProvisionCount` (`internal/pool/planning.go`) measures the min_ready gap against `totalCount` (all non-stale, non-destroyed resources tracked for the pool), not `readyCount` (only `ResourceStateReady`). A resource this pool already provisioned but that hasn't reached `Ready` yet (mid-admission — e.g. guest personalization via `AdmissionHandler`) is real inventory-in-progress and must count toward the target; comparing against `readyCount` alone made every reconcile tick before admission finished re-request the *full* remaining gap, overshooting `min_ready` by one extra resource per tick until `max_total` capped it (#258, 2026-08).
 - Resource destroy paths (recycle-by-max-age, drain, sandbox-triggered `DestroyResource`) persist a transient state (`recycling` or `destroying`) *before* calling the provisioner, so a resource mid-teardown is observable via the REST API (`GET /api/v1/resources[/{id}]`) and `.boxy/state.json` instead of just vanishing once the destroy completes. No CLI command surfaces individual pool-resource state today (`boxy status` only aggregates ready-inventory counts; `boxy debug pool` only has `drain`/`fill`) — that's deliberately out of scope, see ADR-0006's Non-goals. An orphan sweep in `internal/pool/manager.go` recovers resources left stuck in a transient state by a crash; both sweep sites cover both transient states (safe because every driver's `Delete` is idempotent on an already-gone resource) — see ADR-0006 for why an earlier, narrower split turned out to leave a real recovery gap.
 
@@ -240,108 +228,75 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   (locking only around the store write) left the exact window open that
   this one closes.
 - **`providersdk.NetworkRangeReporter`** (`NetworkRanges(ctx, switchName)`)
-  is an optional capability, detected by type assertion like every other
-  one in this package, that discovers a named switch's real IPv4 range from
-  the host's own `vEthernet (<switch name>)` adapter rather than trusting
-  an operator-declared `network.range` blindly (2026-08, #223). `hyperv.
-  Driver` is the only implementation — `devfactory` deliberately does not
-  implement it, same reasoning as `GuestPersonalizer`'s devfactory-parity
-  non-goal above (one real consumer, no second provider to validate a
-  simulated contract against). `Driver.Create` is the sole caller: it
-  validates the declared address falls *within* (not equal to) a discovered
-  range whenever `config.switch` and either `network.range` or
-  `network.static_ip` are set (both modes get this check, not just
-  `range` — a `static_ip` pool is exactly as exposed to a typo/drifted
-  address), right after `cc.Network.validate()` and before `reserveMemory`
-  so a bad config fails before reserving host memory. The discovery query
-  itself is bounded by `d.memQueryTimeout()`, reused rather than adding a
-  fourth overridable duration field. A positive contradiction is a hard
-  `Create` error; an indeterminate result (query failure, or nothing
-  discoverable — e.g. a Private switch has no host vNIC) logs a warning and
-  proceeds, since this host cannot validate the PowerShell against a real
-  switch — see [ADR-0013](docs/adr/0013-hyperv-network-range-reporter.md)
-  for the full design, including why validation lives in `Create` rather
-  than at pool registration/reconcile time as originally proposed
-  (`PoolSpec.Config` is an undecoded `map[string]any` outside the driver,
-  and the driver itself normally runs on a remote agent, not the daemon
-  that owns pool reconciliation).
+  is an optional capability that discovered a switch's real IPv4 range to
+  validate an operator-declared `network.range` against (2026-08, #223).
+  **It now has zero implementations**: the config it validated, and
+  `hyperv.Driver`'s implementation of it, were removed with #224's Plan 1c
+  (2026-09-14) once per-sandbox segments took over guest addressing — see
+  `NetworkIsolator` below. The interface is deliberately kept as
+  provider-neutral public SDK surface; the archived Hyper-V implementation
+  is under `.archive/pkg/hyperv/`. Don't treat it as an oversight — read
+  [ADR-0013](docs/adr/0013-hyperv-network-range-reporter.md)'s 2026-09-14
+  change-log entry first.
+- **`providersdk.NetworkIsolator`** (`CreateSegment`/`AttachToSegment`/
+  `DestroySegment`, keyed by an opaque `SegmentRef`) is the optional
+  per-sandbox network isolation capability, type-asserted like every other
+  one here (2026-09, #224). It can't live on `Driver.Create`: preheated
+  resources exist before any sandbox claims them, so a segment is created on
+  a sandbox's first claim and each resource is moved onto it at allocation
+  time. All three methods are contractually idempotent — `CreateSegment` per
+  `sandboxID`, returning the same ref on a repeat — and `sandboxID` is
+  documented as already name-safe, so drivers don't each invent their own
+  escaping. `hyperv` (Internal vSwitch + `New-NetNat` over a `diskjson`
+  segment ledger) and `docker` (per-sandbox bridge, connect-then-disconnect)
+  implement it; `devfactory` deliberately does not, same reasoning as
+  `GuestPersonalizer`/`NetworkRangeReporter` above. Wired end-to-end as of
+  2026-09-14: sandbox allocation creates and attaches segments, agents
+  advertise which provider types they can actually isolate (an agent that
+  doesn't is skipped, not failed), and `hyperv`'s `AttachToSegment` also
+  assigns the guest's in-guest address from the segment's own block — which
+  is why hyperv's pool-level `network` config (`static_ip`/`range`) is gone;
+  the segment is now always the guest's real network. Real-hardware
+  validation (wks01, 2026-09-16) confirmed the single-host case end-to-end
+  (switch, NAT, segment addressing, exec, teardown). **One risk remains open
+  and unverified: `New-NetNat` may be effectively one-instance-per-host,
+  which would break the second sandbox on a Hyper-V host.** A follow-up
+  attempt to verify it was blocked by an unrelated topology gap before
+  reaching a second `New-NetNat` call — see ADR-0021's 2026-09-16 entry.
+  Verify on real hardware before trusting this in production for more than
+  one concurrent sandbox per host. See
+  [ADR-0021](docs/adr/0021-network-isolation-driver-capability.md) for that
+  risk, the credential-retention decision `AttachToSegment` needed, and the
+  cost it adds to the allocation hot path.
+- **`providersdk.MeshPeerer`** (`MeshIdentity`/`AddMeshPeer`/`RemoveMeshPeer`)
+  is the optional cross-host connectivity capability layered on
+  `NetworkIsolator`'s `SegmentRef` (2026-09-16, #224 Decision 2). `pkg/meshnet`
+  owns the agent-side `wireguard-go` device lifecycle (one interface per
+  sandbox per host it touches, never shared across sandboxes); private keys
+  never leave the agent process. Peer introduction rides the existing
+  ADR-0005 gRPC transport — `boxy serve` relays each host's public
+  key/endpoint/CIDR to the other, then gets out of the data path, the same
+  coordinator-not-relay role Headscale plays for Tailscale. `hyperv` and
+  `docker` implement it; `devfactory` deliberately does not, same reasoning
+  as `NetworkIsolator` above. Wired end-to-end: a sandbox spanning N hosts
+  gets a full pairwise mesh among exactly those N agents' segments; a
+  single-host sandbox never touches this capability at all. **Cross-host
+  behavior is entirely unverified against live infrastructure** — a wks01
+  validation attempt using two agent processes on one physical host hit a
+  real two-agents-one-host topology gap (`queryBoxyMemoryMB` sums
+  host-wide, orphan-adoption isn't agent-scoped) before mesh peering itself
+  could be exercised. See
+  [ADR-0022](docs/adr/0022-cross-host-mesh-peering.md) for the design and
+  that open risk.
 
 ### PSRP Transport Dependency Fork (go-psrp / go-psrpcore)
 
-- `pkg/psdirect` (PowerShell Direct/HvSocket exec) depends on
-  `github.com/smnsjas/go-psrp` and `github.com/smnsjas/go-psrpcore`, two
-  third-party modules this project does not own. As of 2026-08-28 (#242),
-  `go.mod` `replace`s both to public forks under `github.com/Geogboe/` —
-  **a deliberate decision, not a default response to every upstream bug.**
-  It was made specifically because #242, #244, and #257 all independently
-  traced into the same pair of hardcoded/unconfigurable spots in these two
-  modules with no tagged release to bump to (`go list -m -versions` on the
-  pinned `go-psrpcore` returns nothing — pseudo-versions only), making it a
-  shared, recurring blocker rather than a one-off. Forking took on real
-  ongoing maintenance burden (merging upstream fixes, owning the diff) that
-  should not be repeated lightly for the next unrelated third-party
-  dependency issue — evaluate each such case on its own terms.
-- The fork commits are minimal and isolated per fix, based directly on the
-  exact pinned commit/tag (not on either fork's own `main`, which has
-  diverged with unrelated upstream work not yet vetted for boxy's use) —
-  `go-psrpcore`'s `fix/242-configurable-idle-read-timeout` (merged to that
-  fork's `main`, since `main` there exactly matched the pinned commit) adds
-  `Adapter.SetIdleReadTimeout`, defaulting to the original hardcoded 30s so
-  every other caller sees unchanged behavior; `go-psrp`'s
-  `fix/242-disable-hvsocket-idle-cap` (kept off `main`, tagged
-  `v0.2.1-boxy242` instead, since that fork's `main` had moved past the
-  pinned `v0.2.0`) calls it with `0` (disabled) on the HvSocket backend, so
-  the idle cap defers entirely to the caller's own `ctx` deadline instead
-  of an unrelated fixed timeout. Neither fork commit is verifiable against
-  a live guest from this host — validated via each module's own unit
-  tests (new ones added alongside the fix) plus confirming the *pre-existing*
-  failures in `go-psrp`'s `./client` and `./hvsock` packages are identical
-  on the unmodified pinned tag, not introduced by the fork.
-- If re-forking or updating either fork: keep the diff scoped to one issue
-  at a time (don't bundle #244's `AddCommand`/`AddArgument` work into a
-  timeout fix, for example — see `pkg/psdirect.go`'s `escapeNativeArg` doc
-  comment for that separate, still-open gap), base new work on the exact
-  commit/tag boxy currently pins rather than either fork's own `main`, and
-  update `go.mod`'s `replace` pseudo-version/tag together with a note here.
-- **2026-09-08 (#244): `go-psrp`'s fork now also carries `v0.2.2-boxy244`**,
-  adding `Client.ExecuteCommand`/`ExecuteCommandStream` — a client-level
-  entry point onto `go-psrpcore`'s existing
-  `runspace.Pool.CreatePipelineBuilder()` +
-  `pipeline.Pipeline.AddCommand`/`AddArgument`, which already existed on the
-  pinned `go-psrpcore` commit (`v0.0.0-20260828053523-50f4720fbe2b`,
-  unchanged — no `go-psrpcore` fork work was needed for this issue). The tag
-  is a single commit (`928fd31`) directly on top of the pinned
-  `v0.2.1-boxy242`, refactoring `Execute`/`ExecuteStream`'s internals
-  (`pipelinePrereqs`, `invokePipeline`, `acquireSemaphore`, `wireUpStream`,
-  `collectResult`) so the new command-based path reuses them rather than
-  duplicating the connect/semaphore/NTLM-retry/receive-loop wiring; the
-  existing script-based `Execute`/`ExecuteStream` behavior is unchanged —
-  confirmed via the fork's own `go test ./client/...`, all green except the
-  same pre-existing `TestConfig_Validate`/`TestSaveLoadState` failures this
-  Windows dev host already produces against the unmodified pinned tag (SSO
-  detection and file-permission-mode assertions that don't hold on Windows —
-  reproduced identically on `v0.2.1-boxy242` before trusting them as
-  pre-existing), and `./hvsock`'s pre-existing no-live-guest timeouts noted
-  above.
-
-  `pkg/psdirect` now calls `ExecuteCommand`/`ExecuteCommandStream` with a
-  **fixed** wrapper script (`execScript`/`execStreamScript` — containing no
-  caller data at all, so there is nothing left for PowerShell's own parser
-  to mis-tokenize) and delivers `cmd`/`args` as structured CLIXML argument
-  objects bound to the script's own `$args`, instead of building
-  `& 'cmd' 'arg1' ...` as parsed text. This closes #244 for real: `psQuote`
-  (the PowerShell-parser-level single-quote escaping #238 added) is deleted
-  entirely. `escapeNativeArg` is deliberately **kept** — see its updated doc
-  comment and [ADR-0008](docs/adr/0008-streaming-command-execution.md)'s
-  2026-09-08 entry for why: it patches Windows PowerShell 5.1's own native
-  command-line reconstruction when `&` spawns an external process, a hazard
-  that sits downstream of PSRP argument delivery and is unaffected by
-  whether the argument values arrived as parsed text or as `$args`/
-  `AddArgument` objects. `AddCommand`/`AddArgument` alone also doesn't
-  recover `$LASTEXITCODE` out of a single-command pipeline (`go-psrpcore`'s
-  `PowerShell` object has no `AddStatement` to chain a second command) —
-  hence the wrapper-script shape rather than passing `cmd` itself as the
-  PSRP command name.
+`pkg/psdirect` (PowerShell Direct/HvSocket exec) depends on forked copies of
+two third-party modules (`go.mod` `replace`s to `github.com/Geogboe/`) —
+a deliberate response to recurring upstream blockers (#242/#244/#257), not
+a default for every dependency issue. See `pkg/psdirect/CLAUDE.md` for the
+full history, the fork/re-fork process, and why `escapeNativeArg` stays even
+after #244's `AddCommand`/`AddArgument` migration.
 
 ### Guest Credentials
 
@@ -364,12 +319,11 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
 - `hyperv.personalizeGuestLocked`'s guest-exec connection lifecycle is
   credential-scoped (#361, 2026-09): `apply_network` and `rotate_credential`
   share one `vmsdk.GuestSession` (via `psdirect.Exec.OpenSession`) under the
-  guest's old/pre-rotation credential, closed before `verify_credential` opens
-  a distinct session under the newly-rotated credential — never merged across
-  that rotation boundary. This only reduces sessions on the range/static_ip +
-  `ApplyNetwork: true` (allocation-time) path (3 → 2); admission-time and
-  DHCP-mode paths were already 2 and are unchanged. Verified via connect/close
-  counters on a fake executor, not live-guest timing — see the issue for why.
+  guest's old/pre-rotation credential, then close it after the checked rotation
+  command succeeds. Personalization does not open a second session to verify
+  the new credential; fresh-login checks belong in live validation. Tests cover
+  session ownership and failure handling. See
+  `docs/windows-allocation-performance.md` for measured results and limitations.
 
 ### Bundled Agent Skill
 
@@ -380,6 +334,62 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
 
 ## Lessons Learned
 
+- **This primary dev host is Windows ARM64, not x64** — `go build` here
+  produces an ARM64 binary. Any x64 Windows deployment target (wks01
+  included) needs an explicit cross-compile:
+  `GOOS=windows GOARCH=amd64 go build -o boxy-amd64.exe ./cmd/boxy`. An
+  ARM64 binary copied to an x64 host fails immediately at launch with
+  "This version of ... is not compatible with the version of Windows
+  you're running" — easy to mistake for a deployment/copy problem rather
+  than an architecture mismatch. Confirm with `go env GOARCH` before
+  chasing a launch failure on a cross-machine deployment.
+- **`hyperv.CreateConfig.GuestPasswordRef` (pool config) is effectively
+  dead code for any actually-runnable Hyper-V pool, found validating
+  `examples/hyperv-vms` end to end on wks01 (2026-09-17).**
+  `resolveGuestBootstrap` (`internal/cli/secrets.go`) only falls back to
+  it when `server.secrets` has no backend configured at all — but
+  `boxy serve` hard-errors at startup ("server.secrets.backend is
+  required for guest-personalizable pools") for any pool type that needs
+  guest personalization, including every Hyper-V/`vm` pool, if no secrets
+  backend is set. So the branch that reads `GuestPasswordRef` can never
+  be reached by a config that passes `boxy config validate` and actually
+  starts. The real, current mechanism is `boxy pool set-guest-credential
+  <pool> --value -`, which writes the bootstrap credential into the
+  configured secrets backend at `PoolBootstrapKey`, checked *before* the
+  legacy fallback in `resolveGuestBootstrap`. Don't reach for
+  `guest_password_ref` in a new pool config; use the CLI command, after
+  `boxy serve` is running.
+- **`boxy login`'s OS-keyring credential store needs a real interactive
+  desktop logon session on Windows — this is not SSH-exec-specific.**
+  The existing note (see `[[reference_wks01_ssh_1password]]`-style
+  guidance) already covered a plain non-interactive `ssh host "boxy login
+  ..."` failing with `A specified logon session does not exist`. Testing
+  `examples/hyperv-vms` (2026-09-17) found a **WMI-launched process**
+  (`Invoke-CimMethod -ClassName Win32_Process -MethodName Create`, used
+  elsewhere in this workflow specifically to survive SSH session close)
+  hits the identical DPAPI error for `boxy login` and
+  `boxy pool set-guest-credential`, even though the same launch mechanism
+  works fine for `boxy serve` itself (its own secrets backend, opening an
+  already-created DPAPI file, apparently doesn't hit the same failure
+  mode as `go-keyring`'s credential *write* path). Run any
+  credential-*storing* CLI command (`login`, anything that calls
+  `internal/credentials`) from a genuine interactive session — console,
+  RDP, or a local machine talking through an SSH `-L` port-forward tunnel
+  — never from a raw SSH exec or a WMI-launched process on Windows.
+- **`sandbox exec`'s error message is deliberately opaque** ("provider
+  execution failed", `internal/server/execution_manager.go`'s
+  `safeExecutionError`) **and this currently also hides "you forgot
+  `--save-guest-cred`" as a diagnosable case** — confirmed hitting this
+  for real running `examples/hyperv-vms`'s validation loop without the
+  flag on `sandbox create`. The sanitization itself is intentional
+  (provider error text may repeat command args/credentials, so it's never
+  persisted) but the missing-credential case specifically is exactly
+  #351's tracked gap ("sandbox exec: fail fast on missing guest
+  credential; add safe error categories for real transport failures") —
+  not yet fixed. If `sandbox exec` fails opaquely right after a
+  `sandbox create` that didn't pass `--save-guest-cred`, that's almost
+  certainly the cause; don't spend time chasing it as a provider/transport
+  bug without checking that first.
 - **Line endings**: `.gitattributes` declares `* text=auto eol=lf` for the whole
   repo, but that only normalizes files as they're touched — it does not
   retroactively rewrite existing blobs. Several files (e.g. `release.yml`
@@ -637,6 +647,40 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   moving the sequence into backticks does not protect it. A non-doc comment
   (one not immediately preceding a declaration) is not affected; this is
   specific to doc comments.
+- **Fixing a known bug pattern by name (the two tests it was reported
+  against) instead of by grep (every place the pattern actually occurs)
+  leaves instances behind.** `00da11e` (2026-09-14) fixed
+  `diagnostics.MemoryStore`'s "hardcoded past `time.Date` fixture ages out
+  of the store's own real-clock 14-day retention on its exact 14-day
+  anniversary" bug for the two tests it was found in
+  (`TestAPI_DiagnosticsLogsFiltersAndAudits`/`...FiltersByProvider`), with a
+  doc comment explaining the mechanism clearly. A third instance in the
+  same file, `TestAPI_DiagnosticsExportIsSanitizedAndBounded`, used the
+  identical anti-pattern and was missed — it aged out and failed
+  `task ci:validate`'s race-matrix step exactly 14 days after its own fixed
+  date, on 2026-09-17, three days after the "fix". Once a bug is understood
+  as a *pattern* (not a one-off), grep for the pattern's shape across the
+  whole tree (`time\.Date\(2026` was enough here) before considering it
+  fixed, not just re-run the specific tests that originally failed — and
+  double-check any sibling test in the same file that shares fixture setup
+  style, since that is exactly where a missed instance tends to hide.
+  **A fourth instance, `pkg/agentsdk/remoteclient_logs_test.go`'s
+  `TestClientSessionDispatchesOnDemandLogsSinceTimestamp`, was still missed
+  the next day (2026-09-18)** despite that "grep the whole tree" advice
+  being written the day before — the grep was scoped to the files already
+  suspected (`internal/server`, `pkg/diagnostics`), not actually run
+  tree-wide, and it failed the exact same way (a hardcoded 2026-09-03 date,
+  15 days stale) inside a completely different package that constructs its
+  own `diagnostics.NewMemoryStore()`. Two things generalize from this:
+  first, "grep the whole tree" has to mean *the actual repo root*, every
+  package, not just the files a symptom pointed at, since the vulnerable
+  pattern (a literal `time.Date(2026, ...)` fed into `diagnostics.Event
+  .Timestamp` then `Append`ed to a `MemoryStore`/`FileStore` with no
+  injected clock) can appear in any consumer package, not just
+  `diagnostics`'s own tests; second, a consumer package outside
+  `pkg/diagnostics` has *no way* to inject a fixed clock at all (`now` is
+  an unexported field with no constructor param or setter), so
+  `time.Now().UTC()` is the only available fix there, not a design choice.
 
 ## ADRs
 
@@ -682,30 +726,6 @@ Wrap repeated commands in `Taskfile.yml`. If a command is run more than once, ad
 - Tool dependencies used by Taskfile tasks and CI must use explicit pinned versions, kept at the latest stable release compatible with the repository's declared toolchain. Update the pin intentionally in both local and CI workflows and validate the full task/check surface; do not use moving `@latest` references.
 - GoReleaser is pinned in the isolated `tools/` module; use `task release:check` and `task release:snapshot` instead of assuming a global `goreleaser` binary is installed.
 
-### Windows/WSL GitHub Actions validation
-
-- This Windows ARM64 checkout can run Linux GitHub Actions jobs locally with
-  `act` and Docker. Install `act` into the WSL user-local path; sudo is not
-  required:
-
-  ```powershell
-  wsl.exe --cd D:\projects\code\boxy bash -lc "mkdir -p ~/.local/bin"
-  wsl.exe --cd D:\projects\code\boxy bash -lc "curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/nektos/act/master/install.sh | sh -s -- -b ~/.local/bin"
-  ```
-
-- List or run Linux CI jobs from the Windows checkout with the ARM64 runner
-  image:
-
-  ```powershell
-  wsl.exe --cd D:\projects\code\boxy bash -lc "~/.local/bin/act -l -W .github/workflows/ci.yml"
-  wsl.exe --cd D:\projects\code\boxy bash -lc "~/.local/bin/act pull_request -j lint -W .github/workflows/ci.yml -P ubuntu-latest=catthehacker/ubuntu:act-latest --container-architecture linux/arm64"
-  ```
-
-- Use targeted Linux jobs such as `lint`, `build`, or `installer-smoke`.
-  `act` does not reproduce GitHub-hosted Windows runners or release
-  permissions; the repository test suite, `task ci:validate`, and GitHub
-  Actions remain authoritative. Docker Engine must be available to WSL.
-
 ## Installer Notes
 
 - Release installers live in `scripts/install.ps1` and `scripts/install.sh`.
@@ -724,222 +744,19 @@ Wrap repeated commands in `Taskfile.yml`. If a command is run more than once, ad
 
 ## CI / CD Workflow Notes
 
-### Merging PRs
-
-- `main` has no branch protection (`gh api repos/Geogboe/boxy/branches/main/protection` → 404). Merges are gated by convention and green CI, not by GitHub-enforced required checks.
-- History uses merge commits, not squash, for every PR including release-please PRs — use `gh pr merge --merge --body ""`. The trailing `--body ""` is load-bearing, not cosmetic — see the changelog-duplication note below.
-- **Every regular fix/feat PR's changelog entry was appearing twice in release-please's notes until 2026-08-27 — always pass `--body ""`.** Root cause: the repo's merge-commit template (`merge_commit_message: "PR_TITLE"`) puts the PR title into the merge commit's *body*, and PR titles here are themselves Conventional-Commit-formatted (`fix(pool): ...`) — identical in shape to the underlying fix commit already in history. release-please's commit parser walks every commit including merge commits, so it picked up both as separate entries for the same change (see `v0.1.50`'s release notes for a live example: `#240`'s fix is listed twice, once per commit SHA). There is **no repo-settings fix** for this: GitHub only allows three `(merge_commit_title, merge_commit_message)` combinations — `(PR_TITLE, PR_BODY)`, `(PR_TITLE, BLANK)`, `(MERGE_MESSAGE, PR_TITLE)` — and every combination other than the current one either keeps the duplicate body or moves the same duplicate text into the merge commit's *subject* instead. The fix has to happen per-merge: `gh pr merge --merge --body ""` explicitly overrides the template with an empty body via the API, leaving the merge commit as subject-only (`Merge pull request #N from owner/branch`), which doesn't match Conventional-Commit shape and isn't picked up as its own entry. This only prevents *future* duplication — releases already cut (`v0.1.50` and earlier) keep their duplicated notes unless hand-edited separately.
-- release-please PRs reliably show their `CI` check as `action_required` with zero jobs run (seen for 0.1.27 and 0.1.29). This is a known, harmless quirk of that workflow's trigger conditions, not a real gate — safe to merge through.
-- **Batching several small, independent fixes into one local integration
-  branch before opening any PR** (rather than one branch-and-PR per issue
-  against a moving `main`) is a deliberate, requested pattern, not just a
-  shortcut — see PR #264 (2026-08-27, six issues: #241/#251/#258/#249/#213/#104).
-  Build each fix on its own short-lived topic branch off the integration
-  branch as usual (keeps commit messages/`Closes #N` and, if plans change,
-  the option to cherry-pick just one fix out later), `git merge` it into the
-  integration branch immediately, and **run the full build/test/`task
-  ci:validate` gate again after every single merge**, not just once at the
-  end — this caught two separate real semantic-merge regressions in the
-  same session (see the two entries above) that a single end-of-batch check
-  would have found much later and made harder to bisect. If the integration
-  branch already has open PRs from an earlier attempt at per-issue branches
-  covering some of the same commits, close those as superseded (referencing
-  the new batch PR) once the batch PR exists — don't leave both live.
-- **One planning session per batch** (2026-09-03 decision). Plan one
-  substantial issue in a focused session, then spend the rest of the batch on
-  low-hanging issues that already have clear scope and acceptance criteria.
-  Do not start multiple heavyweight planning sessions concurrently or pause
-  every small fix for a new design session. Keep each implementation on its
-  own topic branch, merge it locally into the shared `dev` integration branch,
-  rerun the full validation gate after each merge, and open one aggregate PR
-  from `dev` to `main` when the batch is substantial.
-- **Push/PR/CI cadence is deliberately low, separate from the batching
-  pattern above (2026-08-28 decision).** The mechanics above (topic branch
-  per fix, merged into one local integration branch, full `task ci:validate`
-  after every merge) are the unit of work; pushing that branch, opening a
-  PR, and letting GitHub Actions run is a separate, coarser-grained step —
-  and the point of doing all validation locally first is specifically to
-  avoid needing that remote round-trip more than necessary. Default to
-  working through as much of the backlog as is actually batch-shaped (see
-  the per-issue scoping judgment used for #264: skip anything needing live
-  Hyper-V/macOS validation this host can't do, skip anything design/ADR-
-  shaped, skip anything with no real scope yet) on one local branch across
-  a whole session or more, closing a real batch of issues, before pushing
-  and opening a PR at all. Push once that batch is substantial, not after
-  every few items — local `task ci:validate` is what actually needs to pass
-  before every push either way, so batching doesn't lower validation rigor,
-  it just moves the GitHub Actions run (and the release-please/GoReleaser
-  cadence question — see "Release cadence" above) to fire less often.
-- Merging a release-please PR triggers `release.yml` on push to `main`. The `release-please` job tags and completes quickly; the `goreleaser` job (5 platforms + SBOMs + checksums + cosign signing, ~3 min of actual runtime) then **pauses indefinitely on a `release-signing` GitHub Environment approval** (#55, 2026-08, ADR-0014) before it starts — it will not run to completion on its own. Go approve it in the Actions run's UI, then wait for the run to complete before treating the release as published. Don't mistake the pause for a stalled/failed run.
-- **Release cadence is deliberately not "cut a release after every merged fix" (2026-08-27 decision).** The project stays prerelease (`prerelease: true` in both `release-please-config.json` and `.goreleaser.yml`) until the owner says otherwise, but a prerelease that ships after a single one-line bugfix is still a wasted release: a full 5-platform GoReleaser run (SBOMs, checksums, cosign signing, a manual approval click) for one commit's worth of change. release-please already supports this — it keeps exactly one open release PR that accumulates every commit landed on `main` since the last release, updating in place, until that PR is merged. The fix is workflow discipline, not tooling: **don't merge the release-please PR just because it appeared.** Let multiple fix/feat PRs land on `main` first so the pending release PR accumulates a real batch of changelog-worthy entries, and only merge it — cutting the actual tagged release — when there's enough substance to justify a release, or when the owner explicitly asks for one. This overrides the ship-it skill's Phase 8 default (which treats "approve and merge the release PR" as an automatic follow-on to a self-approved fix PR merge) — ask before merging a release-please PR rather than doing it on autopilot.
-
-- **Early-stage release scope:** Boxy has no users yet. Until that changes, aim to pack as much compatible, tested, and documented work into each release as practical. Batch related features, smaller improvements, and bug fixes together, but do not lower validation rigor or pull in blocked/design-only work without an explicit decision.
-- **Green CI is not the same gate as "no one has commented on this PR."**
-  During the post-0.1.66 batch (2026-09-09, PR #362), the aggregate batch PR
-  was described as ready to merge purely on `task ci:validate` passing —
-  without ever checking for Copilot's automated review or the repo owner's
-  own inline PR comments, both of which were already present and included a
-  real, confirmed bug (see #363 and ADR-0020's neighbors). Before merging any
-  PR — batch or otherwise — check `gh api repos/<owner>/<repo>/pulls/<n>/reviews`
-  and `.../comments` (not just `gh pr view`, which misses bot reviews and
-  inline comments) and classify every finding, human or bot. The bundled
-  `ship-it` skill's Phase 7.5 now makes this an explicit, non-skippable gate.
-
-### GitHub Actions Node 24 migration — done
-
-All actions in `ci.yml` and `release.yml` are pinned to Node 24-compatible
-versions as of 2026-07 (`release-please-action` v5.0.0, `goreleaser-action`
-v7.2.3). The `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` workaround has been removed —
-it's no longer needed. See #100.
-
-### Action pinning and updates
-
-- Every third-party action in `ci.yml` and `release.yml` is pinned to a full
-  commit SHA (not a mutable tag), per #55. The tag is kept as a trailing
-  comment (`@<sha> # vX.Y.Z`) for readability.
-- `.github/dependabot.yml` watches the `github-actions` ecosystem and opens
-  PRs to bump these pins — don't hand-edit them without also checking whether
-  Dependabot would have caught the same update.
-- `.github/CODEOWNERS` requires owner review on any `.github/workflows/`
-  change.
-- A `betterleaks` job runs in `ci.yml` on every push/PR and scans the full Git
-  history of the checked-out ref with pinned Betterleaks `v1.8.1`. `task
-  secrets:scan` installs and runs the same pinned version locally. Do not
-  replace it with directory mode because that would miss secrets that were
-  committed and later removed. Both the CI job and `task secrets:scan`/`task
-  pii:scan` pass `--log-opts HEAD` (2026-08, PR #209 follow-up): without it,
-  Betterleaks' `git .` source walks every ref reachable in the local
-  repository, and `fetch-depth: 0` on `actions/checkout` fetches *all* remote
-  branches (`+refs/heads/*`), not just the one being tested — so an unrelated
-  open branch elsewhere in the repo (e.g. a stray test IP literal on someone
-  else's in-progress PR) could fail the PII job for a PR that never touched
-  it, and the same is true locally for any developer with those branches
-  fetched. `--log-opts HEAD` still walks the *full* history of the checked-out
-  ref back to its initial commit — no coverage of what's actually being
-  merged is lost — it only drops sibling branches this run isn't about. On
-  Windows,
-  `scripts/betterleaks-git.ps1` prepends a narrow Git shim for a native ARM64
-  Git-for-Windows compatibility issue: Betterleaks maps Go's `os.DevNull` to
-  `NUL` for `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM`, while the
-  `clangarm64` Git build rejects `NUL` as a config-file path, including Git
-  `2.55.0.windows.3`. Testing on an x64 `mingw64` host did not reproduce it.
-  The shim clears only those invalid paths, keeps system config disabled, and
-  delegates to the real Git executable; it does not bypass Betterleaks or
-  weaken the history scan. Retest native `betterleaks git .` after any
-  Betterleaks/Git upgrade before removing the shim. See the independent
-  Windows ARM64 reproduction at
-  https://github.com/Gentleman-Programming/gentle-ai/issues/2206.
-
-- A separate `pii` job uses `.betterleaks-pii.toml` to scan the checked-out
-  ref's full Git history for non-controlled email addresses, private IPs, non-example hostnames,
-  usernames, and home-directory paths. `task pii:scan` runs it locally;
-  `task pii:scan:stdin` checks proposed public issue, PR, or comment text;
-  `task pii:authors` reports Git author identities separately and is
-  informational rather than blocking. Run the repository scan and the stdin
-  scan before publishing public text. The archived external PII-scanner skill
-  is not part of this workflow.
-- Test and documentation fixtures must use scanner-recognized placeholders for
-  fake credentials, such as `${BOXY_TEST_PASSWORD}`, `${BOXY_TEST_TOKEN}`, or
-  `${BOXY_TEST_API_KEY}`. For identity-shaped fixtures, use
-  `boxy-test@example.invalid`, `boxy.example.test`, TEST-NET/documentation IP
-  ranges, `boxy-test-user`, and `C:\Users\boxy-test-user` or
-  `/home/boxy-test-user`. Do not use realistic-looking random strings or
-  common password words such as `password`, `changeme`, `testpass`, or
-  `foo`/`bar`; those can be valid credentials and should remain visible to
-  Betterleaks. Historical secret or PII fixture findings may be recorded only
-  as narrow fingerprint-only `.betterleaksignore` entries after review.
-- **Don't name your own real local infrastructure in checked-in docs**,
-  including working/progress notes — e.g. a real Hyper-V test workstation's
-  hostname. `.betterleaks-pii.toml`'s `boxy-pii-hostname` rule only matches a
-  `host:`/`server:`-style key paired with a dotted FQDN
-  (`host: foo.example.com`); a bare, dot-less label used in prose (e.g.
-  `` `hostlabel` ``) is structurally outside that pattern and will not be
-  flagged, so this is not a case the scanner catches for you. Use a
-  descriptive phrase instead — "the local Hyper-V test host" — the same way
-  the rest of this file avoids naming this project's actual dev machines.
-  Found and fixed 2026-09-06 (docs/superpowers/specs/2026-09-04-*.md had
-  named the author's real test workstation).
-
-### GoReleaser Signing Notes
-
-- GoReleaser publishes `checksums.txt` alongside release binaries and SBOMs,
-  and (as of 2026-08, #55) signs it with **keyless cosign**
-  (Sigstore/Fulcio/Rekor via the `goreleaser` job's GitHub OIDC token), not a
-  GPG subkey — chosen so there is no long-lived private key to generate,
-  store, or rotate. `signs:` lives in `.goreleaser.yml`, so `task
-  release:check` / `task release:snapshot` exercise the config locally
-  (signing itself still fails locally with "cosign: executable file not
-  found" unless `cosign` is installed — that's expected; the real binary
-  only needs to exist in CI, via the `sigstore/cosign-installer` step in
-  `release.yml`). See [ADR-0014](docs/adr/0014-release-signing-with-keyless-cosign.md).
-- The `goreleaser` job runs under the `release-signing` GitHub Environment,
-  which requires a manual approval click before the *entire* job (not just
-  the signature) proceeds — chosen over gating a separate downstream signing
-  job specifically so `signs:` could stay locally testable; see ADR-0014 for
-  the tradeoff. This environment must be created in repo Settings before a
-  release can complete — it does not exist by default, and the job will hang
-  waiting for an approval gate that was never configured otherwise.
-- Artifact attestations (`actions/attest-build-provenance`) were considered
-  and deliberately **not** added alongside cosign signing — both deliver
-  overlapping provenance guarantees for the same artifacts, and shipping
-  both would be duplicated trust machinery for no added assurance.
-  Reconsider only with a concrete reason attestations add something cosign
-  doesn't, not by default.
-- Installer-side automatic signature verification is still **not
-  implemented** — tracked separately as #231, deliberately deferred out of
-  #55 (that issue's own text called it "long term" scope). Don't assume
-  `scripts/install.sh`/`scripts/install.ps1` verify anything beyond the
-  checksum; verify against the actual scripts before claiming otherwise.
+Full detail on merging conventions, release cadence, GitHub Actions pinning,
+running CI locally via `act`, and GoReleaser's cosign signing lives in
+[docs/ci-cd-workflow.md](docs/ci-cd-workflow.md) — read it before merging a
+PR, editing `.github/workflows/`, or touching release config. The load-bearing
+rule to remember without reading further: **don't merge the release-please
+PR just because it appeared** — batch first, ask before cutting a release.
 
 ## Current Delivery Notes
 
-- Secure REST/CLI management (#154), sandbox command execution (#153), and
-  the file-permission-on-rewrite sweep (#158) landed together in #162
-  (2026-08). See [ADR-0007](docs/adr/0007-secure-rest-api-and-cli-authentication.md),
-  [ADR-0008](docs/adr/0008-streaming-command-execution.md), and
-  [ADR-0009](docs/adr/0009-file-permission-hardening-on-rewrite.md) for the
-  decisions and their dated change notes.
-- REST handlers are currently hand-wired under `internal/server/api_*.go`.
-  Keep the route catalog, generated `docs/api.md`, CLI wireframe, and bundled
-  skill synchronized when adding routes or commands; use `task generate`.
-- API keys are hashed in the daemon store and raw values belong only in the OS
-  keyring. The first admin key is loopback-bootstrap-only; TLS uses the Boxy CA
-  by default, `--ca-cert` for custom trust, and explicit insecure overrides —
-  including for a bare (schemeless) `--server` address, which defaults to
-  `https://`, not `http://` (ADR-0007).
-- `os.WriteFile`'s mode argument is ignored on rewrite of a pre-existing
-  file — any new write site handling sensitive or config material needs an
-  explicit `os.Chmod` follow-up unless it uses disk.go's write-tmp-then-rename
-  pattern. See ADR-0009 for the full file list and why rename is exempt.
-- For feature work, use TDD red/green/blue: add a failing test, implement the
-  smallest fix, then review/refactor with `gopls`; finish with `task test`,
-  `task lint`, and documentation/drift checks.
-- Do not run long-running integration, race, browser, smoke, or full CI suites
-  until implementation and focused unit tests for the entire requested batch
-  are complete. Red/green TDD runs are encouraged for small unit tests per
-  feature; defer the expensive end-to-end gates until the final work is ready.
-- Prefer the quiet `agent:*` Taskfile wrappers for verbose test, race, smoke,
-  and CI commands. They capture successful output in `.tmp` and print only
-  bounded diagnostics when a command fails.
-- Guest credential delivery for Hyper-V pools (#188/#189) is implemented with
-  server-owned bootstrap storage, mTLS-authorized agent resolution, allocation
-  time password rotation, one-time sandbox delivery, and caller-supplied exec
-  credentials. See [ADR-0010](docs/adr/0010-guest-credential-delivery.md) and
-  the design spec for the accepted restart/lost-delivery behavior.
-- Post-0.1.66 batch (2026-09-09, PR #362, released as v0.1.67) landed
-  per-operation agent timeouts + a stuck-provisioning watchdog (#333/#337 —
-  see [ADR-0020](docs/adr/0020-bounded-agent-operations-and-provisioning-watchdog.md)),
-  pool quarantine-exhaustion visibility (#328), the `go-psrp`
-  `AddCommand`/`AddArgument` fork (#244, see the PSRP fork section above),
-  agent-facing UI verbiage renamed to "host" (#332), a Pools view remodel
-  (#327, see `docs/ui-design-language.md`), unblocked user-role CLI login
-  (#359), hidden-by-default deleted resources (#353), deferred allocation-time
-  IP assignment (#358), and PSRP session reuse across `apply_network` +
-  `rotate_credential` (#361, see the Guest Credentials section above). Filed
-  follow-ups: #350 (per-sandbox timeout doesn't scale with resource count)
-  and #363 (reconsider the pools UI's "unassigned" sentinel design — its
-  literal name is now reserved at config validation as a narrow fix, not a
-  redesign).
+A running log of recently-landed feature batches and their supporting
+decisions lives in [docs/current-delivery-notes.md](docs/current-delivery-notes.md)
+— check it for what shipped most recently and why, before assuming a
+capability is missing.
 
 # Deletions
 

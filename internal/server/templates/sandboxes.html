@@ -20,7 +20,7 @@
 
 {{define "sandboxes_table_fragment"}}
 {{if .Sandboxes}}
-<table>
+<div class="table-scroll"><table>
   <thead>
     <tr>
       <th scope="col">ID</th>
@@ -69,7 +69,7 @@
     </tr>
     {{end}}
   </tbody>
-</table>
+</table></div>
 {{else}}
 <div class="empty">No sandboxes created</div>
 {{end}}
