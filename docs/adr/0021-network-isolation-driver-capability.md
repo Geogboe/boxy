@@ -335,14 +335,22 @@ Both risks recorded above were carried into Plan 1c to be settled there.
 Neither could be settled empirically: this development host cannot run
 Hyper-V VMs (see AGENTS.md), so everything below rests on fakes.
 
-1. **`New-NetNat` one-instance-per-host — STILL OPEN, unverified.** Nothing
-   in Plan 1c exercised a real `New-NetNat`, so this is re-recorded verbatim
-   rather than closed. If Windows does refuse a second NAT instance, the
-   Hyper-V design remains non-functional past the first sandbox on a host,
-   and the fallback is still the one sketched above: one shared NAT over the
-   whole `10.250.0.0/16` base, with per-sandbox isolation resting on the
-   separate switches alone. **This must be verified on a real Hyper-V host
-   before this feature is trusted in production.**
+1. **`New-NetNat` one-instance-per-host — CLOSED 2026-09-22, disproven on
+   real hardware.** Verified directly on wks01 (Windows 10 Pro): two
+   concurrent `New-NetNat` instances with non-overlapping `/29` prefixes
+   (`10.250.90.0/29` and `10.250.91.0/29`), each over its own Internal
+   vSwitch with a host vNIC address — exactly the shape
+   `hyperv.CreateSegment` produces per sandbox — were created successfully
+   and coexisted. Windows did not refuse the second instance, so the
+   per-sandbox NAT design works as written and no fallback is required.
+
+   The fallback sketched above was also confirmed available should a
+   future host behave differently: one shared NAT over `10.250.0.0/16`
+   coexists fine with two separate per-sandbox switches addressed inside
+   that range. Note this only establishes that the NAT objects can be
+   created and coexist; guest-to-internet traffic through two concurrent
+   NATs was not exercised, and the multi-sandbox path still hasn't been
+   run end to end through the daemon on real Hyper-V hardware.
 2. **`New-NetIPAddress` timing right after `New-VMSwitch` — still
    theoretical, and now better contained.** No timing failure was observed,
    because nothing here has been run against a live host; no bounded
@@ -394,3 +402,25 @@ Hyper-V VMs (see AGENTS.md), so everything below rests on fakes.
   `Get-VMHardDiskDrive` filtered to VMs in the `Running` state, matched
   against the template's own disk path — this is unrelated to network
   isolation itself but was found and fixed in the course of validating it.
+
+- 2026-09-22: **Open Risk 1 (`New-NetNat` one-instance-per-host) closed —
+  disproven on real hardware.** Tested directly on wks01 (Windows 10 Pro)
+  with raw PowerShell rather than a full daemon/agent/sandbox cycle, since
+  the question is purely about what Windows' NAT implementation permits:
+  two Internal vSwitches, each given a host vNIC address in its own `/29`,
+  each with its own `New-NetNat` over that `/29`. Both succeeded and
+  coexisted (`10.250.90.0/29` and `10.250.91.0/29` live simultaneously).
+  This is exactly the object shape `hyperv.CreateSegment` creates per
+  sandbox, so the per-sandbox NAT design is sound as written and the
+  shared-NAT fallback this ADR sketched is not needed.
+
+  The fallback was verified as available anyway, in case a future host or
+  Windows build behaves differently: a single NAT over `10.250.0.0/16`
+  coexists with two separate per-sandbox switches addressed inside that
+  range.
+
+  Scope of what this does and does not establish: it proves the NAT and
+  switch objects can be created and coexist. It does not exercise guest
+  traffic through two concurrent NATs, and the multi-sandbox path still
+  has not been driven end to end through the daemon on real Hyper-V
+  hardware — that remains the outstanding validation for this feature.
