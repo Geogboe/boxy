@@ -280,7 +280,10 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   `docker` implement it; `devfactory` deliberately does not, same reasoning
   as `NetworkIsolator` above. Wired end-to-end: a sandbox spanning N hosts
   gets a full pairwise mesh among exactly those N agents' segments; a
-  single-host sandbox never touches this capability at all. **Cross-host
+  single-host sandbox never touches this capability at all. A mesh setup
+  failure is logged as a warning, not a sandbox failure: cross-host overlay
+  traffic does not work yet (#379), and failing would also break sandboxes
+  whose resources are each usable on their own host. **Cross-host
   behavior is entirely unverified against live infrastructure** — a wks01
   validation attempt using two agent processes on one physical host hit a
   real two-agents-one-host topology gap (`queryBoxyMemoryMB` sums
