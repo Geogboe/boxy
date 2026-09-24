@@ -646,4 +646,9 @@ c9a06237db159b7394e105ccd6e77bd5a67a8288:pkg/providersdk/providers/docker/segmen
 c9a06237db159b7394e105ccd6e77bd5a67a8288:pkg/providersdk/providers/docker/segment_cidr_test.go:boxy-pii-private-ipv4:103
 c9a06237db159b7394e105ccd6e77bd5a67a8288:pkg/providersdk/providers/docker/segment_cidr_test.go:boxy-pii-private-ipv4:111
 c9a06237db159b7394e105ccd6e77bd5a67a8288:pkg/segmentcidr/segmentcidr.go:boxy-pii-private-ipv4:26
+
+# Reviewed 2026-09-24: the review comment above, naming those same
+# addresses in prose, trips the same rule on this file itself. Same
+# self-referential case as the earlier .betterleaksignore entry above.
+59f2db9814cced38585c72ce648a4600ef47da35:.betterleaksignore:boxy-pii-private-ipv4:642
 ed2e40e9b7b09e592a08fbbe79a614f8a1eef5ae:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:678
