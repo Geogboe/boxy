@@ -1,8 +1,11 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -711,13 +714,33 @@ func TestManager_EnsureNetworkSegment_MeshFailureDoesNotFailSandbox(t *testing.T
 	}
 	allocator := &fakeMeshPeeringAllocator{
 		fakeSegmentTrackingAllocator: &fakeSegmentTrackingAllocator{createRef: "boxy-sb-sb-1"},
-		identityErr:                  errors.New("create wireguard device: operation not permitted"),
+		identityErr:                  errors.New(`create TUN device "wg-sb-1": operation not permitted`),
 	}
 	m := New(st, allocator)
+
+	// Capture the warning: the manager logs through slog.Default.
+	var logged bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logged, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	res := model.Resource{ID: "res-2", Provider: model.ProviderRef{Name: "docker", AgentID: "agent-2"}}
 	if err := m.ensureNetworkSegment(ctx, &sb, model.Pool{Name: "pool-b"}, res); err != nil {
 		t.Fatalf("ensureNetworkSegment returned the mesh error, want it logged only: %v", err)
+	}
+	var rec map[string]any
+	if err := json.Unmarshal(logged.Bytes(), &rec); err != nil {
+		t.Fatalf("expected exactly one JSON log record, got %q: %v", logged.String(), err)
+	}
+	for key, want := range map[string]string{
+		"level":      "WARN",
+		"operation":  "mesh_peering",
+		"agent_id":   "agent-2",
+		"error_code": "mesh_device_unavailable",
+	} {
+		if rec[key] != want {
+			t.Fatalf("log record %s = %v, want %q (record: %v)", key, rec[key], want, rec)
+		}
 	}
 	if len(sb.NetworkSegments) != 2 {
 		t.Fatalf("NetworkSegments = %+v, want agent-2's segment recorded despite the mesh failure", sb.NetworkSegments)
