@@ -545,23 +545,25 @@ after #244's `AddCommand`/`AddArgument` migration.
   PII); neither was caused by #208's own changes, and conflating "PR is red"
   with "PR broke it" would have led to fixing the wrong branch. Root-cause
   before patching.
-- **A specific known flake on `windows-latest`'s `Test` job (2026-09-09):**
-  `t.TempDir()` cleanup can fail with `TempDir RemoveAll cleanup: unlinkat
-  ...: The directory is not empty` for any test under `internal/cli` that
-  spawns an agent via `runAgentServe`/`agent_serve_test.go` helpers into a
-  `t.TempDir()`-backed data dir (seen on both
-  `TestAgentServe_TokenRegistrationThenCertReconnect` and
-  `TestRunAgentServe_SetsDefaultLoggerSoPackageLevelLogsReachDiagnostics` —
-  different tests, same root cause: something still holds a file handle
-  open in that directory when Go's test cleanup tries to remove it,
-  Windows-only since POSIX allows removing a directory while a process
-  holds a handle into it but Windows does not). Reproduced identically
-  across four separate CI runs on PR #367, none of which touched
-  `internal/cli` or agent-serve code at all — confirmed pre-existing and
-  environmental, not caused by that PR. A plain rerun of the failed job
-  reliably goes green; don't chase this as a code bug without first
-  checking whether the failing test is even reachable from your branch's
-  changes (see the entry above).
+- **`TempDir RemoveAll cleanup: ... directory not empty` in `internal/cli`
+  agent tests was a real test bug, not an environment flake (#376, fixed
+  2026-09-24).** It was first logged (2026-09-09) as a Windows-only
+  open-handle flake that a rerun fixes, and treated as not worth chasing.
+  It then reproduced on Linux in `task ci:validate`'s WSL race run (2 of 30
+  runs of `TestAgentServe_TokenRegistrationThenCertReconnect`), which ruled
+  out the Windows-handle theory. The cause: the test runs server and agent
+  in one process, and `runAgentServe` sets the process-global slog default
+  to write into the agent's `t.TempDir()` diagnostics file. The test
+  daemon's cleanup called `grpcSrv.Stop()`, which returns before the
+  server's `Connect` handler runs its deferred "agent disconnected" log, so
+  that log could write into the agent directory while `RemoveAll` was
+  deleting it. `startAgentTestDaemon` now uses `GracefulStop` (what `boxy
+  serve` uses), which waits for handlers. The general lesson: a failure that
+  only a rerun makes go away is still a bug with a cause. Reproduce it with
+  `-count=N` before labeling it environmental. The Windows sightings of
+  `TestRunAgentServe_SetsDefaultLoggerSoPackageLevelLogsReachDiagnostics`
+  don't use the test daemon and may have a separate cause; if it recurs,
+  reproduce it the same way.
 - **Fully validate locally before pushing, including the parts that are easy
   to skip because you already predict the result.** `task ci:validate` (or
   the specific local scan/lint commands it wraps) must actually be run and
