@@ -668,20 +668,33 @@ func TestDriver_DestroySegment_KeepsSharedNAT(t *testing.T) {
 func TestEnsureSharedNATScript_Rules(t *testing.T) {
 	script := ensureSharedNATScript()
 	for _, want := range []string{
+		// Any NAT other than the shared or a legacy one is refused rather
+		// than joined by a second one -- on every call, not only when the
+		// shared NAT is missing.
+		"Where-Object { $_.Name -ne 'boxy-segments' -and $_.Name -notlike 'boxy-sb-*' }",
+		"one NAT network per host",
+		// An existing shared NAT over the wrong prefix is an error.
+		"$nat.InternalIPInterfaceAddressPrefix -ne '" + segmentBaseCIDR + "'",
 		// Legacy per-sandbox NATs are removed, matched by name only.
 		"Where-Object { $_.Name -like 'boxy-sb-*' }",
 		"Remove-NetNat",
-		// Any other NAT is refused rather than joined by a second one.
-		"Where-Object { $_.Name -ne 'boxy-segments' }",
-		"one NAT network per host",
 		// Losing a creation race counts as success once the NAT exists.
 		"} catch {\n        if (-not (Get-NetNat -Name 'boxy-segments'",
-		// An existing shared NAT over the wrong prefix is an error.
-		"$nat.InternalIPInterfaceAddressPrefix -ne '10.250.0.0/16'",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("shared NAT script missing %q:\n%s", want, script)
 		}
+	}
+	// Every refusal comes before any change, so a refused call leaves the
+	// host untouched.
+	lastThrow := strings.LastIndex(script, "throw (")
+	if lastThrow > strings.Index(script, "Remove-NetNat") || lastThrow > strings.Index(script, "New-NetNat") {
+		t.Fatalf("shared NAT script changes the host before its last validation check:\n%s", script)
+	}
+	// The foreign-NAT check must not sit inside the "shared NAT missing"
+	// branch, or a NAT added after boxy-segments would be accepted.
+	if strings.Index(script, "if (-not $nat)") < strings.Index(script, "$other.Count") {
+		t.Fatalf("foreign-NAT check only runs when the shared NAT is missing:\n%s", script)
 	}
 }
 

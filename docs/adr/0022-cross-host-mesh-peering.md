@@ -165,13 +165,12 @@ sharing-one-host support, not a mesh-peering defect, but it means:
    single-host lab hardware, not something Decision 2's design assumed;
    the design itself assumes hosts are distinct, which is the normal case
    in production.
-3. The `New-NetNat` one-instance-per-host risk ADR-0021 records as "STILL
-   OPEN, unverified" remains open for the same reason — the two-agent test
-   setup was intended to also exercise a second concurrent `New-NetNat` on
-   one host, but never got far enough before hitting risk 2 above.
-   (Update 2026-09-24: settled outside this ADR. Microsoft's documentation
-   confirms one NAT network per host, and Hyper-V segments move to one
-   shared NAT. See ADR-0021's Open Risk 1.)
+3. The `New-NetNat` one-instance-per-host risk was not settled here: the
+   two-agent test setup was meant to exercise a second concurrent
+   `New-NetNat` on one host but never got past risk 2 above. It was settled
+   on 2026-09-24 outside this ADR: Microsoft's documentation limits a host
+   to one NAT network, and Hyper-V segments now share one host-wide NAT.
+   See ADR-0021's Open Risk 1 and change log.
 
 ## Change log
 

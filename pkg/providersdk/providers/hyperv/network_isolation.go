@@ -406,12 +406,15 @@ func (d *Driver) resolveSegmentLedgerPath() string {
 // (all internet access), which is the wrong default until egress policy
 // exists to restrict it deliberately (see the design spec's Decision 1).
 //
-// Ensuring the shared NAT:
+// Ensuring the shared NAT, checked on every call (not only when the shared
+// NAT is missing), and validated before anything is changed:
+//   - Any NAT that is neither the shared one nor a legacy boxy-sb-* NAT is
+//     refused with an error naming it, since a second NAT on the host is
+//     something Microsoft doesn't support.
+//   - A shared NAT over the wrong prefix is refused.
 //   - Per-sandbox NATs left by earlier Boxy versions (named after their
-//     boxy-sb-* switch) are removed first. They overlap the shared prefix,
-//     and the shared NAT covers the same addresses once it exists.
-//   - Any other NAT on the host is refused with an error naming it rather
-//     than adding a second one, which Microsoft doesn't support.
+//     boxy-sb-* switch) are then removed. They overlap the shared prefix,
+//     and the shared NAT covers the same addresses.
 //   - Concurrent calls (in this process or another agent on the same host)
 //     can both find the NAT missing; the loser's New-NetNat fails, and the
 //     script accepts that as success once the NAT exists.
@@ -477,21 +480,23 @@ if (-not (Get-NetIPAddress -InterfaceAlias '%s' -IPAddress '%s' -ErrorAction Sil
 // exists over segmentBaseCIDR. See CreateSegment for the rules it enforces.
 func ensureSharedNATScript() string {
 	return fmt.Sprintf(`
-$nat = Get-NetNat -Name '%[1]s' -ErrorAction SilentlyContinue
+$nats = @(Get-NetNat -ErrorAction SilentlyContinue)
+$other = @($nats | Where-Object { $_.Name -ne '%[1]s' -and $_.Name -notlike 'boxy-sb-*' })
+if ($other.Count -gt 0) {
+    throw ("host already has a NAT network (" + (($other | ForEach-Object { $_.Name + ' ' + $_.InternalIPInterfaceAddressPrefix }) -join ', ') + "); Windows supports one NAT network per host, so Boxy cannot use '%[1]s'")
+}
+$nat = $nats | Where-Object { $_.Name -eq '%[1]s' }
+if ($nat -and $nat.InternalIPInterfaceAddressPrefix -ne '%[2]s') {
+    throw ("NAT '%[1]s' covers " + $nat.InternalIPInterfaceAddressPrefix + ", expected '%[2]s'")
+}
+$nats | Where-Object { $_.Name -like 'boxy-sb-*' } |
+    Remove-NetNat -Confirm:$false -ErrorAction SilentlyContinue
 if (-not $nat) {
-    Get-NetNat -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'boxy-sb-*' } |
-        Remove-NetNat -Confirm:$false -ErrorAction SilentlyContinue
-    $other = @(Get-NetNat -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne '%[1]s' })
-    if ($other.Count -gt 0) {
-        throw ("host already has a NAT network (" + (($other | ForEach-Object { $_.Name + ' ' + $_.InternalIPInterfaceAddressPrefix }) -join ', ') + "); Windows supports one NAT network per host, so Boxy cannot add '%[1]s'")
-    }
     try {
         New-NetNat -Name '%[1]s' -InternalIPInterfaceAddressPrefix '%[2]s' | Out-Null
     } catch {
         if (-not (Get-NetNat -Name '%[1]s' -ErrorAction SilentlyContinue)) { throw }
     }
-} elseif ($nat.InternalIPInterfaceAddressPrefix -ne '%[2]s') {
-    throw ("NAT '%[1]s' covers " + $nat.InternalIPInterfaceAddressPrefix + ", expected '%[2]s'")
 }
 `, psq(sharedNATName), psq(segmentBaseCIDR))
 }
