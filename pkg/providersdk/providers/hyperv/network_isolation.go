@@ -434,6 +434,14 @@ func (d *Driver) resolveSegmentLedgerPath() string {
 // On failure, the sandbox's ledger entry is deliberately NOT released (see
 // the comment on the error-handling branch below for why).
 func (d *Driver) CreateSegment(ctx context.Context, sandboxID string, cidr string) (providersdk.SegmentRef, error) {
+	// Locked for the whole call, not just the switch-creation script below:
+	// checkCIDRAvailable's own PowerShell also reads live host network state
+	// (Get-NetNat/Get-NetIPAddress), and running it concurrently with another
+	// goroutine's New-VMSwitch/New-NetNat could read a half-created NAT and
+	// misjudge availability. Hyper-V PowerShell for this driver never runs
+	// concurrently with itself.
+	d.segmentHostMu.Lock()
+	defer d.segmentHostMu.Unlock()
 	if _, known, lerr := d.segments().lookupBySandboxID(sandboxID); lerr == nil && !known {
 		// Only check on the first call for this sandbox. On the retry path
 		// the segment's switch and NAT may already exist bound to this very
@@ -448,8 +456,6 @@ func (d *Driver) CreateSegment(ctx context.Context, sandboxID string, cidr strin
 		return "", fmt.Errorf("record segment CIDR for sandbox %q: %w", sandboxID, err)
 	}
 	adapterAlias := fmt.Sprintf("vEthernet (%s)", alloc.SwitchName)
-	d.segmentHostMu.Lock()
-	defer d.segmentHostMu.Unlock()
 	_, err = d.ps(ctx, fmt.Sprintf(`
 $ErrorActionPreference = 'Stop'
 if (-not (Get-VMSwitch -Name '%s' -ErrorAction SilentlyContinue)) {

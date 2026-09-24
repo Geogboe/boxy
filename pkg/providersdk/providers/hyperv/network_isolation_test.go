@@ -728,12 +728,18 @@ func TestDriver_CreateSegment_SerializesHostScripts(t *testing.T) {
 	})
 	d.segmentLedgerPath = filepath.Join(t.TempDir(), "network-segments.json")
 
+	cidrs := map[string]string{
+		"sb-1": "10.250.0.0/29",
+		"sb-2": "10.250.0.8/29",
+		"sb-3": "10.250.0.16/29",
+		"sb-4": "10.250.0.24/29",
+	}
 	var wg sync.WaitGroup
 	for _, id := range []string{"sb-1", "sb-2", "sb-3", "sb-4"} {
 		wg.Add(1)
 		go func(id string) {
 			defer wg.Done()
-			if _, err := d.CreateSegment(context.Background(), id); err != nil {
+			if _, err := d.CreateSegment(context.Background(), id, cidrs[id]); err != nil {
 				t.Errorf("CreateSegment(%s): %v", id, err)
 			}
 		}(id)
