@@ -3,6 +3,7 @@ package diagnostics
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -208,5 +209,31 @@ func TestFileStoreCreatesPrivateFile(t *testing.T) {
 	data, _ := os.ReadFile(path)
 	if strings.Contains(string(data), "Authorization") {
 		t.Fatal("unexpected sensitive field in file")
+	}
+}
+
+// TestFileStoreCloseStopsAppendsWithoutTouchingDisk: after Close, Append
+// must not recreate the store's directory or file, so an owner can remove
+// its data directory while stray log records are still arriving (#376).
+func TestFileStoreCloseStopsAppendsWithoutTouchingDisk(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "agent")
+	store, err := NewFileStore(filepath.Join(dir, "diagnostics.jsonl"), DefaultMaxBytes, DefaultMaxAge)
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+	if err := store.Append(context.Background(), Event{Level: "INFO", Message: "before close"}); err != nil {
+		t.Fatalf("Append before Close: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatalf("remove store directory: %v", err)
+	}
+	if err := store.Append(context.Background(), Event{Level: "INFO", Message: "after close"}); !errors.Is(err, ErrStoreClosed) {
+		t.Fatalf("Append after Close = %v, want ErrStoreClosed", err)
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Append after Close recreated %s (stat err: %v)", dir, err)
 	}
 }

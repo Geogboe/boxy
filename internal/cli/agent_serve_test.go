@@ -202,43 +202,62 @@ func TestAgentServe_TokenRegistrationThenCertReconnect(t *testing.T) {
 // rather than through an injected *slog.Logger) was invisible to the
 // agent's diagnostics.jsonl store even while actively personalizing guests.
 //
-// This deliberately exercises the fast "no credentials" error return
-// (TestAgentServe_RequiresTokenOrCredentials's opts) rather than a full
-// registered-agent flow: runAgentServe still constructs agentDiagnostics
-// and agentLog, and (with the fix) installs it as the default, before
-// returning that error — no network dial needed. A full end-to-end test
-// would run the in-process "server" side and the agent in the same test
-// binary, sharing slog's single process-wide default; asserting on it from
-// the agent side would be entangled with whatever the server side logs
-// concurrently.
+// It runs a real registered agent against the in-process test daemon and
+// logs while the agent is connected. An earlier version used the fast
+// "no credentials" error return and logged after runAgentServe had
+// returned, but runAgentServe now closes its diagnostics store on return
+// (#376), so the contract under test is "while the agent runs". The
+// server side shares slog's process-wide default here, so the file also
+// receives server records; the assertion only looks for this test's own
+// unique message, which those can't produce.
 //
 // This relies on TestMain having already installed a concrete slog default
-// for the whole package's test binary — see its doc comment for why that's
+// for the whole package's test binary -- see its doc comment for why that's
 // required, not just a nicety, once runAgentServe calls slog.SetDefault.
 func TestRunAgentServe_SetsDefaultLoggerSoPackageLevelLogsReachDiagnostics(t *testing.T) {
+	serverDir := t.TempDir()
+	agentDir := t.TempDir()
 	restoreSlogDefaultAfter(t)
 
-	dataDir := t.TempDir()
+	st := store.NewMemoryStore()
+	registry := pool.NewAgentRegistry()
+	addr := startAgentTestDaemon(t, st, registry, serverDir)
+	raw, _, err := agentserver.MintToken(context.Background(), st, "diag-test", time.Hour)
+	if err != nil {
+		t.Fatalf("MintToken: %v", err)
+	}
 	opts := agentServeOpts{
-		server:    "127.0.0.1:1", // never dialed
+		server:    addr,
 		providers: []string{"devfactory"},
-		dataDir:   dataDir,
+		token:     raw,
+		name:      "diag-agent",
+		caCert:    filepath.Join(serverDir, "ca.crt"),
+		dataDir:   agentDir,
 	}
-	if err := runAgentServe(context.Background(), opts); err == nil {
-		t.Fatal("expected an error with no token and no persisted credentials")
-	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { defer close(done); _ = runAgentServe(ctx, opts) }()
+	waitForAgent(t, registry)
 
 	// Simulate the exact pattern provider drivers use (e.g. hyperv's
 	// logHyperVEvent): a package-level slog call against slog.Default(),
 	// not an explicitly-passed *slog.Logger.
 	slog.Info("simulated provider-side event", "component", "hyperv", "operation", "personalize", "status", "succeeded")
 
-	data, err := os.ReadFile(filepath.Join(dataDir, "diagnostics.jsonl"))
+	data, err := os.ReadFile(filepath.Join(agentDir, "diagnostics.jsonl"))
 	if err != nil {
 		t.Fatalf("read diagnostics.jsonl: %v", err)
 	}
 	if !strings.Contains(string(data), "simulated provider-side event") {
 		t.Fatalf("package-level slog record never reached diagnostics.jsonl, got %q", data)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the agent to stop")
 	}
 }
 

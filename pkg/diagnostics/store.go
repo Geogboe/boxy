@@ -138,6 +138,29 @@ type FileStore struct {
 	appendKey    fileCacheKey
 	appendOK     bool
 	appendExpiry time.Time
+	// closed makes Append a no-op once the store's owner has shut down.
+	closed bool
+}
+
+// ErrStoreClosed is returned by FileStore.Append after Close.
+var ErrStoreClosed = errors.New("diagnostics store is closed")
+
+// Close stops the store accepting new events. It waits for an Append already
+// in progress, and every later Append returns ErrStoreClosed without touching
+// the filesystem. Query keeps working.
+//
+// Appends otherwise recreate the store's directory (MkdirAll), so a log
+// record that arrives after the owner has finished -- from any goroutine
+// still using a slog handler wrapping this store -- could write the file
+// back while the owner is removing its data directory (#376).
+func (s *FileStore) Close() error {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	return nil
 }
 
 type fileCacheKey struct {
@@ -164,6 +187,9 @@ func (s *FileStore) Append(_ context.Context, event Event) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return ErrStoreClosed
+	}
 	now := s.currentTime()
 	event = normalizeEvent(event, now)
 	info, err := os.Stat(s.path)
