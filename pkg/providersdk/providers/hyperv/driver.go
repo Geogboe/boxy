@@ -129,6 +129,13 @@ type Driver struct {
 	segmentLedger     *segmentLedger
 	segmentLedgerOnce sync.Once
 
+	// segmentHostMu serializes the host-side PowerShell of CreateSegment and
+	// DestroySegment. Hyper-V fails concurrent Internal switch creation
+	// ("Adding ports to the switch ... failed", error 32790, seen on wks01
+	// 2026-09-24 with two concurrent creates), so segment changes on one
+	// host run one at a time.
+	segmentHostMu sync.Mutex
+
 	// meshEndpoint is Config.MeshEndpoint, threaded through the same way
 	// segmentLedgerPath is.
 	meshEndpoint string

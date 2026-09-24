@@ -438,6 +438,8 @@ func (d *Driver) CreateSegment(ctx context.Context, sandboxID string) (providers
 		return "", fmt.Errorf("allocate segment CIDR for sandbox %q: %w", sandboxID, err)
 	}
 	adapterAlias := fmt.Sprintf("vEthernet (%s)", alloc.SwitchName)
+	d.segmentHostMu.Lock()
+	defer d.segmentHostMu.Unlock()
 	_, err = d.ps(ctx, fmt.Sprintf(`
 $ErrorActionPreference = 'Stop'
 if (-not (Get-VMSwitch -Name '%s' -ErrorAction SilentlyContinue)) {
@@ -624,6 +626,7 @@ func (d *Driver) DestroySegment(ctx context.Context, ref providersdk.SegmentRef)
 	switchName := string(ref)
 	// The NAT named after the switch only exists for segments created before
 	// the shared NAT (sharedNATName), which this never removes.
+	d.segmentHostMu.Lock()
 	_, err := d.ps(ctx, fmt.Sprintf(`
 $ErrorActionPreference = 'Stop'
 if (Get-NetNat -Name '%s' -ErrorAction SilentlyContinue) {
@@ -633,6 +636,7 @@ if (Get-VMSwitch -Name '%s' -ErrorAction SilentlyContinue) {
     Remove-VMSwitch -Name '%s' -Force | Out-Null
 }
 `, psq(switchName), psq(switchName), psq(switchName), psq(switchName)))
+	d.segmentHostMu.Unlock()
 	if err != nil {
 		return fmt.Errorf("destroy segment %q: %w", ref, err)
 	}

@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/vmsdk"
@@ -762,5 +764,40 @@ func TestDriver_CreateSegment_IsANetworkIsolator(t *testing.T) {
 	var d providersdk.Driver = mockDriver(func(context.Context, string) (string, error) { return "", nil })
 	if _, ok := d.(providersdk.NetworkIsolator); !ok {
 		t.Fatal("*hyperv.Driver must satisfy providersdk.NetworkIsolator")
+	}
+}
+
+// TestDriver_CreateSegment_SerializesHostScripts: Hyper-V fails concurrent
+// Internal switch creation, so two CreateSegment calls on one Driver must
+// never have their PowerShell running at the same time.
+func TestDriver_CreateSegment_SerializesHostScripts(t *testing.T) {
+	var running, maxRunning int32
+	d := mockDriver(func(context.Context, string) (string, error) {
+		n := atomic.AddInt32(&running, 1)
+		for {
+			m := atomic.LoadInt32(&maxRunning)
+			if n <= m || atomic.CompareAndSwapInt32(&maxRunning, m, n) {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+		atomic.AddInt32(&running, -1)
+		return "", nil
+	})
+	d.segmentLedgerPath = filepath.Join(t.TempDir(), "network-segments.json")
+
+	var wg sync.WaitGroup
+	for _, id := range []string{"sb-1", "sb-2", "sb-3", "sb-4"} {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			if _, err := d.CreateSegment(context.Background(), id); err != nil {
+				t.Errorf("CreateSegment(%s): %v", id, err)
+			}
+		}(id)
+	}
+	wg.Wait()
+	if maxRunning != 1 {
+		t.Fatalf("up to %d segment scripts ran at once, want 1", maxRunning)
 	}
 }
