@@ -55,7 +55,22 @@ func startAgentTestDaemon(t *testing.T, st store.Store, registry *pool.AgentRegi
 		t.Fatalf("buildAgentGRPCServer: %v", err)
 	}
 	go func() { _ = grpcSrv.Serve(ln) }()
-	t.Cleanup(grpcSrv.Stop)
+	// GracefulStop, as boxy serve uses, not Stop: Stop returns before the
+	// Connect handler's deferred "agent disconnected" log runs. In this
+	// test binary that log goes through the agent's slog default into the
+	// agent's t.TempDir() diagnostics file, so a late write could race
+	// TempDir's RemoveAll and fail cleanup with "directory not empty" (#376).
+	// Stop is the fallback if a test leaves an agent stream open.
+	t.Cleanup(func() {
+		stopped := make(chan struct{})
+		go func() { grpcSrv.GracefulStop(); close(stopped) }()
+		select {
+		case <-stopped:
+		case <-time.After(5 * time.Second):
+			grpcSrv.Stop()
+			<-stopped
+		}
+	})
 
 	return ln.Addr().String()
 }
