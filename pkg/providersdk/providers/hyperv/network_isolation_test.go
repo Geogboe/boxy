@@ -152,8 +152,10 @@ func TestDriver_CreateSegment_RunsSwitchAndNatSetup(t *testing.T) {
 		t.Fatalf("expected exactly one PowerShell call, got %d", len(scripts))
 	}
 	for _, want := range []string{
-		"New-VMSwitch", "SwitchType Internal", "New-NetNat", "10.250.0.0/29",
+		"New-VMSwitch", "SwitchType Internal",
 		"vEthernet (boxy-sb-sb-1)",
+		// One shared NAT over the whole base range, not one per segment.
+		"New-NetNat -Name 'boxy-segments' -InternalIPInterfaceAddressPrefix '10.250.0.0/16'",
 		// The prefix length is rendered from segmentPrefixLen, and the
 		// gateway/alias pair around it must not have been transposed when
 		// that %d was inserted into the positional argument list.
@@ -162,6 +164,9 @@ func TestDriver_CreateSegment_RunsSwitchAndNatSetup(t *testing.T) {
 		if !strings.Contains(scripts[0], want) {
 			t.Fatalf("script missing %q:\n%s", want, scripts[0])
 		}
+	}
+	if strings.Contains(scripts[0], "New-NetNat -Name 'boxy-sb-") {
+		t.Fatalf("script creates a per-sandbox NAT; Windows supports one NAT per host:\n%s", scripts[0])
 	}
 	if strings.Contains(scripts[0], "Get-NetAdapter") {
 		t.Fatalf("script should resolve the adapter by its deterministic vEthernet alias, not a fuzzy Get-NetAdapter lookup:\n%s", scripts[0])
@@ -634,6 +639,46 @@ func TestDriver_DestroySegment_RemovesNatThenSwitch(t *testing.T) {
 	for _, want := range []string{"Remove-NetNat", "Remove-VMSwitch", "boxy-sb-sb-1"} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q:\n%s", want, script)
+		}
+	}
+}
+
+// TestDriver_DestroySegment_KeepsSharedNAT: other segments on the host
+// route through the shared NAT, so tearing down one segment must never
+// remove it.
+func TestDriver_DestroySegment_KeepsSharedNAT(t *testing.T) {
+	var script string
+	d := mockDriver(func(_ context.Context, s string) (string, error) {
+		script = s
+		return "", nil
+	})
+	if err := d.DestroySegment(context.Background(), providersdk.SegmentRef("boxy-sb-sb-1")); err != nil {
+		t.Fatalf("DestroySegment: %v", err)
+	}
+	if strings.Contains(script, sharedNATName) {
+		t.Fatalf("DestroySegment script references the shared NAT %q:\n%s", sharedNATName, script)
+	}
+}
+
+// TestEnsureSharedNATScript_Rules pins the rules the shared-NAT script
+// enforces. It can only check the script text; the behavior itself needs a
+// real Hyper-V host.
+func TestEnsureSharedNATScript_Rules(t *testing.T) {
+	script := ensureSharedNATScript()
+	for _, want := range []string{
+		// Legacy per-sandbox NATs are removed, matched by name only.
+		"Where-Object { $_.Name -like 'boxy-sb-*' }",
+		"Remove-NetNat",
+		// Any other NAT is refused rather than joined by a second one.
+		"Where-Object { $_.Name -ne 'boxy-segments' }",
+		"one NAT network per host",
+		// Losing a creation race counts as success once the NAT exists.
+		"} catch {\n        if (-not (Get-NetNat -Name 'boxy-segments'",
+		// An existing shared NAT over the wrong prefix is an error.
+		"$nat.InternalIPInterfaceAddressPrefix -ne '10.250.0.0/16'",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("shared NAT script missing %q:\n%s", want, script)
 		}
 	}
 }
