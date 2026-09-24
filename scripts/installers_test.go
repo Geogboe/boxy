@@ -18,6 +18,7 @@ import (
 )
 
 func TestInstallPS1InstallsReleaseFromLocalFixture(t *testing.T) {
+	skipInstallerRunInShortMode(t)
 	if runtime.GOOS != "windows" {
 		t.Skip("PowerShell installer smoke test only runs on Windows")
 	}
@@ -52,6 +53,7 @@ func TestInstallPS1InstallsReleaseFromLocalFixture(t *testing.T) {
 }
 
 func TestInstallPS1UpgradesExistingInstallByDefault(t *testing.T) {
+	skipInstallerRunInShortMode(t)
 	if runtime.GOOS != "windows" {
 		t.Skip("PowerShell installer smoke test only runs on Windows")
 	}
@@ -92,6 +94,7 @@ func TestInstallPS1UpgradesExistingInstallByDefault(t *testing.T) {
 }
 
 func TestInstallPS1SkipsUpgradeWhenRequested(t *testing.T) {
+	skipInstallerRunInShortMode(t)
 	if runtime.GOOS != "windows" {
 		t.Skip("PowerShell installer smoke test only runs on Windows")
 	}
@@ -183,6 +186,7 @@ func TestInstallPS1DeclaresExpectedContracts(t *testing.T) {
 }
 
 func TestInstallShInstallsReleaseFromLocalFixture(t *testing.T) {
+	skipInstallerRunInShortMode(t)
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("native shell installer smoke test only runs on linux and darwin")
 	}
@@ -218,6 +222,7 @@ func TestInstallShInstallsReleaseFromLocalFixture(t *testing.T) {
 }
 
 func TestInstallShUpgradesExistingInstallByDefault(t *testing.T) {
+	skipInstallerRunInShortMode(t)
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("native shell installer smoke test only runs on linux and darwin")
 	}
@@ -257,6 +262,7 @@ func TestInstallShUpgradesExistingInstallByDefault(t *testing.T) {
 }
 
 func TestInstallShSkipsUpgradeWhenRequested(t *testing.T) {
+	skipInstallerRunInShortMode(t)
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("native shell installer smoke test only runs on linux and darwin")
 	}
@@ -297,6 +303,7 @@ func TestInstallShSkipsUpgradeWhenRequested(t *testing.T) {
 }
 
 func TestInstallShWorksWithPosixSh(t *testing.T) {
+	skipInstallerRunInShortMode(t)
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("POSIX sh installer smoke test only runs on linux and darwin")
 	}
@@ -336,6 +343,7 @@ func TestInstallShWorksWithPosixSh(t *testing.T) {
 }
 
 func TestInstallShWSL(t *testing.T) {
+	skipInstallerRunInShortMode(t)
 	if runtime.GOOS != "windows" {
 		t.Skip("WSL installer smoke test only runs on Windows")
 	}
@@ -598,4 +606,15 @@ func execCommand(t *testing.T, dir string, argv []string, extraEnv map[string]st
 		cmd.Env = append(cmd.Env, key+"="+value)
 	}
 	return cmd.CombinedOutput()
+}
+
+// skipInstallerRunInShortMode skips a test that actually runs an installer.
+// These take minutes (most of CI's Test job time), and the Installer Smoke
+// job runs this package without -short, so the -short race matrix doesn't
+// need to run them a second time.
+func skipInstallerRunInShortMode(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("runs an installer end to end; covered by the Installer Smoke job (go test ./scripts without -short)")
+	}
 }
