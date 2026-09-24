@@ -18,6 +18,7 @@ func TestDescribeErrorClassifiesActionableCategoriesWithoutRawDetails(t *testing
 		{name: "availability denied", err: errors.New("hyperv query available memory: Access is denied"), code: "provider_availability_access_denied", want: "Hyper-V/WMI available-memory probe was denied"},
 		{name: "guest auth", err: errors.New("psdirect: broker auth: authentication failed: invalid credentials"), code: "hyperv_guest_authentication_failed", want: "PowerShell Direct guest authentication failed"},
 		{name: "timeout", err: context.DeadlineExceeded, code: "operation_timeout", want: "operation timed out"},
+		{name: "mesh device", err: errors.New(`create TUN device "wg-sb-1": operation not permitted`), code: "mesh_device_unavailable", want: "could not create the WireGuard device (Linux agents need CAP_NET_ADMIN; Windows agents need wintun.dll next to boxy.exe)"},
 	}
 
 	for _, tt := range tests {

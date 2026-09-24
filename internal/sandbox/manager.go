@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"sync"
 	"time"
@@ -11,6 +12,7 @@ import (
 	// Aliased: this file's allocation helpers all take a `pool model.Pool`
 	// parameter, which would shadow an unaliased import of this package.
 	boxypool "github.com/Geogboe/boxy/internal/pool"
+	"github.com/Geogboe/boxy/pkg/diagnostics"
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/resourcepool"
@@ -595,8 +597,15 @@ func (m *Manager) ensureNetworkSegment(ctx context.Context, sb *model.Sandbox, p
 	if err := isolator.AttachToSegment(ctx, pool, res, ref); err != nil {
 		return fmt.Errorf("attach resource %q to network segment: %w", res.ID, err)
 	}
+	// Mesh peering failure is logged, not returned. Cross-host overlay
+	// traffic doesn't work yet (#379), and a host that can't create a
+	// WireGuard device (no CAP_NET_ADMIN, no Wintun) would otherwise fail a
+	// sandbox whose resources are each usable on their own host.
 	if err := m.triggerMeshPeering(ctx, sb, agentID); err != nil {
-		return fmt.Errorf("establish mesh peering for sandbox %q: %w", sb.ID, err)
+		code, summary := diagnostics.DescribeError(err)
+		slog.Default().Warn("mesh peering failed; sandbox resources on different hosts cannot reach each other",
+			"sandbox_id", sb.ID, "agent_id", agentID, "operation", "mesh_peering",
+			"error_code", code, "error_summary", summary)
 	}
 	return nil
 }
