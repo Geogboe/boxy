@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.1.69](https://github.com/Geogboe/boxy/compare/v0.1.68...v0.1.69) (2026-09-24)
+
+
+### Bug Fixes
+
+* **ci:** check out before paths-filter; don't run installers twice ([735182a](https://github.com/Geogboe/boxy/commit/735182a2bcc45fdef45bec30de7789e6201e8768))
+* **ci:** check out before paths-filter; don't run installers twice ([6285db5](https://github.com/Geogboe/boxy/commit/6285db5b9722dbab45f62e419ff4aa6e16a107ae))
+* **ci:** let the WSL race run work from a linked git worktree ([0fb2776](https://github.com/Geogboe/boxy/commit/0fb27761716a17b2908f2578b1d980b8296cb74f))
+* **ci:** let the WSL race run work from a linked git worktree ([d7f0182](https://github.com/Geogboe/boxy/commit/d7f01826d198c1d753593318b596c417a16be59a))
+* **ci:** make the docs-only gate actually skip; allowlist ADR test prefixes ([2c6fad2](https://github.com/Geogboe/boxy/commit/2c6fad214bebe9f5af76fec42c2f53e4d8168534))
+* **ci:** re-point PII allowlist entries at PR [#369](https://github.com/Geogboe/boxy/issues/369)'s squash-merge SHA ([7a9c881](https://github.com/Geogboe/boxy/commit/7a9c8812cc9d3f74ff86464d2f29fa5a235ae00d))
+* **ci:** re-point PII allowlist entries at PR [#369](https://github.com/Geogboe/boxy/issues/369)'s squash-merge SHA ([5349100](https://github.com/Geogboe/boxy/commit/5349100dfc1e6c5faf0fe64a320764e10f6ee679))
+* **cli:** wait for agent-server handlers before test TempDir cleanup ([72b7b28](https://github.com/Geogboe/boxy/commit/72b7b28cfa65e7065b69969e28dd291c6b58c9f5))
+* **cli:** wait for agent-server handlers before test TempDir cleanup ([6001682](https://github.com/Geogboe/boxy/commit/60016826e089f23ccd215e9b40912596085ca514))
+* **diagnostics:** close the agent's store so late logs can't recreate it ([0f62892](https://github.com/Geogboe/boxy/commit/0f62892c32a7c509eea73a3ce414b012f1531b4f))
+* **diagnostics:** close the agent's store so late logs can't recreate it ([c5f25de](https://github.com/Geogboe/boxy/commit/c5f25def047c3ea09b8a50b97064c2672bdf2282))
+* **hyperv:** route every segment through one shared NAT per host ([4114ba0](https://github.com/Geogboe/boxy/commit/4114ba07611675982245c00e6e7f419174e81855))
+* **hyperv:** route every segment through one shared NAT per host ([ed2e40e](https://github.com/Geogboe/boxy/commit/ed2e40e9b7b09e592a08fbbe79a614f8a1eef5ae))
+* **hyperv:** serialize segment switch create/destroy per host ([157129d](https://github.com/Geogboe/boxy/commit/157129d05300f0df55cab73b387ab1522e118a82))
+* **hyperv:** validate every NAT on each segment create, before changing any ([d977388](https://github.com/Geogboe/boxy/commit/d9773886071bae13cc25686c77ad3ee6761f96c9))
+* **meshnet:** keep interface identity in the message, not a dropped attr ([da47318](https://github.com/Geogboe/boxy/commit/da47318de78041f85eee2b1dff280e24acb3dbd1))
+* **meshnet:** route wireguard-go's own logging into slog ([61cb70a](https://github.com/Geogboe/boxy/commit/61cb70a8623923232b22674389aad0c88addc8a1))
+* **meshnet:** route wireguard-go's own logging into slog ([657c412](https://github.com/Geogboe/boxy/commit/657c412af41ca967a6d932254863b4d32acccd49))
+* **sandbox:** log mesh peering failures instead of failing the sandbox ([f260cc5](https://github.com/Geogboe/boxy/commit/f260cc5b23f4804bc3d79e3903e1a7238e2c4aa3))
+* **sandbox:** log mesh peering failures instead of failing the sandbox ([a6c3a5a](https://github.com/Geogboe/boxy/commit/a6c3a5aa44f166860b2866e14b1abc90db576847))
+* **sandbox:** record mesh failures with a safe diagnostics code ([9c77023](https://github.com/Geogboe/boxy/commit/9c770233bc4ce811e848bc01c8cbde83b6f3402c))
+
+
+### Testing
+
+* **sandbox:** assert the mesh-failure warning and its safe fields ([7ee12b8](https://github.com/Geogboe/boxy/commit/7ee12b8076c9729ab65b534899837d69ffa1378e))
+
+
+### Continuous Integration
+
+* skip lint/test/build/installer-smoke for docs-only changes ([83cafe4](https://github.com/Geogboe/boxy/commit/83cafe46c5b62b7054ffdf8fa33111f81b7a29ca))
+* skip lint/test/build/installer-smoke for docs-only changes ([3a0bbba](https://github.com/Geogboe/boxy/commit/3a0bbbacb90aece377d32d0a4d734b8eca3a2b91))
+
+
+### Documentation
+
+* **adr-0021:** close the New-NetNat one-instance-per-host risk ([c35d036](https://github.com/Geogboe/boxy/commit/c35d036c70c4a3a4b708a689528a6ead25fcf611))
+* **adr-0021:** record one-NAT-per-host as the supported limit ([1aeabce](https://github.com/Geogboe/boxy/commit/1aeabce5ab3f515626243de8ebdd57b577bf8085))
+* **adr-0021:** record one-NAT-per-host as the supported limit; fix docs-only CI gate ([fc624cc](https://github.com/Geogboe/boxy/commit/fc624ccc6585b0869538826a1a28859197bb468d))
+* **adr-0021:** record the shared NAT implementation and wks01 results ([6bae7cd](https://github.com/Geogboe/boxy/commit/6bae7cd5801a0784da565fbbbca0583775a23290))
+* **agents:** record squash-merge/betterleaksignore and deploy-gate lessons ([69b7d67](https://github.com/Geogboe/boxy/commit/69b7d6715f72c7dee7f841ecb37ad36a719fa7d8))
+* correct current-delivery-notes' PR [#369](https://github.com/Geogboe/boxy/issues/369) entry to reflect its actual merge ([e9d05e5](https://github.com/Geogboe/boxy/commit/e9d05e5ab940b49a06697d197fa0806854e1ab00))
+* reconcile ADR-0021 lead-in and sibling docs with the NAT finding ([13bc176](https://github.com/Geogboe/boxy/commit/13bc176b0fa0d2b72efdf908f6d6449f21b555a1))
+
 ## [0.1.68](https://github.com/Geogboe/boxy/compare/v0.1.67...v0.1.68) (2026-09-22)
 
 
