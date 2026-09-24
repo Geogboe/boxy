@@ -266,7 +266,7 @@ func (ap *AgentProvisioner) Allocate(ctx context.Context, pool model.Pool, res m
 // providersdk.NetworkIsolator check happens inside the agent -- too late,
 // and as a hard error. For a remote agent there is no local driver to
 // assert against at all.
-func (ap *AgentProvisioner) CreateSegment(ctx context.Context, pool model.Pool, res model.Resource, sandboxID model.SandboxID) (providersdk.SegmentRef, providersdk.Type, error) {
+func (ap *AgentProvisioner) CreateSegment(ctx context.Context, pool model.Pool, res model.Resource, sandboxID model.SandboxID, cidr string) (providersdk.SegmentRef, providersdk.Type, error) {
 	spec, ok := ap.Specs[pool.Name]
 	if !ok {
 		return "", "", fmt.Errorf("unknown pool %q", pool.Name)
@@ -283,7 +283,7 @@ func (ap *AgentProvisioner) CreateSegment(ctx context.Context, pool model.Pool, 
 	if !ok {
 		return "", "", fmt.Errorf("agent %q does not support network isolation", res.Provider.AgentID)
 	}
-	ref, err := isolator.CreateSegment(ctx, driverType, string(sandboxID))
+	ref, err := isolator.CreateSegment(ctx, driverType, string(sandboxID), cidr)
 	if err != nil {
 		return "", "", err
 	}

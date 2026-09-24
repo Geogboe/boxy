@@ -25,7 +25,7 @@ func TestDriver_CreateSegment_CreatesLabeledBridgeNetwork(t *testing.T) {
 	}
 	d := &Driver{cli: cli}
 
-	ref, err := d.CreateSegment(context.Background(), "sb-1")
+	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestDriver_CreateSegment_RejectsNameCollisionWithUnmanagedNetwork(t *testin
 	}
 	d := &Driver{cli: cli}
 
-	if _, err := d.CreateSegment(context.Background(), "sb-1"); err == nil {
+	if _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29"); err == nil {
 		t.Fatal("CreateSegment succeeded against an unmanaged name collision, want an error")
 	}
 }
@@ -228,11 +228,11 @@ func TestDriver_CreateSegment_IdempotentForSameSandboxID(t *testing.T) {
 	}
 	d := &Driver{cli: cli}
 
-	first, err := d.CreateSegment(context.Background(), "sb-1")
+	first, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("first CreateSegment: %v", err)
 	}
-	second, err := d.CreateSegment(context.Background(), "sb-1")
+	second, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("second CreateSegment: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestDriver_CreateSegment_ResolvesNetworkWhenCreateLosesARace(t *testing.T) 
 	}
 	d := &Driver{cli: cli}
 
-	ref, err := d.CreateSegment(context.Background(), "sb-1")
+	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment must not propagate a lost create race, got: %v", err)
 	}

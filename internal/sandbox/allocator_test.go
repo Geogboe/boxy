@@ -20,7 +20,7 @@ type fakeIsolatingAllocator struct {
 	gotAttachRef providersdk.SegmentRef
 }
 
-func (f *fakeIsolatingAllocator) CreateSegment(_ context.Context, pool model.Pool, res model.Resource, sandboxID model.SandboxID) (providersdk.SegmentRef, providersdk.Type, error) {
+func (f *fakeIsolatingAllocator) CreateSegment(_ context.Context, pool model.Pool, res model.Resource, sandboxID model.SandboxID, _ string) (providersdk.SegmentRef, providersdk.Type, error) {
 	f.gotPool, f.gotRes, f.gotSbID = pool, res, sandboxID
 	return f.createRef, f.createType, f.createErr
 }
@@ -36,7 +36,7 @@ func TestNetworkIsolatingAllocator_SatisfiedByTypeAssertion(t *testing.T) {
 	if !ok {
 		t.Fatal("allocator implementing NetworkIsolatingAllocator's methods was not detected via type assertion")
 	}
-	ref, providerType, err := isolator.CreateSegment(context.Background(), model.Pool{Name: "pool-a"}, model.Resource{ID: "res-1"}, "sb-1")
+	ref, providerType, err := isolator.CreateSegment(context.Background(), model.Pool{Name: "pool-a"}, model.Resource{ID: "res-1"}, "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}

@@ -1041,7 +1041,7 @@ func TestRemoteAgent_CreateSegmentRoundTrip(t *testing.T) {
 	}
 	resultCh := make(chan result, 1)
 	go func() {
-		ref, err := a.CreateSegment(context.Background(), "hyperv", "sb-1")
+		ref, err := a.CreateSegment(context.Background(), "hyperv", "sb-1", "10.250.0.0/29")
 		resultCh <- result{ref, err}
 	}()
 
@@ -1147,7 +1147,7 @@ func TestRemoteAgent_CreateSegmentAgentErrorSurfaces(t *testing.T) {
 
 	resultCh := make(chan error, 1)
 	go func() {
-		_, err := a.CreateSegment(context.Background(), "hyperv", "sb-1")
+		_, err := a.CreateSegment(context.Background(), "hyperv", "sb-1", "10.250.0.0/29")
 		resultCh <- err
 	}()
 
@@ -1183,7 +1183,7 @@ func TestRemoteAgent_CreateSegmentMismatchedOutcomeErrors(t *testing.T) {
 	}
 	resultCh := make(chan result, 1)
 	go func() {
-		ref, err := a.CreateSegment(context.Background(), "hyperv", "sb-1")
+		ref, err := a.CreateSegment(context.Background(), "hyperv", "sb-1", "10.250.0.0/29")
 		resultCh <- result{ref, err}
 	}()
 
@@ -1321,7 +1321,7 @@ func TestRemoteAgent_CreateSegmentEmptyRefIsNotRejected(t *testing.T) {
 	}
 	resultCh := make(chan result, 1)
 	go func() {
-		ref, err := a.CreateSegment(context.Background(), "hyperv", "sb-1")
+		ref, err := a.CreateSegment(context.Background(), "hyperv", "sb-1", "10.250.0.0/29")
 		resultCh <- result{ref, err}
 	}()
 

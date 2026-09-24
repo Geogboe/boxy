@@ -106,6 +106,11 @@ func reconstructAgentError(agentID string, ae *boxyagentv1.AgentError) error {
 		if json.Unmarshal(ae.GetErrorDetailJson(), &oe) == nil {
 			return fmt.Errorf("agent %q: %w", agentID, &oe)
 		}
+	case "cidr_conflict":
+		var ce providersdk.CIDRConflictError
+		if json.Unmarshal(ae.GetErrorDetailJson(), &ce) == nil {
+			return fmt.Errorf("agent %q: %w", agentID, &ce)
+		}
 	}
 	return base
 }
@@ -653,10 +658,10 @@ func (a *RemoteAgent) PersonalizeGuest(ctx context.Context, provider providersdk
 	}, nil
 }
 
-func (a *RemoteAgent) CreateSegment(ctx context.Context, provider providersdk.Type, sandboxID string) (providersdk.SegmentRef, error) {
+func (a *RemoteAgent) CreateSegment(ctx context.Context, provider providersdk.Type, sandboxID string, cidr string) (providersdk.SegmentRef, error) {
 	res, err := a.call(ctx, &boxyagentv1.Command{
 		ProviderType: string(provider),
-		Op:           &boxyagentv1.Command_CreateSegment{CreateSegment: &boxyagentv1.CreateSegmentCommand{SandboxId: sandboxID}},
+		Op:           &boxyagentv1.Command_CreateSegment{CreateSegment: &boxyagentv1.CreateSegmentCommand{SandboxId: sandboxID, Cidr: cidr}},
 	})
 	if err != nil {
 		return "", err

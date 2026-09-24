@@ -410,7 +410,7 @@ type fakeSegmentTrackingAllocator struct {
 func (f *fakeSegmentTrackingAllocator) Allocate(context.Context, model.Pool, model.Resource) (providersdk.AllocationResult, error) {
 	return providersdk.AllocationResult{}, nil
 }
-func (f *fakeSegmentTrackingAllocator) CreateSegment(_ context.Context, _ model.Pool, res model.Resource, sandboxID model.SandboxID) (providersdk.SegmentRef, providersdk.Type, error) {
+func (f *fakeSegmentTrackingAllocator) CreateSegment(_ context.Context, _ model.Pool, res model.Resource, sandboxID model.SandboxID, cidr string) (providersdk.SegmentRef, providersdk.Type, error) {
 	f.createCalls++
 	f.gotSandboxID = sandboxID
 	providerType := providersdk.Type(res.Provider.Name)
@@ -576,17 +576,26 @@ func TestManager_AddFromPool_MixedProviderTypesOnOneAgentGetSeparateSegments(t *
 	if allocator.createCalls != 2 {
 		t.Fatalf("CreateSegment called %d times, want 2 (one segment per provider type, even on one agent)", allocator.createCalls)
 	}
-	want := map[string]model.NetworkSegment{
-		"docker": {AgentID: "agent-1", ProviderType: "docker", Ref: "docker-net-1"},
-		"hyperv": {AgentID: "agent-1", ProviderType: "hyperv", Ref: "boxy-sb-sb-1"},
+	wantRefs := map[string]string{"docker": "docker-net-1", "hyperv": "boxy-sb-sb-1"}
+	if len(sb.NetworkSegments) != len(wantRefs) {
+		t.Fatalf("NetworkSegments = %+v, want one per provider type: %+v", sb.NetworkSegments, wantRefs)
 	}
-	if len(sb.NetworkSegments) != len(want) {
-		t.Fatalf("NetworkSegments = %+v, want one per provider type: %+v", sb.NetworkSegments, want)
-	}
+	seenCIDRs := map[string]bool{}
 	for _, seg := range sb.NetworkSegments {
-		if expected, ok := want[seg.ProviderType]; !ok || seg != expected {
-			t.Fatalf("segment %+v is not one of the expected per-provider segments %+v", seg, want)
+		wantRef, ok := wantRefs[seg.ProviderType]
+		if !ok || seg.Ref != wantRef || seg.AgentID != "agent-1" {
+			t.Fatalf("segment %+v is not one of the expected per-provider segments %+v", seg, wantRefs)
 		}
+		// Every segment carries its allocated range, and no two share one:
+		// two segments on the same agent overlapping is the collision class
+		// that breaks cross-host mesh peering (#370).
+		if seg.CIDR == "" {
+			t.Fatalf("segment %+v has no CIDR recorded", seg)
+		}
+		if seenCIDRs[seg.CIDR] {
+			t.Fatalf("two segments share CIDR %q: %+v", seg.CIDR, sb.NetworkSegments)
+		}
+		seenCIDRs[seg.CIDR] = true
 	}
 
 	// The load-bearing assertion: each resource must have been attached to
@@ -610,7 +619,7 @@ func TestManager_AddFromPool_MixedProviderTypesOnOneAgentGetSeparateSegments(t *
 	if err != nil {
 		t.Fatalf("GetSandbox: %v", err)
 	}
-	if len(persisted.NetworkSegments) != len(want) {
+	if len(persisted.NetworkSegments) != len(wantRefs) {
 		t.Fatalf("persisted NetworkSegments = %+v, want both recorded so deletion tears both down", persisted.NetworkSegments)
 	}
 }

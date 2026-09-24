@@ -2,7 +2,6 @@ package hyperv
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -15,77 +14,72 @@ import (
 	"github.com/Geogboe/boxy/pkg/vmsdk"
 )
 
-func TestSegmentLedger_AllocateCIDR_FirstFitNoCollision(t *testing.T) {
-	ledgerPath := filepath.Join(t.TempDir(), "network-segments.json")
-	ledger := newSegmentLedger(ledgerPath)
+func TestSegmentLedger_Record_StoresSuppliedCIDRAndDerivesAddresses(t *testing.T) {
+	ledger := newSegmentLedger(filepath.Join(t.TempDir(), "network-segments.json"))
 
-	first, err := ledger.allocate("sb-1")
+	got, err := ledger.record("sb-1", "10.250.4.0/29")
 	if err != nil {
-		t.Fatalf("allocate sb-1: %v", err)
+		t.Fatalf("record: %v", err)
 	}
-	second, err := ledger.allocate("sb-2")
-	if err != nil {
-		t.Fatalf("allocate sb-2: %v", err)
+	if got.CIDR != "10.250.4.0/29" {
+		t.Fatalf("CIDR = %q, want the caller-supplied range", got.CIDR)
 	}
-	if first.CIDR == second.CIDR {
-		t.Fatalf("two sandboxes got the same CIDR: %q", first.CIDR)
+	// Gateway and guest are derived from the supplied block, using the same
+	// offsets the ledger used to apply to blocks it carved itself.
+	if got.Gateway != "10.250.4.1" {
+		t.Fatalf("Gateway = %q, want 10.250.4.1", got.Gateway)
 	}
-	if first.CIDR != "10.250.0.0/29" {
-		t.Fatalf("first allocation = %q, want the base range's first /29", first.CIDR)
-	}
-	if second.CIDR != "10.250.0.8/29" {
-		t.Fatalf("second allocation = %q, want the next /29", second.CIDR)
+	if got.GuestAddress != "10.250.4.2" {
+		t.Fatalf("GuestAddress = %q, want 10.250.4.2", got.GuestAddress)
 	}
 }
 
-func TestSegmentLedger_AllocateCIDR_IdempotentForSameSandbox(t *testing.T) {
-	ledgerPath := filepath.Join(t.TempDir(), "network-segments.json")
-	ledger := newSegmentLedger(ledgerPath)
+// TestSegmentLedger_Record_IgnoresADifferentCIDROnRepeat pins the
+// idempotency rule that matters once the server picks the range: a retried
+// CreateSegment that proposes a different CIDR must not renumber a segment
+// whose switch and NAT may already be bound to the original one.
+func TestSegmentLedger_Record_IgnoresADifferentCIDROnRepeat(t *testing.T) {
+	ledger := newSegmentLedger(filepath.Join(t.TempDir(), "network-segments.json"))
 
-	first, err := ledger.allocate("sb-1")
+	first, err := ledger.record("sb-1", "10.250.0.0/29")
 	if err != nil {
-		t.Fatalf("allocate: %v", err)
+		t.Fatalf("record: %v", err)
 	}
-	again, err := ledger.allocate("sb-1")
+	again, err := ledger.record("sb-1", "10.250.9.0/29")
 	if err != nil {
-		t.Fatalf("re-allocate: %v", err)
+		t.Fatalf("re-record: %v", err)
 	}
-	if first.CIDR != again.CIDR {
-		t.Fatalf("re-allocating the same sandbox changed its CIDR: %q -> %q", first.CIDR, again.CIDR)
+	if again.CIDR != first.CIDR {
+		t.Fatalf("re-recording changed the CIDR: %q -> %q", first.CIDR, again.CIDR)
 	}
 }
 
-func TestSegmentLedger_Release_FreesCIDRForReuse(t *testing.T) {
-	ledgerPath := filepath.Join(t.TempDir(), "network-segments.json")
-	ledger := newSegmentLedger(ledgerPath)
+func TestSegmentLedger_Record_RejectsUnusableCIDR(t *testing.T) {
+	ledger := newSegmentLedger(filepath.Join(t.TempDir(), "network-segments.json"))
+	for _, bad := range []string{"", "not-a-cidr", "2001:db8::/64"} {
+		if _, err := ledger.record("sb-"+bad, bad); err == nil {
+			t.Fatalf("record(%q) succeeded, want an error", bad)
+		}
+	}
+}
 
-	first, err := ledger.allocate("sb-1")
-	if err != nil {
-		t.Fatalf("allocate: %v", err)
+func TestSegmentLedger_Release_RemovesTheEntry(t *testing.T) {
+	ledger := newSegmentLedger(filepath.Join(t.TempDir(), "network-segments.json"))
+
+	if _, err := ledger.record("sb-1", "10.250.0.0/29"); err != nil {
+		t.Fatalf("record: %v", err)
 	}
 	if err := ledger.release("sb-1"); err != nil {
 		t.Fatalf("release: %v", err)
 	}
-	reused, err := ledger.allocate("sb-2")
-	if err != nil {
-		t.Fatalf("allocate sb-2: %v", err)
-	}
-	if reused.CIDR != first.CIDR {
-		t.Fatalf("released CIDR was not reused: got %q, want %q", reused.CIDR, first.CIDR)
+	if _, ok, err := ledger.lookupBySandboxID("sb-1"); err != nil {
+		t.Fatalf("lookup: %v", err)
+	} else if ok {
+		t.Fatal("entry still present after release")
 	}
 }
 
-// TestSegmentLedger_ConcurrentAllocate_NoLostEntries exercises the exact race
-// task-2's code review flagged (finding 1): before the fix, *Driver.segments*
-// constructed a brand-new *segmentLedger (and therefore a brand-new,
-// unshared diskjson.Store/sync.Mutex) on every call, so two concurrent
-// allocate() calls against the "same" ledger each locked their own
-// independent mutex over the same underlying file, both could read the same
-// stale snapshot, and the second Update's write could silently clobber the
-// first's, dropping an entry. This test drives many goroutines each calling
-// allocate() for a distinct sandbox ID against one shared *segmentLedger
-// instance and asserts every entry survives.
-func TestSegmentLedger_ConcurrentAllocate_NoLostEntries(t *testing.T) {
+func TestSegmentLedger_ConcurrentRecord_NoLostEntries(t *testing.T) {
 	ledgerPath := filepath.Join(t.TempDir(), "network-segments.json")
 	ledger := newSegmentLedger(ledgerPath)
 
@@ -97,7 +91,7 @@ func TestSegmentLedger_ConcurrentAllocate_NoLostEntries(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			alloc, err := ledger.allocate(fmt.Sprintf("sb-%d", i))
+			alloc, err := ledger.record(fmt.Sprintf("sb-%d", i), fmt.Sprintf("10.250.%d.0/29", i))
 			errs[i] = err
 			cidrs[i] = alloc.CIDR
 		}(i)
@@ -106,7 +100,7 @@ func TestSegmentLedger_ConcurrentAllocate_NoLostEntries(t *testing.T) {
 
 	for i, err := range errs {
 		if err != nil {
-			t.Fatalf("allocate sb-%d: %v", i, err)
+			t.Fatalf("record sb-%d: %v", i, err)
 		}
 	}
 
@@ -118,12 +112,15 @@ func TestSegmentLedger_ConcurrentAllocate_NoLostEntries(t *testing.T) {
 	seenCIDRs := make(map[string]bool)
 	for i := 0; i < n; i++ {
 		sandboxID := fmt.Sprintf("sb-%d", i)
-		alloc, err := reloaded.allocate(sandboxID)
+		alloc, ok, err := reloaded.lookupBySandboxID(sandboxID)
 		if err != nil {
-			t.Fatalf("reload allocate %s: %v", sandboxID, err)
+			t.Fatalf("reload lookup %s: %v", sandboxID, err)
+		}
+		if !ok {
+			t.Fatalf("entry for %s missing after reload -- a concurrent write was lost", sandboxID)
 		}
 		if alloc.CIDR != cidrs[i] {
-			t.Fatalf("entry for %s lost or changed: got CIDR %q after reload, want %q (the CIDR its own allocate() call returned)", sandboxID, alloc.CIDR, cidrs[i])
+			t.Fatalf("entry for %s lost or changed: got CIDR %q after reload, want %q (the CIDR its own record() call returned)", sandboxID, alloc.CIDR, cidrs[i])
 		}
 		if seenCIDRs[alloc.CIDR] {
 			t.Fatalf("duplicate CIDR %q handed to more than one sandbox", alloc.CIDR)
@@ -143,16 +140,25 @@ func TestDriver_CreateSegment_RunsSwitchAndNatSetup(t *testing.T) {
 	})
 	d.segmentLedgerPath = filepath.Join(t.TempDir(), "network-segments.json")
 
-	ref, err := d.CreateSegment(context.Background(), "sb-1")
+	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
 	if ref != "boxy-sb-sb-1" {
 		t.Fatalf("ref = %q, want %q", ref, "boxy-sb-sb-1")
 	}
-	if len(scripts) != 1 {
-		t.Fatalf("expected exactly one PowerShell call, got %d", len(scripts))
+	// Two calls: the local CIDR-conflict probe, then the setup script. The
+	// probe is what lets this host refuse a server-proposed range that
+	// collides with something only it can see (#370).
+	if len(scripts) != 2 {
+		t.Fatalf("expected a conflict probe then a setup call, got %d", len(scripts))
 	}
+	for _, want := range []string{"Get-NetNat", "Get-NetIPAddress"} {
+		if !strings.Contains(scripts[0], want) {
+			t.Fatalf("first call should probe for local CIDR conflicts, missing %q:\n%s", want, scripts[0])
+		}
+	}
+	scripts = scripts[1:]
 	for _, want := range []string{
 		"New-VMSwitch", "SwitchType Internal",
 		"vEthernet (boxy-sb-sb-1)",
@@ -189,14 +195,13 @@ func TestDriver_CreateSegment_FailurePreservesLedgerEntry(t *testing.T) {
 	})
 	d.segmentLedgerPath = filepath.Join(t.TempDir(), "network-segments.json")
 
-	if _, err := d.CreateSegment(context.Background(), "sb-1"); err == nil {
+	if _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29"); err == nil {
 		t.Fatal("expected CreateSegment to fail")
 	}
 
-	// Observe the persisted ledger directly rather than calling allocate()
-	// again: allocate is itself mutating (it can pop FreedIndexes and hand
-	// out a fresh block), so using it as the observation mechanism produces
-	// the same-looking result whether or not the entry actually survived.
+	// Observe the persisted ledger directly rather than through another
+	// CreateSegment call, which would itself write the entry and so look the
+	// same whether or not the first one survived.
 	before, err := d.segments().store.Load()
 	if err != nil {
 		t.Fatalf("load ledger after failure: %v", err)
@@ -208,12 +213,9 @@ func TestDriver_CreateSegment_FailurePreservesLedgerEntry(t *testing.T) {
 	if entry.CIDR != "10.250.0.0/29" {
 		t.Fatalf("preserved entry CIDR = %q, want the first block %q", entry.CIDR, "10.250.0.0/29")
 	}
-	if len(before.FreedIndexes) != 0 {
-		t.Fatalf("CreateSegment returned block indexes to the free list on failure: %v", before.FreedIndexes)
-	}
 
 	fail = false
-	ref, err := d.CreateSegment(context.Background(), "sb-1")
+	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("retry CreateSegment: %v", err)
 	}
@@ -227,76 +229,6 @@ func TestDriver_CreateSegment_FailurePreservesLedgerEntry(t *testing.T) {
 	if after.BySandboxID["sb-1"].CIDR != entry.CIDR {
 		t.Fatalf("retry changed the CIDR: got %q, want %q (the one allocated before the failure)",
 			after.BySandboxID["sb-1"].CIDR, entry.CIDR)
-	}
-}
-
-func TestBlockForIndex_RejectsIndexBeyondBaseRange(t *testing.T) {
-	// 10.250.0.0/16 holds exactly 8192 /29 blocks, so 8192 is the first
-	// index past the end.
-	const blocks = 8192
-	if _, _, _, err := blockForIndex(blocks - 1); err != nil {
-		t.Fatalf("last in-range index must still allocate: %v", err)
-	}
-	for _, index := range []int{blocks, blocks + 1, 1 << 30, -1} {
-		_, _, _, err := blockForIndex(index)
-		if err == nil {
-			t.Fatalf("blockForIndex(%d) returned an address outside %s instead of an error", index, segmentBaseCIDR)
-		}
-		if index >= 0 && !errors.Is(err, errSegmentRangeExhausted) {
-			t.Fatalf("blockForIndex(%d) error = %v, want it to wrap errSegmentRangeExhausted", index, err)
-		}
-	}
-}
-
-func TestIndexForBlock_RejectsCIDROutsideBaseRange(t *testing.T) {
-	// Below the base address: the unsigned subtraction would underflow into
-	// an enormous bogus index if unchecked.
-	if _, err := indexForBlock("10.249.255.248/29"); err == nil {
-		t.Fatal("indexForBlock accepted a CIDR sorting below segmentBaseCIDR")
-	}
-	// Past the last block in the base range.
-	if _, err := indexForBlock("10.251.0.0/29"); err == nil {
-		t.Fatal("indexForBlock accepted a CIDR beyond segmentBaseCIDR's last block")
-	}
-	got, err := indexForBlock("10.250.0.8/29")
-	if err != nil {
-		t.Fatalf("indexForBlock on a valid block: %v", err)
-	}
-	if got != 1 {
-		t.Fatalf("indexForBlock(10.250.0.8/29) = %d, want 1", got)
-	}
-}
-
-// TestSegmentLedger_ReleaseSkipsCorruptCIDR covers the other half of the
-// underflow guard: a hand-edited/corrupt CIDR must not push a bogus index
-// onto the free list for the next allocate to hand out.
-func TestSegmentLedger_ReleaseSkipsCorruptCIDR(t *testing.T) {
-	ledgerPath := filepath.Join(t.TempDir(), "network-segments.json")
-	ledger := newSegmentLedger(ledgerPath)
-
-	if _, err := ledger.allocate("sb-1"); err != nil {
-		t.Fatalf("allocate: %v", err)
-	}
-	if _, err := ledger.store.Update(func(s segmentLedgerState) (segmentLedgerState, error) {
-		alloc := s.BySandboxID["sb-1"]
-		alloc.CIDR = "10.249.255.248/29"
-		s.BySandboxID["sb-1"] = alloc
-		return s, nil
-	}); err != nil {
-		t.Fatalf("corrupt ledger entry: %v", err)
-	}
-	if err := ledger.release("sb-1"); err != nil {
-		t.Fatalf("release: %v", err)
-	}
-	state, err := ledger.store.Load()
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if _, ok := state.BySandboxID["sb-1"]; ok {
-		t.Fatal("release left the corrupt entry in place")
-	}
-	if len(state.FreedIndexes) != 0 {
-		t.Fatalf("release pushed an index recovered from a corrupt CIDR onto the free list: %v", state.FreedIndexes)
 	}
 }
 
@@ -349,7 +281,7 @@ func TestDriver_AttachToSegment_ConnectsThenAssignsSegmentAddress(t *testing.T) 
 	var sessions []*recordingGuestExec
 	d := segmentDriver(t, windowsGuestNotes, &sessions)
 
-	ref, err := d.CreateSegment(context.Background(), "sb-1")
+	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
@@ -401,7 +333,7 @@ func TestDriver_AttachToSegment_PrefersRotatedCredentialOverStaleBootstrap(t *te
 		t.Fatalf("verification session password = %q, want a freshly rotated value", rotated)
 	}
 
-	ref, err := d.CreateSegment(context.Background(), "sb-1")
+	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
@@ -425,7 +357,7 @@ func TestDriver_AttachToSegment_FallsBackToBootstrapWithoutRotatedCredential(t *
 	var sessions []*recordingGuestExec
 	d := segmentDriver(t, windowsGuestNotes, &sessions)
 
-	ref, err := d.CreateSegment(context.Background(), "sb-1")
+	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
@@ -507,7 +439,7 @@ func TestDriver_AttachToSegment_DerivesGuestAddressForLegacyLedgerEntry(t *testi
 	var sessions []*recordingGuestExec
 	d := segmentDriver(t, windowsGuestNotes, &sessions)
 
-	ref, err := d.CreateSegment(context.Background(), "sb-1")
+	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
@@ -540,7 +472,7 @@ func TestDriver_AttachToSegment_RepeatReassignsSameAddress(t *testing.T) {
 	var sessions []*recordingGuestExec
 	d := segmentDriver(t, windowsGuestNotes, &sessions)
 
-	ref, err := d.CreateSegment(context.Background(), "sb-1")
+	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
@@ -567,7 +499,7 @@ func TestDriver_AttachToSegment_LinuxGuestIsAHardError(t *testing.T) {
 	var sessions []*recordingGuestExec
 	d := segmentDriver(t, "boxy_guest_os=linux;boxy_guest_user=ubuntu", &sessions)
 
-	ref, err := d.CreateSegment(context.Background(), "sb-1")
+	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
@@ -603,7 +535,7 @@ func TestDriver_AttachToSegment_UnknownSegmentIsAnError(t *testing.T) {
 func TestDriver_AttachToSegment_ConnectsAdapterBeforeAddressing(t *testing.T) {
 	var order []string
 	d := segmentDriver(t, windowsGuestNotes, nil)
-	ref, err := d.CreateSegment(context.Background(), "sb-1")
+	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
@@ -708,7 +640,7 @@ func TestDriver_DestroySegment_ReleasesLedgerEntry(t *testing.T) {
 	d := mockDriver(func(context.Context, string) (string, error) { return "", nil })
 	d.segmentLedgerPath = filepath.Join(t.TempDir(), "network-segments.json")
 
-	ref, err := d.CreateSegment(context.Background(), "sb-1")
+	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
@@ -723,12 +655,9 @@ func TestDriver_DestroySegment_ReleasesLedgerEntry(t *testing.T) {
 	if _, ok := state.BySandboxID["sb-1"]; ok {
 		t.Fatal("DestroySegment left sb-1's ledger entry behind; its CIDR would leak permanently")
 	}
-	if len(state.FreedIndexes) != 1 || state.FreedIndexes[0] != 0 {
-		t.Fatalf("FreedIndexes = %v, want the destroyed segment's block index [0] returned for reuse", state.FreedIndexes)
-	}
 
 	// The freed block is genuinely reusable by the next sandbox.
-	next, err := d.CreateSegment(context.Background(), "sb-2")
+	next, err := d.CreateSegment(context.Background(), "sb-2", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment sb-2: %v", err)
 	}
@@ -749,7 +678,7 @@ func TestDriver_DestroySegment_IdempotentWhenAlreadyGone(t *testing.T) {
 	d := mockDriver(func(context.Context, string) (string, error) { return "", nil })
 	d.segmentLedgerPath = filepath.Join(t.TempDir(), "network-segments.json")
 
-	ref, err := d.CreateSegment(context.Background(), "sb-1")
+	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
@@ -768,8 +697,8 @@ func TestDriver_DestroySegment_IdempotentWhenAlreadyGone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load ledger: %v", err)
 	}
-	if len(state.FreedIndexes) != 1 {
-		t.Fatalf("FreedIndexes = %v, want exactly one entry (repeat destroys must not free the same block twice)", state.FreedIndexes)
+	if len(state.BySandboxID) != 0 {
+		t.Fatalf("ledger = %v, want empty after destroying the only segment", state.BySandboxID)
 	}
 }
 

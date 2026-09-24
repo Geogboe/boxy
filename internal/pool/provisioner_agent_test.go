@@ -188,7 +188,7 @@ func (m *mockAgent) PersonalizeGuest(ctx context.Context, provider providersdk.T
 // CreateSegment and AttachToSegment give mockAgent the
 // agentsdk.NetworkIsolatingAgent capability, unconditionally, the same way
 // PersonalizeGuest above unconditionally gives it GuestPersonalizingAgent.
-func (m *mockAgent) CreateSegment(_ context.Context, _ providersdk.Type, sandboxID string) (providersdk.SegmentRef, error) {
+func (m *mockAgent) CreateSegment(_ context.Context, _ providersdk.Type, sandboxID string, _ string) (providersdk.SegmentRef, error) {
 	m.gotCreateSegmentSandboxID = sandboxID
 	return m.createSegmentRef, m.createSegmentErr
 }
@@ -1267,7 +1267,7 @@ func TestAgentProvisioner_CreateSegment(t *testing.T) {
 	}
 	res := model.Resource{ID: "res-1", Provider: model.ProviderRef{AgentID: agent.Info().ID}}
 
-	ref, providerType, err := ap.CreateSegment(context.Background(), model.Pool{Name: "pool-a"}, res, "sb-1")
+	ref, providerType, err := ap.CreateSegment(context.Background(), model.Pool{Name: "pool-a"}, res, "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
