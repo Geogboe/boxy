@@ -332,8 +332,10 @@ rediscovering them:
 ## Open risks — status after Plan 1c
 
 Both risks recorded above were carried into Plan 1c to be settled there.
-Neither could be settled empirically: this development host cannot run
-Hyper-V VMs (see AGENTS.md), so everything below rests on fakes.
+Plan 1c itself could not settle either empirically, because the
+development host cannot run Hyper-V VMs (see AGENTS.md). Risk 1 was
+settled afterwards from Microsoft's documentation plus testing on wks01, a
+real Hyper-V host (2026-09-24). Risk 2 still rests on fakes.
 
 1. **`New-NetNat` one-instance-per-host — CONFIRMED as the supported limit
    2026-09-24; design changes to one shared NAT per host.** Microsoft's
