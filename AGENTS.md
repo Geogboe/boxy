@@ -561,12 +561,18 @@ after #244's `AddCommand`/`AddArgument` migration.
   server's `Connect` handler runs its deferred "agent disconnected" log, so
   that log could write into the agent directory while `RemoveAll` was
   deleting it. `startAgentTestDaemon` now uses `GracefulStop` (what `boxy
-  serve` uses), which waits for handlers. The general lesson: a failure that
-  only a rerun makes go away is still a bug with a cause. Reproduce it with
-  `-count=N` before labeling it environmental. The Windows sightings of
-  `TestRunAgentServe_SetsDefaultLoggerSoPackageLevelLogsReachDiagnostics`
-  don't use the test daemon and may have a separate cause; if it recurs,
-  reproduce it the same way.
+  serve` uses), which waits for handlers. **That first fix was incomplete**:
+  it passed 60 local stress runs, then failed in CI, because the daemon's
+  agent-reconciliation goroutines also log after the disconnect and
+  `GracefulStop` doesn't wait for them. The real fix is at the source:
+  `diagnostics.FileStore.Append` recreates its directory (`MkdirAll`) on
+  every write, so `FileStore` now has `Close`, after which appends are
+  no-ops, and `runAgentServe` closes its store on return. No late log from
+  any goroutine can recreate the directory. Two general lessons: a failure
+  that only a rerun makes go away is still a bug with a cause, so reproduce
+  it with `-count=N` before labeling it environmental; and a passing stress
+  run only proves the writers you happened to hit are covered, so fix the
+  shared mechanism (here, the store's write path), not each writer.
 - **Fully validate locally before pushing, including the parts that are easy
   to skip because you already predict the result.** `task ci:validate` (or
   the specific local scan/lint commands it wraps) must actually be run and
