@@ -351,9 +351,7 @@ real Hyper-V host (2026-09-24). Risk 2 still rests on fakes.
    whole `10.250.0.0/16` base, with per-sandbox isolation resting on the
    separate Internal switches. That shape was also created on wks01 (one
    `/16` NAT alongside two per-sandbox switches addressed inside it).
-   Still to verify on real hardware once implemented: guests on two
-   segments reach the internet through the shared NAT, and cannot reach
-   each other through the host.
+   Implemented and verified on wks01 on 2026-09-24; see the change log.
 2. **`New-NetIPAddress` timing right after `New-VMSwitch` — still
    theoretical, and now better contained.** No timing failure was observed,
    because nothing here has been run against a live host; no bounded
@@ -417,3 +415,30 @@ real Hyper-V host (2026-09-24). Risk 2 still rests on fakes.
   isolation from the per-sandbox Internal switches. An earlier draft of
   this entry recorded the risk as disproven from the test alone; it was
   corrected before merging once the official guidance was found.
+
+- 2026-09-24: **Shared NAT implemented and verified on real hardware.**
+  `hyperv.CreateSegment` keeps a per-sandbox Internal switch and now
+  ensures one host-wide NAT, `boxy-segments`, over the segment base range.
+  It removes per-sandbox `boxy-sb-*` NATs left by earlier versions, and
+  refuses to run, naming the other NAT, if the host already has a non-Boxy
+  NAT. `DestroySegment` never removes the shared NAT. Segment create and
+  destroy scripts are serialized per driver: two concurrent `New-VMSwitch`
+  calls on wks01 failed with "Adding ports to the switch ... failed"
+  (error 32790), while each succeeds on its own.
+
+  Verified on wks01 (Windows 10 Pro, freshly rebooted) by running the
+  driver's own generated scripts, then booting one template clone on each
+  of two segments:
+  - Both guests reached the internet through the shared NAT (ping, TCP
+    443, DNS).
+  - Neither guest could reach the other by ping or TCP 5985, nor the other
+    segment's gateway address.
+  - The host reached both guests, which shows the refusals came from
+    isolation rather than guest firewalls.
+  - IP forwarding stayed disabled on both segment adapters.
+  - Destroying one segment left the shared NAT in place.
+  - A pre-existing non-Boxy NAT made segment creation fail with the
+    expected error.
+
+  This exercised the driver's scripts directly, not a full `boxy serve`
+  run with two sandboxes. That end-to-end run is tracked as #383.

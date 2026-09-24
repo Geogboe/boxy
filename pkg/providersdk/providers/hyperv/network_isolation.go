@@ -49,6 +49,15 @@ type segmentLedgerState struct {
 // allocations that start near 10.0.x.x or 10.1.x.x).
 const segmentBaseCIDR = "10.250.0.0/16"
 
+// sharedNATName is the one WinNAT instance every segment on a host routes
+// through, covering all of segmentBaseCIDR. Microsoft's Hyper-V NAT guide
+// limits a host to one NAT network and says creating more leaves WinNAT in
+// an unknown state, so segments share this NAT and get isolation from their
+// separate Internal switches instead (ADR-0021, Open Risk 1). It is created
+// on first use and never removed by DestroySegment: other segments on the
+// host may still be using it, and an idle NAT costs nothing.
+const sharedNATName = "boxy-segments"
+
 // segmentPrefixLen is the prefix length of each per-sandbox block carved out
 // of segmentBaseCIDR. A /29 is 8 addresses: network, gateway, up to 5 usable
 // hosts, broadcast -- enough for a small sandbox lab.
@@ -391,10 +400,24 @@ func (d *Driver) resolveSegmentLedgerPath() string {
 	return filepath.Join(dir, segmentLedgerFilename)
 }
 
-// CreateSegment creates a dedicated Internal vSwitch + NAT for one sandbox.
+// CreateSegment creates a dedicated Internal vSwitch for one sandbox and
+// makes sure the host's shared NAT (sharedNATName) exists to route it.
 // Internal, not Private: Private would also cut off the host-provided NAT
 // (all internet access), which is the wrong default until egress policy
 // exists to restrict it deliberately (see the design spec's Decision 1).
+//
+// Ensuring the shared NAT, checked on every call (not only when the shared
+// NAT is missing), and validated before anything is changed:
+//   - Any NAT that is neither the shared one nor a legacy boxy-sb-* NAT is
+//     refused with an error naming it, since a second NAT on the host is
+//     something Microsoft doesn't support.
+//   - A shared NAT over the wrong prefix is refused.
+//   - Per-sandbox NATs left by earlier Boxy versions (named after their
+//     boxy-sb-* switch) are then removed. They overlap the shared prefix,
+//     and the shared NAT covers the same addresses.
+//   - Concurrent calls (in this process or another agent on the same host)
+//     can both find the NAT missing; the loser's New-NetNat fails, and the
+//     script accepts that as success once the NAT exists.
 //
 // The switch's host-side adapter is referenced directly by its deterministic
 // name, "vEthernet (<switch name>)" — the name Hyper-V gives an Internal
@@ -418,6 +441,8 @@ func (d *Driver) CreateSegment(ctx context.Context, sandboxID string) (providers
 		return "", fmt.Errorf("allocate segment CIDR for sandbox %q: %w", sandboxID, err)
 	}
 	adapterAlias := fmt.Sprintf("vEthernet (%s)", alloc.SwitchName)
+	d.segmentHostMu.Lock()
+	defer d.segmentHostMu.Unlock()
 	_, err = d.ps(ctx, fmt.Sprintf(`
 $ErrorActionPreference = 'Stop'
 if (-not (Get-VMSwitch -Name '%s' -ErrorAction SilentlyContinue)) {
@@ -426,14 +451,11 @@ if (-not (Get-VMSwitch -Name '%s' -ErrorAction SilentlyContinue)) {
 if (-not (Get-NetIPAddress -InterfaceAlias '%s' -IPAddress '%s' -ErrorAction SilentlyContinue)) {
     New-NetIPAddress -IPAddress '%s' -PrefixLength %d -InterfaceAlias '%s' | Out-Null
 }
-if (-not (Get-NetNat -Name '%s' -ErrorAction SilentlyContinue)) {
-    New-NetNat -Name '%s' -InternalIPInterfaceAddressPrefix '%s' | Out-Null
-}
-`,
+%s`,
 		psq(alloc.SwitchName), psq(alloc.SwitchName),
 		psq(adapterAlias), psq(alloc.Gateway),
 		psq(alloc.Gateway), segmentPrefixLen, psq(adapterAlias),
-		psq(alloc.SwitchName), psq(alloc.SwitchName), psq(alloc.CIDR)))
+		ensureSharedNATScript()))
 	if err != nil {
 		// Deliberately not releasing the ledger entry here (task-2 code
 		// review finding 3): allocate()'s own idempotency contract exists
@@ -452,6 +474,31 @@ if (-not (Get-NetNat -Name '%s' -ErrorAction SilentlyContinue)) {
 		return "", fmt.Errorf("create segment for sandbox %q: %w", sandboxID, err)
 	}
 	return providersdk.SegmentRef(alloc.SwitchName), nil
+}
+
+// ensureSharedNATScript returns the PowerShell that makes sure sharedNATName
+// exists over segmentBaseCIDR. See CreateSegment for the rules it enforces.
+func ensureSharedNATScript() string {
+	return fmt.Sprintf(`
+$nats = @(Get-NetNat -ErrorAction SilentlyContinue)
+$other = @($nats | Where-Object { $_.Name -ne '%[1]s' -and $_.Name -notlike 'boxy-sb-*' })
+if ($other.Count -gt 0) {
+    throw ("host already has a NAT network (" + (($other | ForEach-Object { $_.Name + ' ' + $_.InternalIPInterfaceAddressPrefix }) -join ', ') + "); Windows supports one NAT network per host, so Boxy cannot use '%[1]s'")
+}
+$nat = $nats | Where-Object { $_.Name -eq '%[1]s' }
+if ($nat -and $nat.InternalIPInterfaceAddressPrefix -ne '%[2]s') {
+    throw ("NAT '%[1]s' covers " + $nat.InternalIPInterfaceAddressPrefix + ", expected '%[2]s'")
+}
+$nats | Where-Object { $_.Name -like 'boxy-sb-*' } |
+    Remove-NetNat -Confirm:$false -ErrorAction SilentlyContinue
+if (-not $nat) {
+    try {
+        New-NetNat -Name '%[1]s' -InternalIPInterfaceAddressPrefix '%[2]s' | Out-Null
+    } catch {
+        if (-not (Get-NetNat -Name '%[1]s' -ErrorAction SilentlyContinue)) { throw }
+    }
+}
+`, psq(sharedNATName), psq(segmentBaseCIDR))
 }
 
 // AttachToSegment moves an already-created, already-running VM's network
@@ -582,6 +629,9 @@ func (d *Driver) assignSegmentAddress(ctx context.Context, providerResourceID st
 // switch/NAT identity rather than finding the entry already gone.
 func (d *Driver) DestroySegment(ctx context.Context, ref providersdk.SegmentRef) error {
 	switchName := string(ref)
+	// The NAT named after the switch only exists for segments created before
+	// the shared NAT (sharedNATName), which this never removes.
+	d.segmentHostMu.Lock()
 	_, err := d.ps(ctx, fmt.Sprintf(`
 $ErrorActionPreference = 'Stop'
 if (Get-NetNat -Name '%s' -ErrorAction SilentlyContinue) {
@@ -591,6 +641,7 @@ if (Get-VMSwitch -Name '%s' -ErrorAction SilentlyContinue) {
     Remove-VMSwitch -Name '%s' -Force | Out-Null
 }
 `, psq(switchName), psq(switchName), psq(switchName), psq(switchName)))
+	d.segmentHostMu.Unlock()
 	if err != nil {
 		return fmt.Errorf("destroy segment %q: %w", ref, err)
 	}

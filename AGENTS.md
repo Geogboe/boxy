@@ -247,8 +247,8 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   time. All three methods are contractually idempotent — `CreateSegment` per
   `sandboxID`, returning the same ref on a repeat — and `sandboxID` is
   documented as already name-safe, so drivers don't each invent their own
-  escaping. `hyperv` (Internal vSwitch + `New-NetNat` over a `diskjson`
-  segment ledger) and `docker` (per-sandbox bridge, connect-then-disconnect)
+  escaping. `hyperv` (per-sandbox Internal vSwitch over a `diskjson`
+  segment ledger, all routed through one shared `boxy-segments` NAT per host) and `docker` (per-sandbox bridge, connect-then-disconnect)
   implement it; `devfactory` deliberately does not, same reasoning as
   `GuestPersonalizer`/`NetworkRangeReporter` above. Wired end-to-end as of
   2026-09-14: sandbox allocation creates and attaches segments, agents
@@ -258,13 +258,13 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   is why hyperv's pool-level `network` config (`static_ip`/`range`) is gone;
   the segment is now always the guest's real network. Real-hardware
   validation (wks01, 2026-09-16) confirmed the single-host case end-to-end
-  (switch, NAT, segment addressing, exec, teardown). **One risk remains open
-  and unverified: `New-NetNat` may be effectively one-instance-per-host,
-  which would break the second sandbox on a Hyper-V host.** A follow-up
-  attempt to verify it was blocked by an unrelated topology gap before
-  reaching a second `New-NetNat` call — see ADR-0021's 2026-09-16 entry.
-  Verify on real hardware before trusting this in production for more than
-  one concurrent sandbox per host. See
+  (switch, NAT, segment addressing, exec, teardown). **Windows supports one
+  NAT network per host** (Microsoft's Hyper-V *Set up a NAT network* guide),
+  so segments share one NAT over `10.250.0.0/16` rather than each creating
+  its own — `New-NetNat` accepts extra instances without error, but that
+  configuration is unsupported. Creating a segment refuses to run on a host
+  that already has a non-Boxy NAT. Two concurrent sandboxes on one Hyper-V
+  host through the shared NAT still need real-hardware validation. See
   [ADR-0021](docs/adr/0021-network-isolation-driver-capability.md) for that
   risk, the credential-retention decision `AttachToSegment` needed, and the
   cost it adds to the allocation hot path.

@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/vmsdk"
@@ -152,8 +154,10 @@ func TestDriver_CreateSegment_RunsSwitchAndNatSetup(t *testing.T) {
 		t.Fatalf("expected exactly one PowerShell call, got %d", len(scripts))
 	}
 	for _, want := range []string{
-		"New-VMSwitch", "SwitchType Internal", "New-NetNat", "10.250.0.0/29",
+		"New-VMSwitch", "SwitchType Internal",
 		"vEthernet (boxy-sb-sb-1)",
+		// One shared NAT over the whole base range, not one per segment.
+		"New-NetNat -Name 'boxy-segments' -InternalIPInterfaceAddressPrefix '10.250.0.0/16'",
 		// The prefix length is rendered from segmentPrefixLen, and the
 		// gateway/alias pair around it must not have been transposed when
 		// that %d was inserted into the positional argument list.
@@ -162,6 +166,9 @@ func TestDriver_CreateSegment_RunsSwitchAndNatSetup(t *testing.T) {
 		if !strings.Contains(scripts[0], want) {
 			t.Fatalf("script missing %q:\n%s", want, scripts[0])
 		}
+	}
+	if strings.Contains(scripts[0], "New-NetNat -Name 'boxy-sb-") {
+		t.Fatalf("script creates a per-sandbox NAT; Windows supports one NAT per host:\n%s", scripts[0])
 	}
 	if strings.Contains(scripts[0], "Get-NetAdapter") {
 		t.Fatalf("script should resolve the adapter by its deterministic vEthernet alias, not a fuzzy Get-NetAdapter lookup:\n%s", scripts[0])
@@ -638,6 +645,59 @@ func TestDriver_DestroySegment_RemovesNatThenSwitch(t *testing.T) {
 	}
 }
 
+// TestDriver_DestroySegment_KeepsSharedNAT: other segments on the host
+// route through the shared NAT, so tearing down one segment must never
+// remove it.
+func TestDriver_DestroySegment_KeepsSharedNAT(t *testing.T) {
+	var script string
+	d := mockDriver(func(_ context.Context, s string) (string, error) {
+		script = s
+		return "", nil
+	})
+	if err := d.DestroySegment(context.Background(), providersdk.SegmentRef("boxy-sb-sb-1")); err != nil {
+		t.Fatalf("DestroySegment: %v", err)
+	}
+	if strings.Contains(script, sharedNATName) {
+		t.Fatalf("DestroySegment script references the shared NAT %q:\n%s", sharedNATName, script)
+	}
+}
+
+// TestEnsureSharedNATScript_Rules pins the rules the shared-NAT script
+// enforces. It can only check the script text; the behavior itself needs a
+// real Hyper-V host.
+func TestEnsureSharedNATScript_Rules(t *testing.T) {
+	script := ensureSharedNATScript()
+	for _, want := range []string{
+		// Any NAT other than the shared or a legacy one is refused rather
+		// than joined by a second one -- on every call, not only when the
+		// shared NAT is missing.
+		"Where-Object { $_.Name -ne 'boxy-segments' -and $_.Name -notlike 'boxy-sb-*' }",
+		"one NAT network per host",
+		// An existing shared NAT over the wrong prefix is an error.
+		"$nat.InternalIPInterfaceAddressPrefix -ne '" + segmentBaseCIDR + "'",
+		// Legacy per-sandbox NATs are removed, matched by name only.
+		"Where-Object { $_.Name -like 'boxy-sb-*' }",
+		"Remove-NetNat",
+		// Losing a creation race counts as success once the NAT exists.
+		"} catch {\n        if (-not (Get-NetNat -Name 'boxy-segments'",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("shared NAT script missing %q:\n%s", want, script)
+		}
+	}
+	// Every refusal comes before any change, so a refused call leaves the
+	// host untouched.
+	lastThrow := strings.LastIndex(script, "throw (")
+	if lastThrow > strings.Index(script, "Remove-NetNat") || lastThrow > strings.Index(script, "New-NetNat") {
+		t.Fatalf("shared NAT script changes the host before its last validation check:\n%s", script)
+	}
+	// The foreign-NAT check must not sit inside the "shared NAT missing"
+	// branch, or a NAT added after boxy-segments would be accepted.
+	if strings.Index(script, "if (-not $nat)") < strings.Index(script, "$other.Count") {
+		t.Fatalf("foreign-NAT check only runs when the shared NAT is missing:\n%s", script)
+	}
+}
+
 // TestDriver_DestroySegment_ReleasesLedgerEntry covers the final-review fix
 // that made DestroySegment self-contained: the ledger entry is keyed by
 // sandbox ID and reachable only through unexported API, so a caller holding
@@ -717,5 +777,40 @@ func TestDriver_CreateSegment_IsANetworkIsolator(t *testing.T) {
 	var d providersdk.Driver = mockDriver(func(context.Context, string) (string, error) { return "", nil })
 	if _, ok := d.(providersdk.NetworkIsolator); !ok {
 		t.Fatal("*hyperv.Driver must satisfy providersdk.NetworkIsolator")
+	}
+}
+
+// TestDriver_CreateSegment_SerializesHostScripts: Hyper-V fails concurrent
+// Internal switch creation, so two CreateSegment calls on one Driver must
+// never have their PowerShell running at the same time.
+func TestDriver_CreateSegment_SerializesHostScripts(t *testing.T) {
+	var running, maxRunning int32
+	d := mockDriver(func(context.Context, string) (string, error) {
+		n := atomic.AddInt32(&running, 1)
+		for {
+			m := atomic.LoadInt32(&maxRunning)
+			if n <= m || atomic.CompareAndSwapInt32(&maxRunning, m, n) {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+		atomic.AddInt32(&running, -1)
+		return "", nil
+	})
+	d.segmentLedgerPath = filepath.Join(t.TempDir(), "network-segments.json")
+
+	var wg sync.WaitGroup
+	for _, id := range []string{"sb-1", "sb-2", "sb-3", "sb-4"} {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			if _, err := d.CreateSegment(context.Background(), id); err != nil {
+				t.Errorf("CreateSegment(%s): %v", id, err)
+			}
+		}(id)
+	}
+	wg.Wait()
+	if maxRunning != 1 {
+		t.Fatalf("up to %d segment scripts ran at once, want 1", maxRunning)
 	}
 }

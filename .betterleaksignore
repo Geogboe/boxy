@@ -626,3 +626,10 @@ c35d036c70c4a3a4b708a689528a6ead25fcf611:docs/adr/0021-network-isolation-driver-
 2c6fad214bebe9f5af76fec42c2f53e4d8168534:.betterleaksignore:boxy-pii-private-ipv4:614
 1aeabce5ab3f515626243de8ebdd57b577bf8085:docs/adr/0021-network-isolation-driver-capability.md:boxy-pii-private-ipv4:349
 1aeabce5ab3f515626243de8ebdd57b577bf8085:docs/adr/0021-network-isolation-driver-capability.md:boxy-pii-private-ipv4:414
+
+# Reviewed 2026-09-24: Boxy's own segment base range in the shared-NAT
+# change (AGENTS.md note and two Hyper-V test fixtures asserting the shared
+# NAT's prefix). Same reviewed-fixture category as the batches above.
+ed2e40e9b7b09e592a08fbbe79a614f8a1eef5ae:AGENTS.md:boxy-pii-private-ipv4:263
+ed2e40e9b7b09e592a08fbbe79a614f8a1eef5ae:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:158
+ed2e40e9b7b09e592a08fbbe79a614f8a1eef5ae:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:678

@@ -93,9 +93,10 @@ A running log of recently-landed feature batches and their supporting decisions.
   2026-09-18 change-log entries for the full detail.
 - Per-sandbox network isolation (#224, Decision 1) landed 2026-09-14 across
   Plans 1a/1b/1c. Every sandbox now gets its own provider-level network —
-  a Docker bridge, or a Hyper-V Internal vSwitch plus NAT over a `/29` from
-  `10.250.0.0/16` — created on its first resource claim and torn down with
-  the sandbox. It is automatic and universal with no opt-out: an agent
+  a Docker bridge, or a Hyper-V Internal vSwitch on its own `/29` — created
+  on its first resource claim and torn down with the sandbox. (As of
+  2026-09-24, Hyper-V segments route through one host-wide `boxy-segments`
+  NAT that stays in place, rather than a NAT per sandbox; see below.) It is automatic and universal with no opt-out: an agent
   advertises which provider types it can actually isolate, and one that
   advertises none (devfactory) is skipped rather than failed. Hyper-V's
   `AttachToSegment` also assigns the guest's address from the segment's own
