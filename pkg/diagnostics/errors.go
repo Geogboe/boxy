@@ -36,6 +36,8 @@ func DescribeError(err error) (code, summary string) {
 		return "hyperv_guest_authentication_failed", "PowerShell Direct guest authentication failed"
 	case strings.Contains(lower, "hvsock connect") || strings.Contains(lower, "powershell direct") || strings.Contains(lower, "psdirect"):
 		return "hyperv_guest_operation_failed", "PowerShell Direct guest operation failed"
+	case strings.Contains(lower, "create tun device"):
+		return "mesh_device_unavailable", "could not create the WireGuard device (Linux agents need CAP_NET_ADMIN; Windows agents need wintun.dll next to boxy.exe)"
 	case strings.Contains(lower, "capacity") || strings.Contains(lower, "insufficient memory"):
 		return "provider_capacity_failed", "provider reported insufficient capacity"
 	default:
