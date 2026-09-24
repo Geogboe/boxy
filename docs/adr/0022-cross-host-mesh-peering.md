@@ -169,6 +169,9 @@ sharing-one-host support, not a mesh-peering defect, but it means:
    OPEN, unverified" remains open for the same reason — the two-agent test
    setup was intended to also exercise a second concurrent `New-NetNat` on
    one host, but never got far enough before hitting risk 2 above.
+   (Update 2026-09-24: settled outside this ADR. Microsoft's documentation
+   confirms one NAT network per host, and Hyper-V segments move to one
+   shared NAT. See ADR-0021's Open Risk 1.)
 
 ## Change log
 

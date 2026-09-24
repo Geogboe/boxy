@@ -105,8 +105,10 @@ A running log of recently-landed feature batches and their supporting decisions.
   `.archive/pkg/hyperv/`. See
   [ADR-0021](adr/0021-network-isolation-driver-capability.md) for the
   design and, importantly, for what is **not** settled: `New-NetNat`'s
-  possible one-instance-per-host limit is still unverified and would break
-  the second sandbox on a Hyper-V host if real. Also carries a deliberate
+  possible one-instance-per-host limit was still unverified at the time.
+  (Update 2026-09-24: Microsoft's documentation confirms one NAT network
+  per host; the design moves to one shared NAT. See ADR-0021's change
+  log.) Also carries a deliberate
   in-memory guest-credential retention in the Hyper-V driver (the rotated
   credential is unavailable to `AttachToSegment` otherwise) worth a second
   look, and adds a PSRP session to the allocation hot path, compounding
