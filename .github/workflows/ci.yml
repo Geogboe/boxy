@@ -30,13 +30,19 @@ jobs:
     # the tool that needs to see prose/doc content, so skipping them for
     # docs changes would be backwards.
     #
-    # `non_code` uses only negative patterns, which dorny/paths-filter
-    # documents as implicitly matching everything (`**`) first and then
-    # excluding the listed paths -- so it's true (meaning "something beyond
-    # the safe list changed") whenever ANY changed file falls outside this
-    # explicit, conservative allow-list, including any doc path not listed
-    # here. That's deliberate: an unlisted path defaults to running full CI
-    # (today's status quo), never to silently skipping it. The list is
+    # `non_code` is a positive `**` baseline minus an explicit, conservative
+    # allow-list of prose paths. Both halves matter: paths-filter's default
+    # `predicate-quantifier: 'some'` includes a file if it matches AT LEAST
+    # ONE pattern and does NOT treat `!` patterns as subtractive, so a
+    # negation-only filter matches everything and never skips (which is how
+    # this shipped broken in #375 -- the gate was a silent no-op). The
+    # `some-with-excludes` quantifier is what makes `!` actually exclude.
+    #
+    # So it's true (meaning "something beyond the safe list changed")
+    # whenever ANY changed file falls outside the allow-list, including any
+    # doc path not listed here. That's deliberate: an unlisted path defaults
+    # to running full CI (today's status quo), never to silently skipping
+    # it. The list is
     # deliberately narrower than "all of docs/" -- docs/ui-design-language.md,
     # docs/help/index.md, docs/api.md, and README.md are read directly by Go
     # tests (internal/server/ui_design_test.go, cmd/help-gen/main_test.go,
@@ -51,8 +57,10 @@ jobs:
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
+          predicate-quantifier: 'some-with-excludes'
           filters: |
             non_code:
+              - '**'
               - '!docs/adr/**'
               - '!docs/superpowers/**'
               - '!docs/current-delivery-notes.md'

@@ -250,6 +250,10 @@ func runAgentServe(ctx context.Context, opts agentServeOpts) error {
 	if err != nil {
 		return fmt.Errorf("open agent diagnostics store: %w", err)
 	}
+	// The process-wide slog default installed below outlives this function,
+	// so close the store on return: later log records (from goroutines that
+	// are still winding down) then skip the file instead of recreating it.
+	defer func() { _ = agentDiagnostics.Close() }()
 	// Keep the configured stderr/service log destination while also retaining
 	// a bounded, redacted local history for explicit server-side pulls.
 	// Install this as the process-wide default (mirroring the daemon's
