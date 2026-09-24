@@ -619,3 +619,10 @@ c35d036c70c4a3a4b708a689528a6ead25fcf611:docs/adr/0021-network-isolation-driver-
 c35d036c70c4a3a4b708a689528a6ead25fcf611:docs/adr/0021-network-isolation-driver-capability.md:boxy-pii-private-ipv4:348
 c35d036c70c4a3a4b708a689528a6ead25fcf611:docs/adr/0021-network-isolation-driver-capability.md:boxy-pii-private-ipv4:412
 c35d036c70c4a3a4b708a689528a6ead25fcf611:docs/adr/0021-network-isolation-driver-capability.md:boxy-pii-private-ipv4:418
+
+# Reviewed 2026-09-24: Boxy's own segment base range (the /16 above) in
+# ADR-0021's rewritten Open Risk 1 entry, and the comment above naming the
+# earlier test prefixes. Same reviewed-fixture category as the batches above.
+2c6fad214bebe9f5af76fec42c2f53e4d8168534:.betterleaksignore:boxy-pii-private-ipv4:614
+1aeabce5ab3f515626243de8ebdd57b577bf8085:docs/adr/0021-network-isolation-driver-capability.md:boxy-pii-private-ipv4:349
+1aeabce5ab3f515626243de8ebdd57b577bf8085:docs/adr/0021-network-isolation-driver-capability.md:boxy-pii-private-ipv4:414
