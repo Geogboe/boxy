@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/network"
 
 	"github.com/Geogboe/boxy/pkg/providersdk"
+	"github.com/Geogboe/boxy/pkg/segmentcidr"
 )
 
 // segmentNetworkPrefix namespaces the per-sandbox networks this driver
@@ -18,18 +20,31 @@ import (
 // supply an ID already safe for use in provider-specific resource names.
 const segmentNetworkPrefix = "boxy-sb-"
 
-// CreateSegment creates a dedicated bridge network for one sandbox. No
-// explicit IPAM/subnet is set -- the Docker daemon auto-assigns a
-// non-overlapping subnet from its own default address pools, so unlike
-// Hyper-V's implementation there is no collision-avoidance ledger to
-// maintain here.
+// CreateSegment creates a dedicated bridge network for one sandbox, on the
+// caller-allocated cidr.
+//
+// The subnet is set explicitly rather than left to the daemon's auto-IPAM.
+// Auto-IPAM picks a non-overlapping subnet on *this* host, which is exactly
+// wrong for cross-host mesh peering: two daemons allocating from the same
+// default pool in the same order hand out the same range, and WireGuard
+// then drops the decrypted cross-host traffic as coming from a disallowed
+// source address (#370). Only the caller, which sees every host, can pick a
+// range that is unique across all of them.
+//
+// Giving up auto-IPAM means giving up its host-local collision avoidance,
+// so the proposed range is checked against what this host already has
+// first, and refused with a *providersdk.CIDRConflictError if it is
+// unusable. The caller then proposes a different one.
 //
 // Idempotent per sandbox ID, as the interface requires: the deterministic
 // network name is resolved first, and an existing network's ID is returned
 // unchanged rather than issuing a second NetworkCreate. Without that check a
 // retry would either fail on the duplicate name or leave a second, orphaned
-// network behind that nothing ever tears down.
-func (d *Driver) CreateSegment(ctx context.Context, sandboxID string) (providersdk.SegmentRef, error) {
+// network behind that nothing ever tears down. cidr is ignored on that
+// path -- the existing network's own subnet is authoritative, and
+// renumbering a live network out from under its containers would be worse
+// than honoring a stale proposal.
+func (d *Driver) CreateSegment(ctx context.Context, sandboxID string, cidr string) (providersdk.SegmentRef, error) {
 	name := segmentNetworkPrefix + sandboxID
 	id, found, err := d.findSegmentNetwork(ctx, name)
 	if err != nil {
@@ -38,9 +53,16 @@ func (d *Driver) CreateSegment(ctx context.Context, sandboxID string) (providers
 	if found {
 		return providersdk.SegmentRef(id), nil
 	}
+	if err := d.checkCIDRAvailable(ctx, cidr); err != nil {
+		return "", err
+	}
 	resp, err := d.cli.NetworkCreate(ctx, name, network.CreateOptions{
 		Driver: "bridge",
 		Labels: map[string]string{managedLabel: managedLabelValue},
+		IPAM: &network.IPAM{
+			Driver: "default",
+			Config: []network.IPAMConfig{{Subnet: cidr}},
+		},
 	})
 	if err != nil {
 		// A concurrent CreateSegment for the same sandbox can win the race
@@ -53,6 +75,59 @@ func (d *Driver) CreateSegment(ctx context.Context, sandboxID string) (providers
 		return "", fmt.Errorf("create docker network %q: %w", name, err)
 	}
 	return providersdk.SegmentRef(resp.ID), nil
+}
+
+// checkCIDRAvailable reports whether cidr is free to use on this host,
+// returning a *providersdk.CIDRConflictError naming the collision if not.
+//
+// Two sources, because they catch different things. Existing Docker
+// networks' IPAM config covers everything the daemon manages, including
+// `docker0` -- the collision actually observed in #370, where one host's
+// default bridge occupied the other host's segment range. Host routes
+// cover what the daemon knows nothing about: a VPN, the corporate LAN, an
+// unrelated bridge. Neither alone is sufficient.
+//
+// A failure to enumerate either source is deliberately not fatal. Refusing
+// to create any segment because `ip route` is unavailable would be a worse
+// outcome than proceeding -- the caller-side global allocation is still in
+// force, and this check is the local-collision backstop, not the primary
+// guarantee.
+func (d *Driver) checkCIDRAvailable(ctx context.Context, cidr string) error {
+	if strings.TrimSpace(cidr) == "" {
+		return fmt.Errorf("no segment CIDR supplied")
+	}
+
+	var inUse []string
+	var sources []string
+
+	if nets, err := d.cli.NetworkList(ctx, network.ListOptions{}); err == nil {
+		for _, n := range nets {
+			for _, c := range n.IPAM.Config {
+				if c.Subnet != "" {
+					inUse = append(inUse, c.Subnet)
+					sources = append(sources, fmt.Sprintf("docker network %q (%s)", n.Name, c.Subnet))
+				}
+			}
+		}
+	}
+
+	if out, err := d.runHost(ctx, "ip", "-4", "route", "show"); err == nil {
+		for _, line := range strings.Split(out, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) == 0 || !strings.Contains(fields[0], "/") {
+				continue
+			}
+			inUse = append(inUse, fields[0])
+			sources = append(sources, fmt.Sprintf("host route %s", strings.TrimSpace(line)))
+		}
+	}
+
+	for i, candidate := range inUse {
+		if segmentcidr.OverlapsAny(cidr, []string{candidate}) {
+			return &providersdk.CIDRConflictError{RequestedCIDR: cidr, ConflictingWith: sources[i]}
+		}
+	}
+	return nil
 }
 
 // findSegmentNetwork resolves a segment network by its deterministic name.

@@ -28,7 +28,7 @@ func (f *fakeIsolatingDriver) Allocate(ctx context.Context, id string) (map[stri
 	return nil, nil
 }
 
-func (f *fakeIsolatingDriver) CreateSegment(ctx context.Context, sandboxID string) (providersdk.SegmentRef, error) {
+func (f *fakeIsolatingDriver) CreateSegment(ctx context.Context, sandboxID string, cidr string) (providersdk.SegmentRef, error) {
 	f.createCalls++
 	return providersdk.SegmentRef("seg-" + sandboxID), nil
 }
@@ -45,7 +45,7 @@ func TestNetworkIsolator_DetectedByTypeAssertion(t *testing.T) {
 	if !ok {
 		t.Fatal("driver implementing NetworkIsolator's methods was not detected via type assertion")
 	}
-	ref, err := isolator.CreateSegment(context.Background(), "sb-1")
+	ref, err := isolator.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}

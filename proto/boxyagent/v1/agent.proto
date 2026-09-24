@@ -257,6 +257,16 @@ message PersonalizeGuestCommand {
 // than creating a second segment.
 message CreateSegmentCommand {
   string sandbox_id = 1;
+
+  // cidr is the address range the server allocated for this segment. The
+  // agent must use it rather than choosing its own: the server allocates
+  // globally across hosts so a sandbox spanning two of them gets two
+  // non-overlapping segments, which cross-host mesh peering requires
+  // (#370). If the range is unusable on this host -- it overlaps an
+  // existing network, NAT prefix or interface address the server cannot
+  // see -- the agent returns an AgentError with error_type
+  // "cidr_conflict" and the server proposes a different one.
+  string cidr = 2;
 }
 
 // AttachToSegmentCommand asks the agent to move an already-created

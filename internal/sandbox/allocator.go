@@ -36,7 +36,7 @@ type PackageSandboxAllocator interface {
 // which have no model.Pool/model.Resource in scope to re-resolve it from).
 type NetworkIsolatingAllocator interface {
 	SandboxAllocator
-	CreateSegment(ctx context.Context, pool model.Pool, res model.Resource, sandboxID model.SandboxID) (providersdk.SegmentRef, providersdk.Type, error)
+	CreateSegment(ctx context.Context, pool model.Pool, res model.Resource, sandboxID model.SandboxID, cidr string) (providersdk.SegmentRef, providersdk.Type, error)
 	AttachToSegment(ctx context.Context, pool model.Pool, res model.Resource, ref providersdk.SegmentRef) error
 }
 

@@ -43,7 +43,7 @@ func (s *stubIsolatingAgent) Delete(context.Context, providersdk.Type, string) e
 func (s *stubIsolatingAgent) Allocate(context.Context, providersdk.Type, string) (map[string]any, error) {
 	return nil, nil
 }
-func (s *stubIsolatingAgent) CreateSegment(_ context.Context, _ providersdk.Type, _ string) (providersdk.SegmentRef, error) {
+func (s *stubIsolatingAgent) CreateSegment(_ context.Context, _ providersdk.Type, _ string, _ string) (providersdk.SegmentRef, error) {
 	s.createSegmentCall++
 	return s.createSegmentRef, s.createSegmentErr
 }

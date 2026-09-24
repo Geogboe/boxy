@@ -133,6 +133,7 @@ type mockDockerClient struct {
 	containerExecInspect func(ctx context.Context, execID string) (container.ExecInspect, error)
 	containerRemove      func(ctx context.Context, containerID string, options container.RemoveOptions) error
 	info                 func(ctx context.Context) (systemtypes.Info, error)
+	networkList          func(ctx context.Context, options network.ListOptions) ([]network.Summary, error)
 	networkCreate        func(ctx context.Context, name string, options network.CreateOptions) (network.CreateResponse, error)
 	networkInspect       func(ctx context.Context, networkID string, options network.InspectOptions) (network.Inspect, error)
 	networkConnect       func(ctx context.Context, networkID, containerID string, config *network.EndpointSettings) error
@@ -205,6 +206,16 @@ func (m *mockDockerClient) NetworkInspect(ctx context.Context, networkID string,
 	}
 	return network.Inspect{}, notFoundError{msg: "network " + networkID + " not found"}
 }
+
+// NetworkList defaults to reporting no existing networks, so a test that
+// doesn't care about CIDR-conflict detection sees an empty host.
+func (m *mockDockerClient) NetworkList(ctx context.Context, options network.ListOptions) ([]network.Summary, error) {
+	if m.networkList != nil {
+		return m.networkList(ctx, options)
+	}
+	return nil, nil
+}
+
 func (m *mockDockerClient) NetworkConnect(ctx context.Context, networkID, containerID string, config *network.EndpointSettings) error {
 	return m.networkConnect(ctx, networkID, containerID, config)
 }

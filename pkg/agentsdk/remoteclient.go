@@ -725,7 +725,7 @@ func executeCommand(ctx context.Context, drivers DriverSet, cmd *boxyagentv1.Com
 		if !ok {
 			return errorResult(cmd.GetCommandId(), fmt.Sprintf("provider %q does not support network isolation", cmd.GetProviderType()), nil)
 		}
-		ref, err := isolator.CreateSegment(ctx, op.CreateSegment.GetSandboxId())
+		ref, err := isolator.CreateSegment(ctx, op.CreateSegment.GetSandboxId(), op.CreateSegment.GetCidr())
 		if err != nil {
 			return errorResult(cmd.GetCommandId(), err.Error(), err)
 		}
