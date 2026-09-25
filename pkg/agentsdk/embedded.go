@@ -25,7 +25,14 @@ type EmbeddedAgent struct {
 
 // NewEmbeddedAgent creates an agent backed by the given drivers.
 // Each driver must have a unique Type — one driver per provider type per agent.
-func NewEmbeddedAgent(id, name string, drivers ...providersdk.Driver) (*EmbeddedAgent, error) {
+//
+// meshCapable is the caller's own pkg/meshnet.Probe result (or false, if the
+// mesh overlay isn't enabled for this process) -- see
+// AgentInfo.MeshCapable's doc comment for why this can't be computed here
+// the way NetworkIsolatingProviders is: it is a live environment probe, not
+// a type assertion against drivers, and running it is only safe when the
+// caller has already confirmed the operator opted in.
+func NewEmbeddedAgent(id, name string, meshCapable bool, drivers ...providersdk.Driver) (*EmbeddedAgent, error) {
 	dm := make(map[providersdk.Type]providersdk.Driver, len(drivers))
 	providers := make([]providersdk.Type, 0, len(drivers))
 
@@ -47,6 +54,7 @@ func NewEmbeddedAgent(id, name string, drivers ...providersdk.Driver) (*Embedded
 			// and never has to be repeated per call. See
 			// AgentInfo.NetworkIsolatingProviders.
 			NetworkIsolatingProviders: NetworkIsolatingProviderTypes(dm, providers),
+			MeshCapable:               meshCapable,
 		},
 		drivers: dm,
 	}, nil

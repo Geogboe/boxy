@@ -291,6 +291,23 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   could be exercised. See
   [ADR-0022](docs/adr/0022-cross-host-mesh-peering.md) for the design and
   that open risk.
+- **An agent implementing `agentsdk.MeshPeeringAgent` (both `EmbeddedAgent`
+  and `RemoteAgent`, unconditionally) is not evidence the host can actually
+  create a WireGuard device.** `AgentInfo.MeshCapable` (2026-09-25, #379
+  blocker 6) is the real, probed answer (`pkg/meshnet.Probe`), gated behind
+  an explicit opt-in (`boxy agent serve --enable-mesh-overlay` /
+  `server.mesh_overlay_enabled` in `boxy.yaml`) that must never run
+  unconditionally — on Windows, creating the first Wintun adapter installs
+  the kernel driver. `internal/pool.AgentProvisioner`'s
+  `MeshIdentity`/`AddMeshPeer` check it before calling through.
+  `cmd/wintun-fetch` (a GoReleaser before-hook) downloads, SHA-256-verifies,
+  and stages the real `wintun.dll` into the Windows release archive
+  alongside `boxy.exe`; `scripts/install.ps1` copies it into the install
+  directory when present (`Test-Path`-guarded, so a pre-#379 archive still
+  installs cleanly). See ADR-0022's 2026-09-25 changelog entry for what's
+  implemented and packaged versus what's deliberately still open (the
+  Program Files install-location hardening, and live validation on real
+  hardware).
 
 ### PSRP Transport Dependency Fork (go-psrp / go-psrpcore)
 
@@ -782,10 +799,36 @@ Wrap repeated commands in `Taskfile.yml`. If a command is run more than once, ad
   cosign signature bundle for `checksums.txt` (#55, 2026-08, ADR-0014).
   Installer-side automatic verification of it is deliberately deferred — see
   #231 — installers today still verify only the checksum.
-- Default install locations are user-local:
-  - Windows: `%LOCALAPPDATA%\Programs\boxy\bin`
-  - Linux: `$HOME/.local/bin`
+- Default install locations are user-local for both platforms:
+  `$HOME\.local\bin` (Windows) / `$HOME/.local/bin` (Linux), overridable
+  via `BOXY_INSTALL_DIR`. (This AGENTS.md entry previously said Windows
+  defaulted to `%LOCALAPPDATA%\Programs\boxy\bin` — that was stale; verify
+  against `scripts/install.ps1`/`scripts/install.sh` before trusting either
+  path in a future change, per the "Issue text drifts from reality fast"
+  lesson above.)
 - Linux installer prints PATH update instructions instead of editing shell startup files automatically.
+- **A real (non-`--user`) `agent`/`serve service install` on Windows does
+  NOT run the interactive installer's own binary from this user-writable
+  location** (2026-09-25, #379 blocker 6 hardening). Since installing a
+  real service already requires elevation, `service install` copies the
+  currently-running binary (and `wintun.dll`, if present alongside it)
+  into `%ProgramFiles%\Boxy\<service-name>\` — a location whose default
+  ACL inheritance already restricts write access to Administrators/SYSTEM,
+  no custom ACL code needed — and points the service at that copy instead.
+  This closes a DLL/binary-planting privilege-escalation exposure: without
+  it, a service running with elevated privileges pointed at a plain
+  user-writable path, which any process running as that same user could
+  overwrite. `boxy update` refreshes each installed service's protected
+  copy (`stageProtectedServiceBinary`) between stopping and restarting it,
+  specifically so the copy design doesn't silently leave a real service
+  running a stale binary after an update — see
+  `internal/cli/update.go`'s `restartInstalledDefaultServices`. **Known
+  remaining gap, not closed by
+  this**: `service.yaml`/credentials/state still live in the ordinary
+  user-writable data directory (`.boxy-agent/`, `.boxy/`), and
+  `writeYAMLFile`'s `chmod 0o600` sets no ACLs on Windows — a user with
+  write access there can still repoint `server:`/other settings a
+  privileged service reads. That's a separate, not-yet-addressed exposure.
 
 ## CI / CD Workflow Notes
 

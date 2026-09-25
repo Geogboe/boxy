@@ -12,7 +12,7 @@ import (
 func newTestAgent(t *testing.T) *agentsdk.EmbeddedAgent {
 	t.Helper()
 	d := devfactory.New(&devfactory.Config{DataDir: t.TempDir()})
-	agent, err := agentsdk.NewEmbeddedAgent("boxy-test-agent", "Test Agent", d)
+	agent, err := agentsdk.NewEmbeddedAgent("boxy-test-agent", "Test Agent", false, d)
 	if err != nil {
 		t.Fatalf("NewEmbeddedAgent: %v", err)
 	}
@@ -31,6 +31,26 @@ func TestEmbeddedAgent_Info(t *testing.T) {
 	}
 	if len(info.Providers) != 1 || info.Providers[0] != devfactory.ProviderType {
 		t.Errorf("expected providers [devfactory], got %v", info.Providers)
+	}
+}
+
+func TestEmbeddedAgent_InfoReportsMeshCapableVerbatim(t *testing.T) {
+	d := devfactory.New(&devfactory.Config{DataDir: t.TempDir()})
+
+	capable, err := agentsdk.NewEmbeddedAgent("mesh-capable-agent", "Mesh Capable", true, d)
+	if err != nil {
+		t.Fatalf("NewEmbeddedAgent: %v", err)
+	}
+	if !capable.Info().MeshCapable {
+		t.Error("expected MeshCapable true when the constructor was given true")
+	}
+
+	incapable, err := agentsdk.NewEmbeddedAgent("mesh-incapable-agent", "Mesh Incapable", false, d)
+	if err != nil {
+		t.Fatalf("NewEmbeddedAgent: %v", err)
+	}
+	if incapable.Info().MeshCapable {
+		t.Error("expected MeshCapable false when the constructor was given false")
 	}
 }
 
@@ -153,7 +173,7 @@ func (d *noListDriver) Allocate(ctx context.Context, id string) (map[string]any,
 // can't enumerate.
 func TestEmbeddedAgent_ListReturnsErrorForDriverWithoutCapability(t *testing.T) {
 	d := &noListDriver{inner: devfactory.New(&devfactory.Config{DataDir: t.TempDir()})}
-	agent, err := agentsdk.NewEmbeddedAgent("boxy-test-agent", "Test Agent", d)
+	agent, err := agentsdk.NewEmbeddedAgent("boxy-test-agent", "Test Agent", false, d)
 	if err != nil {
 		t.Fatalf("NewEmbeddedAgent: %v", err)
 	}
@@ -180,7 +200,7 @@ func TestEmbeddedAgent_DuplicateProviderType(t *testing.T) {
 	d1 := devfactory.New(&devfactory.Config{DataDir: t.TempDir()})
 	d2 := devfactory.New(&devfactory.Config{DataDir: t.TempDir()})
 
-	_, err := agentsdk.NewEmbeddedAgent("dup", "Dup", d1, d2)
+	_, err := agentsdk.NewEmbeddedAgent("dup", "Dup", false, d1, d2)
 	if err == nil {
 		t.Fatal("expected error for duplicate provider type")
 	}

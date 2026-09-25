@@ -52,6 +52,123 @@ func TestInstallPS1InstallsReleaseFromLocalFixture(t *testing.T) {
 	}
 }
 
+// TestInstallPS1CopiesWintunDLLWhenPresent covers #379 blocker 6's install
+// half: createBaseURLFixture's windows zips now always include a wintun.dll
+// entry (see buildBoxyBinaryForTarget), matching every real windows archive
+// built by .goreleaser.yml from this change onward, so install.ps1 must
+// actually copy it into $InstallDir alongside boxy.exe -- packaging it into
+// the release archive is necessary but not sufficient if the installer
+// silently drops it, which is exactly what it did before this fix (it only
+// ever copied boxy.exe out of the extracted archive).
+func TestInstallPS1CopiesWintunDLLWhenPresent(t *testing.T) {
+	skipInstallerRunInShortMode(t)
+	if runtime.GOOS != "windows" {
+		t.Skip("PowerShell installer smoke test only runs on Windows")
+	}
+
+	root := repoRoot(t)
+	tempDir := t.TempDir()
+	version := "v9.9.9-test"
+	baseUrl := createBaseURLFixture(t, root, tempDir, version, "windows")
+
+	installDir := filepath.Join(tempDir, "install")
+	_ = runCommand(t, root, []string{
+		"pwsh", "-NoProfile", "-File", filepath.Join(root, "scripts", "install.ps1"),
+	}, map[string]string{
+		"BOXY_BASE_URL":    baseUrl,
+		"BOXY_INSTALL_DIR": installDir,
+		"BOXY_VERSION":     version,
+	})
+
+	wintunDest := filepath.Join(installDir, "wintun.dll")
+	content, err := os.ReadFile(wintunDest)
+	if err != nil {
+		t.Fatalf("expected wintun.dll installed at %s: %v", wintunDest, err)
+	}
+	if string(content) != "fixture-wintun-dll-bytes" {
+		t.Fatalf("installed wintun.dll content = %q, want the fixture's bytes", content)
+	}
+}
+
+// TestInstallPS1SkipsWintunDLLWhenArchiveHasNone covers backward
+// compatibility with a release built before #379 blocker 6: an archive
+// with no wintun.dll entry at all (every release up to and including
+// v0.1.68) must still install boxy.exe successfully, with install.ps1's
+// Test-Path guard silently skipping the copy rather than erroring.
+func TestInstallPS1SkipsWintunDLLWhenArchiveHasNone(t *testing.T) {
+	skipInstallerRunInShortMode(t)
+	if runtime.GOOS != "windows" {
+		t.Skip("PowerShell installer smoke test only runs on Windows")
+	}
+
+	root := repoRoot(t)
+	tempDir := t.TempDir()
+	version := "v9.9.9-test"
+
+	releaseDir := filepath.Join(tempDir, "release-assets")
+	if err := os.MkdirAll(releaseDir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", releaseDir, err)
+	}
+	// Both arches, like releaseAssetsForOS builds for every other fixture:
+	// install.ps1 requests whichever one matches the host actually running
+	// this test (amd64 or arm64), so a single hardcoded arch would only
+	// pass on a matching CI runner.
+	var checksumLines []string
+	for _, arch := range []string{"amd64", "arm64"} {
+		assetName := fmt.Sprintf("boxy_%s_windows_%s.zip", strings.TrimPrefix(version, "v"), arch)
+		assetPath := filepath.Join(releaseDir, assetName)
+		binaryPath := buildBoxyBinary(t, root, version, "windows", arch)
+		// No `extra` entries here, deliberately -- this is the pre-#379
+		// archive shape.
+		writeZipArchive(t, assetPath, binaryPath, "boxy.exe", nil)
+		h := sha256.Sum256(mustReadFile(t, assetPath))
+		checksumLines = append(checksumLines, fmt.Sprintf("%x  %s", h, assetName))
+	}
+	checksums := []byte(strings.Join(checksumLines, "\n") + "\n")
+
+	tagJSON := fmt.Sprintf(`[{"tag_name":%q}]`, version)
+	downloadPrefix := "/Geogboe/boxy/releases/download/" + version + "/"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/Geogboe/boxy/releases", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(tagJSON))
+	})
+	mux.HandleFunc(downloadPrefix, func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, downloadPrefix)
+		if name == "checksums.txt" {
+			_, _ = w.Write(checksums)
+			return
+		}
+		data, err := os.ReadFile(filepath.Join(releaseDir, name))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(data)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	installDir := filepath.Join(tempDir, "install")
+	output := runCommand(t, root, []string{
+		"pwsh", "-NoProfile", "-File", filepath.Join(root, "scripts", "install.ps1"),
+	}, map[string]string{
+		"BOXY_BASE_URL":    srv.URL,
+		"BOXY_INSTALL_DIR": installDir,
+		"BOXY_VERSION":     version,
+	})
+
+	if _, err := os.Stat(filepath.Join(installDir, "boxy.exe")); err != nil {
+		t.Fatalf("expected boxy.exe still installed from a pre-wintun archive: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(installDir, "wintun.dll")); !os.IsNotExist(err) {
+		t.Fatalf("expected no wintun.dll to be installed from an archive that never had one, stat err = %v", err)
+	}
+	if !strings.Contains(output, "Done!") {
+		t.Fatalf("expected install output to include completion banner, got:\n%s", output)
+	}
+}
+
 func TestInstallPS1UpgradesExistingInstallByDefault(t *testing.T) {
 	skipInstallerRunInShortMode(t)
 	if runtime.GOOS != "windows" {
@@ -465,6 +582,35 @@ func releaseAssetsForOS(version, targetOS string) []releaseAsset {
 
 func buildBoxyBinaryForTarget(t *testing.T, root, output, version, goos, goarch string) {
 	t.Helper()
+	binaryPath := buildBoxyBinary(t, root, version, goos, goarch)
+	binaryName := filepath.Base(binaryPath)
+
+	switch filepath.Ext(output) {
+	case ".zip":
+		// wintun.dll is bundled in every real windows archive from #379
+		// blocker 6 onward (see .goreleaser.yml's windows archive) -- matching
+		// that here means the many existing windows installer tests below
+		// exercise install.ps1's copy-if-present path implicitly, on top of
+		// TestInstallPS1CopiesWintunDLLWhenPresent's direct assertion.
+		// TestInstallPS1SkipsWintunDLLWhenArchiveHasNone builds its own
+		// fixture without this entry to cover an older, pre-#379 archive.
+		extra := map[string][]byte{}
+		if goos == "windows" {
+			extra["wintun.dll"] = []byte("fixture-wintun-dll-bytes")
+		}
+		writeZipArchive(t, output, binaryPath, binaryName, extra)
+	case ".gz":
+		writeTarGzArchive(t, output, binaryPath, binaryName)
+	default:
+		t.Fatalf("unsupported output archive: %s", output)
+	}
+}
+
+// buildBoxyBinary cross-compiles a real boxy binary for goos/goarch, stamped
+// with version -- the shared build step behind every installer fixture
+// archive, whatever it ultimately gets packaged into.
+func buildBoxyBinary(t *testing.T, root, version, goos, goarch string) string {
+	t.Helper()
 	buildDir := t.TempDir()
 	binaryName := "boxy"
 	if goos == "windows" {
@@ -484,18 +630,14 @@ func buildBoxyBinaryForTarget(t *testing.T, root, output, version, goos, goarch 
 	if err != nil {
 		t.Fatalf("build %s/%s boxy binary: %v\n%s", goos, goarch, err, string(out))
 	}
-
-	switch filepath.Ext(output) {
-	case ".zip":
-		writeZipArchive(t, output, binaryPath, binaryName)
-	case ".gz":
-		writeTarGzArchive(t, output, binaryPath, binaryName)
-	default:
-		t.Fatalf("unsupported output archive: %s", output)
-	}
+	return binaryPath
 }
 
-func writeZipArchive(t *testing.T, archivePath, filePath, archiveName string) {
+// writeZipArchive zips filePath in as archiveName, plus any extra entries
+// (name -> content) -- used to fold a fixture wintun.dll alongside boxy.exe
+// without a real download, mirroring what a genuine windows release archive
+// contains from #379 blocker 6 onward.
+func writeZipArchive(t *testing.T, archivePath, filePath, archiveName string, extra map[string][]byte) {
 	t.Helper()
 
 	file, err := os.Create(archivePath)
@@ -519,6 +661,17 @@ func writeZipArchive(t *testing.T, archivePath, filePath, archiveName string) {
 	if _, err := io.Copy(entry, source); err != nil {
 		t.Fatalf("write zip entry %s: %v", archiveName, err)
 	}
+
+	for name, content := range extra {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatalf("create zip entry %s: %v", name, err)
+		}
+		if _, err := w.Write(content); err != nil {
+			t.Fatalf("write zip entry %s: %v", name, err)
+		}
+	}
+
 	if err := zw.Close(); err != nil {
 		t.Fatalf("close zip %s: %v", archivePath, err)
 	}

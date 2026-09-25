@@ -75,6 +75,20 @@ type mockAgent struct {
 	gotAttachSegmentResourceID string
 	gotAttachSegmentRef        providersdk.SegmentRef
 	gotDestroySegmentRef       providersdk.SegmentRef
+
+	// meshIdentityCalls/addMeshPeerCalls and the mesh*Err/mesh* result
+	// fields below give mockAgent the agentsdk.MeshPeeringAgent capability
+	// unconditionally, mirroring CreateSegment/AttachToSegment above.
+	// AgentProvisioner.MeshIdentity/AddMeshPeer must not reach these at all
+	// when the agent's own advertised AgentInfo.MeshCapable is false (#379
+	// blocker 6) -- tests assert that by checking these call counts stay 0.
+	meshIdentityCalls int
+	addMeshPeerCalls  int
+	meshIdentityErr   error
+	addMeshPeerErr    error
+	meshPublicKey     string
+	meshEndpoint      string
+	meshCIDR          string
 }
 
 type mockCreateCall struct {
@@ -204,6 +218,25 @@ func (m *mockAgent) AttachToSegment(_ context.Context, _ providersdk.Type, provi
 func (m *mockAgent) DestroySegment(_ context.Context, _ providersdk.Type, ref providersdk.SegmentRef) error {
 	m.gotDestroySegmentRef = ref
 	return m.destroySegmentErr
+}
+
+// MeshIdentity and AddMeshPeer give mockAgent the agentsdk.MeshPeeringAgent
+// capability, unconditionally -- see the field comments above.
+func (m *mockAgent) MeshIdentity(_ context.Context, _ providersdk.Type, _ providersdk.SegmentRef) (string, string, string, error) {
+	m.meshIdentityCalls++
+	if m.meshIdentityErr != nil {
+		return "", "", "", m.meshIdentityErr
+	}
+	return m.meshPublicKey, m.meshEndpoint, m.meshCIDR, nil
+}
+
+func (m *mockAgent) AddMeshPeer(_ context.Context, _ providersdk.Type, _ providersdk.SegmentRef, _, _, _ string) error {
+	m.addMeshPeerCalls++
+	return m.addMeshPeerErr
+}
+
+func (m *mockAgent) RemoveMeshPeer(_ context.Context, _ providersdk.Type, _ providersdk.SegmentRef, _ string) error {
+	return nil
 }
 
 // nonPersonalizingAgent implements only the base agentsdk.Agent methods —

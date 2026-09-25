@@ -253,8 +253,22 @@ type RegisterRequest struct {
 	// server trusts no entry here that is absent from provider_types, the
 	// same anti-spoofing posture Heartbeat.availability already uses.
 	NetworkIsolatingProviderTypes []string `protobuf:"bytes,5,rep,name=network_isolating_provider_types,json=networkIsolatingProviderTypes,proto3" json:"network_isolating_provider_types,omitempty"`
-	unknownFields                 protoimpl.UnknownFields
-	sizeCache                     protoimpl.SizeCache
+	// mesh_capable reports whether this agent can actually create a
+	// WireGuard device right now -- CAP_NET_ADMIN on Linux, wintun.dll
+	// present next to the binary on Windows (#379 blocker 6). Unlike
+	// network_isolating_provider_types, this is not a per-provider-type
+	// capability: whether the process can open a TUN device is a property
+	// of the host/agent, not of any one driver. False (the default, and
+	// what every pre-#379-blocker-6 agent implicitly sends) is the correct
+	// reading for "not mesh-capable" -- the daemon skips mesh peering setup
+	// for such an agent instead of attempting and failing it. Computed once
+	// via a real probe (pkg/meshnet.Probe), and only when the operator has
+	// explicitly enabled the mesh overlay for this agent -- see
+	// docs/adr/0022's 2026-09-25 changelog entry for why an unconditional
+	// probe is not safe on Windows.
+	MeshCapable   bool `protobuf:"varint,6,opt,name=mesh_capable,json=meshCapable,proto3" json:"mesh_capable,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RegisterRequest) Reset() {
@@ -320,6 +334,13 @@ func (x *RegisterRequest) GetNetworkIsolatingProviderTypes() []string {
 		return x.NetworkIsolatingProviderTypes
 	}
 	return nil
+}
+
+func (x *RegisterRequest) GetMeshCapable() bool {
+	if x != nil {
+		return x.MeshCapable
+	}
+	return false
 }
 
 type Heartbeat struct {
@@ -2754,14 +2775,15 @@ const file_boxyagent_v1_agent_proto_rawDesc = "" +
 	"\theartbeat\x18\x02 \x01(\v2\x17.boxyagent.v1.HeartbeatH\x00R\theartbeat\x125\n" +
 	"\x06result\x18\x03 \x01(\v2\x1b.boxyagent.v1.CommandResultH\x00R\x06result\x125\n" +
 	"\tlog_batch\x18\x04 \x01(\v2\x16.boxyagent.v1.LogBatchH\x00R\blogBatchB\t\n" +
-	"\apayload\"\xf4\x01\n" +
+	"\apayload\"\x97\x02\n" +
 	"\x0fRegisterRequest\x12-\n" +
 	"\x12registration_token\x18\x01 \x01(\tR\x11registrationToken\x12\x1d\n" +
 	"\n" +
 	"agent_name\x18\x02 \x01(\tR\tagentName\x12%\n" +
 	"\x0eprovider_types\x18\x03 \x03(\tR\rproviderTypes\x12#\n" +
 	"\ragent_version\x18\x04 \x01(\tR\fagentVersion\x12G\n" +
-	" network_isolating_provider_types\x18\x05 \x03(\tR\x1dnetworkIsolatingProviderTypes\"\xb2\x01\n" +
+	" network_isolating_provider_types\x18\x05 \x03(\tR\x1dnetworkIsolatingProviderTypes\x12!\n" +
+	"\fmesh_capable\x18\x06 \x01(\bR\vmeshCapable\"\xb2\x01\n" +
 	"\tHeartbeat\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1b\n" +
 	"\tunix_time\x18\x02 \x01(\x03R\bunixTime\x12%\n" +

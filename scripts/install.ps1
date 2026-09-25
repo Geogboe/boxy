@@ -147,6 +147,20 @@ try {
     Expand-Archive -Path $ArchivePath -DestinationPath $ExtractDir -Force
     Copy-Item -Path (Join-Path $ExtractDir 'boxy.exe') -Destination $BinaryDest -Force
 
+    # wintun.dll (#379 blocker 6): present in every windows archive from
+    # this release onward, absent from any release built before it -- so
+    # this is a Test-Path guard, not an assumption, and an older archive
+    # installs exactly as it did before this file learned about wintun.
+    # It must sit next to boxy.exe (LoadLibraryEx searches the
+    # application directory), so it goes into the same $InstallDir, not a
+    # subdirectory. `boxy agent serve --enable-mesh-overlay` is what
+    # actually loads it -- installing it here is necessary but not
+    # sufficient; the overlay stays off until that flag is also set.
+    $WintunSrc = Join-Path $ExtractDir 'wintun.dll'
+    if (Test-Path $WintunSrc) {
+        Copy-Item -Path $WintunSrc -Destination (Join-Path $InstallDir 'wintun.dll') -Force
+    }
+
     Write-Ok "boxy $Version installed to $BinaryDest"
     if (-not (Test-InPath $InstallDir)) { Show-PathInstructions $InstallDir }
 

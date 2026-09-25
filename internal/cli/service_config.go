@@ -40,7 +40,11 @@ type agentServiceConfig struct {
 	CACert                 string                 `yaml:"ca_cert,omitempty"`
 	DataDir                string                 `yaml:"data_dir"`
 	Insecure               bool                   `yaml:"insecure,omitempty"`
-	LogFile                string                 `yaml:"log_file"`
+	// MeshOverlayEnabled mirrors agentServeOpts.enableMeshOverlay -- see its
+	// doc comment. Persisted so a restarted service reproduces the exact
+	// invocation captured at `agent service install` time.
+	MeshOverlayEnabled bool   `yaml:"mesh_overlay_enabled,omitempty"`
+	LogFile            string `yaml:"log_file"`
 }
 
 func saveAgentServiceConfig(path string, cfg agentServiceConfig) error {

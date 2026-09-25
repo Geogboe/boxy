@@ -129,6 +129,22 @@ func runServeServiceInstall(cmd *cobra.Command, opts serveServiceInstallOpts) er
 	if err != nil {
 		return fmt.Errorf("create service manager: %w", err)
 	}
+
+	// #379 blocker 6 hardening: same protected-copy staging
+	// runAgentServiceInstall does, and for the same reason -- see
+	// usesProtectedServiceDir's doc comment and that call site's comment
+	// on why the already-installed check must happen before staging.
+	if usesProtectedServiceDir(opts.userMode) {
+		if st, statusErr := mgr.Status(svcName); statusErr == nil && st.Installed {
+			return fmt.Errorf("install %s service: %w", svcName, svcmgr.ErrAlreadyInstalled)
+		}
+		staged, err := stageProtectedServiceBinary(svcName, exePath)
+		if err != nil {
+			return fmt.Errorf("stage protected service binary: %w", err)
+		}
+		exePath = staged
+	}
+
 	spec := svcmgr.Spec{
 		Name:        svcName,
 		DisplayName: "Boxy Server",
@@ -197,6 +213,13 @@ func runServeServiceUninstall(cmd *cobra.Command, opts serveServiceUninstallOpts
 	}
 	if err := mgr.Uninstall(svcName); err != nil {
 		return fmt.Errorf("uninstall %s service: %w", svcName, err)
+	}
+	// See the identical, identically-reasoned cleanup in
+	// runAgentServiceUninstall.
+	if usesProtectedServiceDir(opts.userMode) {
+		if err := removeProtectedServiceDir(svcName); err != nil {
+			return err
+		}
 	}
 	if opts.purge {
 		if err := purgeServiceDataDir(boxyDir); err != nil {

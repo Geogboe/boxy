@@ -122,6 +122,41 @@ func newWithTUNFactory(ifName string, listenPort int, factory tunFactory) (*Inte
 	return &Interface{dev: dev, tunDevice: tunDevice, publicKey: hexEncode(pub)}, nil
 }
 
+// probeInterfaceName is the fixed name Probe creates and immediately tears
+// down. It is never exposed to a caller or persisted anywhere, so a single
+// literal name is fine -- unlike New, Probe has no per-sandbox identity to
+// derive a name from.
+const probeInterfaceName = "boxy-probe"
+
+// newProbeDevice is Probe's device constructor, package-level so tests can
+// substitute a fake that never touches a real OS TUN device or kernel link
+// state (New's bringLinkUp needs CAP_NET_ADMIN itself, the same thing Probe
+// exists to check) -- production always uses the zero value, which resolves
+// to New.
+var newProbeDevice = New
+
+// Probe reports whether this process can create a WireGuard device on this
+// host right now: it creates one throwaway interface (listening on an
+// ephemeral port, so it can never collide with a real segment's listener)
+// and closes it immediately.
+//
+// This is the exact code path AddMeshPeering/MeshIdentity use in production
+// (same tun.CreateTUN, same device.NewDevice) -- so a nil return here is
+// real evidence the environment supports it (CAP_NET_ADMIN on Linux,
+// wintun.dll present on Windows), not just an optimistic guess. Callers use
+// this once at agent startup, gated on the mesh overlay being explicitly
+// enabled (see docs/adr/0022's 2026-09-25 changelog entry): on Windows,
+// creating the first Wintun adapter is what installs the kernel driver, so
+// probing unconditionally would install it on every agent whether or not
+// the operator ever intends to use cross-host mesh.
+func Probe() error {
+	iface, err := newProbeDevice(probeInterfaceName, 0)
+	if err != nil {
+		return err
+	}
+	return iface.Close()
+}
+
 // PublicKeyHex returns this interface's public key, hex-encoded -- the only
 // key material safe to share with a peer or log.
 func (i *Interface) PublicKeyHex() string {

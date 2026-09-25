@@ -197,6 +197,27 @@ type AgentInfo struct {
 	// RegisterRequest.network_isolating_provider_types and filtered against
 	// Providers server-side).
 	NetworkIsolatingProviders []providersdk.Type
+
+	// MeshCapable reports whether this agent can actually create a
+	// WireGuard device right now (#379 blocker 6). Unlike
+	// NetworkIsolatingProviders, this is not per-provider-type -- whether
+	// the process can open a TUN device is a property of the host/agent,
+	// not of any one driver, so a driver implementing providersdk.MeshPeerer
+	// is not by itself evidence this is true. False is the safe default:
+	// callers must not attempt mesh setup (MeshIdentity/AddMeshPeer)
+	// against an agent that doesn't advertise this, and should skip it the
+	// same way NetworkIsolatingProviders' absence means "skip isolation",
+	// not "fail".
+	//
+	// Computed once via a real probe (pkg/meshnet.Probe), and only when the
+	// operator has explicitly enabled the mesh overlay for this agent --
+	// see docs/adr/0022's 2026-09-25 changelog entry for why an
+	// unconditional probe is not safe (it would install the Wintun kernel
+	// driver on every Windows agent, whether or not cross-host mesh is
+	// ever used). EmbeddedAgent computes it at construction from the
+	// caller-supplied probe result; a remote agent carries it in
+	// RegisterRequest.mesh_capable.
+	MeshCapable bool
 }
 
 // NetworkIsolatingProviderTypes returns the subset of providers whose driver

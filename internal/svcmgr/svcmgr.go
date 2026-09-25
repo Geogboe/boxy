@@ -23,6 +23,25 @@ type Spec struct {
 	// working directory to resolve a relative path against.
 	ExecPath string
 	Args     []string
+
+	// LinuxAmbientCapabilities lists POSIX capability names (e.g.
+	// "CAP_NET_ADMIN") to grant the process via systemd's
+	// AmbientCapabilities= directive. The Windows manager ignores it
+	// entirely (no equivalent concept). The Linux manager renders it
+	// verbatim into whichever unit type it installs -- callers should
+	// leave this empty for a --user install, since an unprivileged
+	// systemd --user unit generally cannot be granted ambient capabilities
+	// its own user session doesn't already have; #379 blocker 6's caller
+	// (`agent service install`) only sets this for a system-unit install.
+	//
+	// Currently a no-op in practice: renderUnit emits no User=, so a
+	// system-unit install runs the service as root, which already has
+	// every capability -- AmbientCapabilities= only matters for a
+	// non-root User=. It's declared now so the intent is on record and it
+	// takes effect the moment a future change adds a dedicated
+	// unprivileged User= for this unit; don't read its presence as
+	// evidence the agent runs without root today.
+	LinuxAmbientCapabilities []string
 }
 
 // Status reports whether a named service is installed, currently running,

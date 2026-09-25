@@ -20,7 +20,7 @@ func TestNewEmbeddedAgent_AdvertisesOnlyIsolatingDrivers(t *testing.T) {
 	isolating := &fakeIsolatingDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}, createSegmentRef: "boxy-sb-sb-1"}
 	plain := &fakeDriver{providerType: "devfactory"}
 
-	agent, err := NewEmbeddedAgent("agent-1", "agent-1", isolating, plain)
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", false, isolating, plain)
 	if err != nil {
 		t.Fatalf("NewEmbeddedAgent: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestNewEmbeddedAgent_AdvertisesOnlyIsolatingDrivers(t *testing.T) {
 }
 
 func TestNewEmbeddedAgent_AdvertisesNoneWhenNoDriverIsolates(t *testing.T) {
-	agent, err := NewEmbeddedAgent("agent-1", "agent-1", &fakeDriver{providerType: "devfactory"})
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", false, &fakeDriver{providerType: "devfactory"})
 	if err != nil {
 		t.Fatalf("NewEmbeddedAgent: %v", err)
 	}

@@ -191,7 +191,7 @@ func runUpdate(cmd *cobra.Command, opts updateOptions) error {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not refresh bundled skills: %v\n", err)
 	}
 	if !opts.skipServiceRestart {
-		restartInstalledDefaultServices(cmd)
+		restartInstalledDefaultServices(cmd, exePath)
 	}
 
 	installDir := filepath.Dir(exePath)
@@ -210,15 +210,28 @@ func runUpdate(cmd *cobra.Command, opts updateOptions) error {
 // alone: that's a deliberate operator choice, not something update should
 // override.
 //
+// updatedExePath is the just-updated binary's own path (runUpdate's
+// exePath, the same path updater.Install replaced in place) — needed here
+// because a real (non --user) Windows install doesn't run that file
+// directly: it runs a protected copy under %ProgramFiles%\Boxy\<svcName>\
+// (see usesProtectedServiceDir/stageProtectedServiceBinary, #379 blocker
+// 6). Without re-staging that copy here, `boxy update` would silently
+// restart the service onto its stale pre-update binary — the update would
+// report success while the running service never actually changed. The
+// refresh happens between Stop and Start, deliberately: the service must
+// not still be running from the destination path when it's overwritten.
+//
 // Named instances (installed with --instance-name, see #156) are not
 // covered — svcmgr.Manager has no way to enumerate them, only to query a
-// name the caller already knows. Restarting those is the operator's job.
+// name the caller already knows. Restarting those, and refreshing their
+// protected copy if they have one, is the operator's job (re-run
+// `agent/serve service install` for that instance, or restart it by hand).
 //
 // Failures here are reported as warnings, not returned as errors: the
 // binary update itself already succeeded by the time this runs, and a
 // service that can't be restarted (e.g. a permission issue) shouldn't make
 // `boxy update` look like it failed.
-func restartInstalledDefaultServices(cmd *cobra.Command) {
+func restartInstalledDefaultServices(cmd *cobra.Command, updatedExePath string) {
 	targets := []struct {
 		name     string
 		userMode bool
@@ -244,6 +257,11 @@ func restartInstalledDefaultServices(cmd *cobra.Command) {
 		if err := mgr.Stop(target.name); err != nil {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not restart %s (stop failed): %v\n", target.name, err)
 			continue
+		}
+		if usesProtectedServiceDir(target.userMode) {
+			if _, err := stageProtectedServiceBinary(target.name, updatedExePath); err != nil {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not refresh %s's protected binary copy (it will restart on its PRE-UPDATE binary — re-run `agent/serve service install` to fix, or copy %s into its install directory by hand): %v\n", target.name, updatedExePath, err)
+			}
 		}
 		if err := mgr.Start(target.name); err != nil {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not restart %s (stopped, but failed to start again — start it manually): %v\n", target.name, err)

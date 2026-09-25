@@ -14,6 +14,20 @@ import (
 // scmManager's tests, keyed by service name.
 type fakeSCM struct {
 	services map[string]*fakeSCMService
+	// createCalls records every (name, exepath, args) CreateService saw, in
+	// order -- lets a test assert exactly what Install passed through,
+	// verbatim, on its way to golang.org/x/sys/windows/svc/mgr.Mgr's own
+	// CreateService, which is what actually escapes/quotes exepath and each
+	// arg (via syscall.EscapeArg) before building the service's
+	// BinaryPathName. Boxy's own code between Install and that call must
+	// never itself split, unescape, or otherwise mangle exepath.
+	createCalls []fakeCreateServiceCall
+}
+
+type fakeCreateServiceCall struct {
+	name    string
+	exepath string
+	args    []string
 }
 
 type fakeSCMService struct {
@@ -30,7 +44,8 @@ func (f *fakeSCM) OpenService(name string) (scmService, error) {
 	return s, nil
 }
 
-func (f *fakeSCM) CreateService(name, _ string, _ mgr.Config, _ ...string) (scmService, error) {
+func (f *fakeSCM) CreateService(name, exepath string, _ mgr.Config, args ...string) (scmService, error) {
+	f.createCalls = append(f.createCalls, fakeCreateServiceCall{name: name, exepath: exepath, args: args})
 	if f.services == nil {
 		f.services = map[string]*fakeSCMService{}
 	}
@@ -77,6 +92,37 @@ func TestSCMManager_Install_CreatesService(t *testing.T) {
 	}
 	if _, ok := f.services["boxy-agent"]; !ok {
 		t.Fatal("expected boxy-agent to be created in the fake SCM")
+	}
+}
+
+// TestSCMManager_Install_PassesSpacedExecPathThroughUnmodified guards
+// against reintroducing a CWE-428 unquoted-service-path vulnerability if a
+// future change starts building spec.ExecPath by hand (e.g. string
+// concatenation) instead of passing it straight through to CreateService.
+// A path under "Program Files" (spaces, #379 blocker 6's protected
+// per-service install directory) is exactly the shape that would break if
+// something upstream of the x/sys mgr call quoted or split it incorrectly;
+// the actual escaping into the service's BinaryPathName is
+// golang.org/x/sys/windows/svc/mgr.Mgr.CreateService's job (it uses
+// syscall.EscapeArg), not this package's -- this test only proves Boxy's
+// own code hands it the raw path, unmangled, for that library to escape.
+func TestSCMManager_Install_PassesSpacedExecPathThroughUnmodified(t *testing.T) {
+	f := withFakeSCM(t)
+	m := &scmManager{}
+	spacedExe := `C:\Program Files\Boxy\boxy-agent\boxy.exe`
+
+	if err := m.Install(Spec{Name: "boxy-agent", ExecPath: spacedExe, Args: []string{"agent", "serve", "--service-config", `C:\Program Files\Boxy\boxy-agent\service.yaml`}}); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if len(f.createCalls) != 1 {
+		t.Fatalf("expected exactly 1 CreateService call, got %d", len(f.createCalls))
+	}
+	call := f.createCalls[0]
+	if call.exepath != spacedExe {
+		t.Fatalf("CreateService exepath = %q, want %q verbatim", call.exepath, spacedExe)
+	}
+	if len(call.args) != 4 || call.args[3] != `C:\Program Files\Boxy\boxy-agent\service.yaml` {
+		t.Fatalf("CreateService args = %v, want the spaced service-config path preserved as one element", call.args)
 	}
 }
 

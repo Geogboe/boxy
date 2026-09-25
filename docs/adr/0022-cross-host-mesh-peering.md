@@ -289,3 +289,116 @@ sharing-one-host support, not a mesh-peering defect, but it means:
   still outstanding** — two sessions in a row have gotten closer (from "no
   handshake possible at all" to "handshake reaches the right place but
   isn't completed") without reaching a live ping proof.
+
+- **2026-09-25: #379 blocker 6 implemented — agents that can't create a
+  WireGuard device now say so up front instead of failing deep inside
+  driver code.** Until now, `agentsdk.MeshPeeringAgent` was implemented
+  unconditionally by both `EmbeddedAgent` and `RemoteAgent` (same pattern
+  as `NetworkIsolatingAgent`), so a type assertion for the capability told
+  a caller nothing about whether the *host* could actually open a TUN
+  device — on Windows specifically, nothing ever installed `wintun.dll`,
+  so every Windows agent's mesh attempt was silently doomed from the
+  start. Per the plan researched in #379's comments (Wintun sourcing,
+  Program Files install location, licensing):
+  - `pkg/meshnet.Probe()` creates and immediately closes one throwaway
+    WireGuard device — the same `tun.CreateTUN`/`device.NewDevice` path
+    production uses — so a nil return is real evidence the environment
+    supports it (`CAP_NET_ADMIN` on Linux, `wintun.dll` present on
+    Windows), not an optimistic guess.
+  - This is gated behind a new explicit opt-in, never run unconditionally:
+    `boxy agent serve --enable-mesh-overlay` (and `agent service install
+    --enable-mesh-overlay`, persisted into `service.yaml`) for a remote
+    agent, `server.mesh_overlay_enabled` in `boxy.yaml` for the daemon's
+    own embedded agent. This matters specifically on Windows: creating the
+    first Wintun adapter is what installs the kernel driver, so probing
+    unconditionally on every agent would install a third-party kernel
+    driver on hosts that never intend to use cross-host mesh at all.
+  - The probe result travels as `RegisterRequest.mesh_capable` (agent-wide,
+    unlike `network_isolating_provider_types` — whether a process can open
+    a TUN device isn't a per-provider-type property) into
+    `agentsdk.AgentInfo.MeshCapable`. `internal/pool.AgentProvisioner`'s
+    `MeshIdentity`/`AddMeshPeer` now check it before calling through to the
+    driver, returning a clear "cannot create a WireGuard device" error
+    instead of letting the call reach real device creation and fail there.
+  - `agent service install --enable-mesh-overlay` declares `CAP_NET_ADMIN`
+    on the systemd service via `AmbientCapabilities=` (system-unit installs
+    only — an unprivileged `--user` unit generally cannot be granted
+    ambient capabilities its own login session doesn't already have, so
+    `--user --enable-mesh-overlay` still persists the setting but
+    intentionally never requests the capability). **This is currently a
+    no-op**: `renderUnit` emits no `User=`, so the unit runs as root, which
+    already has every capability. It's declared now so intent is on record
+    and it takes effect the moment a future change adds a dedicated
+    unprivileged `User=` — don't read its presence as evidence the agent
+    runs without root today.
+  - **Release packaging, added the same day**: `cmd/wintun-fetch` downloads
+    the pinned `wintun-0.14.1.zip` from wintun.net, verifies it against a
+    SHA-256 pinned in that tool's own source
+    (`07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51`),
+    and stages a `wintun.dll` per Windows arch plus the Wintun license into
+    `.tmp/wintun/` for `.goreleaser.yml`'s Windows archive to bundle
+    alongside `boxy.exe`. Both the hash and, independently, the
+    Authenticode signature of every architecture's DLL (WireGuard LLC,
+    issued by DigiCert EV Code Signing CA, thumbprint
+    `DF98E075A012ED8C86FBCF14854B8F9555CB3D45`) were verified by hand
+    against a fresh download before pinning — see `cmd/wintun-fetch`'s doc
+    comment. The Wintun prebuilt-binaries license (in the zip, shipped
+    alongside the DLL as `LICENSE-wintun.txt`) permits exactly this
+    bundled-redistribution use (software that only calls Wintun through its
+    documented API, which is all `golang.zx2c4.com/wintun`/`wireguard-go`
+    do). The `boxy` build was split into two GoReleaser build IDs (`boxy`
+    for linux/darwin, `boxy-windows` for windows) so only the Windows
+    archive's `files:` list references the staged DLL — confirmed end to
+    end with `task release:snapshot`: both `windows_amd64.zip` and
+    `windows_arm64.zip` contain `boxy.exe`, the correct per-arch
+    `wintun.dll` (verified byte-identical to the staged file, and
+    independently re-verified as validly signed after archiving), and
+    `LICENSE-wintun.txt`; linux/darwin archives are unaffected.
+    `scripts/install.ps1` (generated from
+    `scripts/generate/install.ps1.tmpl`) now also copies `wintun.dll` out
+    of the extracted archive into the install directory when present, with
+    a `Test-Path` guard so a pre-#379 archive (no `wintun.dll` entry at
+    all) still installs `boxy.exe` exactly as before.
+  - **Program Files hardening, added the same day.** A real (non `--user`)
+    `agent`/`serve service install` on Windows now stages a protected copy
+    of the running binary (+ `wintun.dll`, if present beside it) into
+    `%ProgramFiles%\Boxy\<service-name>\` and points the service at that
+    copy instead of wherever the operator's own `boxy.exe` happens to live
+    — closing the DLL/binary-planting exposure described in #379's
+    comments (a privileged service pointed at a user-writable path is
+    something any process running as that same user could tamper with).
+    One directory per service name (`internal/cli/service_protected_dir.go`),
+    not one shared directory, so a second service install can't hit a
+    sharing violation against the first's already-running exe and
+    agent/serve can't end up serving skewed versions of a binary they'd
+    otherwise share. No custom ACL/`icacls` code — `%ProgramFiles%`'s
+    default inherited ACLs already restrict write access to
+    Administrators/SYSTEM, which is the whole point of installing there.
+    `uninstall` removes its own protected directory. Because `boxy update`
+    replaces the *operator's* binary, not the protected copy, it now also
+    refreshes each installed real service's protected copy
+    (`restartInstalledDefaultServices` in `update.go`) between stopping and
+    restarting it — without that, an update would silently leave the
+    service running its pre-update binary while reporting success. Verified
+    with `golang.org/x/sys/windows/svc/mgr`'s own `CreateService` (it
+    escapes `exepath` via `syscall.EscapeArg`) that a spaced path like
+    `C:\Program Files\Boxy\boxy-agent\boxy.exe` cannot reintroduce a
+    CWE-428 unquoted-service-path issue; a regression test pins this.
+  - **Still not closed by any of the above**: `service.yaml`, issued
+    client certificates, and other agent/daemon state still live in the
+    ordinary user-writable data directory (`.boxy-agent/`, `.boxy/`) —
+    `writeYAMLFile`'s `chmod 0o600` sets no ACLs on Windows. A user with
+    write access there can still repoint `server:`/other settings a
+    privileged service reads at its next restart. This is a separate,
+    not-yet-addressed exposure from the binary/DLL-planting one closed
+    above. Also unaddressed: the equivalent Linux exposure (a root systemd
+    system unit pointing at a binary under `$HOME/.local/bin`, which that
+    same user can overwrite) — "Program Files" hardening is Windows-only,
+    matching how the exposure was originally reported.
+  - This closes #379 blocker 6 as *implemented and packaged*, not as
+    *live-validated*: no Wintun adapter has actually been created on real
+    hardware with this wired up (deliberately not exercised on this
+    session's own dev machine, to avoid installing a kernel driver on it),
+    and blockers 1 (Docker source-NAT masquerade) and 5 (real two-host
+    validation) are unchanged and still block cross-host traffic actually
+    flowing.
