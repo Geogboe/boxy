@@ -33,9 +33,14 @@ type Spec struct {
 	// systemd --user unit generally cannot be granted ambient capabilities
 	// its own user session doesn't already have; #379 blocker 6's caller
 	// (`agent service install`) only sets this for a system-unit install.
-	// #379 blocker 6 is the first caller: a remote agent with the mesh
-	// overlay enabled needs CAP_NET_ADMIN to open a WireGuard device
-	// without running as root.
+	//
+	// Currently a no-op in practice: renderUnit emits no User=, so a
+	// system-unit install runs the service as root, which already has
+	// every capability -- AmbientCapabilities= only matters for a
+	// non-root User=. It's declared now so the intent is on record and it
+	// takes effect the moment a future change adds a dedicated
+	// unprivileged User= for this unit; don't read its presence as
+	// evidence the agent runs without root today.
 	LinuxAmbientCapabilities []string
 }
 

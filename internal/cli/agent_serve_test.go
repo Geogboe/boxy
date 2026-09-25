@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -36,7 +37,34 @@ import (
 // which test (or which -run filter) happens to execute first.
 func TestMain(m *testing.M) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	os.Exit(m.Run())
+
+	// #379 blocker 6 hardening: a real (non --user) agent/serve service
+	// install on Windows stages a protected copy of the binary under
+	// protectedServiceRootFn() (production: %ProgramFiles%\Boxy). Every
+	// test in this package that exercises that install path with the
+	// zero-value (non-user) opts would otherwise try to write there for
+	// real the moment it runs on an actual Windows host -- this package-wide
+	// default redirects it into a scratch directory under os.TempDir()
+	// instead, exactly like a test-local t.TempDir() override would, but
+	// covering every test that doesn't set its own. A test asserting on
+	// the staged content sets its own override (see
+	// service_protected_dir_test.go) rather than relying on this shared
+	// path.
+	protectedServiceScratch, err := os.MkdirTemp("", "boxy-test-protected-service-*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "TestMain: create protected-service scratch dir: %v\n", err)
+		os.Exit(1)
+	}
+	origProtectedServiceRootFn := protectedServiceRootFn
+	protectedServiceRootFn = func() string { return protectedServiceScratch }
+
+	// os.Exit below runs no deferred calls, so cleanup happens explicitly
+	// here rather than via defer -- a defer ahead of os.Exit(m.Run()) would
+	// silently never run.
+	code := m.Run()
+	protectedServiceRootFn = origProtectedServiceRootFn
+	_ = os.RemoveAll(protectedServiceScratch)
+	os.Exit(code)
 }
 
 // startAgentTestDaemon stands up the real server side of the agent

@@ -444,8 +444,9 @@ boxy
 │   │   │   ├── --server, --providers, --config, --token,
 │   │   │   │   --name, --ca-cert, --data-dir,
 │   │   │   │   --insecure, --enable-mesh-overlay      Same as `boxy agent serve` (above); a system-mode
-│   │   │   │                                            install with --enable-mesh-overlay also grants the
-│   │   │   │                                            service CAP_NET_ADMIN on Linux (--user cannot)
+│   │   │   │                                            install with --enable-mesh-overlay also declares
+│   │   │   │                                            CAP_NET_ADMIN on the Linux systemd unit (no-op
+│   │   │   │                                            today, the unit runs as root; --user never gets it)
 │   │   │
 │   │   │   $ boxy agent service install --config boxy.yaml --server s:9091 \
 │   │   │       --token 4f9c…e2a1 --ca-cert ./ca.crt

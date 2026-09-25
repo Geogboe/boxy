@@ -320,13 +320,17 @@ sharing-one-host support, not a mesh-peering defect, but it means:
     `MeshIdentity`/`AddMeshPeer` now check it before calling through to the
     driver, returning a clear "cannot create a WireGuard device" error
     instead of letting the call reach real device creation and fail there.
-  - `agent service install --enable-mesh-overlay` grants the systemd
-    service `CAP_NET_ADMIN` via `AmbientCapabilities=` (system-unit
-    installs only — an unprivileged `--user` unit generally cannot be
-    granted ambient capabilities its own login session doesn't already
-    have, so `--user --enable-mesh-overlay` still persists the setting but
-    intentionally never requests the capability; the probe then reports
-    not-capable, degrading the same way a missing `wintun.dll` does).
+  - `agent service install --enable-mesh-overlay` declares `CAP_NET_ADMIN`
+    on the systemd service via `AmbientCapabilities=` (system-unit installs
+    only — an unprivileged `--user` unit generally cannot be granted
+    ambient capabilities its own login session doesn't already have, so
+    `--user --enable-mesh-overlay` still persists the setting but
+    intentionally never requests the capability). **This is currently a
+    no-op**: `renderUnit` emits no `User=`, so the unit runs as root, which
+    already has every capability. It's declared now so intent is on record
+    and it takes effect the moment a future change adds a dedicated
+    unprivileged `User=` — don't read its presence as evidence the agent
+    runs without root today.
   - **Release packaging, added the same day**: `cmd/wintun-fetch` downloads
     the pinned `wintun-0.14.1.zip` from wintun.net, verifies it against a
     SHA-256 pinned in that tool's own source
@@ -355,14 +359,42 @@ sharing-one-host support, not a mesh-peering defect, but it means:
     of the extracted archive into the install directory when present, with
     a `Test-Path` guard so a pre-#379 archive (no `wintun.dll` entry at
     all) still installs `boxy.exe` exactly as before.
-  - **Still not done, deliberately left for a follow-up**: installing the
-    agent binary + DLL under Program Files instead of the user-writable
-    default install location, closing the DLL-planting exposure described
-    in #379's comments (a service running as SYSTEM could otherwise load a
-    planted DLL from a location the logged-in user can write to). This is
-    a real, separate security-hardening change — default install location,
-    elevation requirements — that deserves its own focused pass rather
-    than folding silently into the packaging work above.
+  - **Program Files hardening, added the same day.** A real (non `--user`)
+    `agent`/`serve service install` on Windows now stages a protected copy
+    of the running binary (+ `wintun.dll`, if present beside it) into
+    `%ProgramFiles%\Boxy\<service-name>\` and points the service at that
+    copy instead of wherever the operator's own `boxy.exe` happens to live
+    — closing the DLL/binary-planting exposure described in #379's
+    comments (a privileged service pointed at a user-writable path is
+    something any process running as that same user could tamper with).
+    One directory per service name (`internal/cli/service_protected_dir.go`),
+    not one shared directory, so a second service install can't hit a
+    sharing violation against the first's already-running exe and
+    agent/serve can't end up serving skewed versions of a binary they'd
+    otherwise share. No custom ACL/`icacls` code — `%ProgramFiles%`'s
+    default inherited ACLs already restrict write access to
+    Administrators/SYSTEM, which is the whole point of installing there.
+    `uninstall` removes its own protected directory. Because `boxy update`
+    replaces the *operator's* binary, not the protected copy, it now also
+    refreshes each installed real service's protected copy
+    (`restartInstalledDefaultServices` in `update.go`) between stopping and
+    restarting it — without that, an update would silently leave the
+    service running its pre-update binary while reporting success. Verified
+    with `golang.org/x/sys/windows/svc/mgr`'s own `CreateService` (it
+    escapes `exepath` via `syscall.EscapeArg`) that a spaced path like
+    `C:\Program Files\Boxy\boxy-agent\boxy.exe` cannot reintroduce a
+    CWE-428 unquoted-service-path issue; a regression test pins this.
+  - **Still not closed by any of the above**: `service.yaml`, issued
+    client certificates, and other agent/daemon state still live in the
+    ordinary user-writable data directory (`.boxy-agent/`, `.boxy/`) —
+    `writeYAMLFile`'s `chmod 0o600` sets no ACLs on Windows. A user with
+    write access there can still repoint `server:`/other settings a
+    privileged service reads at its next restart. This is a separate,
+    not-yet-addressed exposure from the binary/DLL-planting one closed
+    above. Also unaddressed: the equivalent Linux exposure (a root systemd
+    system unit pointing at a binary under `$HOME/.local/bin`, which that
+    same user can overwrite) — "Program Files" hardening is Windows-only,
+    matching how the exposure was originally reported.
   - This closes #379 blocker 6 as *implemented and packaged*, not as
     *live-validated*: no Wintun adapter has actually been created on real
     hardware with this wired up (deliberately not exercised on this

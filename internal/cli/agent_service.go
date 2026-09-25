@@ -81,7 +81,7 @@ also given, a distinctly named default data directory
 	cmd.Flags().StringVar(&opts.agentOpts.caCert, "ca-cert", "", "path to the server's CA certificate, required for the first (token) connection unless --insecure")
 	cmd.Flags().StringVar(&opts.agentOpts.dataDir, "data-dir", "", "directory for the agent's issued credentials (default .boxy-agent[-<instance-name>] in cwd)")
 	cmd.Flags().BoolVar(&opts.agentOpts.insecure, "insecure", false, "connect without TLS (local development only)")
-	cmd.Flags().BoolVar(&opts.agentOpts.enableMeshOverlay, "enable-mesh-overlay", false, "opt this agent into cross-host mesh peering (#379); installs the Wintun kernel driver on first use on Windows, and grants CAP_NET_ADMIN on a Linux system-unit install")
+	cmd.Flags().BoolVar(&opts.agentOpts.enableMeshOverlay, "enable-mesh-overlay", false, "opt this agent into cross-host mesh peering (#379); installs the Wintun kernel driver on first use on Windows, and declares CAP_NET_ADMIN via systemd on a Linux system-unit install (currently a no-op there since the unit runs as root)")
 	return cmd
 }
 
@@ -174,6 +174,27 @@ func runAgentServiceInstall(cmd *cobra.Command, opts agentServiceInstallOpts) er
 	if err != nil {
 		return fmt.Errorf("create service manager: %w", err)
 	}
+
+	// #379 blocker 6 hardening: a real Windows service install stages its
+	// own protected copy of the binary (+ wintun.dll, if present beside
+	// exePath) rather than pointing the service at wherever the operator's
+	// own boxy.exe happens to live -- see usesProtectedServiceDir's doc
+	// comment. Checked here, before staging, rather than relying on
+	// mgr.Install's own already-installed check below: staging first would
+	// mean a failed reinstall attempt (svcName already running) silently
+	// overwrote the live service's binary with whatever this process
+	// happens to be, before the install itself was ever rejected.
+	if usesProtectedServiceDir(opts.userMode) {
+		if st, statusErr := mgr.Status(svcName); statusErr == nil && st.Installed {
+			return fmt.Errorf("install %s service: %w", svcName, svcmgr.ErrAlreadyInstalled)
+		}
+		staged, err := stageProtectedServiceBinary(svcName, exePath)
+		if err != nil {
+			return fmt.Errorf("stage protected service binary: %w", err)
+		}
+		exePath = staged
+	}
+
 	spec := svcmgr.Spec{
 		Name:        svcName,
 		DisplayName: "Boxy Agent",
@@ -283,6 +304,17 @@ func runAgentServiceUninstall(cmd *cobra.Command, opts agentServiceUninstallOpts
 	}
 	if err := mgr.Uninstall(svcName); err != nil {
 		return fmt.Errorf("uninstall %s service: %w", svcName, err)
+	}
+	// Unconditional, not gated behind --purge: the protected copy (#379
+	// blocker 6) is an install artifact this command created, not operator
+	// data like --data-dir -- removing it here is symmetric with
+	// stageProtectedServiceBinary creating it at install time. A no-op for
+	// any install that never staged one (non-Windows, --user, or an older
+	// binary from before this existed).
+	if usesProtectedServiceDir(opts.userMode) {
+		if err := removeProtectedServiceDir(svcName); err != nil {
+			return err
+		}
 	}
 	if opts.purge {
 		if err := purgeServiceDataDir(dataDir); err != nil {

@@ -51,6 +51,44 @@ func TestServeServiceInstall_Elevated_WritesConfigAndInstalls(t *testing.T) {
 	}
 }
 
+// TestServeServiceInstall_RealInstallUsesProtectedServiceDir mirrors
+// TestAgentServiceInstall_RealInstallUsesProtectedServiceDir for
+// `boxy serve service install` -- see that test's doc comment.
+func TestServeServiceInstall_RealInstallUsesProtectedServiceDir(t *testing.T) {
+	withElevated(t, true)
+	m := &fakeManager{}
+	withFakeSvcManager(t, m)
+	withProtectedServiceRoot(t)
+
+	dir := t.TempDir()
+	err := runServeServiceInstall(newTestCmd(&bytes.Buffer{}), serveServiceInstallOpts{
+		userMode:  false,
+		serveOpts: serveOpts{configPath: filepath.Join(dir, "boxy.yaml")},
+		boxyDir:   filepath.Join(dir, ".boxy"),
+	})
+	if err != nil {
+		t.Fatalf("runServeServiceInstall: %v", err)
+	}
+	if len(m.installedSpecs) != 1 {
+		t.Fatalf("expected exactly one Install call, got %d", len(m.installedSpecs))
+	}
+	gotExecPath := m.installedSpecs[0].ExecPath
+
+	selfExePath, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+
+	if usesProtectedServiceDir(false) {
+		wantDir := protectedServiceDir(serveServiceName)
+		if filepath.Dir(gotExecPath) != wantDir {
+			t.Fatalf("ExecPath = %q, want it inside the protected directory %q", gotExecPath, wantDir)
+		}
+	} else if gotExecPath != selfExePath {
+		t.Fatalf("ExecPath = %q, want the original executable path %q (protected staging does not apply here)", gotExecPath, selfExePath)
+	}
+}
+
 func TestServeServiceInstall_NotElevated_ErrorsWithoutInstalling(t *testing.T) {
 	withElevated(t, false)
 	m := &fakeManager{}

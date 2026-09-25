@@ -799,10 +799,36 @@ Wrap repeated commands in `Taskfile.yml`. If a command is run more than once, ad
   cosign signature bundle for `checksums.txt` (#55, 2026-08, ADR-0014).
   Installer-side automatic verification of it is deliberately deferred — see
   #231 — installers today still verify only the checksum.
-- Default install locations are user-local:
-  - Windows: `%LOCALAPPDATA%\Programs\boxy\bin`
-  - Linux: `$HOME/.local/bin`
+- Default install locations are user-local for both platforms:
+  `$HOME\.local\bin` (Windows) / `$HOME/.local/bin` (Linux), overridable
+  via `BOXY_INSTALL_DIR`. (This AGENTS.md entry previously said Windows
+  defaulted to `%LOCALAPPDATA%\Programs\boxy\bin` — that was stale; verify
+  against `scripts/install.ps1`/`scripts/install.sh` before trusting either
+  path in a future change, per the "Issue text drifts from reality fast"
+  lesson above.)
 - Linux installer prints PATH update instructions instead of editing shell startup files automatically.
+- **A real (non-`--user`) `agent`/`serve service install` on Windows does
+  NOT run the interactive installer's own binary from this user-writable
+  location** (2026-09-25, #379 blocker 6 hardening). Since installing a
+  real service already requires elevation, `service install` copies the
+  currently-running binary (and `wintun.dll`, if present alongside it)
+  into `%ProgramFiles%\Boxy\<service-name>\` — a location whose default
+  ACL inheritance already restricts write access to Administrators/SYSTEM,
+  no custom ACL code needed — and points the service at that copy instead.
+  This closes a DLL/binary-planting privilege-escalation exposure: without
+  it, a service running with elevated privileges pointed at a plain
+  user-writable path, which any process running as that same user could
+  overwrite. `boxy update` refreshes each installed service's protected
+  copy (`stageProtectedServiceBinary`) between stopping and restarting it,
+  specifically so the copy design doesn't silently leave a real service
+  running a stale binary after an update — see
+  `internal/cli/update.go`'s `restartInstalledDefaultServices`. **Known
+  remaining gap, not closed by
+  this**: `service.yaml`/credentials/state still live in the ordinary
+  user-writable data directory (`.boxy-agent/`, `.boxy/`), and
+  `writeYAMLFile`'s `chmod 0o600` sets no ACLs on Windows — a user with
+  write access there can still repoint `server:`/other settings a
+  privileged service reads. That's a separate, not-yet-addressed exposure.
 
 ## CI / CD Workflow Notes
 

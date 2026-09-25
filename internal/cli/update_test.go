@@ -406,6 +406,92 @@ func TestRunUpdate_ChecksBothPrivilegedAndUserModeInstances(t *testing.T) {
 	}
 }
 
+// TestRunUpdate_RefreshesProtectedServiceBinaryBeforeRestart covers #379
+// blocker 6's update half: a real Windows service install runs from a
+// staged protected copy (see usesProtectedServiceDir), not directly from
+// the operator's own boxy.exe -- so `boxy update`, which replaces that
+// operator-facing binary in place, must also refresh the protected copy
+// before restarting the service, or the restart would silently bring the
+// service back up on its stale pre-update binary. On a non-Windows host
+// (or if this ever ran with --user) there is no protected copy to refresh,
+// so this test's assertions are conditioned on usesProtectedServiceDir --
+// see the matching pattern in agent_service_test.go.
+func TestRunUpdate_RefreshesProtectedServiceBinaryBeforeRestart(t *testing.T) {
+	withVersion(t, "v1.0.0")
+	withMockUpdater(t, &mockUpdater{latestVersion: "v1.1.0"})
+	withProtectedServiceRoot(t)
+
+	// mockUpdater.Install only records the exe path -- it doesn't actually
+	// write to it the way the real selfupdate.Updater would, so create the
+	// "post-update" binary ourselves at that path.
+	exePath := filepath.Join(t.TempDir(), "boxy.exe")
+	if err := os.WriteFile(exePath, []byte("v1.1.0-bytes"), 0o755); err != nil {
+		t.Fatalf("write fixture updated exe: %v", err)
+	}
+	t.Setenv("BOXY_TEST_EXE_PATH", exePath)
+
+	system := &fakeManager{statusByName: map[string]svcmgr.Status{
+		agentServiceName: {Installed: true, Running: true, Mode: "system-service"},
+	}}
+	withPerModeFakeSvcManager(t, system, &fakeManager{})
+
+	var out bytes.Buffer
+	if err := runUpdate(newTestUpdateCmd(&out), updateOptions{}); err != nil {
+		t.Fatalf("runUpdate: %v", err)
+	}
+	if !slices.Contains(system.startedNames, agentServiceName) {
+		t.Fatalf("expected %s restarted, startedNames = %v", agentServiceName, system.startedNames)
+	}
+
+	if !usesProtectedServiceDir(false) {
+		return // nothing else to check on a platform without protected-copy staging
+	}
+	staged := filepath.Join(protectedServiceDir(agentServiceName), "boxy.exe")
+	content, err := os.ReadFile(staged)
+	if err != nil {
+		t.Fatalf("expected the protected copy refreshed at %s: %v", staged, err)
+	}
+	if string(content) != "v1.1.0-bytes" {
+		t.Fatalf("refreshed protected copy content = %q, want the just-updated binary's bytes", content)
+	}
+	if strings.Contains(out.String(), "protected binary copy") {
+		t.Fatalf("expected no protected-binary-copy warning on a successful refresh, got:\n%s", out.String())
+	}
+}
+
+// TestRunUpdate_ProtectedBinaryRefreshFailure_WarnsAndStillRestarts covers
+// the failure path: if the protected-copy refresh itself fails (e.g. the
+// post-update binary vanished before the refresh ran), update must still
+// attempt to start the service rather than leaving it stopped -- and must
+// say plainly that the service is running its pre-update binary, not
+// silently succeed.
+func TestRunUpdate_ProtectedBinaryRefreshFailure_WarnsAndStillRestarts(t *testing.T) {
+	if !usesProtectedServiceDir(false) {
+		t.Skip("protected service directory staging does not apply on this OS")
+	}
+	withVersion(t, "v1.0.0")
+	withMockUpdater(t, &mockUpdater{latestVersion: "v1.1.0"})
+	withProtectedServiceRoot(t)
+	// Deliberately does not exist -- refresh must fail to open it.
+	t.Setenv("BOXY_TEST_EXE_PATH", filepath.Join(t.TempDir(), "missing-boxy.exe"))
+
+	system := &fakeManager{statusByName: map[string]svcmgr.Status{
+		agentServiceName: {Installed: true, Running: true, Mode: "system-service"},
+	}}
+	withPerModeFakeSvcManager(t, system, &fakeManager{})
+
+	var out bytes.Buffer
+	if err := runUpdate(newTestUpdateCmd(&out), updateOptions{}); err != nil {
+		t.Fatalf("a refresh failure must not fail the overall update, got: %v", err)
+	}
+	if !slices.Contains(system.startedNames, agentServiceName) {
+		t.Fatalf("expected the service still restarted despite the refresh failure, startedNames = %v", system.startedNames)
+	}
+	if !strings.Contains(out.String(), "PRE-UPDATE") {
+		t.Fatalf("expected a warning calling out the stale pre-update binary, got:\n%s", out.String())
+	}
+}
+
 func TestRunUpdate_SkipServiceRestartFlag_SkipsRestartCheck(t *testing.T) {
 	withVersion(t, "v1.0.0")
 	withMockUpdater(t, &mockUpdater{latestVersion: "v1.1.0"})

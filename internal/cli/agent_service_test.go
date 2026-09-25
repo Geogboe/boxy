@@ -254,6 +254,94 @@ func TestAgentServiceInstall_MeshOverlay_UserModeNeverGrantsCapability(t *testin
 	}
 }
 
+// TestAgentServiceInstall_RealInstallUsesProtectedServiceDir covers #379
+// blocker 6's Program Files hardening: a real (non --user) install's
+// service.ExecPath must point at the staged protected copy, not directly
+// at wherever the operator's own boxy.exe happens to live -- on any OS
+// where usesProtectedServiceDir doesn't apply (only Windows real installs
+// qualify), ExecPath is unchanged, which this test also covers so it's
+// meaningful cross-platform rather than skipping outside Windows.
+func TestAgentServiceInstall_RealInstallUsesProtectedServiceDir(t *testing.T) {
+	withElevated(t, true)
+	m := &fakeManager{}
+	withFakeSvcManager(t, m)
+	withProtectedServiceRoot(t)
+
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, ".boxy-agent")
+	err := runAgentServiceInstall(newTestCmd(&bytes.Buffer{}), agentServiceInstallOpts{
+		userMode:  false,
+		agentOpts: agentServeOpts{server: "boxy-server:9091", providers: []string{"docker"}, dataDir: dataDir},
+	})
+	if err != nil {
+		t.Fatalf("runAgentServiceInstall: %v", err)
+	}
+	if len(m.installedSpecs) != 1 {
+		t.Fatalf("expected exactly one Install call, got %d", len(m.installedSpecs))
+	}
+	gotExecPath := m.installedSpecs[0].ExecPath
+
+	selfExePath, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+
+	if usesProtectedServiceDir(false) {
+		wantDir := protectedServiceDir(agentServiceName)
+		if filepath.Dir(gotExecPath) != wantDir {
+			t.Fatalf("ExecPath = %q, want it inside the protected directory %q", gotExecPath, wantDir)
+		}
+		if gotExecPath == selfExePath {
+			t.Fatalf("ExecPath = %q, want a staged copy, not the original executable path", gotExecPath)
+		}
+		content, err := os.ReadFile(gotExecPath)
+		if err != nil {
+			t.Fatalf("read staged binary: %v", err)
+		}
+		selfContent, err := os.ReadFile(selfExePath)
+		if err != nil {
+			t.Fatalf("read own executable: %v", err)
+		}
+		if string(content) != string(selfContent) {
+			t.Fatal("staged binary content does not match the source executable")
+		}
+	} else if gotExecPath != selfExePath {
+		t.Fatalf("ExecPath = %q, want the original executable path %q (protected staging does not apply here)", gotExecPath, selfExePath)
+	}
+}
+
+// TestAgentServiceUninstall_RealInstall_RemovesProtectedServiceDir covers
+// the cleanup half: uninstall must remove whatever install staged, so a
+// later reinstall doesn't have to reason about a stale leftover copy.
+func TestAgentServiceUninstall_RealInstall_RemovesProtectedServiceDir(t *testing.T) {
+	if !usesProtectedServiceDir(false) {
+		t.Skip("protected service directory staging does not apply on this OS")
+	}
+	withElevated(t, true)
+	m := &fakeManager{}
+	withFakeSvcManager(t, m)
+	withProtectedServiceRoot(t)
+
+	dataDir := filepath.Join(t.TempDir(), ".boxy-agent")
+	if err := runAgentServiceInstall(newTestCmd(&bytes.Buffer{}), agentServiceInstallOpts{
+		userMode:  false,
+		agentOpts: agentServeOpts{server: "boxy-server:9091", providers: []string{"docker"}, dataDir: dataDir},
+	}); err != nil {
+		t.Fatalf("runAgentServiceInstall: %v", err)
+	}
+	stagedDir := protectedServiceDir(agentServiceName)
+	if _, err := os.Stat(stagedDir); err != nil {
+		t.Fatalf("expected the protected directory to exist after install: %v", err)
+	}
+
+	if err := runAgentServiceUninstall(newTestCmd(&bytes.Buffer{}), agentServiceUninstallOpts{dataDir: dataDir}); err != nil {
+		t.Fatalf("runAgentServiceUninstall: %v", err)
+	}
+	if _, err := os.Stat(stagedDir); !os.IsNotExist(err) {
+		t.Fatalf("expected the protected directory removed after uninstall, stat err = %v", err)
+	}
+}
+
 // TestAgentServiceInstall_PersistsProviderConfigsBaseDirFromConfigFile
 // guards a real bug: `agent service install --config boxy.yaml` used to
 // write ProviderConfigs into service.yaml without recording the directory
