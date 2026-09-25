@@ -43,10 +43,12 @@ type segmentLedgerState struct {
 }
 
 // segmentBaseCIDR is the private range this driver carves per-sandbox blocks
-// out of. Chosen from RFC 1918 space unlikely to collide with an operator's
+// out of. Reuses segmentcidr.DefaultBase -- the daemon's own allocator base
+// (#370) -- rather than a second literal, so the two can't silently drift
+// apart. Chosen from RFC 1918 space unlikely to collide with an operator's
 // own LAN (10.250.0.0/16 is well outside common home/office 10.0.0.0/8
 // allocations that start near 10.0.x.x or 10.1.x.x).
-const segmentBaseCIDR = "10.250.0.0/16"
+const segmentBaseCIDR = segmentcidr.DefaultBase
 
 // sharedNATName is the one WinNAT instance every segment on a host routes
 // through, covering all of segmentBaseCIDR. Microsoft's Hyper-V NAT guide
