@@ -3,6 +3,20 @@ version: 2
 before:
   hooks:
     - go mod tidy
+    # Stages wintun.dll (per Windows arch) + its license into .tmp/wintun/
+    # (gitignored, and deliberately NOT under dist/ -- GoReleaser's own
+    # "ensuring distribution directory" step fails if dist/ is non-empty
+    # by the time it runs, even from a before-hook that ran first), for
+    # the windows archive below to include (#379 blocker 6: the mesh
+    # overlay's WireGuard device needs it present next to boxy.exe on
+    # Windows, and nothing shipped it before this). Hash-verified against a
+    # pinned SHA-256 inside the tool itself -- see cmd/wintun-fetch's doc
+    # comment for how that pin was chosen and independently verified, and
+    # docs/adr/0022's 2026-09-25 changelog entry for the full design. Not a
+    # go:generate step: its output is a fetched, hash-verified third-party
+    # binary, not something to commit -- the same ephemeral-build-input
+    # treatment checksum/cosign already give every other release artifact.
+    - go run ./cmd/wintun-fetch -out .tmp/wintun
 
 builds:
   - id: boxy
@@ -10,7 +24,23 @@ builds:
     binary: boxy
     env:
       - CGO_ENABLED=0
-    goos: [linux, darwin, windows]
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Version}}
+      - -X main.GitCommit={{.Commit}}
+      - -X main.BuildDate={{.Date}}
+  # Split from the build above (rather than a single boxy build with
+  # goos: [linux, darwin, windows]) so the archives block below can target
+  # only the Windows binaries via `ids:` -- only a Windows archive needs
+  # wintun.dll bundled alongside boxy.exe.
+  - id: boxy-windows
+    main: ./cmd/boxy
+    binary: boxy
+    env:
+      - CGO_ENABLED=0
+    goos: [windows]
     goarch: [amd64, arm64]
     ldflags:
       - -s -w
@@ -19,13 +49,26 @@ builds:
       - -X main.BuildDate={{.Date}}
 
 archives:
-  - formats: [tar.gz]
-    format_overrides:
-      - goos: windows
-        formats: [zip]
+  - id: default
+    ids: [boxy]
+    formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - README.md
+  - id: windows
+    ids: [boxy-windows]
+    formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      # strip_parent: the source is .tmp/wintun/<arch>/wintun.dll -- Wintun
+      # must sit next to boxy.exe (LoadLibraryEx searches the application
+      # directory), so this places it at the archive root, not nested under
+      # a wintun/<arch>/ path.
+      - src: ".tmp/wintun/{{ .Arch }}/wintun.dll"
+        strip_parent: true
+      - src: ".tmp/wintun/LICENSE-wintun.txt"
+        strip_parent: true
 
 checksum:
   name_template: checksums.txt

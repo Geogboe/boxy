@@ -327,16 +327,46 @@ sharing-one-host support, not a mesh-peering defect, but it means:
     have, so `--user --enable-mesh-overlay` still persists the setting but
     intentionally never requests the capability; the probe then reports
     not-capable, degrading the same way a missing `wintun.dll` does).
-  - **Not done in this pass, deliberately left for a follow-up**: the
-    release-packaging half of the plan (downloading, hash/signature
-    verifying, and bundling the actual `wintun.dll` into the Windows
-    release archive; installing the agent binary + DLL under Program Files
-    instead of the user-writable default install location, closing the
-    DLL-planting exposure described in #379's comments). Until that lands,
-    `--enable-mesh-overlay` on Windows still has nothing to load — the
-    probe will report not-capable on every Windows host until an operator
-    places a real signed `wintun.dll` next to `boxy.exe` themselves.
-  - This closes #379 blocker 6 as *implemented*, not as *validated*:
-    blockers 1 (Docker source-NAT masquerade) and 5 (real two-host
+  - **Release packaging, added the same day**: `cmd/wintun-fetch` downloads
+    the pinned `wintun-0.14.1.zip` from wintun.net, verifies it against a
+    SHA-256 pinned in that tool's own source
+    (`07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51`),
+    and stages a `wintun.dll` per Windows arch plus the Wintun license into
+    `.tmp/wintun/` for `.goreleaser.yml`'s Windows archive to bundle
+    alongside `boxy.exe`. Both the hash and, independently, the
+    Authenticode signature of every architecture's DLL (WireGuard LLC,
+    issued by DigiCert EV Code Signing CA, thumbprint
+    `DF98E075A012ED8C86FBCF14854B8F9555CB3D45`) were verified by hand
+    against a fresh download before pinning — see `cmd/wintun-fetch`'s doc
+    comment. The Wintun prebuilt-binaries license (in the zip, shipped
+    alongside the DLL as `LICENSE-wintun.txt`) permits exactly this
+    bundled-redistribution use (software that only calls Wintun through its
+    documented API, which is all `golang.zx2c4.com/wintun`/`wireguard-go`
+    do). The `boxy` build was split into two GoReleaser build IDs (`boxy`
+    for linux/darwin, `boxy-windows` for windows) so only the Windows
+    archive's `files:` list references the staged DLL — confirmed end to
+    end with `task release:snapshot`: both `windows_amd64.zip` and
+    `windows_arm64.zip` contain `boxy.exe`, the correct per-arch
+    `wintun.dll` (verified byte-identical to the staged file, and
+    independently re-verified as validly signed after archiving), and
+    `LICENSE-wintun.txt`; linux/darwin archives are unaffected.
+    `scripts/install.ps1` (generated from
+    `scripts/generate/install.ps1.tmpl`) now also copies `wintun.dll` out
+    of the extracted archive into the install directory when present, with
+    a `Test-Path` guard so a pre-#379 archive (no `wintun.dll` entry at
+    all) still installs `boxy.exe` exactly as before.
+  - **Still not done, deliberately left for a follow-up**: installing the
+    agent binary + DLL under Program Files instead of the user-writable
+    default install location, closing the DLL-planting exposure described
+    in #379's comments (a service running as SYSTEM could otherwise load a
+    planted DLL from a location the logged-in user can write to). This is
+    a real, separate security-hardening change — default install location,
+    elevation requirements — that deserves its own focused pass rather
+    than folding silently into the packaging work above.
+  - This closes #379 blocker 6 as *implemented and packaged*, not as
+    *live-validated*: no Wintun adapter has actually been created on real
+    hardware with this wired up (deliberately not exercised on this
+    session's own dev machine, to avoid installing a kernel driver on it),
+    and blockers 1 (Docker source-NAT masquerade) and 5 (real two-host
     validation) are unchanged and still block cross-host traffic actually
     flowing.

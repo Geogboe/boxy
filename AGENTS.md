@@ -299,11 +299,15 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   `server.mesh_overlay_enabled` in `boxy.yaml`) that must never run
   unconditionally — on Windows, creating the first Wintun adapter installs
   the kernel driver. `internal/pool.AgentProvisioner`'s
-  `MeshIdentity`/`AddMeshPeer` check it before calling through. See
-  ADR-0022's 2026-09-25 changelog entry for what's implemented (the
-  capability advertisement, the Linux `CAP_NET_ADMIN` systemd grant) versus
-  what's deliberately still open (shipping an actual `wintun.dll` in the
-  release archive, Program Files install location).
+  `MeshIdentity`/`AddMeshPeer` check it before calling through.
+  `cmd/wintun-fetch` (a GoReleaser before-hook) downloads, SHA-256-verifies,
+  and stages the real `wintun.dll` into the Windows release archive
+  alongside `boxy.exe`; `scripts/install.ps1` copies it into the install
+  directory when present (`Test-Path`-guarded, so a pre-#379 archive still
+  installs cleanly). See ADR-0022's 2026-09-25 changelog entry for what's
+  implemented and packaged versus what's deliberately still open (the
+  Program Files install-location hardening, and live validation on real
+  hardware).
 
 ### PSRP Transport Dependency Fork (go-psrp / go-psrpcore)
 
