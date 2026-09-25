@@ -39,7 +39,33 @@ type NetworkIsolator interface {
 	// construction, so implementations are not required to sanitize or
 	// escape it further; they may derive a deterministic switch/network name
 	// from it directly.
-	CreateSegment(ctx context.Context, sandboxID string) (SegmentRef, error)
+	//
+	// cidr is the address range the caller has allocated for this segment,
+	// in CIDR notation. The implementation must use it rather than choosing
+	// its own: the caller allocates globally across every host so that a
+	// sandbox spanning two hosts gets two non-overlapping segments, which is
+	// what cross-host mesh peering requires (#370). A driver that picks its
+	// own range independently will collide with the other host sooner or
+	// later, and WireGuard then silently drops the decrypted traffic as
+	// coming from a disallowed source address.
+	//
+	// The implementation must check cidr against what already exists on its
+	// own host -- other networks, NAT prefixes, interface addresses -- and
+	// return a *CIDRConflictError if it is unusable, rather than creating a
+	// segment that overlaps something local. The caller responds by
+	// proposing a different range. Only the agent can see this class of
+	// conflict; only the caller can see the cross-host class.
+	//
+	// On the idempotent repeat path, an implementation that already has a
+	// segment for sandboxID returns it unchanged and ignores cidr — the
+	// existing segment's range is authoritative, and a caller re-proposing
+	// a different one must not silently renumber a live network. The
+	// returned string is always that authoritative range, whether it came
+	// from the cidr argument (fresh segment) or from the pre-existing one
+	// (idempotent repeat): the caller must persist this value rather than
+	// assuming its own proposal was honored, or a retry can record a range
+	// nothing actually holds while the real one goes untracked.
+	CreateSegment(ctx context.Context, sandboxID string, cidr string) (SegmentRef, string, error)
 
 	// AttachToSegment moves an already-created resource (identified by the
 	// driver's own provider-specific resource ID, as returned in

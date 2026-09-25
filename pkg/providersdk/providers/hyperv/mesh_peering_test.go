@@ -61,7 +61,7 @@ func TestDriver_MeshIdentity_CreatesInterfaceLazilyAndReturnsCIDR(t *testing.T) 
 	d.segmentLedgerPath = filepath.Join(t.TempDir(), "network-segments.json")
 	d.meshEndpoint = "203.0.113.5:51820"
 	d.newMeshInterface = newFakeMeshInterface
-	alloc, err := d.segments().allocate("sb-1")
+	alloc, err := d.segments().record("sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("allocate: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestDriver_AddMeshPeer_ConfiguresThePeer(t *testing.T) {
 	d.segmentLedgerPath = filepath.Join(t.TempDir(), "network-segments.json")
 	d.meshEndpoint = "203.0.113.5:51820"
 	d.newMeshInterface = newFakeMeshInterface
-	alloc, err := d.segments().allocate("sb-1")
+	alloc, err := d.segments().record("sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("allocate: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestDriver_MeshIdentity_RejectsUnparsableMeshEndpoint(t *testing.T) {
 	d := mockDriver(func(context.Context, string) (string, error) { return "", nil })
 	d.segmentLedgerPath = filepath.Join(t.TempDir(), "network-segments.json")
 	d.meshEndpoint = "not-a-valid-endpoint"
-	alloc, err := d.segments().allocate("sb-1")
+	alloc, err := d.segments().record("sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("allocate: %v", err)
 	}

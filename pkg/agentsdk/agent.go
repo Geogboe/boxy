@@ -100,7 +100,11 @@ type NetworkIsolatingAgent interface {
 	// both verbatim. Validating that case is deliberately deferred to the
 	// caller (Plan 1c), which is the layer that decides whether to persist a
 	// ref and what to do when one is unusable.
-	CreateSegment(ctx context.Context, provider providersdk.Type, sandboxID string) (providersdk.SegmentRef, error)
+	//
+	// The returned string is the segment's authoritative CIDR, which is not
+	// always cidr above -- see providersdk.NetworkIsolator.CreateSegment's
+	// doc comment. The caller must persist this value, not its own proposal.
+	CreateSegment(ctx context.Context, provider providersdk.Type, sandboxID string, cidr string) (providersdk.SegmentRef, string, error)
 
 	// AttachToSegment moves an already-created resource onto a segment. Must
 	// be routed to the agent that returned ref.

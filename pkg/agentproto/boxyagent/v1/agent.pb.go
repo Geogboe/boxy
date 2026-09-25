@@ -1900,8 +1900,17 @@ func (x *PersonalizeGuestCommand) GetApplyNetwork() bool {
 // Idempotent per sandbox_id: a repeat returns the same segment_ref rather
 // than creating a second segment.
 type CreateSegmentCommand struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	// cidr is the address range the server allocated for this segment. The
+	// agent must use it rather than choosing its own: the server allocates
+	// globally across hosts so a sandbox spanning two of them gets two
+	// non-overlapping segments, which cross-host mesh peering requires
+	// (#370). If the range is unusable on this host -- it overlaps an
+	// existing network, NAT prefix or interface address the server cannot
+	// see -- the agent returns an AgentError with error_type
+	// "cidr_conflict" and the server proposes a different one.
+	Cidr          string `protobuf:"bytes,2,opt,name=cidr,proto3" json:"cidr,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1939,6 +1948,13 @@ func (*CreateSegmentCommand) Descriptor() ([]byte, []int) {
 func (x *CreateSegmentCommand) GetSandboxId() string {
 	if x != nil {
 		return x.SandboxId
+	}
+	return ""
+}
+
+func (x *CreateSegmentCommand) GetCidr() string {
+	if x != nil {
+		return x.Cidr
 	}
 	return ""
 }
@@ -2602,8 +2618,18 @@ func (x *PersonalizeGuestResult) GetGuestCredentialJson() []byte {
 }
 
 type CreateSegmentResult struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SegmentRef    string                 `protobuf:"bytes,1,opt,name=segment_ref,json=segmentRef,proto3" json:"segment_ref,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	SegmentRef string                 `protobuf:"bytes,1,opt,name=segment_ref,json=segmentRef,proto3" json:"segment_ref,omitempty"`
+	// cidr is the segment's authoritative range, which is not always the one
+	// CreateSegmentCommand proposed: CreateSegment is idempotent per
+	// sandbox_id, and a repeat call against an already-created segment
+	// returns that segment's real, already-assigned range unchanged rather
+	// than honoring a new (and possibly different) proposal. The caller must
+	// persist this value, not the one it sent, or a retry after a partial
+	// failure can record a range nothing actually holds while the real one
+	// goes untracked -- reopening the same cross-host collision this whole
+	// mechanism exists to close (#370).
+	Cidr          string `protobuf:"bytes,2,opt,name=cidr,proto3" json:"cidr,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2641,6 +2667,13 @@ func (*CreateSegmentResult) Descriptor() ([]byte, []int) {
 func (x *CreateSegmentResult) GetSegmentRef() string {
 	if x != nil {
 		return x.SegmentRef
+	}
+	return ""
+}
+
+func (x *CreateSegmentResult) GetCidr() string {
+	if x != nil {
+		return x.Cidr
 	}
 	return ""
 }
@@ -2846,10 +2879,11 @@ const file_boxyagent_v1_agent_proto_rawDesc = "" +
 	"\x17PersonalizeGuestCommand\x12\x1f\n" +
 	"\vresource_id\x18\x01 \x01(\tR\n" +
 	"resourceId\x12#\n" +
-	"\rapply_network\x18\x02 \x01(\bR\fapplyNetwork\"5\n" +
+	"\rapply_network\x18\x02 \x01(\bR\fapplyNetwork\"I\n" +
 	"\x14CreateSegmentCommand\x12\x1d\n" +
 	"\n" +
-	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\"Z\n" +
+	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x12\n" +
+	"\x04cidr\x18\x02 \x01(\tR\x04cidr\"Z\n" +
 	"\x16AttachToSegmentCommand\x12\x1f\n" +
 	"\vresource_id\x18\x01 \x01(\tR\n" +
 	"resourceId\x12\x1f\n" +
@@ -2912,10 +2946,11 @@ const file_boxyagent_v1_agent_proto_rawDesc = "" +
 	"\x15guest_credential_json\x18\x02 \x01(\fR\x13guestCredentialJson\x1a=\n" +
 	"\x0fPropertiesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"6\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"J\n" +
 	"\x13CreateSegmentResult\x12\x1f\n" +
 	"\vsegment_ref\x18\x01 \x01(\tR\n" +
-	"segmentRef\"c\n" +
+	"segmentRef\x12\x12\n" +
+	"\x04cidr\x18\x02 \x01(\tR\x04cidr\"c\n" +
 	"\x12MeshIdentityResult\x12\x1d\n" +
 	"\n" +
 	"public_key\x18\x01 \x01(\tR\tpublicKey\x12\x1a\n" +

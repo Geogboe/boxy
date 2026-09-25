@@ -41,3 +41,33 @@ func (e *OrphanedResourceError) Error() string {
 
 // ErrorType implements ErrorTyper.
 func (e *OrphanedResourceError) ErrorType() string { return "orphaned_resource" }
+
+// CIDRConflictError indicates a NetworkIsolator refused a caller-proposed
+// segment CIDR because that range is already in use on this host by
+// something the caller cannot see -- another Docker network, an existing
+// NAT prefix, a host interface address, a VPN route. The caller is expected
+// to propose a different range rather than treat this as fatal.
+//
+// It exists because segment CIDR allocation is split across two parties
+// that each hold half the information (#370): the daemon knows which ranges
+// are in use across *all* hosts, which is what cross-host mesh peering
+// requires, but only the agent knows what else already occupies that range
+// on its own host. Both collision types are real and neither side can rule
+// out the other's alone.
+//
+// ConflictingWith is a human-readable description of what the range
+// collided with, for diagnostics -- it is deliberately not structured,
+// since every provider reports a different kind of object. Both fields are
+// plain strings so the type round-trips through json.Marshal across the
+// RemoteAgent/gRPC boundary, same as OrphanedResourceError.
+type CIDRConflictError struct {
+	RequestedCIDR   string
+	ConflictingWith string
+}
+
+func (e *CIDRConflictError) Error() string {
+	return fmt.Sprintf("proposed segment CIDR %s conflicts with %s on this host", e.RequestedCIDR, e.ConflictingWith)
+}
+
+// ErrorType implements ErrorTyper.
+func (e *CIDRConflictError) ErrorType() string { return "cidr_conflict" }

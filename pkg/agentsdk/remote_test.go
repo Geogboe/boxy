@@ -1036,13 +1036,14 @@ func TestRemoteAgent_CreateSegmentRoundTrip(t *testing.T) {
 	go func() { _ = a.Serve() }()
 
 	type result struct {
-		ref providersdk.SegmentRef
-		err error
+		ref  providersdk.SegmentRef
+		cidr string
+		err  error
 	}
 	resultCh := make(chan result, 1)
 	go func() {
-		ref, err := a.CreateSegment(context.Background(), "hyperv", "sb-1")
-		resultCh <- result{ref, err}
+		ref, cidr, err := a.CreateSegment(context.Background(), "hyperv", "sb-1", "10.250.0.0/29")
+		resultCh <- result{ref, cidr, err}
 	}()
 
 	cmd := recvCommand(t, stream.sentCh)
@@ -1054,6 +1055,9 @@ func TestRemoteAgent_CreateSegmentRoundTrip(t *testing.T) {
 		t.Fatalf("expected sandbox_id sb-1, got %q", createSegment.GetSandboxId())
 	}
 
+	// Feeds a result with no Cidr set, as an agent built before
+	// CreateSegmentResult.cidr existed would send: CreateSegment must fall
+	// back to the proposal rather than returning an empty authoritative CIDR.
 	stream.feedResult(&boxyagentv1.CommandResult{
 		CommandId: cmd.GetCommandId(),
 		Outcome:   &boxyagentv1.CommandResult_CreateSegment{CreateSegment: &boxyagentv1.CreateSegmentResult{SegmentRef: "boxy-sb-sb-1"}},
@@ -1066,6 +1070,52 @@ func TestRemoteAgent_CreateSegmentRoundTrip(t *testing.T) {
 		}
 		if r.ref != "boxy-sb-sb-1" {
 			t.Fatalf("ref = %q, want %q", r.ref, "boxy-sb-sb-1")
+		}
+		if r.cidr != "10.250.0.0/29" {
+			t.Fatalf("cidr = %q, want the proposal as fallback for a pre-cidr-field agent, %q", r.cidr, "10.250.0.0/29")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for CreateSegment to return")
+	}
+}
+
+// TestRemoteAgent_CreateSegmentReturnsAuthoritativeCIDR covers the idempotent
+// repeat path: an agent that already has a segment for this sandbox ignores
+// the new proposal and reports the segment's real range instead. The caller
+// must use that, not its own proposal -- see CreateSegmentResult.cidr's doc
+// comment in the .proto.
+func TestRemoteAgent_CreateSegmentReturnsAuthoritativeCIDR(t *testing.T) {
+	stream := newFakeServerStream()
+	a := NewRemoteAgent(AgentInfo{ID: "agent-1"}, stream)
+	go func() { _ = a.Serve() }()
+
+	type result struct {
+		ref  providersdk.SegmentRef
+		cidr string
+		err  error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		ref, cidr, err := a.CreateSegment(context.Background(), "hyperv", "sb-1", "10.250.0.8/29")
+		resultCh <- result{ref, cidr, err}
+	}()
+
+	cmd := recvCommand(t, stream.sentCh)
+	stream.feedResult(&boxyagentv1.CommandResult{
+		CommandId: cmd.GetCommandId(),
+		Outcome: &boxyagentv1.CommandResult_CreateSegment{CreateSegment: &boxyagentv1.CreateSegmentResult{
+			SegmentRef: "boxy-sb-sb-1",
+			Cidr:       "10.250.0.0/29",
+		}},
+	})
+
+	select {
+	case r := <-resultCh:
+		if r.err != nil {
+			t.Fatalf("CreateSegment returned error: %v", r.err)
+		}
+		if r.cidr != "10.250.0.0/29" {
+			t.Fatalf("cidr = %q, want the agent's authoritative range %q, not the proposal", r.cidr, "10.250.0.0/29")
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for CreateSegment to return")
@@ -1147,7 +1197,7 @@ func TestRemoteAgent_CreateSegmentAgentErrorSurfaces(t *testing.T) {
 
 	resultCh := make(chan error, 1)
 	go func() {
-		_, err := a.CreateSegment(context.Background(), "hyperv", "sb-1")
+		_, _, err := a.CreateSegment(context.Background(), "hyperv", "sb-1", "10.250.0.0/29")
 		resultCh <- err
 	}()
 
@@ -1183,7 +1233,7 @@ func TestRemoteAgent_CreateSegmentMismatchedOutcomeErrors(t *testing.T) {
 	}
 	resultCh := make(chan result, 1)
 	go func() {
-		ref, err := a.CreateSegment(context.Background(), "hyperv", "sb-1")
+		ref, _, err := a.CreateSegment(context.Background(), "hyperv", "sb-1", "10.250.0.0/29")
 		resultCh <- result{ref, err}
 	}()
 
@@ -1321,7 +1371,7 @@ func TestRemoteAgent_CreateSegmentEmptyRefIsNotRejected(t *testing.T) {
 	}
 	resultCh := make(chan result, 1)
 	go func() {
-		ref, err := a.CreateSegment(context.Background(), "hyperv", "sb-1")
+		ref, _, err := a.CreateSegment(context.Background(), "hyperv", "sb-1", "10.250.0.0/29")
 		resultCh <- result{ref, err}
 	}()
 

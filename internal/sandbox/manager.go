@@ -16,6 +16,7 @@ import (
 	"github.com/Geogboe/boxy/pkg/model"
 	"github.com/Geogboe/boxy/pkg/providersdk"
 	"github.com/Geogboe/boxy/pkg/resourcepool"
+	"github.com/Geogboe/boxy/pkg/segmentcidr"
 	"github.com/Geogboe/boxy/pkg/store"
 )
 
@@ -579,7 +580,7 @@ func (m *Manager) ensureNetworkSegment(ctx context.Context, sb *model.Sandbox, p
 	// created. In production it equals providerType above (both are the
 	// pool's resolved driver type); recording what the allocator returned
 	// keeps the record true to the host object even if they ever diverge.
-	ref, createdType, err := isolator.CreateSegment(ctx, pool, res, sb.ID)
+	ref, createdType, cidr, err := m.createSegmentWithCIDR(ctx, isolator, sb, pool, res)
 	if errors.Is(err, boxypool.ErrNetworkIsolationUnsupported) {
 		return nil
 	}
@@ -590,6 +591,7 @@ func (m *Manager) ensureNetworkSegment(ctx context.Context, sb *model.Sandbox, p
 		AgentID:      agentID,
 		ProviderType: string(createdType),
 		Ref:          string(ref),
+		CIDR:         cidr,
 	})
 	if err := m.store.PutSandbox(ctx, *sb); err != nil {
 		return fmt.Errorf("persist network segment for sandbox %q: %w", sb.ID, err)
@@ -608,6 +610,114 @@ func (m *Manager) ensureNetworkSegment(ctx context.Context, sb *model.Sandbox, p
 			"error_code", code, "error_summary", summary)
 	}
 	return nil
+}
+
+// maxCIDRProposals bounds the propose/refuse loop in
+// createSegmentWithCIDR. Each refusal means a range this host can't use, so
+// the cap only matters on a host whose existing networks happen to blanket
+// a long run of the base range; failing loudly after a bounded number of
+// attempts is better than looping over all 8192 blocks one round trip at a
+// time.
+const maxCIDRProposals = 8
+
+// createSegmentWithCIDR allocates a globally-unique range for the segment
+// and creates it, re-proposing if the host refuses the range as locally
+// conflicting.
+//
+// The split exists because neither side can allocate alone (#370). Only the
+// server sees every host, so only it can pick a range no *other* host is
+// using -- which is what cross-host mesh peering requires, since WireGuard
+// drops decrypted traffic whose source isn't in the peer's allowed range.
+// But only the agent can see what else already occupies that range on its
+// own machine: docker0, a VPN, the corporate LAN. So the server proposes
+// from the global view, the agent vetoes on local knowledge, and the server
+// proposes again.
+//
+// In-use ranges come from the sandboxes themselves rather than a separate
+// allocation ledger: a ledger has to be kept in sync and can drift from the
+// segments that actually exist, while a derived view cannot, and releasing
+// a range falls out of deleting the sandbox instead of being a thing to
+// remember. The sandbox being built is included via sb's own segments,
+// which matters for a sandbox spanning hosts -- its second segment must not
+// reuse its first one's range.
+func (m *Manager) createSegmentWithCIDR(
+	ctx context.Context,
+	isolator NetworkIsolatingAllocator,
+	sb *model.Sandbox,
+	pool model.Pool,
+	res model.Resource,
+) (providersdk.SegmentRef, providersdk.Type, string, error) {
+	inUse, err := m.allocatedSegmentCIDRs(ctx, sb)
+	if err != nil {
+		return "", "", "", err
+	}
+
+	allocator := segmentcidr.NewDefault()
+	var refused []string
+	for attempt := 0; attempt < maxCIDRProposals; attempt++ {
+		cidr, err := allocator.Allocate(inUse, refused)
+		if err != nil {
+			return "", "", "", err
+		}
+		ref, createdType, authoritativeCIDR, err := isolator.CreateSegment(ctx, pool, res, sb.ID, cidr)
+		var conflict *providersdk.CIDRConflictError
+		if errors.As(err, &conflict) {
+			slog.Info("segment CIDR refused by host, proposing another",
+				"component", "sandbox", "operation", "segment_cidr_conflict",
+				"resource", string(res.ID), "agent", res.Provider.AgentID,
+				"error_summary", conflict.Error())
+			refused = append(refused, cidr)
+			continue
+		}
+		if err != nil {
+			return "", "", "", err
+		}
+		// authoritativeCIDR, not cidr: on the idempotent repeat path (a
+		// retry against an already-created segment) the driver ignores this
+		// proposal and returns the segment's real, already-assigned range.
+		// Persisting the proposal instead would record a range nothing
+		// actually holds while the real one goes untracked by
+		// allocatedSegmentCIDRs -- reopening the collision this mechanism
+		// exists to close (#370).
+		return ref, createdType, authoritativeCIDR, nil
+	}
+	return "", "", "", fmt.Errorf(
+		"no usable segment CIDR after %d proposals (host refused: %v)",
+		maxCIDRProposals, refused)
+}
+
+// allocatedSegmentCIDRs returns every segment range currently recorded
+// across all sandboxes, including the one being built.
+//
+// current is passed separately because it may not be persisted yet: a
+// sandbox spanning two hosts creates its second segment while the first is
+// still only in memory on this code path, and reusing that first range for
+// the second host is precisely the collision this whole change exists to
+// prevent.
+func (m *Manager) allocatedSegmentCIDRs(ctx context.Context, current *model.Sandbox) ([]string, error) {
+	sandboxes, err := m.store.ListSandboxes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list sandboxes to find allocated segment CIDRs: %w", err)
+	}
+	var inUse []string
+	for _, sb := range sandboxes {
+		if current != nil && sb.ID == current.ID {
+			continue // superseded by current's in-memory state below
+		}
+		for _, seg := range sb.NetworkSegments {
+			if seg.CIDR != "" {
+				inUse = append(inUse, seg.CIDR)
+			}
+		}
+	}
+	if current != nil {
+		for _, seg := range current.NetworkSegments {
+			if seg.CIDR != "" {
+				inUse = append(inUse, seg.CIDR)
+			}
+		}
+	}
+	return inUse, nil
 }
 
 // triggerMeshPeering peers the sandbox's newly-added agent (identified by

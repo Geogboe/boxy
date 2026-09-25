@@ -37,7 +37,7 @@ func TestAgentProvisioner_CreateSegmentUnadvertisedReturnsSentinel(t *testing.T)
 		t.Fatal("test precondition: the fake must implement NetworkIsolatingAgent, or this proves nothing")
 	}
 
-	_, _, err := ap.CreateSegment(context.Background(), model.Pool{Name: "pool-a"}, res, "sb-1")
+	_, _, _, err := ap.CreateSegment(context.Background(), model.Pool{Name: "pool-a"}, res, "sb-1", "10.250.0.0/29")
 	if !errors.Is(err, ErrNetworkIsolationUnsupported) {
 		t.Fatalf("err = %v, want ErrNetworkIsolationUnsupported", err)
 	}
@@ -54,7 +54,7 @@ func TestAgentProvisioner_CreateSegmentAdvertisedForOtherProviderReturnsSentinel
 	agent.info.NetworkIsolatingProviders = []providersdk.Type{"devfactory"}
 	ap, res := isolationTestProvisioner(t, agent)
 
-	_, _, err := ap.CreateSegment(context.Background(), model.Pool{Name: "pool-a"}, res, "sb-1")
+	_, _, _, err := ap.CreateSegment(context.Background(), model.Pool{Name: "pool-a"}, res, "sb-1", "10.250.0.0/29")
 	if !errors.Is(err, ErrNetworkIsolationUnsupported) {
 		t.Fatalf("err = %v, want ErrNetworkIsolationUnsupported for a pool resolving to hyperv", err)
 	}
@@ -72,7 +72,7 @@ func TestAgentProvisioner_CreateSegmentRejectsEmptyRef(t *testing.T) {
 			agent.createSegmentRef = providersdk.SegmentRef(ref)
 			ap, res := isolationTestProvisioner(t, agent)
 
-			_, _, err := ap.CreateSegment(context.Background(), model.Pool{Name: "pool-a"}, res, "sb-1")
+			_, _, _, err := ap.CreateSegment(context.Background(), model.Pool{Name: "pool-a"}, res, "sb-1", "10.250.0.0/29")
 			if err == nil {
 				t.Fatal("expected an error for an empty segment ref returned without one")
 			}

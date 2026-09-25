@@ -266,26 +266,26 @@ func (ap *AgentProvisioner) Allocate(ctx context.Context, pool model.Pool, res m
 // providersdk.NetworkIsolator check happens inside the agent -- too late,
 // and as a hard error. For a remote agent there is no local driver to
 // assert against at all.
-func (ap *AgentProvisioner) CreateSegment(ctx context.Context, pool model.Pool, res model.Resource, sandboxID model.SandboxID) (providersdk.SegmentRef, providersdk.Type, error) {
+func (ap *AgentProvisioner) CreateSegment(ctx context.Context, pool model.Pool, res model.Resource, sandboxID model.SandboxID, cidr string) (providersdk.SegmentRef, providersdk.Type, string, error) {
 	spec, ok := ap.Specs[pool.Name]
 	if !ok {
-		return "", "", fmt.Errorf("unknown pool %q", pool.Name)
+		return "", "", "", fmt.Errorf("unknown pool %q", pool.Name)
 	}
 	driverType := ap.driverTypeForPool(spec)
 	agent, err := ap.agentForResource(res)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	if !advertisesNetworkIsolation(agent, driverType) {
-		return "", "", fmt.Errorf("agent %q, provider %q: %w", res.Provider.AgentID, driverType, ErrNetworkIsolationUnsupported)
+		return "", "", "", fmt.Errorf("agent %q, provider %q: %w", res.Provider.AgentID, driverType, ErrNetworkIsolationUnsupported)
 	}
 	isolator, ok := agent.(agentsdk.NetworkIsolatingAgent)
 	if !ok {
-		return "", "", fmt.Errorf("agent %q does not support network isolation", res.Provider.AgentID)
+		return "", "", "", fmt.Errorf("agent %q does not support network isolation", res.Provider.AgentID)
 	}
-	ref, err := isolator.CreateSegment(ctx, driverType, string(sandboxID))
+	ref, authoritativeCIDR, err := isolator.CreateSegment(ctx, driverType, string(sandboxID), cidr)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	// agentsdk.NetworkIsolatingAgent's own doc comment assigns this
 	// validation to this layer: neither agent implementation rejects an
@@ -299,9 +299,9 @@ func (ap *AgentProvisioner) CreateSegment(ctx context.Context, pool model.Pool, 
 	// misbehaving, and must not be silently skipped like an honest
 	// non-isolating provider.
 	if strings.TrimSpace(string(ref)) == "" {
-		return "", "", fmt.Errorf("agent %q returned an empty network segment ref for sandbox %q", res.Provider.AgentID, sandboxID)
+		return "", "", "", fmt.Errorf("agent %q returned an empty network segment ref for sandbox %q", res.Provider.AgentID, sandboxID)
 	}
-	return ref, driverType, nil
+	return ref, driverType, authoritativeCIDR, nil
 }
 
 // AttachToSegment satisfies sandbox.NetworkIsolatingAllocator.

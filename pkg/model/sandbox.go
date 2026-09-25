@@ -86,8 +86,16 @@ type SandboxPolicies struct {
 // providersdk.SegmentRef as a plain string, so this package doesn't import
 // providersdk) -- callers pass it back to the same agent/provider type
 // unchanged, never interpreting it themselves.
+// CIDR is the address range allocated to this segment. It is recorded here
+// rather than in a separate allocation ledger so that the set of in-use
+// ranges is derivable from the sandboxes that actually exist: a standalone
+// ledger can drift from reality, and releasing a range becomes something
+// that has to be remembered rather than something that falls out of
+// deleting the sandbox. See #370 and
+// docs/superpowers/specs/2026-09-22-global-segment-cidr-allocation-design.md.
 type NetworkSegment struct {
 	AgentID      string `json:"agent_id" yaml:"agent_id"`
 	ProviderType string `json:"provider_type" yaml:"provider_type"`
 	Ref          string `json:"ref" yaml:"ref"`
+	CIDR         string `json:"cidr,omitempty" yaml:"cidr,omitempty"`
 }

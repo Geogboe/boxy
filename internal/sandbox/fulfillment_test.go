@@ -142,6 +142,31 @@ func (a deletingFailingAllocator) Allocate(ctx context.Context, p model.Pool, r 
 	return providersdk.AllocationResult{}, fmt.Errorf("allocator failed after delete request")
 }
 
+// segmentLeakOnRollbackAllocator creates a real network segment for one
+// pool group's resource, then fails Allocate for a later group -- the
+// scenario rollbackAllocation must not silently discard. Unlike a
+// pool/resource, a NetworkSegment recorded mid-transaction backs a real
+// host object (a Docker network, a Hyper-V vSwitch+NAT) that reverting the
+// whole sandbox record to its pre-transaction snapshot would orphan.
+type segmentLeakOnRollbackAllocator struct {
+	failPool model.PoolName
+}
+
+func (a segmentLeakOnRollbackAllocator) Allocate(_ context.Context, p model.Pool, _ model.Resource) (providersdk.AllocationResult, error) {
+	if p.Name == a.failPool {
+		return providersdk.AllocationResult{}, fmt.Errorf("allocate failed for pool %s", p.Name)
+	}
+	return providersdk.AllocationResult{Properties: map[string]any{"allocated": true}}, nil
+}
+
+func (a segmentLeakOnRollbackAllocator) CreateSegment(_ context.Context, _ model.Pool, res model.Resource, _ model.SandboxID, cidr string) (providersdk.SegmentRef, providersdk.Type, string, error) {
+	return providersdk.SegmentRef("seg-" + string(res.ID)), providersdk.Type(res.Provider.Name), cidr, nil
+}
+
+func (a segmentLeakOnRollbackAllocator) AttachToSegment(context.Context, model.Pool, model.Resource, providersdk.SegmentRef) error {
+	return nil
+}
+
 // poolNameDispatchEnsurer routes EnsureReady to a different fake/real
 // implementation per pool name — used to give one sandbox's pool a
 // hung/blocking ensurer while another sandbox's pool behaves normally in the
@@ -833,6 +858,101 @@ func TestFulfiller_RollbackPreservesDeletingAndRestoresInventory(t *testing.T) {
 		if res.State != model.ResourceStateReady {
 			t.Fatalf("resource %q state = %q, want ready", res.ID, res.State)
 		}
+	}
+}
+
+// TestFulfiller_RollbackPreservesNetworkSegmentsCreatedBeforeFailure guards
+// against a rollback that restores the sandbox record to its pre-transaction
+// snapshot silently discarding a NetworkSegment recorded for an earlier,
+// successful pool group. Unlike the resource/pool it reverts, a segment
+// backs a real host object (a Docker network, a Hyper-V vSwitch+NAT); losing
+// the record both leaks that object (sandbox deletion's own segment
+// teardown can never find it) and frees its CIDR for reuse by
+// allocatedSegmentCIDRs while the object still occupies it.
+func TestFulfiller_RollbackPreservesNetworkSegmentsCreatedBeforeFailure(t *testing.T) {
+	t.Parallel()
+
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+
+	webRes := model.Resource{
+		ID:        "res-web",
+		Type:      model.ResourceTypeContainer,
+		Profile:   "web",
+		Provider:  model.ProviderRef{Name: "docker", AgentID: "agent-1"},
+		State:     model.ResourceStateReady,
+		CreatedAt: time.Unix(1, 0).UTC(),
+		UpdatedAt: time.Unix(1, 0).UTC(),
+	}
+	winRes := model.Resource{
+		ID:        "res-win",
+		Type:      model.ResourceTypeVM,
+		Profile:   "win",
+		Provider:  model.ProviderRef{Name: "hyperv", AgentID: "agent-1"},
+		State:     model.ResourceStateReady,
+		CreatedAt: time.Unix(2, 0).UTC(),
+		UpdatedAt: time.Unix(2, 0).UTC(),
+	}
+	for _, res := range []model.Resource{webRes, winRes} {
+		if err := st.PutResource(ctx, res); err != nil {
+			t.Fatalf("put resource %q: %v", res.ID, err)
+		}
+	}
+	for _, pl := range []model.Pool{
+		{
+			Name: "web",
+			Inventory: model.ResourceCollection{
+				ExpectedType:    model.ResourceTypeContainer,
+				ExpectedProfile: "web",
+				Resources:       []model.Resource{webRes},
+			},
+		},
+		{
+			Name: "win",
+			Inventory: model.ResourceCollection{
+				ExpectedType:    model.ResourceTypeVM,
+				ExpectedProfile: "win",
+				Resources:       []model.Resource{winRes},
+			},
+		},
+	} {
+		if err := st.PutPool(ctx, pl); err != nil {
+			t.Fatalf("put pool %q: %v", pl.Name, err)
+		}
+	}
+
+	if err := st.CreateSandbox(ctx, model.Sandbox{
+		ID:     "sb-1",
+		Name:   "lab",
+		Status: model.SandboxStatusPending,
+		Requests: []model.ResourceRequest{
+			{Type: model.ResourceTypeContainer, Profile: "web", Count: 1},
+			{Type: model.ResourceTypeVM, Profile: "win", Count: 1},
+		},
+	}); err != nil {
+		t.Fatalf("create sandbox: %v", err)
+	}
+
+	f := NewFulfiller(st, pool.New(st, &fakeFulfillProvisioner{}), New(st, segmentLeakOnRollbackAllocator{failPool: "win"}), 0)
+	if err := f.Reconcile(ctx); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	sb, err := st.GetSandbox(ctx, "sb-1")
+	if err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if sb.Status != model.SandboxStatusFailed {
+		t.Fatalf("status = %q, want %q", sb.Status, model.SandboxStatusFailed)
+	}
+	if len(sb.Resources) != 0 {
+		t.Fatalf("sandbox resources = %v, want rollback to pre-allocation resources", sb.Resources)
+	}
+	if len(sb.NetworkSegments) != 1 {
+		t.Fatalf("NetworkSegments = %+v, want the web resource's segment preserved despite rollback", sb.NetworkSegments)
+	}
+	if got, want := sb.NetworkSegments[0].Ref, "seg-res-web"; got != want {
+		t.Fatalf("NetworkSegments[0].Ref = %q, want %q", got, want)
 	}
 }
 

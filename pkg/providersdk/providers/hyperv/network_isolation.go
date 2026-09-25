@@ -3,7 +3,6 @@ package hyperv
 import (
 	"context"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/Geogboe/boxy/pkg/diskjson"
 	"github.com/Geogboe/boxy/pkg/providersdk"
+	"github.com/Geogboe/boxy/pkg/segmentcidr"
 )
 
 // segmentAllocation is one sandbox's assigned switch/NAT identity, persisted
@@ -33,21 +33,22 @@ type segmentAllocation struct {
 	GuestAddress string `json:"guest_address,omitempty"`
 }
 
+// segmentLedgerState is this host's record of which sandbox holds which
+// segment. It no longer tracks free/next block indexes: the server allocates
+// ranges globally across every host (#370), because a per-host allocator
+// cannot avoid colliding with a host it cannot see. Any next_index /
+// freed_indexes keys left in an older on-disk ledger are simply ignored.
 type segmentLedgerState struct {
-	// NextIndex is the next /29 block offset (0-based) to hand out from
-	// segmentBaseCIDR. Only ever increases while entries exist; a released
-	// CIDR is tracked in FreedIndexes and reused before NextIndex advances,
-	// so long-running hosts don't walk the whole range needlessly.
-	NextIndex    int                          `json:"next_index"`
-	FreedIndexes []int                        `json:"freed_indexes,omitempty"`
-	BySandboxID  map[string]segmentAllocation `json:"by_sandbox_id"`
+	BySandboxID map[string]segmentAllocation `json:"by_sandbox_id"`
 }
 
 // segmentBaseCIDR is the private range this driver carves per-sandbox blocks
-// out of. Chosen from RFC 1918 space unlikely to collide with an operator's
+// out of. Reuses segmentcidr.DefaultBase -- the daemon's own allocator base
+// (#370) -- rather than a second literal, so the two can't silently drift
+// apart. Chosen from RFC 1918 space unlikely to collide with an operator's
 // own LAN (10.250.0.0/16 is well outside common home/office 10.0.0.0/8
 // allocations that start near 10.0.x.x or 10.1.x.x).
-const segmentBaseCIDR = "10.250.0.0/16"
+const segmentBaseCIDR = segmentcidr.DefaultBase
 
 // sharedNATName is the one WinNAT instance every segment on a host routes
 // through, covering all of segmentBaseCIDR. Microsoft's Hyper-V NAT guide
@@ -58,19 +59,20 @@ const segmentBaseCIDR = "10.250.0.0/16"
 // host may still be using it, and an idle NAT costs nothing.
 const sharedNATName = "boxy-segments"
 
-// segmentPrefixLen is the prefix length of each per-sandbox block carved out
-// of segmentBaseCIDR. A /29 is 8 addresses: network, gateway, up to 5 usable
-// hosts, broadcast -- enough for a small sandbox lab.
+// segmentPrefixLen is the prefix length of each per-sandbox block. Reuses
+// segmentcidr.DefaultBlockLen -- the daemon's own allocator block size --
+// rather than a second literal, for the same reason segmentBaseCIDR reuses
+// segmentcidr.DefaultBase: the daemon proposes blocks of this size, so a
+// mismatch here would mean New-NetIPAddress applies a prefix length that
+// doesn't match the range the daemon actually allocated. A /29 is 8
+// addresses: network, gateway, up to 5 usable hosts, broadcast -- enough
+// for a small sandbox lab.
 //
-// This is the single source of truth for the block size: the persisted CIDR
-// string, the host-side New-NetIPAddress -PrefixLength argument, and
-// segmentBlockSize's address arithmetic are all derived from it rather than
-// repeating the literal in three places.
-const segmentPrefixLen = 29
-
-// segmentBlockSize is how many IPv4 addresses one segmentPrefixLen block
-// spans, derived from segmentPrefixLen rather than restated.
-const segmentBlockSize = 1 << (32 - segmentPrefixLen)
+// This is the single source of truth for the block size *within this
+// driver*: the persisted CIDR string, the host-side New-NetIPAddress
+// -PrefixLength argument, and segmentBlockSize's address arithmetic are all
+// derived from it rather than repeating the literal in three places.
+const segmentPrefixLen = segmentcidr.DefaultBlockLen
 
 // segmentGatewayOffset/segmentGuestOffset are the fixed positions, counted
 // from a block's own network address, of the two addresses this driver hands
@@ -95,13 +97,6 @@ const (
 // segment ledger, written under Config.DataDir.
 const segmentLedgerFilename = "network-segments.json"
 
-// errSegmentRangeExhausted reports that segmentBaseCIDR has no block left at
-// the requested index -- either every block is in use, or a persisted index
-// is out of range. Named (and wrapped, not replaced, by its callers) so a
-// caller can tell genuine exhaustion apart from a malformed-config parse
-// failure with errors.Is.
-var errSegmentRangeExhausted = errors.New("network segment range exhausted")
-
 type segmentLedger struct {
 	store *diskjson.Store[segmentLedgerState]
 }
@@ -114,10 +109,24 @@ func newSegmentLedger(path string) *segmentLedger {
 	}
 }
 
-// allocate returns the sandbox's existing CIDR/gateway if one is already
-// recorded (idempotent -- a retried CreateSegment call must not hand out a
-// second block), or carves and persists a new /29 otherwise.
-func (l *segmentLedger) allocate(sandboxID string) (segmentAllocation, error) {
+// record persists the sandbox's segment against the caller-supplied CIDR,
+// deriving the gateway and guest addresses from it, and returns the entry.
+//
+// This ledger used to choose the CIDR itself, carving the next free /29 out
+// of segmentBaseCIDR. It no longer does: a per-host allocator cannot avoid
+// colliding with another host, because it cannot see one. Two hosts each
+// starting at index 0 both hand their first sandbox 10.250.0.0/29, and
+// cross-host mesh peering then fails at the WireGuard layer (#370). The
+// caller allocates globally instead and passes the result in; the ledger
+// keeps only the record of what this host was told, which AttachToSegment
+// still needs for in-guest addressing.
+//
+// Idempotent, as before: a retried CreateSegment for the same sandboxID
+// returns the existing entry untouched rather than renumbering a segment
+// that may already have a live switch and NAT bound to it. A caller that
+// proposes a different CIDR on the retry is ignored, deliberately -- see
+// providersdk.NetworkIsolator.CreateSegment.
+func (l *segmentLedger) record(sandboxID string, cidr string) (segmentAllocation, error) {
 	state, err := l.store.Update(func(s segmentLedgerState) (segmentLedgerState, error) {
 		if s.BySandboxID == nil {
 			s.BySandboxID = make(map[string]segmentAllocation)
@@ -125,14 +134,7 @@ func (l *segmentLedger) allocate(sandboxID string) (segmentAllocation, error) {
 		if _, ok := s.BySandboxID[sandboxID]; ok {
 			return s, nil
 		}
-		index := s.NextIndex
-		if n := len(s.FreedIndexes); n > 0 {
-			index = s.FreedIndexes[n-1]
-			s.FreedIndexes = s.FreedIndexes[:n-1]
-		} else {
-			s.NextIndex++
-		}
-		cidr, gateway, guest, err := blockForIndex(index)
+		gateway, guest, err := addressesForCIDR(cidr)
 		if err != nil {
 			return s, err
 		}
@@ -194,6 +196,20 @@ func (l *segmentLedger) releaseBySwitchName(switchName string) error {
 // freshly-allocated entry would carry. ok is false with a nil error when no
 // entry carries switchName -- a real condition (a segment created by a
 // different agent, or a hand-removed ledger), not a failure of this lookup.
+// lookupBySandboxID reports whether this host already has a segment
+// recorded for sandboxID. Used by CreateSegment to tell a first call apart
+// from a retry, since only the first should check the proposed CIDR for
+// local conflicts -- on a retry the segment's own switch and NAT may
+// already hold that range, and the check would flag it against itself.
+func (l *segmentLedger) lookupBySandboxID(sandboxID string) (segmentAllocation, bool, error) {
+	state, err := l.store.Load()
+	if err != nil {
+		return segmentAllocation{}, false, err
+	}
+	alloc, ok := state.BySandboxID[sandboxID]
+	return alloc, ok, nil
+}
+
 func (l *segmentLedger) lookupBySwitchName(switchName string) (segmentAllocation, bool, error) {
 	state, err := l.store.Load()
 	if err != nil {
@@ -215,80 +231,100 @@ func (l *segmentLedger) lookupBySwitchName(switchName string) (segmentAllocation
 	return segmentAllocation{}, false, nil
 }
 
-// releaseAllocation removes sandboxID's entry from an in-flight ledger state
-// and returns its block index to FreedIndexes for reuse. Factored out so
-// release and releaseBySwitchName share one implementation rather than each
-// reimplementing the free-list accounting; both call it from inside their own
-// store.Update callback, so it must not lock anything itself.
-//
-// A CIDR whose index can't be recovered (corrupt or hand-edited state, see
-// indexForBlock's range checks) is dropped from BySandboxID without being
-// added to FreedIndexes: leaking one reusable block is strictly better than
-// pushing a bogus index onto the free list for the next allocate to hand out.
+// releaseAllocation removes sandboxID's entry from an in-flight ledger
+// state. The CIDR itself needs no bookkeeping here: the daemon owns
+// allocation, so a released range is free again as soon as no sandbox
+// records it. Shared by release and releaseBySwitchName, both of which call
+// it from inside their own store.Update callback, so it must not lock
+// anything itself.
 func releaseAllocation(s segmentLedgerState, sandboxID string) segmentLedgerState {
 	if s.BySandboxID == nil {
 		return s
-	}
-	alloc, ok := s.BySandboxID[sandboxID]
-	if !ok {
-		return s
-	}
-	if idx, err := indexForBlock(alloc.CIDR); err == nil {
-		s.FreedIndexes = append(s.FreedIndexes, idx)
 	}
 	delete(s.BySandboxID, sandboxID)
 	return s
 }
 
-// segmentBaseBounds parses segmentBaseCIDR into its base address (as a
-// uint32) and the number of segmentPrefixLen blocks it can hold -- 8192 for
-// the current /16 base and /29 blocks, derived rather than hardcoded so a
-// change to either constant stays consistent.
-func segmentBaseBounds() (baseInt uint32, blocks int, err error) {
-	_, base, parseErr := net.ParseCIDR(segmentBaseCIDR)
-	if parseErr != nil {
-		return 0, 0, fmt.Errorf("parse segmentBaseCIDR: %w", parseErr)
+// checkCIDRAvailable reports whether cidr is free to use on this host,
+// returning a *providersdk.CIDRConflictError naming the collision if not.
+//
+// Two sources. Existing NAT prefixes catch another Boxy segment or any
+// other NAT an operator configured. Host IPv4 addresses catch everything
+// else with an address on this machine -- the physical NIC on the corporate
+// LAN, a VPN adapter, an unrelated vSwitch -- which is the class the
+// server-side allocator cannot see at all.
+//
+// sharedNATName is excluded from the NAT source. It covers all of
+// segmentBaseCIDR by design (ensureSharedNATScript), so every legitimate
+// per-sandbox block the daemon hands out is a sub-range of it -- once the
+// shared NAT exists (after the first segment on the host), every later
+// segment's CIDR would otherwise "conflict" with it. The shared NAT itself
+// is not a collision; only something else routing through the requested
+// range is.
+//
+// Enumeration failure is deliberately not fatal: refusing every segment
+// because one Get- cmdlet errored would be worse than proceeding, given
+// the server-side global allocation is still in force and this is the
+// local backstop rather than the primary guarantee.
+func (d *Driver) checkCIDRAvailable(ctx context.Context, cidr string) error {
+	if strings.TrimSpace(cidr) == "" {
+		return fmt.Errorf("no segment CIDR supplied")
 	}
-	ip4 := base.IP.To4()
-	if ip4 == nil {
-		return 0, 0, fmt.Errorf("segmentBaseCIDR %q is not IPv4", segmentBaseCIDR)
+
+	// Fields are joined with '|' rather than a tab: PowerShell escapes a tab
+	// as a backtick sequence, and a backtick cannot appear inside a Go raw
+	// string literal (it terminates it). '|' needs no escaping on either
+	// side and cannot appear in an interface alias, NAT name or prefix.
+	out, err := d.ps(ctx, `
+$ErrorActionPreference = 'SilentlyContinue'
+Get-NetNat | ForEach-Object { "nat|" + $_.Name + "|" + $_.InternalIPInterfaceAddressPrefix }
+Get-NetIPAddress -AddressFamily IPv4 | ForEach-Object { "addr|" + $_.InterfaceAlias + "|" + $_.IPAddress + "/" + $_.PrefixLength }
+`)
+	if err != nil {
+		return nil
 	}
-	ones, bits := base.Mask.Size()
-	if bits != 32 || ones > segmentPrefixLen {
-		return 0, 0, fmt.Errorf("segmentBaseCIDR %q cannot hold a /%d block", segmentBaseCIDR, segmentPrefixLen)
+
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Split(strings.TrimSpace(line), "|")
+		if len(fields) < 3 {
+			continue
+		}
+		kind, name, prefix := fields[0], fields[1], fields[2]
+		if kind == "nat" && name == sharedNATName {
+			continue
+		}
+		// A host address arrives as <ip>/<prefixlen> -- the address, not
+		// its network. OverlapsAny masks both sides before comparing, so
+		// 10.250.0.1/29 is correctly read as covering 10.250.0.0/29.
+		if !segmentcidr.OverlapsAny(cidr, []string{prefix}) {
+			continue
+		}
+		what := fmt.Sprintf("NAT %q (%s)", name, prefix)
+		if kind == "addr" {
+			what = fmt.Sprintf("host address on %q (%s)", name, prefix)
+		}
+		return &providersdk.CIDRConflictError{RequestedCIDR: cidr, ConflictingWith: what}
 	}
-	baseInt = uint32(ip4[0])<<24 | uint32(ip4[1])<<16 | uint32(ip4[2])<<8 | uint32(ip4[3])
-	return baseInt, 1 << (segmentPrefixLen - ones), nil
+	return nil
 }
 
-// blockForIndex computes the index-th segmentPrefixLen block within
-// segmentBaseCIDR, returning its network CIDR, the first usable address
-// (used as the switch's gateway/host-side IP), and the guest-assignable
-// address that follows it.
-//
-// The index is range-checked against segmentBaseCIDR's real capacity before
-// any address arithmetic runs, so an out-of-range index returns
-// errSegmentRangeExhausted instead of silently computing an address outside
-// the base range (or, for a very large index, wrapping the uint32 offset
-// around into unrelated address space).
-func blockForIndex(index int) (cidr string, gateway string, guest string, err error) {
-	baseInt, blocks, err := segmentBaseBounds()
+// addressesForCIDR derives a block's gateway (host-side switch address) and
+// guest-assignable address from the block's own network CIDR. Shares the
+// same offsets blockForIndex used, so a segment recorded from a
+// caller-supplied CIDR is addressed identically to one this driver would
+// have carved itself.
+func addressesForCIDR(cidr string) (gateway string, guest string, err error) {
+	_, block, err := net.ParseCIDR(cidr)
 	if err != nil {
-		return "", "", "", err
+		return "", "", fmt.Errorf("parse segment CIDR %q: %w", cidr, err)
 	}
-	if index < 0 || index >= blocks {
-		return "", "", "", fmt.Errorf("%w: block index %d is outside the %d /%d blocks in %s",
-			errSegmentRangeExhausted, index, blocks, segmentPrefixLen, segmentBaseCIDR)
+	ip4 := block.IP.To4()
+	if ip4 == nil {
+		return "", "", fmt.Errorf("segment CIDR %q is not IPv4", cidr)
 	}
-	//nolint:gosec // index is bounded to [0, blocks) immediately above, and
-	// blocks is derived from segmentBaseCIDR's own prefix length, so the
-	// conversion cannot overflow uint32 for any base range this constant can
-	// express.
-	blockStart := baseInt + uint32(index)*segmentBlockSize
-	return fmt.Sprintf("%s/%d", ipv4FromUint32(blockStart), segmentPrefixLen),
-		ipv4FromUint32(blockStart + segmentGatewayOffset),
-		ipv4FromUint32(blockStart + segmentGuestOffset),
-		nil
+	blockStart := uint32(ip4[0])<<24 | uint32(ip4[1])<<16 | uint32(ip4[2])<<8 | uint32(ip4[3])
+	return ipv4FromUint32(blockStart + segmentGatewayOffset),
+		ipv4FromUint32(blockStart + segmentGuestOffset), nil
 }
 
 // guestAddressForCIDR derives a block's guest-assignable address from the
@@ -321,37 +357,6 @@ func ipv4FromUint32(addr uint32) string {
 	var octets [4]byte
 	binary.BigEndian.PutUint32(octets[:], addr)
 	return net.IPv4(octets[0], octets[1], octets[2], octets[3]).String()
-}
-
-// indexForBlock recovers a persisted block's index within segmentBaseCIDR:
-// the block size is fixed, so the offset from segmentBaseCIDR's base address
-// divided by segmentBlockSize is the index. A CIDR that sorts below the base
-// address, or beyond its last block, is reported as an error rather than
-// allowed to underflow the unsigned subtraction (or overshoot) into a
-// plausible-looking but wrong index -- reachable only from corrupt or
-// hand-edited ledger state, but silent if unchecked.
-func indexForBlock(cidr string) (int, error) {
-	_, block, err := net.ParseCIDR(cidr)
-	if err != nil {
-		return 0, err
-	}
-	baseInt, blocks, err := segmentBaseBounds()
-	if err != nil {
-		return 0, err
-	}
-	blockIP4 := block.IP.To4()
-	if blockIP4 == nil {
-		return 0, fmt.Errorf("non-IPv4 CIDR %q", cidr)
-	}
-	blockInt := uint32(blockIP4[0])<<24 | uint32(blockIP4[1])<<16 | uint32(blockIP4[2])<<8 | uint32(blockIP4[3])
-	if blockInt < baseInt {
-		return 0, fmt.Errorf("CIDR %q sorts below segmentBaseCIDR %s", cidr, segmentBaseCIDR)
-	}
-	index := int((blockInt - baseInt) / segmentBlockSize)
-	if index >= blocks {
-		return 0, fmt.Errorf("CIDR %q is outside segmentBaseCIDR %s", cidr, segmentBaseCIDR)
-	}
-	return index, nil
 }
 
 func switchNameForSandbox(sandboxID string) string {
@@ -435,14 +440,29 @@ func (d *Driver) resolveSegmentLedgerPath() string {
 //
 // On failure, the sandbox's ledger entry is deliberately NOT released (see
 // the comment on the error-handling branch below for why).
-func (d *Driver) CreateSegment(ctx context.Context, sandboxID string) (providersdk.SegmentRef, error) {
-	alloc, err := d.segments().allocate(sandboxID)
-	if err != nil {
-		return "", fmt.Errorf("allocate segment CIDR for sandbox %q: %w", sandboxID, err)
-	}
-	adapterAlias := fmt.Sprintf("vEthernet (%s)", alloc.SwitchName)
+func (d *Driver) CreateSegment(ctx context.Context, sandboxID string, cidr string) (providersdk.SegmentRef, string, error) {
+	// Locked for the whole call, not just the switch-creation script below:
+	// checkCIDRAvailable's own PowerShell also reads live host network state
+	// (Get-NetNat/Get-NetIPAddress), and running it concurrently with another
+	// goroutine's New-VMSwitch/New-NetNat could read a half-created NAT and
+	// misjudge availability. Hyper-V PowerShell for this driver never runs
+	// concurrently with itself.
 	d.segmentHostMu.Lock()
 	defer d.segmentHostMu.Unlock()
+	if _, known, lerr := d.segments().lookupBySandboxID(sandboxID); lerr == nil && !known {
+		// Only check on the first call for this sandbox. On the retry path
+		// the segment's switch and NAT may already exist bound to this very
+		// range, and checking would then find the segment conflicting with
+		// itself.
+		if err := d.checkCIDRAvailable(ctx, cidr); err != nil {
+			return "", "", err
+		}
+	}
+	alloc, err := d.segments().record(sandboxID, cidr)
+	if err != nil {
+		return "", "", fmt.Errorf("record segment CIDR for sandbox %q: %w", sandboxID, err)
+	}
+	adapterAlias := fmt.Sprintf("vEthernet (%s)", alloc.SwitchName)
 	_, err = d.ps(ctx, fmt.Sprintf(`
 $ErrorActionPreference = 'Stop'
 if (-not (Get-VMSwitch -Name '%s' -ErrorAction SilentlyContinue)) {
@@ -471,9 +491,9 @@ if (-not (Get-NetIPAddress -InterfaceAlias '%s' -IPAddress '%s' -ErrorAction Sil
 		// what makes this safe: the deterministic switch name and CIDR are
 		// unchanged, so the "if not exists" checks above correctly resume
 		// wherever the previous attempt left off.
-		return "", fmt.Errorf("create segment for sandbox %q: %w", sandboxID, err)
+		return "", "", fmt.Errorf("create segment for sandbox %q: %w", sandboxID, err)
 	}
-	return providersdk.SegmentRef(alloc.SwitchName), nil
+	return providersdk.SegmentRef(alloc.SwitchName), alloc.CIDR, nil
 }
 
 // ensureSharedNATScript returns the PowerShell that makes sure sharedNATName

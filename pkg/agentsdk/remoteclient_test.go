@@ -513,7 +513,7 @@ func TestExecuteCommand(t *testing.T) {
 		cmd := &boxyagentv1.Command{
 			CommandId:    "cmd-20",
 			ProviderType: "hyperv",
-			Op:           &boxyagentv1.Command_CreateSegment{CreateSegment: &boxyagentv1.CreateSegmentCommand{SandboxId: "sb-1"}},
+			Op:           &boxyagentv1.Command_CreateSegment{CreateSegment: &boxyagentv1.CreateSegmentCommand{SandboxId: "sb-1", Cidr: "10.250.0.0/29"}},
 		}
 		res := executeCommand(context.Background(), drivers, cmd)
 		if res.GetError() != nil {
@@ -521,6 +521,12 @@ func TestExecuteCommand(t *testing.T) {
 		}
 		if got := res.GetCreateSegment().GetSegmentRef(); got != "boxy-sb-sb-1" {
 			t.Fatalf("segment_ref = %q, want %q", got, "boxy-sb-sb-1")
+		}
+		// fakeIsolatingDriver echoes the cidr it was given back as
+		// authoritative, standing in for a driver's idempotent-repeat
+		// return -- the result must carry it through to the wire.
+		if got := res.GetCreateSegment().GetCidr(); got != "10.250.0.0/29" {
+			t.Fatalf("cidr = %q, want %q", got, "10.250.0.0/29")
 		}
 		fid := drivers["hyperv"].(*fakeIsolatingDriver)
 		if fid.gotSandboxID != "sb-1" {
@@ -1070,12 +1076,12 @@ type fakeIsolatingDriver struct {
 	gotDestroyRef    providersdk.SegmentRef
 }
 
-func (f *fakeIsolatingDriver) CreateSegment(_ context.Context, sandboxID string) (providersdk.SegmentRef, error) {
+func (f *fakeIsolatingDriver) CreateSegment(_ context.Context, sandboxID string, cidr string) (providersdk.SegmentRef, string, error) {
 	f.gotSandboxID = sandboxID
 	if f.createSegmentErr != nil {
-		return "", f.createSegmentErr
+		return "", "", f.createSegmentErr
 	}
-	return f.createSegmentRef, nil
+	return f.createSegmentRef, cidr, nil
 }
 func (f *fakeIsolatingDriver) AttachToSegment(_ context.Context, providerResourceID string, ref providersdk.SegmentRef) error {
 	f.gotResourceID, f.gotAttachRef = providerResourceID, ref
@@ -1092,7 +1098,7 @@ func TestEmbeddedAgent_CreateSegment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewEmbeddedAgent: %v", err)
 	}
-	ref, err := agent.CreateSegment(context.Background(), "hyperv", "sb-1")
+	ref, _, err := agent.CreateSegment(context.Background(), "hyperv", "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
@@ -1138,7 +1144,7 @@ func TestEmbeddedAgent_CreateSegmentUnsupportedDriverErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewEmbeddedAgent: %v", err)
 	}
-	if _, err := agent.CreateSegment(context.Background(), "docker", "sb-1"); err == nil {
+	if _, _, err := agent.CreateSegment(context.Background(), "docker", "sb-1", "10.250.0.0/29"); err == nil {
 		t.Fatal("expected an error for a driver that does not implement NetworkIsolator")
 	}
 }

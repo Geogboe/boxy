@@ -33,10 +33,13 @@ type PackageSandboxAllocator interface {
 //
 // CreateSegment also returns the resolved provider type (needed by Manager
 // to record model.NetworkSegment.ProviderType for later destroy calls,
-// which have no model.Pool/model.Resource in scope to re-resolve it from).
+// which have no model.Pool/model.Resource in scope to re-resolve it from)
+// and the segment's authoritative CIDR, which is not always the cidr
+// argument -- see providersdk.NetworkIsolator.CreateSegment's doc comment.
+// The caller must persist the returned CIDR, not its own proposal.
 type NetworkIsolatingAllocator interface {
 	SandboxAllocator
-	CreateSegment(ctx context.Context, pool model.Pool, res model.Resource, sandboxID model.SandboxID) (providersdk.SegmentRef, providersdk.Type, error)
+	CreateSegment(ctx context.Context, pool model.Pool, res model.Resource, sandboxID model.SandboxID, cidr string) (providersdk.SegmentRef, providersdk.Type, string, error)
 	AttachToSegment(ctx context.Context, pool model.Pool, res model.Resource, ref providersdk.SegmentRef) error
 }
 

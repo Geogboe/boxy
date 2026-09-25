@@ -632,4 +632,23 @@ c35d036c70c4a3a4b708a689528a6ead25fcf611:docs/adr/0021-network-isolation-driver-
 # NAT's prefix). Same reviewed-fixture category as the batches above.
 ed2e40e9b7b09e592a08fbbe79a614f8a1eef5ae:AGENTS.md:boxy-pii-private-ipv4:263
 ed2e40e9b7b09e592a08fbbe79a614f8a1eef5ae:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:158
+
+# Reviewed 2026-09-24: not Boxy's own reserved range, so the general
+# boxy-pii-private-ipv4 filter doesn't cover these, but still not a leaked
+# real address. The design doc documents an observed collision between two
+# hosts' well-known Docker default bridge subnets (172.17-19.0.0/16); the
+# segmentcidr.go comment names those same defaults for context; the docker
+# driver test fixtures reuse Docker's default docker0 subnet and the
+# canonical 192.168.1.0/24 example gateway as synthetic host-route input.
+c9a06237db159b7394e105ccd6e77bd5a67a8288:docs/superpowers/specs/2026-09-22-global-segment-cidr-allocation-design.md:boxy-pii-private-ipv4:15
+c9a06237db159b7394e105ccd6e77bd5a67a8288:docs/superpowers/specs/2026-09-22-global-segment-cidr-allocation-design.md:boxy-pii-private-ipv4:16
+c9a06237db159b7394e105ccd6e77bd5a67a8288:pkg/providersdk/providers/docker/segment_cidr_test.go:boxy-pii-private-ipv4:82
+c9a06237db159b7394e105ccd6e77bd5a67a8288:pkg/providersdk/providers/docker/segment_cidr_test.go:boxy-pii-private-ipv4:103
+c9a06237db159b7394e105ccd6e77bd5a67a8288:pkg/providersdk/providers/docker/segment_cidr_test.go:boxy-pii-private-ipv4:111
+c9a06237db159b7394e105ccd6e77bd5a67a8288:pkg/segmentcidr/segmentcidr.go:boxy-pii-private-ipv4:26
+
+# Reviewed 2026-09-24: the review comment above, naming those same
+# addresses in prose, trips the same rule on this file itself. Same
+# self-referential case as the earlier .betterleaksignore entry above.
+59f2db9814cced38585c72ce648a4600ef47da35:.betterleaksignore:boxy-pii-private-ipv4:642
 ed2e40e9b7b09e592a08fbbe79a614f8a1eef5ae:pkg/providersdk/providers/hyperv/network_isolation_test.go:boxy-pii-private-ipv4:678

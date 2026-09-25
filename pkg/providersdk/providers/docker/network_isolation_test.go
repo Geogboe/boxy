@@ -25,7 +25,7 @@ func TestDriver_CreateSegment_CreatesLabeledBridgeNetwork(t *testing.T) {
 	}
 	d := &Driver{cli: cli}
 
-	ref, err := d.CreateSegment(context.Background(), "sb-1")
+	ref, _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestDriver_CreateSegment_RejectsNameCollisionWithUnmanagedNetwork(t *testin
 	}
 	d := &Driver{cli: cli}
 
-	if _, err := d.CreateSegment(context.Background(), "sb-1"); err == nil {
+	if _, _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29"); err == nil {
 		t.Fatal("CreateSegment succeeded against an unmanaged name collision, want an error")
 	}
 }
@@ -228,11 +228,11 @@ func TestDriver_CreateSegment_IdempotentForSameSandboxID(t *testing.T) {
 	}
 	d := &Driver{cli: cli}
 
-	first, err := d.CreateSegment(context.Background(), "sb-1")
+	first, _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("first CreateSegment: %v", err)
 	}
-	second, err := d.CreateSegment(context.Background(), "sb-1")
+	second, _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("second CreateSegment: %v", err)
 	}
@@ -244,6 +244,54 @@ func TestDriver_CreateSegment_IdempotentForSameSandboxID(t *testing.T) {
 	}
 	if !slices.Equal(inspected, []string{"boxy-sb-sb-1", "boxy-sb-sb-1"}) {
 		t.Fatalf("NetworkInspect called with %v, want the deterministic segment name both times", inspected)
+	}
+}
+
+// TestDriver_CreateSegment_IdempotentRepeatReturnsExistingCIDRNotNewProposal
+// guards CreateSegmentResult.cidr's contract: a repeat call for a sandbox
+// that already has a segment must report that segment's real subnet, not
+// the (possibly different) range the caller just proposed. The caller
+// persists whatever CreateSegment returns as authoritative, so returning
+// the wrong one here would let a stale range go on record while the real
+// one -- still held by this live network -- goes untracked.
+func TestDriver_CreateSegment_IdempotentRepeatReturnsExistingCIDRNotNewProposal(t *testing.T) {
+	created := 0
+	cli := &mockDockerClient{
+		networkInspect: func(_ context.Context, networkID string, _ network.InspectOptions) (network.Inspect, error) {
+			if created == 0 {
+				return network.Inspect{}, notFoundError{msg: "network not found"}
+			}
+			return network.Inspect{
+				Name:   networkID,
+				ID:     "net-abc123",
+				Labels: map[string]string{managedLabel: managedLabelValue},
+				IPAM:   network.IPAM{Config: []network.IPAMConfig{{Subnet: "10.250.0.0/29"}}},
+			}, nil
+		},
+		networkCreate: func(_ context.Context, _ string, _ network.CreateOptions) (network.CreateResponse, error) {
+			created++
+			return network.CreateResponse{ID: "net-abc123"}, nil
+		},
+	}
+	d := &Driver{cli: cli}
+
+	_, firstCIDR, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
+	if err != nil {
+		t.Fatalf("first CreateSegment: %v", err)
+	}
+	if firstCIDR != "10.250.0.0/29" {
+		t.Fatalf("first cidr = %q, want the proposal %q", firstCIDR, "10.250.0.0/29")
+	}
+
+	// A retry proposing a *different* range than what was actually created --
+	// e.g. after a daemon restart lost track of the first attempt's segment.
+	_, secondCIDR, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.8/29")
+	if err != nil {
+		t.Fatalf("second CreateSegment: %v", err)
+	}
+	if secondCIDR != "10.250.0.0/29" {
+		t.Fatalf("second cidr = %q, want the network's real subnet %q, not the new proposal %q",
+			secondCIDR, "10.250.0.0/29", "10.250.0.8/29")
 	}
 }
 
@@ -268,7 +316,7 @@ func TestDriver_CreateSegment_ResolvesNetworkWhenCreateLosesARace(t *testing.T) 
 	}
 	d := &Driver{cli: cli}
 
-	ref, err := d.CreateSegment(context.Background(), "sb-1")
+	ref, _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment must not propagate a lost create race, got: %v", err)
 	}
@@ -277,6 +325,35 @@ func TestDriver_CreateSegment_ResolvesNetworkWhenCreateLosesARace(t *testing.T) 
 	}
 	if inspects != 2 {
 		t.Fatalf("NetworkInspect called %d times, want a re-resolve after the failed create", inspects)
+	}
+}
+
+// TestDriver_CreateSegment_TranslatesPoolOverlapIntoCIDRConflict covers the
+// other create-time race: checkCIDRAvailable passes, but a *different*
+// network (not this sandbox's own -- that case is the "loses a race" test
+// above) claims an overlapping subnet before NetworkCreate runs. Docker's
+// IPAM rejects that with a plain error, not a structured type; the caller's
+// retry loop only recognizes *CIDRConflictError, so a translation is
+// required here or a local race turns into a hard sandbox failure instead
+// of the caller proposing a different range.
+func TestDriver_CreateSegment_TranslatesPoolOverlapIntoCIDRConflict(t *testing.T) {
+	cli := &mockDockerClient{
+		networkInspect: func(_ context.Context, _ string, _ network.InspectOptions) (network.Inspect, error) {
+			return network.Inspect{}, notFoundError{msg: "network not found"}
+		},
+		networkCreate: func(_ context.Context, _ string, _ network.CreateOptions) (network.CreateResponse, error) {
+			return network.CreateResponse{}, errors.New("Error response from daemon: Pool overlaps with other one on this address space")
+		},
+	}
+	d := &Driver{cli: cli}
+
+	_, _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
+	var conflict *providersdk.CIDRConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("err = %v, want a *CIDRConflictError so the caller retries with a different range", err)
+	}
+	if conflict.RequestedCIDR != "10.250.0.0/29" {
+		t.Fatalf("RequestedCIDR = %q, want %q", conflict.RequestedCIDR, "10.250.0.0/29")
 	}
 }
 
