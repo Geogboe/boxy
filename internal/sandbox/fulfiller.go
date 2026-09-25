@@ -354,8 +354,18 @@ func (f *Fulfiller) rollbackAllocation(ctx context.Context, snapshot allocationS
 	if err != nil {
 		return fmt.Errorf("get sandbox %q after rollback: %w", snapshot.sandbox.ID, err)
 	}
+	// NetworkSegments is carried forward from current, not reverted to the
+	// pre-transaction snapshot like everything else below. Unlike a
+	// resource/pool, a segment ensureNetworkSegment recorded since the
+	// snapshot has a real host object behind it (a Docker network, a
+	// Hyper-V vSwitch+NAT) that a discarded record would orphan: silently
+	// untracked by any sandbox, so sandbox deletion's own segment teardown
+	// (see deleter.go) can never reach it, and its CIDR reads as free to
+	// allocatedSegmentCIDRs even though the host object still occupies it.
+	networkSegments := current.NetworkSegments
 	if current.Status == model.SandboxStatusDeleting {
 		deleting := snapshot.sandbox
+		deleting.NetworkSegments = networkSegments
 		deleting.Status = model.SandboxStatusDeleting
 		deleting.Error = current.Error
 		if err := f.store.PutSandbox(ctx, deleting); err != nil {
@@ -365,6 +375,7 @@ func (f *Fulfiller) rollbackAllocation(ctx context.Context, snapshot allocationS
 	}
 
 	failed := snapshot.sandbox
+	failed.NetworkSegments = networkSegments
 	failed.Status = model.SandboxStatusFailed
 	failed.Error = msg
 	if err := f.store.PutSandbox(ctx, failed); err != nil {
