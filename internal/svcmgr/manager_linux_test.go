@@ -86,6 +86,39 @@ func TestRenderUnit_QuotesArgsWithSpaces(t *testing.T) {
 	}
 }
 
+// TestRenderUnit_OmitsAmbientCapabilitiesWhenUnset covers the ordinary case
+// (no #379 mesh overlay caller involved): no AmbientCapabilities= line
+// should appear in the unit at all, not an empty one.
+func TestRenderUnit_OmitsAmbientCapabilitiesWhenUnset(t *testing.T) {
+	spec := Spec{
+		Name:     "boxy-agent",
+		ExecPath: "/usr/local/bin/boxy",
+		Args:     []string{"agent", "serve"},
+	}
+	unit := renderUnit(spec)
+	if strings.Contains(unit, "AmbientCapabilities") {
+		t.Errorf("rendered unit should omit AmbientCapabilities when unset; got:\n%s", unit)
+	}
+}
+
+// TestRenderUnit_IncludesAmbientCapabilitiesWhenSet covers #379 blocker 6:
+// `agent service install --enable-mesh-overlay` needs CAP_NET_ADMIN granted
+// via systemd so the agent can open a WireGuard device without running as
+// root.
+func TestRenderUnit_IncludesAmbientCapabilitiesWhenSet(t *testing.T) {
+	spec := Spec{
+		Name:                     "boxy-agent",
+		ExecPath:                 "/usr/local/bin/boxy",
+		Args:                     []string{"agent", "serve"},
+		LinuxAmbientCapabilities: []string{"CAP_NET_ADMIN"},
+	}
+	unit := renderUnit(spec)
+	want := "AmbientCapabilities=CAP_NET_ADMIN"
+	if !strings.Contains(unit, want) {
+		t.Errorf("rendered unit missing %q; got:\n%s", want, unit)
+	}
+}
+
 // TestQuoteSystemdArg exercises quoteSystemdArg directly across the cases
 // that matter for systemd's unit-file command-line syntax: simple tokens
 // stay unquoted (no gratuitous quoting), and space/tab/quote/backslash

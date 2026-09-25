@@ -945,6 +945,50 @@ func TestRunSession_RegistersAndDispatchesCommand(t *testing.T) {
 	}
 }
 
+// TestRunSession_RegisterRequestCarriesMeshCapable proves RemoteClientConfig.
+// MeshCapable (the caller's own pkg/meshnet.Probe result, taken once before
+// RunSession starts -- see its doc comment) is forwarded verbatim onto
+// RegisterRequest.mesh_capable, for both values.
+func TestRunSession_RegisterRequestCarriesMeshCapable(t *testing.T) {
+	for _, meshCapable := range []bool{true, false} {
+		t.Run(fmt.Sprintf("meshCapable=%v", meshCapable), func(t *testing.T) {
+			stream := newFakeClientStream()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			sessionErrCh := make(chan error, 1)
+			go func() {
+				sessionErrCh <- RunSession(ctx, stream, RemoteClientConfig{
+					AgentName:     "test-agent",
+					AgentVersion:  "v-test",
+					ProviderTypes: []providersdk.Type{"docker"},
+					Drivers:       DriverSet{"docker": &fakeDriver{providerType: "docker"}},
+					MeshCapable:   meshCapable,
+				})
+			}()
+			defer func() {
+				stream.close()
+				cancel()
+				<-sessionErrCh
+			}()
+
+			var registerSent *boxyagentv1.AgentMessage
+			select {
+			case registerSent = <-stream.sentCh:
+			case <-time.After(2 * time.Second):
+				t.Fatal("timed out waiting for RegisterRequest")
+			}
+			reg := registerSent.GetRegister()
+			if reg == nil {
+				t.Fatalf("expected a RegisterRequest, got %#v", registerSent)
+			}
+			if reg.GetMeshCapable() != meshCapable {
+				t.Fatalf("RegisterRequest.MeshCapable = %v, want %v", reg.GetMeshCapable(), meshCapable)
+			}
+		})
+	}
+}
+
 // TestRunSession_HeartbeatCarriesAvailability proves the end-to-end client
 // wiring: a driver implementing providersdk.AvailabilityReporter shows up
 // on the wire inside Heartbeat.availability, and a driver that doesn't
@@ -1094,7 +1138,7 @@ func (f *fakeIsolatingDriver) DestroySegment(_ context.Context, ref providersdk.
 
 func TestEmbeddedAgent_CreateSegment(t *testing.T) {
 	driver := &fakeIsolatingDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}, createSegmentRef: "boxy-sb-sb-1"}
-	agent, err := NewEmbeddedAgent("agent-1", "agent-1", driver)
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", false, driver)
 	if err != nil {
 		t.Fatalf("NewEmbeddedAgent: %v", err)
 	}
@@ -1112,7 +1156,7 @@ func TestEmbeddedAgent_CreateSegment(t *testing.T) {
 
 func TestEmbeddedAgent_AttachToSegment(t *testing.T) {
 	driver := &fakeIsolatingDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}}
-	agent, err := NewEmbeddedAgent("agent-1", "agent-1", driver)
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", false, driver)
 	if err != nil {
 		t.Fatalf("NewEmbeddedAgent: %v", err)
 	}
@@ -1126,7 +1170,7 @@ func TestEmbeddedAgent_AttachToSegment(t *testing.T) {
 
 func TestEmbeddedAgent_DestroySegment(t *testing.T) {
 	driver := &fakeIsolatingDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}}
-	agent, err := NewEmbeddedAgent("agent-1", "agent-1", driver)
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", false, driver)
 	if err != nil {
 		t.Fatalf("NewEmbeddedAgent: %v", err)
 	}
@@ -1140,7 +1184,7 @@ func TestEmbeddedAgent_DestroySegment(t *testing.T) {
 
 func TestEmbeddedAgent_CreateSegmentUnsupportedDriverErrors(t *testing.T) {
 	driver := &fakeDriver{providerType: "docker"}
-	agent, err := NewEmbeddedAgent("agent-1", "agent-1", driver)
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", false, driver)
 	if err != nil {
 		t.Fatalf("NewEmbeddedAgent: %v", err)
 	}
@@ -1174,7 +1218,7 @@ func (f *fakeMeshPeeringDriver) RemoveMeshPeer(_ context.Context, _ providersdk.
 
 func TestEmbeddedAgent_MeshIdentity(t *testing.T) {
 	driver := &fakeMeshPeeringDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}, identityPub: "pub1", identityEndpoint: "203.0.113.5:51820", identityCIDR: "10.250.0.0/29"}
-	agent, err := NewEmbeddedAgent("agent-1", "agent-1", driver)
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", false, driver)
 	if err != nil {
 		t.Fatalf("NewEmbeddedAgent: %v", err)
 	}
@@ -1189,7 +1233,7 @@ func TestEmbeddedAgent_MeshIdentity(t *testing.T) {
 
 func TestEmbeddedAgent_AddMeshPeer(t *testing.T) {
 	driver := &fakeMeshPeeringDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}}
-	agent, err := NewEmbeddedAgent("agent-1", "agent-1", driver)
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", false, driver)
 	if err != nil {
 		t.Fatalf("NewEmbeddedAgent: %v", err)
 	}
@@ -1203,7 +1247,7 @@ func TestEmbeddedAgent_AddMeshPeer(t *testing.T) {
 
 func TestEmbeddedAgent_RemoveMeshPeer(t *testing.T) {
 	driver := &fakeMeshPeeringDriver{fakeDriver: &fakeDriver{providerType: "hyperv"}}
-	agent, err := NewEmbeddedAgent("agent-1", "agent-1", driver)
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", false, driver)
 	if err != nil {
 		t.Fatalf("NewEmbeddedAgent: %v", err)
 	}
@@ -1217,7 +1261,7 @@ func TestEmbeddedAgent_RemoveMeshPeer(t *testing.T) {
 
 func TestEmbeddedAgent_MeshIdentityUnsupportedDriverErrors(t *testing.T) {
 	driver := &fakeDriver{providerType: "docker"}
-	agent, err := NewEmbeddedAgent("agent-1", "agent-1", driver)
+	agent, err := NewEmbeddedAgent("agent-1", "agent-1", false, driver)
 	if err != nil {
 		t.Fatalf("NewEmbeddedAgent: %v", err)
 	}

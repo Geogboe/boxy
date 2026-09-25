@@ -175,6 +175,85 @@ func TestAgentServiceInstall_Elevated_WritesConfigAndInstalls(t *testing.T) {
 	}
 }
 
+// TestAgentServiceInstall_MeshOverlay_SystemModeGrantsCapabilityAndPersistsConfig
+// covers #379 blocker 6: --enable-mesh-overlay on a real (system) install
+// must both persist into service.yaml (so a restarted service reproduces
+// it) and request CAP_NET_ADMIN from the service manager, since a real
+// systemd system unit is the one install mode that can actually be granted
+// it.
+func TestAgentServiceInstall_MeshOverlay_SystemModeGrantsCapabilityAndPersistsConfig(t *testing.T) {
+	withElevated(t, true)
+	m := &fakeManager{}
+	withFakeSvcManager(t, m)
+
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, ".boxy-agent")
+
+	var out bytes.Buffer
+	err := runAgentServiceInstall(newTestCmd(&out), agentServiceInstallOpts{
+		userMode: false,
+		agentOpts: agentServeOpts{
+			server:            "boxy-server:9091",
+			providers:         []string{"docker"},
+			dataDir:           dataDir,
+			enableMeshOverlay: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("runAgentServiceInstall: %v", err)
+	}
+	if len(m.installedSpecs) != 1 {
+		t.Fatalf("expected exactly one Install call, got %d", len(m.installedSpecs))
+	}
+	spec := m.installedSpecs[0]
+	if !slices.Equal(spec.LinuxAmbientCapabilities, []string{"CAP_NET_ADMIN"}) {
+		t.Fatalf("Spec.LinuxAmbientCapabilities = %v, want [CAP_NET_ADMIN]", spec.LinuxAmbientCapabilities)
+	}
+
+	cfg, err := loadAgentServiceConfig(filepath.Join(dataDir, "service.yaml"))
+	if err != nil {
+		t.Fatalf("loadAgentServiceConfig: %v", err)
+	}
+	if !cfg.MeshOverlayEnabled {
+		t.Fatal("expected the saved service config to persist MeshOverlayEnabled=true")
+	}
+}
+
+// TestAgentServiceInstall_MeshOverlay_UserModeNeverGrantsCapability covers
+// the other half: an unprivileged --user install cannot be meaningfully
+// granted ambient capabilities (see svcmgr.Spec.LinuxAmbientCapabilities'
+// doc comment), so it must not even ask, although the setting itself still
+// persists (the probe at agent startup is what actually decides
+// MeshCapable, and it can legitimately succeed or fail independent of this).
+func TestAgentServiceInstall_MeshOverlay_UserModeNeverGrantsCapability(t *testing.T) {
+	withElevated(t, true)
+	m := &fakeManager{}
+	withFakeSvcManager(t, m)
+
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, ".boxy-agent")
+
+	var out bytes.Buffer
+	err := runAgentServiceInstall(newTestCmd(&out), agentServiceInstallOpts{
+		userMode: true,
+		agentOpts: agentServeOpts{
+			server:            "boxy-server:9091",
+			providers:         []string{"docker"},
+			dataDir:           dataDir,
+			enableMeshOverlay: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("runAgentServiceInstall: %v", err)
+	}
+	if len(m.installedSpecs) != 1 {
+		t.Fatalf("expected exactly one Install call, got %d", len(m.installedSpecs))
+	}
+	if got := m.installedSpecs[0].LinuxAmbientCapabilities; len(got) != 0 {
+		t.Fatalf("Spec.LinuxAmbientCapabilities = %v, want empty for a --user install", got)
+	}
+}
+
 // TestAgentServiceInstall_PersistsProviderConfigsBaseDirFromConfigFile
 // guards a real bug: `agent service install --config boxy.yaml` used to
 // write ProviderConfigs into service.yaml without recording the directory

@@ -336,6 +336,16 @@ func (ap *AgentProvisioner) MeshIdentity(ctx context.Context, providerType provi
 	if !ok {
 		return "", "", "", fmt.Errorf("agent %q does not support mesh peering", agentID)
 	}
+	// agent implementing agentsdk.MeshPeeringAgent (checked above) only
+	// means its driver satisfies providersdk.MeshPeerer -- both EmbeddedAgent
+	// and RemoteAgent implement it unconditionally, regardless of whether
+	// this host can actually open a WireGuard device. MeshCapable is the
+	// real, probed answer to that; checking it here avoids attempting (and
+	// failing deep inside the driver on) a device creation this agent
+	// already knows it can't do. See AgentInfo.MeshCapable's doc comment.
+	if !agent.Info().MeshCapable {
+		return "", "", "", fmt.Errorf("agent %q cannot create a WireGuard device (mesh overlay not enabled, or no CAP_NET_ADMIN/wintun.dll)", agentID)
+	}
 	return peerer.MeshIdentity(ctx, providerType, ref)
 }
 
@@ -348,6 +358,10 @@ func (ap *AgentProvisioner) AddMeshPeer(ctx context.Context, providerType provid
 	peerer, ok := agent.(agentsdk.MeshPeeringAgent)
 	if !ok {
 		return fmt.Errorf("agent %q does not support mesh peering", agentID)
+	}
+	// See the identical check in MeshIdentity above.
+	if !agent.Info().MeshCapable {
+		return fmt.Errorf("agent %q cannot create a WireGuard device (mesh overlay not enabled, or no CAP_NET_ADMIN/wintun.dll)", agentID)
 	}
 	return peerer.AddMeshPeer(ctx, providerType, ref, peerPublicKey, peerEndpoint, peerCIDR)
 }

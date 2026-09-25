@@ -58,6 +58,16 @@ type ServerSpec struct {
 	// store retains events. Empty means the 14-day default.
 	DiagnosticsRetention string `json:"diagnostics_retention,omitempty" yaml:"diagnostics_retention,omitempty"`
 
+	// MeshOverlayEnabled opts the daemon's own embedded agent (the local
+	// drivers `boxy serve` hosts in-process, see agentsdk.EmbeddedAgent) into
+	// cross-host mesh peering (#379 blocker 6). Default false: creating the
+	// first WireGuard device on Windows installs the Wintun kernel driver,
+	// so this must be an explicit opt-in, never attempted just because a
+	// sandbox happens to span hosts. A remote `boxy agent serve` process has
+	// its own independent flag for the same reason -- see
+	// docs/adr/0022's 2026-09-25 changelog entry.
+	MeshOverlayEnabled bool `json:"mesh_overlay_enabled,omitempty" yaml:"mesh_overlay_enabled,omitempty"`
+
 	// AgentTimeouts bounds remote/embedded agent RPC operations so a single
 	// hung call (e.g. a stalled PersonalizeGuest against a guest that never
 	// answers) cannot freeze pool provisioning or sandbox fulfillment

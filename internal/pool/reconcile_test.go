@@ -346,7 +346,7 @@ func TestReconcileAgent_DevfactoryFailListPreservesTrackedResource(t *testing.T)
 		t.Fatalf("seed PutResource: %v", err)
 	}
 
-	agent, err := agentsdk.NewEmbeddedAgent("agent-1", "Test Agent", driver)
+	agent, err := agentsdk.NewEmbeddedAgent("agent-1", "Test Agent", false, driver)
 	if err != nil {
 		t.Fatalf("NewEmbeddedAgent: %v", err)
 	}

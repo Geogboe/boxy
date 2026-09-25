@@ -356,6 +356,32 @@ func TestRunAgentServe_ServiceConfig_LoadsOptsFromFile(t *testing.T) {
 	}
 }
 
+// TestRunAgentServe_ServiceConfig_LoadsMeshOverlayEnabled covers #379
+// blocker 6's service-config half: `agent service install
+// --enable-mesh-overlay` must persist through to a restarted service's
+// resolved opts, the same way Insecure does above.
+func TestRunAgentServe_ServiceConfig_LoadsMeshOverlayEnabled(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "service.yaml")
+
+	if err := saveAgentServiceConfig(cfgPath, agentServiceConfig{
+		Server:             "127.0.0.1:1",
+		Providers:          []string{"docker"},
+		DataDir:            filepath.Join(dir, ".boxy-agent"),
+		MeshOverlayEnabled: true,
+	}); err != nil {
+		t.Fatalf("saveAgentServiceConfig: %v", err)
+	}
+
+	opts, err := resolveAgentServeOpts(agentServeOpts{serviceConfigPath: cfgPath})
+	if err != nil {
+		t.Fatalf("resolveAgentServeOpts: %v", err)
+	}
+	if !opts.enableMeshOverlay {
+		t.Fatal("expected enableMeshOverlay to be loaded from the service config as true")
+	}
+}
+
 func TestRunAgentServe_NoServiceConfigAndNoServer_ErrorsClearly(t *testing.T) {
 	_, err := resolveAgentServeOpts(agentServeOpts{})
 	if err == nil {

@@ -263,7 +263,8 @@ func runServe(ctx context.Context, opts serveOpts, cmd *cobra.Command) error {
 		return fmt.Errorf("build drivers: %w", err)
 	}
 	configureEmbeddedGuestBootstrapResolvers(drivers, st, guestSecrets, specsMap)
-	embeddedAgent, err := agentsdk.NewEmbeddedAgent(embeddedAgentID, "Embedded Agent", drivers...)
+	meshCapable := probeMeshCapability(cfg.Server.MeshOverlayEnabled)
+	embeddedAgent, err := agentsdk.NewEmbeddedAgent(embeddedAgentID, "Embedded Agent", meshCapable, drivers...)
 	if err != nil {
 		failAgent(err.Error())
 		return fmt.Errorf("create embedded agent: %w", err)

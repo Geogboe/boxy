@@ -413,6 +413,10 @@
           "description": "HTTP API listen address. Empty means the default (:9090).",
           "type": "string"
         },
+        "mesh_overlay_enabled": {
+          "description": "Opts the daemon's own embedded agent into cross-host mesh peering (#379). Default false: on Windows, creating the first WireGuard device installs the Wintun kernel driver, so this must be an explicit opt-in, never attempted just because a sandbox happens to span hosts.",
+          "type": "boolean"
+        },
         "pool_provisioning_watchdog_threshold": {
           "description": "How long a resource may sit in the provisioning state without progress before the reconciler destroys and replaces it, as a Go duration string. Empty means the default (15m). Must exceed every configured agent_timeouts value.",
           "type": "string"

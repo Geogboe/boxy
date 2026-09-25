@@ -183,3 +183,47 @@ func TestName_ReturnsTheUnderlyingTUNDeviceName(t *testing.T) {
 		t.Fatal("expected a non-empty interface name")
 	}
 }
+
+func TestProbe_ReturnsNilOnSuccessAndClosesTheInterface(t *testing.T) {
+	var created *Interface
+	orig := newProbeDevice
+	t.Cleanup(func() { newProbeDevice = orig })
+	newProbeDevice = func(ifName string, listenPort int) (*Interface, error) {
+		if ifName != probeInterfaceName {
+			t.Fatalf("ifName = %q, want %q", ifName, probeInterfaceName)
+		}
+		iface, err := newWithTUNFactory(ifName, listenPort, func(name string, mtu int) (tun.Device, error) {
+			tunDev, _, err := netstack.CreateNetTUN([]netip.Addr{netip.MustParseAddr("192.0.2.1")}, nil, mtu)
+			return tunDev, err
+		})
+		created = iface
+		return iface, err
+	}
+
+	if err := Probe(); err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if created == nil {
+		t.Fatal("expected newProbeDevice to be called")
+	}
+	if !created.closed {
+		t.Fatal("expected Probe to close the interface it created")
+	}
+}
+
+func TestProbe_PropagatesDeviceCreationFailure(t *testing.T) {
+	wantErr := fmt.Errorf("permission denied")
+	orig := newProbeDevice
+	t.Cleanup(func() { newProbeDevice = orig })
+	newProbeDevice = func(ifName string, listenPort int) (*Interface, error) {
+		return nil, wantErr
+	}
+
+	err := Probe()
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("error = %q, want it to contain %q", err.Error(), "permission denied")
+	}
+}

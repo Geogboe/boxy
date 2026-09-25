@@ -42,6 +42,15 @@ type RemoteClientConfig struct {
 	Drivers           DriverSet
 	HeartbeatInterval time.Duration // default 15s if zero; overridden by the server's RegisterResponse if set
 
+	// MeshCapable is this process's own pkg/meshnet.Probe result, taken
+	// once by the caller (`boxy agent serve`) before RunSession starts and
+	// sent verbatim as RegisterRequest.mesh_capable. See
+	// AgentInfo.MeshCapable's doc comment for why this lives here rather
+	// than being computed from Drivers the way NetworkIsolatingProviders
+	// is -- it is a live environment probe, and running it is only safe
+	// once the caller has confirmed the mesh overlay is enabled.
+	MeshCapable bool
+
 	// AvailabilitySampleTimeout bounds each individual
 	// providersdk.AvailabilityReporter query sampled before a Heartbeat is
 	// sent — see sampleAvailability. Zero uses
@@ -182,6 +191,7 @@ func RunSession(ctx context.Context, stream boxyagentv1.AgentTransportService_Co
 			ProviderTypes:                 providerTypes,
 			AgentVersion:                  cfg.AgentVersion,
 			NetworkIsolatingProviderTypes: isolatingTypes,
+			MeshCapable:                   cfg.MeshCapable,
 		}},
 	}); err != nil {
 		return fmt.Errorf("send register request: %w", err)

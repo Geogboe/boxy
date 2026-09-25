@@ -291,6 +291,19 @@ boxy agent              # Agent: distributed, connects to daemon via gRPC
   could be exercised. See
   [ADR-0022](docs/adr/0022-cross-host-mesh-peering.md) for the design and
   that open risk.
+- **An agent implementing `agentsdk.MeshPeeringAgent` (both `EmbeddedAgent`
+  and `RemoteAgent`, unconditionally) is not evidence the host can actually
+  create a WireGuard device.** `AgentInfo.MeshCapable` (2026-09-25, #379
+  blocker 6) is the real, probed answer (`pkg/meshnet.Probe`), gated behind
+  an explicit opt-in (`boxy agent serve --enable-mesh-overlay` /
+  `server.mesh_overlay_enabled` in `boxy.yaml`) that must never run
+  unconditionally — on Windows, creating the first Wintun adapter installs
+  the kernel driver. `internal/pool.AgentProvisioner`'s
+  `MeshIdentity`/`AddMeshPeer` check it before calling through. See
+  ADR-0022's 2026-09-25 changelog entry for what's implemented (the
+  capability advertisement, the Linux `CAP_NET_ADMIN` systemd grant) versus
+  what's deliberately still open (shipping an actual `wintun.dll` in the
+  release archive, Program Files install location).
 
 ### PSRP Transport Dependency Fork (go-psrp / go-psrpcore)
 

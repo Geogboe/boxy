@@ -289,3 +289,54 @@ sharing-one-host support, not a mesh-peering defect, but it means:
   still outstanding** — two sessions in a row have gotten closer (from "no
   handshake possible at all" to "handshake reaches the right place but
   isn't completed") without reaching a live ping proof.
+
+- **2026-09-25: #379 blocker 6 implemented — agents that can't create a
+  WireGuard device now say so up front instead of failing deep inside
+  driver code.** Until now, `agentsdk.MeshPeeringAgent` was implemented
+  unconditionally by both `EmbeddedAgent` and `RemoteAgent` (same pattern
+  as `NetworkIsolatingAgent`), so a type assertion for the capability told
+  a caller nothing about whether the *host* could actually open a TUN
+  device — on Windows specifically, nothing ever installed `wintun.dll`,
+  so every Windows agent's mesh attempt was silently doomed from the
+  start. Per the plan researched in #379's comments (Wintun sourcing,
+  Program Files install location, licensing):
+  - `pkg/meshnet.Probe()` creates and immediately closes one throwaway
+    WireGuard device — the same `tun.CreateTUN`/`device.NewDevice` path
+    production uses — so a nil return is real evidence the environment
+    supports it (`CAP_NET_ADMIN` on Linux, `wintun.dll` present on
+    Windows), not an optimistic guess.
+  - This is gated behind a new explicit opt-in, never run unconditionally:
+    `boxy agent serve --enable-mesh-overlay` (and `agent service install
+    --enable-mesh-overlay`, persisted into `service.yaml`) for a remote
+    agent, `server.mesh_overlay_enabled` in `boxy.yaml` for the daemon's
+    own embedded agent. This matters specifically on Windows: creating the
+    first Wintun adapter is what installs the kernel driver, so probing
+    unconditionally on every agent would install a third-party kernel
+    driver on hosts that never intend to use cross-host mesh at all.
+  - The probe result travels as `RegisterRequest.mesh_capable` (agent-wide,
+    unlike `network_isolating_provider_types` — whether a process can open
+    a TUN device isn't a per-provider-type property) into
+    `agentsdk.AgentInfo.MeshCapable`. `internal/pool.AgentProvisioner`'s
+    `MeshIdentity`/`AddMeshPeer` now check it before calling through to the
+    driver, returning a clear "cannot create a WireGuard device" error
+    instead of letting the call reach real device creation and fail there.
+  - `agent service install --enable-mesh-overlay` grants the systemd
+    service `CAP_NET_ADMIN` via `AmbientCapabilities=` (system-unit
+    installs only — an unprivileged `--user` unit generally cannot be
+    granted ambient capabilities its own login session doesn't already
+    have, so `--user --enable-mesh-overlay` still persists the setting but
+    intentionally never requests the capability; the probe then reports
+    not-capable, degrading the same way a missing `wintun.dll` does).
+  - **Not done in this pass, deliberately left for a follow-up**: the
+    release-packaging half of the plan (downloading, hash/signature
+    verifying, and bundling the actual `wintun.dll` into the Windows
+    release archive; installing the agent binary + DLL under Program Files
+    instead of the user-writable default install location, closing the
+    DLL-planting exposure described in #379's comments). Until that lands,
+    `--enable-mesh-overlay` on Windows still has nothing to load — the
+    probe will report not-capable on every Windows host until an operator
+    places a real signed `wintun.dll` next to `boxy.exe` themselves.
+  - This closes #379 blocker 6 as *implemented*, not as *validated*:
+    blockers 1 (Docker source-NAT masquerade) and 5 (real two-host
+    validation) are unchanged and still block cross-host traffic actually
+    flowing.

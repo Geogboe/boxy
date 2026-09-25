@@ -138,8 +138,11 @@ func renderUnit(spec Spec) string {
 	}
 	fmt.Fprintf(&b, "ExecStart=%s\n", strings.Join(execParts, " "))
 	fmt.Fprintf(&b, "Restart=on-failure\n")
-	fmt.Fprintf(&b, "RestartSec=5\n\n")
-	fmt.Fprintf(&b, "[Install]\n")
+	fmt.Fprintf(&b, "RestartSec=5\n")
+	if len(spec.LinuxAmbientCapabilities) > 0 {
+		fmt.Fprintf(&b, "AmbientCapabilities=%s\n", strings.Join(spec.LinuxAmbientCapabilities, " "))
+	}
+	fmt.Fprintf(&b, "\n[Install]\n")
 	return b.String()
 }
 

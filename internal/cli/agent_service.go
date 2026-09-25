@@ -81,6 +81,7 @@ also given, a distinctly named default data directory
 	cmd.Flags().StringVar(&opts.agentOpts.caCert, "ca-cert", "", "path to the server's CA certificate, required for the first (token) connection unless --insecure")
 	cmd.Flags().StringVar(&opts.agentOpts.dataDir, "data-dir", "", "directory for the agent's issued credentials (default .boxy-agent[-<instance-name>] in cwd)")
 	cmd.Flags().BoolVar(&opts.agentOpts.insecure, "insecure", false, "connect without TLS (local development only)")
+	cmd.Flags().BoolVar(&opts.agentOpts.enableMeshOverlay, "enable-mesh-overlay", false, "opt this agent into cross-host mesh peering (#379); installs the Wintun kernel driver on first use on Windows, and grants CAP_NET_ADMIN on a Linux system-unit install")
 	return cmd
 }
 
@@ -156,6 +157,7 @@ func runAgentServiceInstall(cmd *cobra.Command, opts agentServiceInstallOpts) er
 		CACert:                 absCACert,
 		DataDir:                absDataDir,
 		Insecure:               opts.agentOpts.insecure,
+		MeshOverlayEnabled:     opts.agentOpts.enableMeshOverlay,
 		LogFile:                logFile,
 	}
 	cfgPath := filepath.Join(absDataDir, "service.yaml")
@@ -185,6 +187,16 @@ func runAgentServiceInstall(cmd *cobra.Command, opts agentServiceInstallOpts) er
 		// the service's logs would otherwise go nowhere useful (no
 		// console for Windows SCM/Task Scheduler to catch stray output).
 		Args: []string{"agent", "serve", "--service-config", cfgPath, "--log-file", logFile},
+	}
+	// Only for a real system-unit install: an unprivileged --user unit
+	// cannot be meaningfully granted ambient capabilities its own login
+	// session doesn't already have (see svcmgr.Spec.LinuxAmbientCapabilities),
+	// so requesting it there would just be misleading unit-file content
+	// that never actually grants anything. The Windows manager ignores this
+	// field entirely; there, --enable-mesh-overlay's effect is the probe
+	// installing the Wintun driver on first use, not a service-manager grant.
+	if opts.agentOpts.enableMeshOverlay && !opts.userMode {
+		spec.LinuxAmbientCapabilities = []string{"CAP_NET_ADMIN"}
 	}
 	if err := mgr.Install(spec); err != nil {
 		return fmt.Errorf("install %s service: %w", svcName, err)

@@ -423,6 +423,9 @@ boxy
 │   │   ├── --name <name>                          Agent name (default: hostname)
 │   │   ├── --data-dir <path>                      Issued-credential dir (default .boxy-agent in cwd)
 │   │   ├── --insecure                             Connect without TLS (local development only)
+│   │   ├── --enable-mesh-overlay                  Opt into cross-host mesh peering (#379); on Windows
+│   │   │                                            installs the Wintun kernel driver on first use;
+│   │   │                                            default false
 │   │   │
 │   │   $ boxy agent serve --config boxy.yaml --server boxy.example.test:9091 \
 │   │       --token 4f9c…e2a1 --ca-cert ./ca.crt
@@ -440,7 +443,9 @@ boxy
 │   │   │   ├── --instance-name <name>                Named instance -> boxy-agent-<name>, .boxy-agent-<name>/
 │   │   │   ├── --server, --providers, --config, --token,
 │   │   │   │   --name, --ca-cert, --data-dir,
-│   │   │   │   --insecure                            Same as `boxy agent serve` (above)
+│   │   │   │   --insecure, --enable-mesh-overlay      Same as `boxy agent serve` (above); a system-mode
+│   │   │   │                                            install with --enable-mesh-overlay also grants the
+│   │   │   │                                            service CAP_NET_ADMIN on Linux (--user cannot)
 │   │   │
 │   │   │   $ boxy agent service install --config boxy.yaml --server s:9091 \
 │   │   │       --token 4f9c…e2a1 --ca-cert ./ca.crt

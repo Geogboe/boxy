@@ -23,6 +23,20 @@ type Spec struct {
 	// working directory to resolve a relative path against.
 	ExecPath string
 	Args     []string
+
+	// LinuxAmbientCapabilities lists POSIX capability names (e.g.
+	// "CAP_NET_ADMIN") to grant the process via systemd's
+	// AmbientCapabilities= directive. The Windows manager ignores it
+	// entirely (no equivalent concept). The Linux manager renders it
+	// verbatim into whichever unit type it installs -- callers should
+	// leave this empty for a --user install, since an unprivileged
+	// systemd --user unit generally cannot be granted ambient capabilities
+	// its own user session doesn't already have; #379 blocker 6's caller
+	// (`agent service install`) only sets this for a system-unit install.
+	// #379 blocker 6 is the first caller: a remote agent with the mesh
+	// overlay enabled needs CAP_NET_ADMIN to open a WireGuard device
+	// without running as root.
+	LinuxAmbientCapabilities []string
 }
 
 // Status reports whether a named service is installed, currently running,

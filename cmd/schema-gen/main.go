@@ -173,6 +173,10 @@ func buildServerSchema() map[string]any {
 				"type":        "string",
 				"description": "How long the bounded server diagnostics store retains events, as a Go duration string. Empty means the default (14 days).",
 			},
+			"mesh_overlay_enabled": map[string]any{
+				"type":        "boolean",
+				"description": "Opts the daemon's own embedded agent into cross-host mesh peering (#379). Default false: on Windows, creating the first WireGuard device installs the Wintun kernel driver, so this must be an explicit opt-in, never attempted just because a sandbox happens to span hosts.",
+			},
 			"agent_timeouts": map[string]any{
 				"type":                 "object",
 				"additionalProperties": false,

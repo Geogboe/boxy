@@ -58,6 +58,21 @@ message RegisterRequest {
   // server trusts no entry here that is absent from provider_types, the
   // same anti-spoofing posture Heartbeat.availability already uses.
   repeated string network_isolating_provider_types = 5;
+
+  // mesh_capable reports whether this agent can actually create a
+  // WireGuard device right now -- CAP_NET_ADMIN on Linux, wintun.dll
+  // present next to the binary on Windows (#379 blocker 6). Unlike
+  // network_isolating_provider_types, this is not a per-provider-type
+  // capability: whether the process can open a TUN device is a property
+  // of the host/agent, not of any one driver. False (the default, and
+  // what every pre-#379-blocker-6 agent implicitly sends) is the correct
+  // reading for "not mesh-capable" -- the daemon skips mesh peering setup
+  // for such an agent instead of attempting and failing it. Computed once
+  // via a real probe (pkg/meshnet.Probe), and only when the operator has
+  // explicitly enabled the mesh overlay for this agent -- see
+  // docs/adr/0022's 2026-09-25 changelog entry for why an unconditional
+  // probe is not safe on Windows.
+  bool mesh_capable = 6;
 }
 
 message Heartbeat {

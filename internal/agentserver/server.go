@@ -344,6 +344,11 @@ func (s *Server) Connect(stream boxyagentv1.AgentTransportService_ConnectServer)
 		// serve. Narrowing only — an agent can never advertise more here
 		// than it advertised above.
 		NetworkIsolatingProviders: retainProviderTypes(toProviderTypes(reg.GetNetworkIsolatingProviderTypes()), providers),
+		// Unlike NetworkIsolatingProviders, not narrowed against providers:
+		// MeshCapable is a host/agent-wide property (can this process open a
+		// TUN device at all), not tied to any one provider type, so there is
+		// nothing to filter it against.
+		MeshCapable: reg.GetMeshCapable(),
 	}
 	remote := agentsdk.NewRemoteAgent(info, stream)
 	remote.SetLogSink(s.storeAgentLogs)

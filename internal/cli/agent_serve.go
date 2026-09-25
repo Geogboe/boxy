@@ -46,6 +46,13 @@ type agentServeOpts struct {
 	insecure          bool
 	serviceConfigPath string
 
+	// enableMeshOverlay opts this agent into cross-host mesh peering
+	// (#379 blocker 6). Default false: on Windows, creating the first
+	// WireGuard device installs the Wintun kernel driver, so this must be
+	// an explicit choice, never attempted just because a sandbox happens
+	// to span hosts. See docs/adr/0022's 2026-09-25 changelog entry.
+	enableMeshOverlay bool
+
 	// providerConfigsBaseDir is the directory of whichever config file
 	// actually supplied providerConfigs (--config, or --service-config's
 	// embedded provider_configs) — passed to each decoded provider config's
@@ -80,6 +87,7 @@ func newAgentServeCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opts.dataDir, "data-dir", "", "directory for the agent's issued credentials (default .boxy-agent in cwd)")
 	cmd.Flags().BoolVar(&opts.insecure, "insecure", false, "connect without TLS (local development only)")
 	cmd.Flags().StringVar(&opts.serviceConfigPath, "service-config", "", "load flags from a service config file written by `boxy agent service install` instead of the flags above")
+	cmd.Flags().BoolVar(&opts.enableMeshOverlay, "enable-mesh-overlay", false, "opt this agent into cross-host mesh peering (#379); on Windows this installs the Wintun kernel driver on first use")
 
 	return cmd
 }
@@ -158,6 +166,7 @@ func resolveAgentServeOpts(opts agentServeOpts) (agentServeOpts, error) {
 		caCert:                 cfg.CACert,
 		dataDir:                cfg.DataDir,
 		insecure:               cfg.Insecure,
+		enableMeshOverlay:      cfg.MeshOverlayEnabled,
 		serviceConfigPath:      opts.serviceConfigPath,
 	}, nil
 }
@@ -303,7 +312,9 @@ func runAgentServe(ctx context.Context, opts agentServeOpts) error {
 		token = ""
 	}
 
-	agentLog.Info("starting boxy agent", "server", opts.server, "providers", providerTypes, "data_dir", dataDir, "insecure", opts.insecure)
+	meshCapable := probeMeshCapability(opts.enableMeshOverlay)
+
+	agentLog.Info("starting boxy agent", "server", opts.server, "providers", providerTypes, "data_dir", dataDir, "insecure", opts.insecure, "mesh_overlay_enabled", opts.enableMeshOverlay, "mesh_capable", meshCapable)
 
 	dial := newAgentDialer(opts.server, dataDir, opts.caCert, opts.insecure, connectionHolder)
 	return agentsdk.Run(ctx, dial, agentsdk.RemoteClientConfig{
@@ -312,6 +323,7 @@ func runAgentServe(ctx context.Context, opts agentServeOpts) error {
 		AgentVersion:  Version,
 		ProviderTypes: providerTypes,
 		Drivers:       drivers,
+		MeshCapable:   meshCapable,
 		LogStore:      agentDiagnostics,
 		Logger:        agentLog,
 		OnRegistered: func(resp *boxyagentv1.RegisterResponse) {
