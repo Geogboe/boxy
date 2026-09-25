@@ -659,7 +659,7 @@ func (m *Manager) createSegmentWithCIDR(
 		if err != nil {
 			return "", "", "", err
 		}
-		ref, createdType, err := isolator.CreateSegment(ctx, pool, res, sb.ID, cidr)
+		ref, createdType, authoritativeCIDR, err := isolator.CreateSegment(ctx, pool, res, sb.ID, cidr)
 		var conflict *providersdk.CIDRConflictError
 		if errors.As(err, &conflict) {
 			slog.Info("segment CIDR refused by host, proposing another",
@@ -672,7 +672,14 @@ func (m *Manager) createSegmentWithCIDR(
 		if err != nil {
 			return "", "", "", err
 		}
-		return ref, createdType, cidr, nil
+		// authoritativeCIDR, not cidr: on the idempotent repeat path (a
+		// retry against an already-created segment) the driver ignores this
+		// proposal and returns the segment's real, already-assigned range.
+		// Persisting the proposal instead would record a range nothing
+		// actually holds while the real one goes untracked by
+		// allocatedSegmentCIDRs -- reopening the collision this mechanism
+		// exists to close (#370).
+		return ref, createdType, authoritativeCIDR, nil
 	}
 	return "", "", "", fmt.Errorf(
 		"no usable segment CIDR after %d proposals (host refused: %v)",

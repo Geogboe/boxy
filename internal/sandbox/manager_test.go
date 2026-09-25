@@ -410,15 +410,18 @@ type fakeSegmentTrackingAllocator struct {
 func (f *fakeSegmentTrackingAllocator) Allocate(context.Context, model.Pool, model.Resource) (providersdk.AllocationResult, error) {
 	return providersdk.AllocationResult{}, nil
 }
-func (f *fakeSegmentTrackingAllocator) CreateSegment(_ context.Context, _ model.Pool, res model.Resource, sandboxID model.SandboxID, cidr string) (providersdk.SegmentRef, providersdk.Type, error) {
+func (f *fakeSegmentTrackingAllocator) CreateSegment(_ context.Context, _ model.Pool, res model.Resource, sandboxID model.SandboxID, cidr string) (providersdk.SegmentRef, providersdk.Type, string, error) {
 	f.createCalls++
 	f.gotSandboxID = sandboxID
+	if f.createErr != nil {
+		return "", "", "", f.createErr
+	}
 	providerType := providersdk.Type(res.Provider.Name)
 	ref := f.createRef
 	if f.refsByProvider != nil {
 		ref = f.refsByProvider[providerType]
 	}
-	return ref, providerType, f.createErr
+	return ref, providerType, cidr, nil
 }
 func (f *fakeSegmentTrackingAllocator) AttachToSegment(_ context.Context, _ model.Pool, res model.Resource, ref providersdk.SegmentRef) error {
 	f.attachCalls++

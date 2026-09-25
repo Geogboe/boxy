@@ -188,9 +188,12 @@ func (m *mockAgent) PersonalizeGuest(ctx context.Context, provider providersdk.T
 // CreateSegment and AttachToSegment give mockAgent the
 // agentsdk.NetworkIsolatingAgent capability, unconditionally, the same way
 // PersonalizeGuest above unconditionally gives it GuestPersonalizingAgent.
-func (m *mockAgent) CreateSegment(_ context.Context, _ providersdk.Type, sandboxID string, _ string) (providersdk.SegmentRef, error) {
+func (m *mockAgent) CreateSegment(_ context.Context, _ providersdk.Type, sandboxID string, cidr string) (providersdk.SegmentRef, string, error) {
 	m.gotCreateSegmentSandboxID = sandboxID
-	return m.createSegmentRef, m.createSegmentErr
+	if m.createSegmentErr != nil {
+		return "", "", m.createSegmentErr
+	}
+	return m.createSegmentRef, cidr, nil
 }
 
 func (m *mockAgent) AttachToSegment(_ context.Context, _ providersdk.Type, providerResourceID string, ref providersdk.SegmentRef) error {
@@ -1267,12 +1270,15 @@ func TestAgentProvisioner_CreateSegment(t *testing.T) {
 	}
 	res := model.Resource{ID: "res-1", Provider: model.ProviderRef{AgentID: agent.Info().ID}}
 
-	ref, providerType, err := ap.CreateSegment(context.Background(), model.Pool{Name: "pool-a"}, res, "sb-1", "10.250.0.0/29")
+	ref, providerType, cidr, err := ap.CreateSegment(context.Background(), model.Pool{Name: "pool-a"}, res, "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
 	if ref != "boxy-sb-sb-1" || providerType != "hyperv" {
 		t.Fatalf("got (%q, %q), want (boxy-sb-sb-1, hyperv)", ref, providerType)
+	}
+	if cidr != "10.250.0.0/29" {
+		t.Fatalf("cidr = %q, want the agent's authoritative range %q", cidr, "10.250.0.0/29")
 	}
 	if agent.gotCreateSegmentSandboxID != "sb-1" {
 		t.Fatalf("agent got sandboxID = %q, want sb-1", agent.gotCreateSegmentSandboxID)

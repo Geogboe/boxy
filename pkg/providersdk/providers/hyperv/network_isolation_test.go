@@ -140,7 +140,7 @@ func TestDriver_CreateSegment_RunsSwitchAndNatSetup(t *testing.T) {
 	})
 	d.segmentLedgerPath = filepath.Join(t.TempDir(), "network-segments.json")
 
-	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
+	ref, _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
@@ -181,6 +181,38 @@ func TestDriver_CreateSegment_RunsSwitchAndNatSetup(t *testing.T) {
 	}
 }
 
+// TestDriver_CreateSegment_IdempotentRepeatReturnsExistingCIDRNotNewProposal
+// guards CreateSegmentResult.cidr's contract at the driver level: a repeat
+// call for a sandbox that already has a segment must report that segment's
+// real, already-assigned range, not a new (and possibly different)
+// proposal. The caller persists whatever CreateSegment returns as
+// authoritative, so returning the new proposal here would let a stale
+// range go on record while the real one -- still bound to this switch --
+// goes untracked.
+func TestDriver_CreateSegment_IdempotentRepeatReturnsExistingCIDRNotNewProposal(t *testing.T) {
+	d := mockDriver(func(_ context.Context, _ string) (string, error) { return "", nil })
+	d.segmentLedgerPath = filepath.Join(t.TempDir(), "network-segments.json")
+
+	_, firstCIDR, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
+	if err != nil {
+		t.Fatalf("first CreateSegment: %v", err)
+	}
+	if firstCIDR != "10.250.0.0/29" {
+		t.Fatalf("first cidr = %q, want the proposal %q", firstCIDR, "10.250.0.0/29")
+	}
+
+	// A retry proposing a *different* range than the switch is actually
+	// bound to -- e.g. after a daemon restart lost track of sb-1's segment.
+	_, secondCIDR, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.8/29")
+	if err != nil {
+		t.Fatalf("second CreateSegment: %v", err)
+	}
+	if secondCIDR != "10.250.0.0/29" {
+		t.Fatalf("second cidr = %q, want the switch's real range %q, not the new proposal %q",
+			secondCIDR, "10.250.0.0/29", "10.250.0.8/29")
+	}
+}
+
 // TestDriver_CreateSegment_FailurePreservesLedgerEntry exercises task-2 code
 // review finding 3: a PowerShell failure must not release the sandbox's
 // ledger entry, so a retried CreateSegment for the same sandboxID gets back
@@ -195,7 +227,7 @@ func TestDriver_CreateSegment_FailurePreservesLedgerEntry(t *testing.T) {
 	})
 	d.segmentLedgerPath = filepath.Join(t.TempDir(), "network-segments.json")
 
-	if _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29"); err == nil {
+	if _, _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29"); err == nil {
 		t.Fatal("expected CreateSegment to fail")
 	}
 
@@ -215,7 +247,7 @@ func TestDriver_CreateSegment_FailurePreservesLedgerEntry(t *testing.T) {
 	}
 
 	fail = false
-	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
+	ref, _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("retry CreateSegment: %v", err)
 	}
@@ -281,7 +313,7 @@ func TestDriver_AttachToSegment_ConnectsThenAssignsSegmentAddress(t *testing.T) 
 	var sessions []*recordingGuestExec
 	d := segmentDriver(t, windowsGuestNotes, &sessions)
 
-	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
+	ref, _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
@@ -333,7 +365,7 @@ func TestDriver_AttachToSegment_PrefersRotatedCredentialOverStaleBootstrap(t *te
 		t.Fatalf("verification session password = %q, want a freshly rotated value", rotated)
 	}
 
-	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
+	ref, _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
@@ -357,7 +389,7 @@ func TestDriver_AttachToSegment_FallsBackToBootstrapWithoutRotatedCredential(t *
 	var sessions []*recordingGuestExec
 	d := segmentDriver(t, windowsGuestNotes, &sessions)
 
-	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
+	ref, _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
@@ -439,7 +471,7 @@ func TestDriver_AttachToSegment_DerivesGuestAddressForLegacyLedgerEntry(t *testi
 	var sessions []*recordingGuestExec
 	d := segmentDriver(t, windowsGuestNotes, &sessions)
 
-	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
+	ref, _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
@@ -472,7 +504,7 @@ func TestDriver_AttachToSegment_RepeatReassignsSameAddress(t *testing.T) {
 	var sessions []*recordingGuestExec
 	d := segmentDriver(t, windowsGuestNotes, &sessions)
 
-	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
+	ref, _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
@@ -499,7 +531,7 @@ func TestDriver_AttachToSegment_LinuxGuestIsAHardError(t *testing.T) {
 	var sessions []*recordingGuestExec
 	d := segmentDriver(t, "boxy_guest_os=linux;boxy_guest_user=ubuntu", &sessions)
 
-	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
+	ref, _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
@@ -535,7 +567,7 @@ func TestDriver_AttachToSegment_UnknownSegmentIsAnError(t *testing.T) {
 func TestDriver_AttachToSegment_ConnectsAdapterBeforeAddressing(t *testing.T) {
 	var order []string
 	d := segmentDriver(t, windowsGuestNotes, nil)
-	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
+	ref, _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
@@ -640,7 +672,7 @@ func TestDriver_DestroySegment_ReleasesLedgerEntry(t *testing.T) {
 	d := mockDriver(func(context.Context, string) (string, error) { return "", nil })
 	d.segmentLedgerPath = filepath.Join(t.TempDir(), "network-segments.json")
 
-	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
+	ref, _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
@@ -657,7 +689,7 @@ func TestDriver_DestroySegment_ReleasesLedgerEntry(t *testing.T) {
 	}
 
 	// The freed block is genuinely reusable by the next sandbox.
-	next, err := d.CreateSegment(context.Background(), "sb-2", "10.250.0.0/29")
+	next, _, err := d.CreateSegment(context.Background(), "sb-2", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment sb-2: %v", err)
 	}
@@ -678,7 +710,7 @@ func TestDriver_DestroySegment_IdempotentWhenAlreadyGone(t *testing.T) {
 	d := mockDriver(func(context.Context, string) (string, error) { return "", nil })
 	d.segmentLedgerPath = filepath.Join(t.TempDir(), "network-segments.json")
 
-	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
+	ref, _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
@@ -739,7 +771,7 @@ func TestDriver_CreateSegment_SerializesHostScripts(t *testing.T) {
 		wg.Add(1)
 		go func(id string) {
 			defer wg.Done()
-			if _, err := d.CreateSegment(context.Background(), id, cidrs[id]); err != nil {
+			if _, _, err := d.CreateSegment(context.Background(), id, cidrs[id]); err != nil {
 				t.Errorf("CreateSegment(%s): %v", id, err)
 			}
 		}(id)

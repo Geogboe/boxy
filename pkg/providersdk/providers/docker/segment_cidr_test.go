@@ -26,7 +26,7 @@ func TestCreateSegment_UsesProposedCIDRAsExplicitSubnet(t *testing.T) {
 	}
 	d := &Driver{cli: cli}
 
-	if _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.7.0/29"); err != nil {
+	if _, _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.7.0/29"); err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
 	if gotOpts.IPAM == nil || len(gotOpts.IPAM.Config) != 1 {
@@ -56,7 +56,7 @@ func TestCreateSegment_RefusesCIDRCollidingWithAnExistingNetwork(t *testing.T) {
 	}
 	d := &Driver{cli: cli}
 
-	_, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
+	_, _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	var conflict *providersdk.CIDRConflictError
 	if !errors.As(err, &conflict) {
 		t.Fatalf("err = %v, want a *CIDRConflictError so the caller re-proposes", err)
@@ -82,7 +82,7 @@ func TestCreateSegment_RefusesCIDRCollidingWithAHostRoute(t *testing.T) {
 		return "10.250.4.0/24 dev tun0 scope link\ndefault via 192.168.1.1 dev eth0\n", nil
 	}}
 
-	_, err := d.CreateSegment(context.Background(), "sb-1", "10.250.4.0/29")
+	_, _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.4.0/29")
 	var conflict *providersdk.CIDRConflictError
 	if !errors.As(err, &conflict) {
 		t.Fatalf("err = %v, want a *CIDRConflictError", err)
@@ -111,7 +111,7 @@ func TestCreateSegment_AcceptsNonCollidingCIDR(t *testing.T) {
 		return "172.17.0.0/16 dev docker0\n192.168.1.0/24 dev eth0\n", nil
 	}}
 
-	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
+	ref, _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment refused a non-colliding CIDR: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestCreateSegment_ProceedsWhenLocalProbesFail(t *testing.T) {
 		return "", fmt.Errorf("ip: not found")
 	}}
 
-	if _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29"); err != nil {
+	if _, _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29"); err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
 }

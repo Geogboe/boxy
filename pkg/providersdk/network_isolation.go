@@ -59,8 +59,13 @@ type NetworkIsolator interface {
 	// On the idempotent repeat path, an implementation that already has a
 	// segment for sandboxID returns it unchanged and ignores cidr — the
 	// existing segment's range is authoritative, and a caller re-proposing
-	// a different one must not silently renumber a live network.
-	CreateSegment(ctx context.Context, sandboxID string, cidr string) (SegmentRef, error)
+	// a different one must not silently renumber a live network. The
+	// returned string is always that authoritative range, whether it came
+	// from the cidr argument (fresh segment) or from the pre-existing one
+	// (idempotent repeat): the caller must persist this value rather than
+	// assuming its own proposal was honored, or a retry can record a range
+	// nothing actually holds while the real one goes untracked.
+	CreateSegment(ctx context.Context, sandboxID string, cidr string) (SegmentRef, string, error)
 
 	// AttachToSegment moves an already-created resource (identified by the
 	// driver's own provider-specific resource ID, as returned in

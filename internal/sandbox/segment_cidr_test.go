@@ -17,21 +17,29 @@ type cidrRecordingAllocator struct {
 	proposed  []string
 	refuse    map[string]string // cidr -> what it supposedly collides with
 	createErr error
+	// authoritativeCIDR, when set, stands in for a driver's idempotent
+	// repeat path: it ignores the proposal and returns this range instead,
+	// as a real driver does when a segment already exists for the sandbox.
+	authoritativeCIDR string
 }
 
 func (f *cidrRecordingAllocator) Allocate(context.Context, model.Pool, model.Resource) (providersdk.AllocationResult, error) {
 	return providersdk.AllocationResult{}, nil
 }
 
-func (f *cidrRecordingAllocator) CreateSegment(_ context.Context, _ model.Pool, res model.Resource, _ model.SandboxID, cidr string) (providersdk.SegmentRef, providersdk.Type, error) {
+func (f *cidrRecordingAllocator) CreateSegment(_ context.Context, _ model.Pool, res model.Resource, _ model.SandboxID, cidr string) (providersdk.SegmentRef, providersdk.Type, string, error) {
 	f.proposed = append(f.proposed, cidr)
 	if what, refused := f.refuse[cidr]; refused {
-		return "", "", &providersdk.CIDRConflictError{RequestedCIDR: cidr, ConflictingWith: what}
+		return "", "", "", &providersdk.CIDRConflictError{RequestedCIDR: cidr, ConflictingWith: what}
 	}
 	if f.createErr != nil {
-		return "", "", f.createErr
+		return "", "", "", f.createErr
 	}
-	return providersdk.SegmentRef("seg-" + cidr), providersdk.Type(res.Provider.Name), nil
+	authoritative := cidr
+	if f.authoritativeCIDR != "" {
+		authoritative = f.authoritativeCIDR
+	}
+	return providersdk.SegmentRef("seg-" + cidr), providersdk.Type(res.Provider.Name), authoritative, nil
 }
 
 func (f *cidrRecordingAllocator) AttachToSegment(context.Context, model.Pool, model.Resource, providersdk.SegmentRef) error {
@@ -142,6 +150,30 @@ func TestCreateSegment_GivesUpAfterTooManyRefusals(t *testing.T) {
 	}
 	if len(alloc.proposed) != maxCIDRProposals {
 		t.Fatalf("made %d proposals, want the %d cap", len(alloc.proposed), maxCIDRProposals)
+	}
+}
+
+// TestCreateSegment_RecordsDriversAuthoritativeCIDRNotItsOwnProposal covers
+// the idempotent-repeat case: a driver whose segment already exists for
+// this sandbox (e.g. a retry after PutSandbox failed to persist an earlier,
+// successful CreateSegment) ignores the new proposal and returns the real,
+// already-assigned range. The manager must persist that range, not the
+// proposal it sent -- otherwise allocatedSegmentCIDRs's view of what is in
+// use goes stale, silently freeing a range a live host object still holds.
+func TestCreateSegment_RecordsDriversAuthoritativeCIDRNotItsOwnProposal(t *testing.T) {
+	alloc := &cidrRecordingAllocator{authoritativeCIDR: "10.250.0.8/29"}
+	m, _ := newCIDRTestManager(t, alloc)
+
+	sb, err := m.CreateFromPool(context.Background(), "pool-a", 1, "sb", model.SandboxPolicies{})
+	if err != nil {
+		t.Fatalf("CreateFromPool: %v", err)
+	}
+	if len(alloc.proposed) != 1 || alloc.proposed[0] != "10.250.0.0/29" {
+		t.Fatalf("proposed = %v, want the first free block proposed once", alloc.proposed)
+	}
+	if got, want := sb.NetworkSegments[0].CIDR, "10.250.0.8/29"; got != want {
+		t.Fatalf("recorded CIDR = %q, want the driver's authoritative range %q, not its own proposal %q",
+			got, want, alloc.proposed[0])
 	}
 }
 

@@ -59,15 +59,20 @@ const segmentBaseCIDR = segmentcidr.DefaultBase
 // host may still be using it, and an idle NAT costs nothing.
 const sharedNATName = "boxy-segments"
 
-// segmentPrefixLen is the prefix length of each per-sandbox block carved out
-// of segmentBaseCIDR. A /29 is 8 addresses: network, gateway, up to 5 usable
-// hosts, broadcast -- enough for a small sandbox lab.
+// segmentPrefixLen is the prefix length of each per-sandbox block. Reuses
+// segmentcidr.DefaultBlockLen -- the daemon's own allocator block size --
+// rather than a second literal, for the same reason segmentBaseCIDR reuses
+// segmentcidr.DefaultBase: the daemon proposes blocks of this size, so a
+// mismatch here would mean New-NetIPAddress applies a prefix length that
+// doesn't match the range the daemon actually allocated. A /29 is 8
+// addresses: network, gateway, up to 5 usable hosts, broadcast -- enough
+// for a small sandbox lab.
 //
-// This is the single source of truth for the block size: the persisted CIDR
-// string, the host-side New-NetIPAddress -PrefixLength argument, and
-// segmentBlockSize's address arithmetic are all derived from it rather than
-// repeating the literal in three places.
-const segmentPrefixLen = 29
+// This is the single source of truth for the block size *within this
+// driver*: the persisted CIDR string, the host-side New-NetIPAddress
+// -PrefixLength argument, and segmentBlockSize's address arithmetic are all
+// derived from it rather than repeating the literal in three places.
+const segmentPrefixLen = segmentcidr.DefaultBlockLen
 
 // segmentGatewayOffset/segmentGuestOffset are the fixed positions, counted
 // from a block's own network address, of the two addresses this driver hands
@@ -435,7 +440,7 @@ func (d *Driver) resolveSegmentLedgerPath() string {
 //
 // On failure, the sandbox's ledger entry is deliberately NOT released (see
 // the comment on the error-handling branch below for why).
-func (d *Driver) CreateSegment(ctx context.Context, sandboxID string, cidr string) (providersdk.SegmentRef, error) {
+func (d *Driver) CreateSegment(ctx context.Context, sandboxID string, cidr string) (providersdk.SegmentRef, string, error) {
 	// Locked for the whole call, not just the switch-creation script below:
 	// checkCIDRAvailable's own PowerShell also reads live host network state
 	// (Get-NetNat/Get-NetIPAddress), and running it concurrently with another
@@ -450,12 +455,12 @@ func (d *Driver) CreateSegment(ctx context.Context, sandboxID string, cidr strin
 		// range, and checking would then find the segment conflicting with
 		// itself.
 		if err := d.checkCIDRAvailable(ctx, cidr); err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 	alloc, err := d.segments().record(sandboxID, cidr)
 	if err != nil {
-		return "", fmt.Errorf("record segment CIDR for sandbox %q: %w", sandboxID, err)
+		return "", "", fmt.Errorf("record segment CIDR for sandbox %q: %w", sandboxID, err)
 	}
 	adapterAlias := fmt.Sprintf("vEthernet (%s)", alloc.SwitchName)
 	_, err = d.ps(ctx, fmt.Sprintf(`
@@ -486,9 +491,9 @@ if (-not (Get-NetIPAddress -InterfaceAlias '%s' -IPAddress '%s' -ErrorAction Sil
 		// what makes this safe: the deterministic switch name and CIDR are
 		// unchanged, so the "if not exists" checks above correctly resume
 		// wherever the previous attempt left off.
-		return "", fmt.Errorf("create segment for sandbox %q: %w", sandboxID, err)
+		return "", "", fmt.Errorf("create segment for sandbox %q: %w", sandboxID, err)
 	}
-	return providersdk.SegmentRef(alloc.SwitchName), nil
+	return providersdk.SegmentRef(alloc.SwitchName), alloc.CIDR, nil
 }
 
 // ensureSharedNATScript returns the PowerShell that makes sure sharedNATName

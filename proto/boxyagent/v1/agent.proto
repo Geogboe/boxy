@@ -358,6 +358,17 @@ message PersonalizeGuestResult {
 
 message CreateSegmentResult {
   string segment_ref = 1;
+
+  // cidr is the segment's authoritative range, which is not always the one
+  // CreateSegmentCommand proposed: CreateSegment is idempotent per
+  // sandbox_id, and a repeat call against an already-created segment
+  // returns that segment's real, already-assigned range unchanged rather
+  // than honoring a new (and possibly different) proposal. The caller must
+  // persist this value, not the one it sent, or a retry after a partial
+  // failure can record a range nothing actually holds while the real one
+  // goes untracked -- reopening the same cross-host collision this whole
+  // mechanism exists to close (#370).
+  string cidr = 2;
 }
 
 message MeshIdentityResult {

@@ -44,17 +44,17 @@ const segmentNetworkPrefix = "boxy-sb-"
 // path -- the existing network's own subnet is authoritative, and
 // renumbering a live network out from under its containers would be worse
 // than honoring a stale proposal.
-func (d *Driver) CreateSegment(ctx context.Context, sandboxID string, cidr string) (providersdk.SegmentRef, error) {
+func (d *Driver) CreateSegment(ctx context.Context, sandboxID string, cidr string) (providersdk.SegmentRef, string, error) {
 	name := segmentNetworkPrefix + sandboxID
-	id, found, err := d.findSegmentNetwork(ctx, name)
+	id, existingCIDR, found, err := d.findSegmentNetwork(ctx, name)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if found {
-		return providersdk.SegmentRef(id), nil
+		return providersdk.SegmentRef(id), existingCIDR, nil
 	}
 	if err := d.checkCIDRAvailable(ctx, cidr); err != nil {
-		return "", err
+		return "", "", err
 	}
 	resp, err := d.cli.NetworkCreate(ctx, name, network.CreateOptions{
 		Driver: "bridge",
@@ -69,12 +69,24 @@ func (d *Driver) CreateSegment(ctx context.Context, sandboxID string, cidr strin
 		// between the lookup above and this call; the daemon then rejects
 		// the duplicate name. Re-resolve before reporting failure so the
 		// loser of that race still returns the same segment as the winner.
-		if id, found, lookupErr := d.findSegmentNetwork(ctx, name); lookupErr == nil && found {
-			return providersdk.SegmentRef(id), nil
+		if id, existingCIDR, found, lookupErr := d.findSegmentNetwork(ctx, name); lookupErr == nil && found {
+			return providersdk.SegmentRef(id), existingCIDR, nil
 		}
-		return "", fmt.Errorf("create docker network %q: %w", name, err)
+		// checkCIDRAvailable above is a point-in-time probe, not a lock: a
+		// different network (not this sandbox's own, handled above) can
+		// still claim an overlapping subnet in the window between that
+		// probe and this call. Docker's IPAM then rejects NetworkCreate
+		// itself with this message rather than a structured error type.
+		// Reported as a *CIDRConflictError like checkCIDRAvailable's own
+		// refusals, so the caller's retry loop treats it the same way --
+		// propose a different range -- instead of hard-failing the whole
+		// sandbox on a race the caller can recover from by retrying.
+		if strings.Contains(err.Error(), "Pool overlaps") {
+			return "", "", &providersdk.CIDRConflictError{RequestedCIDR: cidr, ConflictingWith: "a Docker network created concurrently with an overlapping subnet"}
+		}
+		return "", "", fmt.Errorf("create docker network %q: %w", name, err)
 	}
-	return providersdk.SegmentRef(resp.ID), nil
+	return providersdk.SegmentRef(resp.ID), cidr, nil
 }
 
 // checkCIDRAvailable reports whether cidr is free to use on this host,
@@ -130,27 +142,32 @@ func (d *Driver) checkCIDRAvailable(ctx context.Context, cidr string) error {
 	return nil
 }
 
-// findSegmentNetwork resolves a segment network by its deterministic name.
-// found is false with a nil error when no such network exists -- the normal
-// first-call case, not a failure.
+// findSegmentNetwork resolves a segment network by its deterministic name,
+// along with its authoritative subnet (see CreateSegmentResult.cidr's
+// doc comment for why the caller must use this over its own proposal on the
+// idempotent repeat path). found is false with a nil error when no such
+// network exists -- the normal first-call case, not a failure.
 //
 // A name match alone is not enough: the deterministic name is predictable,
 // so an unrelated, unmanaged network happening to share it would otherwise
 // be silently adopted as this sandbox's segment -- and later torn down by
 // DestroySegment, which is not this driver's to remove. The managed label
 // CreateSegment sets is checked before a found network is trusted.
-func (d *Driver) findSegmentNetwork(ctx context.Context, name string) (id string, found bool, err error) {
+func (d *Driver) findSegmentNetwork(ctx context.Context, name string) (id string, cidr string, found bool, err error) {
 	inspect, err := d.cli.NetworkInspect(ctx, name, network.InspectOptions{})
 	if err != nil {
 		if cerrdefs.IsNotFound(err) {
-			return "", false, nil
+			return "", "", false, nil
 		}
-		return "", false, fmt.Errorf("inspect docker network %q: %w", name, err)
+		return "", "", false, fmt.Errorf("inspect docker network %q: %w", name, err)
 	}
 	if inspect.Labels[managedLabel] != managedLabelValue {
-		return "", false, fmt.Errorf("network %q already exists and is not a boxy-managed network", name)
+		return "", "", false, fmt.Errorf("network %q already exists and is not a boxy-managed network", name)
 	}
-	return inspect.ID, true, nil
+	if len(inspect.IPAM.Config) > 0 {
+		cidr = inspect.IPAM.Config[0].Subnet
+	}
+	return inspect.ID, cidr, true, nil
 }
 
 // AttachToSegment moves an already-running container onto the sandbox's

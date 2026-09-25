@@ -138,14 +138,14 @@ func (a *EmbeddedAgent) PersonalizeGuest(ctx context.Context, provider providers
 	return gp.PersonalizeGuest(ctx, id, opts)
 }
 
-func (a *EmbeddedAgent) CreateSegment(ctx context.Context, provider providersdk.Type, sandboxID string, cidr string) (providersdk.SegmentRef, error) {
+func (a *EmbeddedAgent) CreateSegment(ctx context.Context, provider providersdk.Type, sandboxID string, cidr string) (providersdk.SegmentRef, string, error) {
 	d, err := a.driver(provider)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	isolator, ok := d.(providersdk.NetworkIsolator)
 	if !ok {
-		return "", fmt.Errorf("agent %q: provider %q does not support network isolation", a.info.ID, provider)
+		return "", "", fmt.Errorf("agent %q: provider %q does not support network isolation", a.info.ID, provider)
 	}
 	return isolator.CreateSegment(ctx, sandboxID, cidr)
 }

@@ -1710,7 +1710,7 @@ func TestDriver_AssignGuestIP_ScriptIsIdempotentAndVerifiesApply(t *testing.T) {
 	var execs []*recordingGuestExec
 	d := segmentDriver(t, windowsGuestNotes, &execs)
 
-	ref, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
+	ref, _, err := d.CreateSegment(context.Background(), "sb-1", "10.250.0.0/29")
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}

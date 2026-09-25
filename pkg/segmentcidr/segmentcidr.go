@@ -4,9 +4,13 @@
 // It exists because segment ranges have to be unique across every host a
 // sandbox touches, not just within one host. Each host choosing its own
 // range independently is what broke cross-host mesh peering (#370): two
-// hosts allocating from the same base in the same order hand out the same
-// range, and WireGuard then drops the decrypted cross-host traffic as
-// coming from a disallowed source address.
+// hosts allocating from the same base in the same order can hand out the
+// same range, and a host then routes traffic addressed to the peer's
+// segment locally instead of into the tunnel, since its own routing table
+// has an equally valid, higher-priority local match. This is route
+// ambiguity, not the separate "disallowed source address" WireGuard drop
+// (#379) -- that one is caused by Docker's NAT masquerading traffic before
+// encryption, and happens even when both ranges are unique.
 //
 // The allocator is deliberately stateless. Callers pass in the ranges
 // already in use and get back one that isn't, so the "what is allocated"
